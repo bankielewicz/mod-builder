@@ -26,6 +26,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: '/w' }))
+  on('session.id', () => ({ value: 's1' }))
   on('env.get', ($: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
   on('fs.read', ($: any, e: any) => {
     const text = seen.files[e.path]
@@ -210,7 +211,7 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     const r: any = await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
     expect(r.result.status).toBe('async_launched')
     expect(r.result.agentId).toBe('duet-d1')
-    expect(r.result.outputFile).toBe('/home/u/.claude/duet-data/d1.out.md')
+    expect(r.result.outputFile).toBe('/home/u/.claude/duet-data/sessions/s1/d1.out.md')
     expect(r.result.canContinueAgent).toBe(false)
     expect(seen.beneath).toBe(0)
     await seen.clock.settle()
@@ -218,7 +219,7 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     expect(seen.submitted[0]).toContain('Background agent duet-d1 (duet:codex-reviewer) finished on Codex')
     expect(seen.submitted[0]).toContain('Found 3 callers.')
     expect(seen.submitted[0]).toContain('[duet d1 · codex · sandbox read-only · base abc1234 · read-only run: no files changed')
-    expect(seen.files['/home/u/.claude/duet-data/d1.out.md']).toContain('Found 3 callers.')
+    expect(seen.files['/home/u/.claude/duet-data/sessions/s1/d1.out.md']).toContain('Found 3 callers.')
   })
 
   test('a failed background run is delivered as a failure, never quietly', { options: { codexConsent: 'allow' } }, async ($, on) => {
@@ -272,5 +273,15 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     expect(rows[0].type).toBe('Explore')
     expect(rows[0].tokens).toBe(150)
     expect(rows[0].ok).toBe(true)
+  })
+})
+
+describe('review admission', () => {
+  test('a review counts against maxConcurrent, so at the limit it is refused and Codex never runs', { options: { maxConcurrent: 0, codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv).toEqual([])
   })
 })

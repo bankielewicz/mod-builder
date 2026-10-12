@@ -118,7 +118,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Prompts | `$.prompt.submit`: one turn per finished background Codex run (its answer or failure) and per run a reload cut off |
 | Settings | `$.config.list` / `$.config.set` on duet's own rows, from `/duet config` |
 | Processes | `$.process.spawn` / `$.process.run`: `codex exec --json …`, `codex exec review --json …`, `codex debug models`, `git rev-parse`, `git status --porcelain` |
-| Files | reads `<cwd>/.claude/agents/<type>.md`, `~/.claude/agents/<type>.md`; writes `~/.claude/duet-data/runs.jsonl` (no prompt text), `review-<id>.md` and `d<n>.out.md` (a background run's answer) |
+| Files | reads `<cwd>/.claude/agents/<type>.md`, `~/.claude/agents/<type>.md`; writes `~/.claude/duet-data/runs.jsonl` (no prompt text), `sessions/<session>/review-<id>.md` and `sessions/<session>/d<n>.out.md` (a background run's answer; per session, since ids restart at d1) |
 | Network | none directly; **Codex sends the handoff and whatever it reads under the session folder to OpenAI** under your Codex sign-in |
 | Model calls | none by the mod directly; Codex usage per routed call and review; each delivered background answer is a Claude turn |
 | Environment | reads `HOME`, `USERPROFILE`; Codex's child env blanks `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_SESSION_ACCESS_TOKEN` |

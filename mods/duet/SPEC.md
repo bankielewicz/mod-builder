@@ -85,7 +85,7 @@ has no `run_in_background` in this build, so the type's mode is the only lever.
 
 A routed **read-only** call in background mode, once consent and the concurrency limit pass, is answered at once with the Agent tool's
 `async_launched` record: `agentId: duet-d<n>`, `description`, `prompt`, `outputFile` =
-`~/.claude/duet-data/d<n>.out.md` (a placeholder while it runs, Codex's answer when it ends),
+`~/.claude/duet-data/sessions/<session>/d<n>.out.md` (a placeholder while it runs, Codex's answer when it ends),
 `canReadOutputFile: true`, `canContinueAgent: false`. Codex keeps running (`void … .catch`); when it
 ends duet delivers the answer with `$.prompt.submit({ text })`: a turn of its own once the session
 is idle, which the model reads as "The duet plugin sent a message:" (the same way a background
@@ -179,7 +179,7 @@ Three example agents are written to this repo's `.claude/agents/` to prove it en
 - **Files read at run time:** `.claude/agents/<type>.md` and `~/.claude/agents/<type>.md` for routed types.
 - **Files outside the repo, at run time:** `~/.claude/duet-data/runs.jsonl` (one line per run: id,
   kind, provider, model, subagent type, start, duration, tokens, exit, outcome; **no prompt text**),
-  and `~/.claude/duet-data/review-<id>.md` (each review's full text, for `/duet show <id>`). *(Build note: Codex's answer is read from its JSONL stream, so no schema or last-message temp files are written.)*
+  and `~/.claude/duet-data/sessions/<session>/review-<id>.md` (each review's full text, for `/duet show <id>`). *(Build note: Codex's answer is read from its JSONL stream, so no schema or last-message temp files are written.)*
 - **Processes the mod runs:** `codex exec --json -s <sandbox> -c approval_policy="never" -C <cwd> -o <file> [-m <model>] -`
   (prompt on stdin), `codex exec review --json -c sandbox_mode="read-only" -c approval_policy="never" …` (review has no `-s` flag), `git rev-parse HEAD`, `git diff --stat <base>`, `git status --porcelain`.
 - **Leaves the machine:** whatever Codex reads under the session folder, plus the handoff prompt, goes to
@@ -199,7 +199,7 @@ Three example agents are written to this repo's `.claude/agents/` to prove it en
 - **(0.2.0) Turns started in the session:** one `$.prompt.submit` per finished background Codex run
   (its answer or its failure) and per run a reload cut off; each is a Claude turn of its own, as a
   background agent's notification is, so it costs Claude tokens.
-- **(0.2.0) Files outside the repo:** `~/.claude/duet-data/d<n>.out.md`, each background run's streamed
+- **(0.2.0) Files outside the repo:** `~/.claude/duet-data/sessions/<session>/d<n>.out.md`, each background run's streamed
   text (the `outputFile` Claude may read). `claude plugin update duet@claudemod` after Verify
   rewrites the installed copy under `~/.claude/plugins/cache/claudemod/duet/` (you approved this).
 - **Costs:** Codex usage per routed call and per review (the probe "reply ok" used ~22k input tokens, mostly Codex's own system context). No Claude model calls by the mod.
@@ -348,3 +348,16 @@ Added in 0.2.0:
 Load (`/plugin install duet@claudemod` or `claude --plugin-dir mods/duet`), `codex login` once,
 set `codexAgents` in `/config`, `/duet demo`, `/duet review`, `/duet stats`; `ctrl+x tab` for the
 pane's keys; `/reload-plugins` picks up edits.
+
+## Change 0.2.1 (2026-10-12)
+
+> Fixes from the Codex review of PR #1.
+
+- **What changes:**
+  - An agent file with `tools: []` (or an empty `tools:` line) now means no tools, so it runs read-only. Only a missing `tools` line means every tool.
+  - Per-task files (`d<n>.out.md`, `review-<id>.md`) live under `~/.claude/duet-data/sessions/<session>/`, since ids restart at `d1` in every session.
+  - `/duet review` goes through the same admission as routed agents, so `maxConcurrent` counts reviews too.
+  - Appends to `runs.jsonl` are serialized within a session. Appends from two sessions can still race; the log is stats only.
+- **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, tests; the per-session folders above.
+- **Tests:** an empty tools list is read-only; reviews count against the limit; session folders are filesystem-safe; the background out file is per session.
+- **Done means:** all tests pass, validate is clean.

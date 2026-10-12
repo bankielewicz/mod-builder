@@ -59,3 +59,29 @@ describe('ui', () => {
     await demo.unmount()
   })
 })
+
+describe('overlapping refreshes', () => {
+  test('a refresh asked for during a slow read gets a fresh read, not the stale one', async ($, on) => {
+    mock.clock(on)
+    let release = () => {}
+    const slow = new Promise<void>(resolve => (release = resolve))
+    let branch = 'main'
+    let calls = 0
+    on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', () => ({ value: undefined }) as never)
+    on('process.run', async () => {
+      calls += 1
+      const head = branch
+      if (calls === 1) await slow
+      return { value: { ...ON_BRANCH, stdout: ON_BRANCH.stdout.replace('feature/x', head) } } as never
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    branch = 'feature/new'
+    const asked = $.command.run({ command: 'git-branch', args: 'refresh', origin: COMPOSER, presentation: PRESENTATION })
+    release()
+    const { text } = await asked
+    expect(text).toContain('feature/new')
+    expect(calls).toBe(2)
+  })
+})
+

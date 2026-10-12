@@ -19,7 +19,7 @@ const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 120 } as const
 
 type Disk = Record<string, string>
-type Output = { exitCode: number; stdout: string }
+type Output = { exitCode: number; stdout: string; throws?: boolean }
 
 /** A mod folder on the in-memory disk: every file of a mod that has reached Register. */
 const modFiles = (name: string): Disk => ({
@@ -72,6 +72,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     seen.argv.push([...e.argv])
     if (hold) await hold
     const out = (e.argv.includes('validate') ? outputs.validate : outputs.test) ?? { exitCode: 0, stdout: '' }
+    if (out.throws) throw new Error('could not start')
     return { value: { ...out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('ui.toast', ($, e) => (seen.toasts.push((e as { text: string }).text), { value: undefined }) as never)
@@ -359,6 +360,59 @@ describe('edit', () => {
     await clock.advance(10)
     const stale = await mountPane($)
     expect(await stale.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+})
+
+describe('edit failures', () => {
+  async function greenThenEdit($: Engine, on: On, outputs: { validate?: Output; test?: Output }) {
+    const disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      ['/m/.claude-plugin/marketplace.json']: JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const w = world(on, disk, outputs)
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.press({ key: 'test' })
+    await w.clock.advance(500)
+    await ui.unmount()
+    await w.clock.advance(5000)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status: 'passed' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status: 'running' } as never)
+    await w.clock.advance(10)
+    return w
+  }
+
+  test('a Validate that fails during an edit is not re-run after every turn', OPTIONS, async ($, on) => {
+    const outputs = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+    const { seen, clock } = await greenThenEdit($, on, outputs)
+    outputs.validate = { exitCode: 1, stdout: validateMissing }
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.unmount()
+    const before = seen.argv.length
+    await $.turn.complete({ answer: 'one' } as never)
+    await clock.advance(1000)
+    await $.turn.complete({ answer: 'two' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.length).toBe(before)
+  })
+
+  test('a run that cannot start during an edit shows as failed, with Fix, not as stale', OPTIONS, async ($, on) => {
+    const outputs: { validate?: Output; test?: Output } = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+    const { clock } = await greenThenEdit($, on, outputs)
+    outputs.validate = { exitCode: 0, stdout: '', throws: true }
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.unmount()
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /validate · could not run/ })).toBeDefined()
+    expect(await after.find({ key: 'fix' })).toBeDefined()
   })
 })
 

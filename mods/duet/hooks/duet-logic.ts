@@ -375,12 +375,19 @@ export function parseAgentFile(text: string): AgentDef | null {
     const kv = line.match(/^([A-Za-z_-]+):\s*(.*)$/)
     if (kv) fields[kv[1]!] = (kv[2] ?? '').trim()
   }
+  // An absent `tools` line means every tool; a present but empty one (`tools: []`) means none.
   const toolsRaw = fields.tools?.replace(/^\[|\]$/g, '')
-  const tools = toolsRaw ? toolsRaw.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean) : null
+  const tools =
+    toolsRaw === undefined ? null : toolsRaw.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
   return { name: fields.name ?? '', description: fields.description ?? '', tools, body: (m[2] ?? '').trim() }
 }
 
 /** Whether an agent's tools let it edit; no `tools:` line means every tool. */
+/** A filesystem-safe folder name for a session id. */
+export function sessionFolderOf(sessionId: string): string {
+  return sessionId.replace(/[^\w.-]/g, '_').slice(0, 80) || 'unknown'
+}
+
 export function canEdit(def: AgentDef | null): boolean {
   if (!def || def.tools === null) return true
   return def.tools.some(t => EDIT_TOOLS.includes(t) || t === '*')
@@ -657,6 +664,11 @@ export function lostOnReload(tasks: Task[], mine: ReadonlySet<string>, now: numb
 }
 
 /** Codex agent runs still going, which the concurrency limit counts. */
+/** Codex runs in flight of any kind (routed agents and reviews): what the concurrency limit admits against. */
+export function codexRunning(tasks: Task[]): number {
+  return tasks.filter(t => t.provider === 'codex' && t.status === 'running').length
+}
+
 export function liveCount(tasks: Task[]): number {
   return tasks.filter(t => t.provider === 'codex' && t.kind === 'agent' && t.status === 'running').length
 }

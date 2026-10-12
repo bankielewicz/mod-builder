@@ -218,8 +218,10 @@ export function rerunPlanOf(lights: readonly Light[], isRunning: boolean): RunKi
   if (isRunning) return []
   const validate = lights[STAGES.indexOf('Validate')]
   const test = lights[STAGES.indexOf('Test')]
-  if (validate !== 'stale' && test !== 'stale') return []
-  return test === 'pending' ? ['Validate'] : ['Validate', 'Test']
+  // A Validate that failed on the current code blocks Test; re-running it changes nothing.
+  if (validate === 'stale') return test === 'pending' ? ['Validate'] : ['Validate', 'Test']
+  if (validate === 'passed' && test === 'stale') return ['Test']
+  return []
 }
 
 /** Every light green. */
@@ -270,8 +272,12 @@ export function isReadmeDone(readme: string): boolean {
 /** The version a marketplace.json lists the mod at, or null when unlisted or unversioned. */
 export function listedVersionOf(marketplace: string, name: string): string | null {
   try {
-    const parsed = JSON.parse(marketplace) as { plugins?: { name?: unknown; version?: unknown }[] }
-    const entry = (parsed.plugins ?? []).find(plugin => plugin.name === name)
+    const parsed = JSON.parse(marketplace) as { plugins?: { name?: unknown; source?: unknown; version?: unknown }[] }
+    const entry = (parsed.plugins ?? []).find(
+      plugin =>
+        plugin.name === name ||
+        (typeof plugin.source === 'string' && plugin.source.replace(/\/+$/, '').endsWith(`/${name}`)),
+    )
     return typeof entry?.version === 'string' ? entry.version : null
   } catch {
     return null

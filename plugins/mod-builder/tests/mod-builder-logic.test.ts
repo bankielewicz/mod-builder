@@ -397,7 +397,8 @@ describe('mod-builder-logic', () => {
     const lights = (validate: string, test: string) => ['passed', 'passed', 'passed', 'passed', validate, test, 'pending', 'pending'] as never
     expect(rerunPlanOf(lights('passed', 'passed'), false)).toEqual([])
     expect(rerunPlanOf(lights('stale', 'stale'), false)).toEqual(['Validate', 'Test'])
-    expect(rerunPlanOf(lights('passed', 'stale'), false)).toEqual(['Validate', 'Test'])
+    expect(rerunPlanOf(lights('passed', 'stale'), false)).toEqual(['Test'])
+    expect(rerunPlanOf(lights('failed', 'stale'), false)).toEqual([])
     expect(rerunPlanOf(lights('stale', 'pending'), false)).toEqual(['Validate'])
     expect(rerunPlanOf(lights('stale', 'stale'), true)).toEqual([])
     expect(rerunPlanOf(lights('failed', 'pending'), false)).toEqual([])
@@ -430,5 +431,6 @@ describe('mod-builder-logic', () => {
     expect(startsGeneration({ ...spec, stage: 'Logic' }, STAGES.map(() => 'passed'))).toBe(false)
     expect(listedVersionOf(JSON.stringify({ plugins: [{ name: 'x', version: '1.0.0' }] }), 'x')).toBe('1.0.0')
     expect(listedVersionOf('nope', 'x')).toBeNull()
+    expect(listedVersionOf(JSON.stringify({ plugins: [{ name: 'other-name', source: './mods/x', version: '2.0.0' }] }), 'x')).toBe('2.0.0')
   })
 })

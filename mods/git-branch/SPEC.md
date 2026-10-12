@@ -110,3 +110,13 @@
 
 How to load it (`/plugin install git-branch@claudemod` or `claude --plugin-dir mods/git-branch`),
 `/git-branch demo`, `/git-branch hide|show|refresh`, and that `/reload-plugins` picks up edits.
+
+## Change 0.1.1 (2026-10-12)
+
+> Fix from the Codex review of PR #1.
+
+- **What changes:** a refresh asked for while a git read is in flight now queues one fresh read after it (shared by everyone who asks meanwhile), instead of reusing the read that started before the branch changed.
+- **What gets touched:** `hooks/register.tsx`, `tests/ui.test.tsx`.
+- **Tests:** a refresh during a slow read reports the new branch, after exactly one more read.
+- **Done means:** all tests pass, validate is clean.
+

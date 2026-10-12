@@ -293,7 +293,8 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
     const endedAt = await $.clock.now()
     result = Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
   } catch (error) {
-    result = { kind, ok: false, stampMs: stamp, summary: 'could not run', errors: [String(error).slice(0, 200)] }
+    const endedAt = await $.clock.now()
+    result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary: 'could not run', errors: [String(error).slice(0, 200)] }
   }
   const results = await resultsOf($)
   await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
@@ -312,8 +313,7 @@ async function rerunStale($: Engine): Promise<void> {
   const inFlight = await read($, runs)
   for (const view of await read($, views)) {
     const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
-    if (!plan.length) continue
-    await run($, view.name, 'Validate')
+    if (plan.includes('Validate')) await run($, view.name, 'Validate')
     const validated = (await resultsOf($))[view.name]?.Validate
     if (plan.includes('Test') && validated?.ok) await run($, view.name, 'Test')
   }
@@ -468,7 +468,11 @@ export const register: Register = (on, options) => {
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
-    const known = (await read($, views)).find(view => view.name === mod)
+    let known = (await read($, views)).find(view => view.name === mod)
+    if (!known && report.stage === 'Spec') {
+      await scan($, false)
+      known = (await read($, views)).find(view => view.name === mod)
+    }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
       await $.store.set(GENERATIONS_KEY, { ...(await generationsOf($)), [mod]: now })
     }

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
-  isRouted, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isRouted, codexRunning, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -286,5 +286,21 @@ describe('0.2.0 rules', () => {
     const p = { startedAt: 1000, type: 'Explore', description: 'Map auth' }
     expect(claudeTaskOf(p, { usage: { input_tokens: 5, output_tokens: 5, model: 'm' }, isAborted: false, reason: 'answer' }, 4000)).toMatchObject({ provider: 'claude', status: 'done', tokens: 10, model: 'm', startedAt: 1000, endedAt: 4000, subagentType: 'Explore' })
     expect(claudeTaskOf(p, { isAborted: true, reason: 'aborted' }, 2000)).toMatchObject({ status: 'error', detail: 'aborted' })
+  })
+})
+
+describe('review fixes', () => {
+  test('an explicitly empty tools list is read-only; an absent one is every tool', () => {
+    expect(parseAgentFile('---\nname: none\ntools: []\n---\nx')?.tools).toEqual([])
+    expect(effectiveSandbox('workspace-write', parseAgentFile('---\nname: none\ntools: []\n---\nx'))).toBe('read-only')
+    expect(effectiveSandbox('workspace-write', parseAgentFile('---\nname: none\ntools:\n---\nx'))).toBe('read-only')
+    expect(parseAgentFile('---\nname: all\n---\nx')?.tools).toBeNull()
+  })
+
+  test('admission counts reviews too; session folders are filesystem-safe', () => {
+    const t = (kind: 'agent' | 'review', status: 'running' | 'done') => ({ id: 'd1', provider: 'codex', kind, status }) as never
+    expect(codexRunning([t('agent', 'running'), t('review', 'running'), t('review', 'done')])).toBe(2)
+    expect(sessionFolderOf('a1b2-c3/../x')).toBe('a1b2-c3_.._x')
+    expect(sessionFolderOf('')).toBe('unknown')
   })
 })

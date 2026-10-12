@@ -13,6 +13,12 @@ mod-builder follows two rules:
   [its README](../plugins/mod-builder/README.md#what-it-reaches).
 - **Our own code only.** Community mods are read for ideas. They are never installed or copied.
 
+Mod Lab re-runs a mod's checks on its own (`autoRerun`) when the mod's code changes. That's
+`claude plugin validate`, which only reads the files, and `claude plugin test`, whose test
+environment has no file system, network or process access (per Claude Code's API declarations).
+It only re-runs mods you have already validated or tested in this install. To turn it off, set
+`autoRerun` to off in `/config`.
+
 What the skills do for safety:
 
 - The SPEC lists every file, process and cost before anything is built, and it is the only gate.

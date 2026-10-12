@@ -1,6 +1,6 @@
 {
   "name": "duet",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on, with independent Codex reviews; measures every run",
   "author": {
     "name": "Bryan Ankielewicz"

@@ -7,6 +7,7 @@ import {
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
+  codexRunning, sessionFolderOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -111,7 +112,7 @@ async function admit($: EngineInterface, make: (id: string) => Task): Promise<Ta
   let admitted: Task | null = null
   await update($, tasks, list => {
     const t = make(idAfter(list))
-    admitted = liveCount(list) < options.maxConcurrent ? t : null
+    admitted = codexRunning(list) < options.maxConcurrent ? t : null
     return admitted ? [t, ...list] : list
   })
   await refreshStatus($)
@@ -125,6 +126,15 @@ async function dataDir($: EngineInterface): Promise<string> {
   return `${home}/.claude/duet-data`
 }
 
+/** This session's own folder, for per-task files: ids restart at d1 in every session. */
+async function sessionDir($: EngineInterface): Promise<string> {
+  const id = await $.session.id().catch(() => 'unknown')
+  return `${await dataDir($)}/sessions/${sessionFolderOf(id)}`
+}
+
+// Appends to runs.jsonl one at a time within this session (it is read, appended and rewritten).
+let logChain: Promise<void> = Promise.resolve()
+
 async function readText($: EngineInterface, path: string): Promise<string> {
   try {
     return String(await $.fs.read(path))
@@ -133,9 +143,14 @@ async function readText($: EngineInterface, path: string): Promise<string> {
   }
 }
 
-async function logRun($: EngineInterface, task: Task): Promise<void> {
+async function appendRun($: EngineInterface, task: Task): Promise<void> {
   const path = `${await dataDir($)}/runs.jsonl`
   await $.fs.write(path, appendLog(await readText($, path), runLineOf(task)))
+}
+
+function logRun($: EngineInterface, task: Task): Promise<void> {
+  logChain = logChain.catch(() => undefined).then(() => appendRun($, task))
+  return logChain
 }
 
 /** The custom agent's definition: project `.claude/agents` first, then the user's. */
@@ -314,7 +329,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     const job: Job = { id, type, cwd, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
-      const outputFile = `${await dataDir($)}/${id}.out.md`
+      const outputFile = `${await sessionDir($)}/${id}.out.md`
       await $.fs.write(outputFile, `duet ${id} (${type}) is running on Codex; its answer arrives as a message when it ends.\n`).catch(() => undefined)
       handedOff = true
       void finishInBackground($, job, outputFile).catch(() => undefined)
@@ -356,14 +371,22 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
     $.ui.toast(`${id} review refused: ${blocked}`.slice(0, 80))
     return
   }
-  await putTask($, task)
+  const admitted = await admit($, newId => ({ ...task, id: newId }))
+  if (!admitted) {
+    const n = codexRunning(await read($, tasks))
+    const why = `limit: ${n} Codex run${n === 1 ? '' : 's'} already running (maxConcurrent ${options.maxConcurrent})`
+    await putTask($, { ...task, status: 'refused', endedAt: Date.now(), detail: why })
+    $.ui.toast(`${id} review refused: ${why}`.slice(0, 80))
+    return
+  }
+  Object.assign(task, { id: admitted.id })
   await ensureTicker($)
-  const { run, failure } = await runCodex($, id, reviewArgv(target, options.model), undefined)
+  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model), undefined)
   const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
-  if (!failure) await $.fs.write(`${await dataDir($)}/review-${id}.md`, run.text)
-  $.ui.toast((failure ? `${id} review failed: ${failure}` : `${id} review: ${done.detail}`).slice(0, 80))
+  if (!failure) await $.fs.write(`${await sessionDir($)}/review-${task.id}.md`, run.text)
+  $.ui.toast((failure ? `${task.id} review failed: ${failure}` : `${task.id} review: ${done.detail}`).slice(0, 80))
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────
@@ -540,7 +563,7 @@ async function finishEdit($: EngineInterface, f: ConfigField, text: string): Pro
 }
 
 async function readReview($: EngineInterface, id: string): Promise<string> {
-  return readText($, `${await dataDir($)}/review-${id}.md`)
+  return readText($, `${await sessionDir($)}/review-${id}.md`)
 }
 
 export const register: Register = (on, raw) => {

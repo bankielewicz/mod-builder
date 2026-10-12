@@ -17,6 +17,7 @@ const isHidden = atom({ plugin: 'git-branch', key: 'isHidden' } as const, false)
 const isDemo = atom({ plugin: 'git-branch', key: 'isDemo' } as const, false)
 
 let inFlight: Promise<Snapshot> | null = null
+let queued: Promise<Snapshot> | null = null
 
 async function readGit($: EngineInterface): Promise<Snapshot> {
   let next: Snapshot
@@ -30,10 +31,25 @@ async function readGit($: EngineInterface): Promise<Snapshot> {
   return next
 }
 
-/** One git read at a time; a caller during a read shares its answer. */
+/**
+ * One git read at a time. A caller during a read gets one fresh read queued
+ * after it (shared by every caller who asks meanwhile), never the read that
+ * started before their change.
+ */
 async function refresh($: EngineInterface): Promise<Snapshot> {
-  if (!inFlight) inFlight = readGit($).finally(() => { inFlight = null })
-  return inFlight
+  if (!inFlight) {
+    inFlight = readGit($).finally(() => { inFlight = null })
+    return inFlight
+  }
+  if (!queued) {
+    queued = inFlight
+      .catch(() => undefined)
+      .then(() => {
+        queued = null
+        return refresh($)
+      })
+  }
+  return queued
 }
 
 async function describeNow($: EngineInterface): Promise<string> {
