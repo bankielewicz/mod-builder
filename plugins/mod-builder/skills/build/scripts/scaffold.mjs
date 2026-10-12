@@ -48,10 +48,10 @@ if (existsSync(target) && readdirSync(target).some(entry => entry !== 'SPEC.md')
 
 /** source (under templates/) → destination (under the mod) */
 const plan = [
-  ['scaffold/.claude-plugin/plugin.json', '.claude-plugin/plugin.json'],
-  ['scaffold/hooks/hooks.json', 'hooks/hooks.json'],
-  ['scaffold/tsconfig.json', 'tsconfig.json'],
-  ['scaffold/.gitignore', '.gitignore'],
+  ['scaffold/.claude-plugin/plugin.json.tpl', '.claude-plugin/plugin.json'],
+  ['scaffold/hooks/hooks.json.tpl', 'hooks/hooks.json'],
+  ['scaffold/tsconfig.json.tpl', 'tsconfig.json'],
+  ['scaffold/gitignore.tpl', '.gitignore'],
   [`archetypes/${archetype}/register.tsx.tpl`, 'hooks/register.tsx'],
   [`archetypes/${archetype}/logic.ts.tpl`, `hooks/${name}-logic.ts`],
   [`archetypes/${archetype}/logic.test.ts.tpl`, `tests/${name}-logic.test.ts`],

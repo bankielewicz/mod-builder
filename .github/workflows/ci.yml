@@ -36,7 +36,7 @@ jobs:
       - name: Validate and test every plugin
         run: |
           status=0
-          for manifest in $(git ls-files 'plugins/*/.claude-plugin/plugin.json' 'mods/*/.claude-plugin/plugin.json'); do
+          for manifest in $(git ls-files ':(glob)plugins/*/.claude-plugin/plugin.json' ':(glob)mods/*/.claude-plugin/plugin.json'); do
             dir="${manifest%/.claude-plugin/plugin.json}"
             echo "::group::$dir"
             claude plugin validate "$dir" || { echo "::error::$dir: validate failed"; status=1; }
