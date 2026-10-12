@@ -19,6 +19,12 @@
       "title": "Open Mod Lab when a build starts",
       "description": "Open the Mod Lab pane when a mod's files start changing, if the window is wide enough.",
       "default": false
+    },
+    "autoRerun": {
+      "type": "boolean",
+      "title": "Re-run stale checks after each turn",
+      "description": "When a mod's code changes after Validate or Test passed, re-run them at the end of Claude's turn (Validate first, then Test if it passes).",
+      "default": true
     }
   }
 }

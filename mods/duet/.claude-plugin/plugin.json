@@ -1,0 +1,61 @@
+{
+  "name": "duet",
+  "version": "0.2.0",
+  "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on, with independent Codex reviews; measures every run",
+  "author": {
+    "name": "Bryan Ankielewicz"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "codexAgents": {
+      "type": "string",
+      "title": "Subagent types sent to Codex",
+      "description": "Comma-separated subagent types Codex runs instead of Claude, e.g. general-purpose, code-explorer. * sends every type. Named, isolated and nested calls stay on Claude. Empty: only the duet: roles go to Codex.",
+      "default": ""
+    },
+    "codexSandbox": {
+      "type": "string",
+      "title": "Codex sandbox",
+      "description": "read-only: Codex can read and answer but not edit. workspace-write: Codex may edit files under the session folder. A custom agent whose tools cannot edit always runs read-only.",
+      "options": [
+        "read-only",
+        "workspace-write"
+      ],
+      "default": "read-only"
+    },
+    "codexModel": {
+      "type": "string",
+      "title": "Codex model",
+      "description": "Passed to codex as -m. Empty: Codex's own configured model.",
+      "default": ""
+    },
+    "maxConcurrent": {
+      "type": "number",
+      "title": "Codex runs at once",
+      "description": "A routed call beyond this many live Codex runs is refused with a reason.",
+      "default": 2
+    },
+    "timeoutMinutes": {
+      "type": "number",
+      "title": "Codex timeout (minutes)",
+      "description": "A Codex run past this is stopped and the call refused.",
+      "default": 20
+    },
+    "codexConsent": {
+      "type": "string",
+      "title": "Sending repo content to Codex",
+      "description": "ask: once per session before the first handoff. allow: pre-approved (needed for headless claude -p).",
+      "options": [
+        "ask",
+        "allow"
+      ],
+      "default": "ask"
+    },
+    "codexRunMode": {
+      "type": "string",
+      "title": "Wait or background",
+      "description": "wait or background for codexAgents types, then overrides by type: advisor=background, Explore=wait. Roles default to advisor wait, reviewer background. A run that can edit always waits.",
+      "default": "background"
+    }
+  }
+}

@@ -35,7 +35,7 @@ const modFiles = (name: string): Disk => ({
  * The world beneath Mod Lab: a disk from `disk`, the clock and store from
  * memory, processes answered from `outputs`, and every UI call recorded.
  */
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime = { ms: 1000 }) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -54,9 +54,10 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
       const [head, ...tail] = path.slice(dir.length + 1).split('/')
       names.set(head!, tail.length ? 'dir' : 'file')
     }
-    return [...names].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: 1000, isLink: false }))
+    return [...names].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: mtime.ms, isLink: false }))
   }
   on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
   on('command.register', () => ({ value: undefined }) as never)
   on('tool.register', ($, e) => ({ value: { tool: `mcp__mod-builder__${e.name}` } }) as never)
   on('fs.list', ($, e) => ({ value: entriesOf((e as { path: string }).path) }) as never)
@@ -147,7 +148,8 @@ describe('pane', () => {
     expect(await ui.find({ type: 'Text', text: /next: Validate/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · mods\/git-branch\// })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /The git-branch mod\./ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'Va' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ {2}MODS$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^5 $/ })).toBeDefined()
     await ui.press({ key: 'validate' })
     await clock.advance(1000)
     await ui.unmount()
@@ -273,6 +275,90 @@ describe('progress', () => {
     await clock.advance(10)
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /next: Test/ })).toBeDefined()
+  })
+})
+
+describe('selection', () => {
+  test('a running lab_report selects the mod being built', OPTIONS, async ($, on) => {
+    const { clock } = world(on, { ...modFiles('git-branch'), ...modFiles('duet') })
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /^ git-branch $/ })).toBeDefined()
+    await before.unmount()
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'duet', stage: 'Logic', status: 'running' } as never)
+    await clock.advance(10)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /^ duet $/ })).toBeDefined()
+    expect(await after.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+  })
+})
+
+describe('auto re-run', () => {
+  test('code changed after a pass: the end of the turn re-runs Validate, then Test', OPTIONS, async ($, on) => {
+    const mtime = { ms: 1000 }
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    await ui.unmount()
+    expect(seen.argv).toHaveLength(2)
+    mtime.ms = 5000
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.slice(2).map(argv => argv[2])).toEqual(['validate', 'test'])
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /files changed/ })).toBeUndefined()
+  })
+
+  test('nothing changed: the end of the turn runs nothing', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await $.turn.complete({ answer: 'done' } as never)
+    await clock.advance(1000)
+    expect(seen.argv).toHaveLength(1)
+  })
+})
+
+describe('edit', () => {
+  test('Spec running on a green mod starts an edit: older stages go stale, then green again as they are redone', OPTIONS, async ($, on) => {
+    const mtime = { ms: 1000 }
+    const disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      ['/m/.claude-plugin/marketplace.json']: JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    await ui.unmount()
+    const green = await mountPane($)
+    expect(await green.find({ type: 'Text', text: /^ready to share$/ })).toBeDefined()
+    await green.unmount()
+
+    await clock.advance(5000)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status: 'running', note: 'revising SPEC.md' } as never)
+    await clock.advance(10)
+    const editing = await mountPane($)
+    expect(await editing.find({ type: 'Text', text: /^revising SPEC\.md$/ })).toBeDefined()
+    await editing.unmount()
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status: 'passed' } as never)
+    await clock.advance(10)
+    const stale = await mountPane($)
+    expect(await stale.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
   })
 })
 

@@ -27,7 +27,7 @@ import {
   isPulseDim,
   isTestFile,
   layoutOf,
-  legendOf,
+  columnsOf,
   lightMarkOf,
   lightsOf,
   liveReports,
@@ -40,6 +40,9 @@ import {
   reachesOf,
   REPORT_TTL_MS,
   reportOf,
+  startsGeneration,
+  listedVersionOf,
+  rerunPlanOf,
   resultOf,
   runningTextOf,
   shortPath,
@@ -83,6 +86,10 @@ const EMPTY: FileFacts = {
   version: null,
   description: null,
   isReadmeStale: false,
+  specMtimeMs: 0,
+  logicMtimeMs: 0,
+  readmeMtimeMs: 0,
+  listedVersion: null,
 }
 
 const FULL: FileFacts = {
@@ -241,7 +248,7 @@ describe('mod-builder-logic', () => {
     expect([80, 60, 59, 40, 39, 34, 33].map(layoutOf)).toEqual(['full', 'full', 'medium', 'medium', 'compact', 'compact', 'none'])
   })
 
-  test('lights animate in three frames; the legend lights the pair under the running light', () => {
+  test('lights animate in three frames; the column header lights the number over the running light', () => {
     expect([0, 1, 2, 3].map(frame => lightMarkOf('running', frame))).toEqual([
       { text: '◐', tone: 'accent', bold: true },
       { text: '◐', tone: 'accent', dim: true },
@@ -249,14 +256,18 @@ describe('mod-builder-logic', () => {
       { text: '◐', tone: 'accent', bold: true },
     ])
     expect(lightMarkOf('failed')).toEqual({ text: '✕', tone: 'error', bold: true })
-    const legend = legendOf(['passed', 'passed', 'passed', 'passed', 'running', 'pending', 'pending', 'pending'])
-    expect(legend.map(m => m.text).join('')).toBe('SpScLoReVaTeRESh')
-    expect(legend[4]).toEqual({ text: 'Va', tone: 'accent' })
-    expect(legend[1]).toEqual({ text: 'Sc', tone: 'dim', dim: true })
+    const columns = columnsOf(['passed', 'passed', 'passed', 'passed', 'running', 'pending', 'pending', 'pending'])
+    expect(columns.map(m => m.text).join('')).toBe('1 2 3 4 5 6 7 8 ')
+    expect(columns[4]).toEqual({ text: '5 ', tone: 'accent', bold: true })
+    expect(columns[1]).toEqual({ text: '2 ', tone: 'dim' })
+    expect(columnsOf(['passed', 'passed', 'failed'] as never)[2]?.tone).toBe('error')
+    expect(columnsOf(['passed', 'passed', 'passed', 'passed', 'stale', 'stale', 'passed', 'passed'])[4]).toEqual({ text: '5 ', tone: 'warn', bold: true })
   })
 
   test('track connectors: ━ after passed, animated after running, ┄ ahead', () => {
     const track = trackOf(['passed', 'passed', 'passed', 'passed', 'running', 'pending', 'pending', 'pending'], 1)
+    expect(track[0]?.num).toEqual({ text: '1 ', tone: 'dim', dim: true })
+    expect(track[7]?.num.text).toBe('8 ')
     expect(track[0]?.joint).toEqual({ text: ' ━ ', tone: 'success' })
     expect(track[3]?.joint).toEqual({ text: ' ━ ', tone: 'success' })
     expect(track[4]?.joint).toEqual({ text: ' ━ ', tone: 'accent' })
@@ -380,5 +391,44 @@ describe('mod-builder-logic', () => {
     expect(demoClockOf(20_000).now).toBe('0:12')
     expect(demoToastsBetween(0, failAt - 1)).toEqual(['✓ aurora: validate clean · 3 hooks'])
     expect(demoToastsBetween(failAt - 1, failAt)).toEqual(['✕ aurora: 1 test failing. Claude is fixing it'])
+  })
+
+  test('rerun plan: stale Validate or Test re-runs Validate, then Test once it has run before', () => {
+    const lights = (validate: string, test: string) => ['passed', 'passed', 'passed', 'passed', validate, test, 'pending', 'pending'] as never
+    expect(rerunPlanOf(lights('passed', 'passed'), false)).toEqual([])
+    expect(rerunPlanOf(lights('stale', 'stale'), false)).toEqual(['Validate', 'Test'])
+    expect(rerunPlanOf(lights('passed', 'stale'), false)).toEqual(['Validate', 'Test'])
+    expect(rerunPlanOf(lights('stale', 'pending'), false)).toEqual(['Validate'])
+    expect(rerunPlanOf(lights('stale', 'stale'), true)).toEqual([])
+    expect(rerunPlanOf(lights('failed', 'pending'), false)).toEqual([])
+  })
+
+  test('edit generation: evidence older than the edit goes stale; Scaffold and Register stay green', () => {
+    const built: FileFacts = { ...FULL, version: '0.2.0', listedVersion: '0.1.0', specMtimeMs: 100, logicMtimeMs: 300, readmeMtimeMs: 400, codeMtimeMs: 500 }
+    const ran: Results = {
+      Validate: { kind: 'Validate', ok: true, stampMs: 500, atMs: 600, summary: 'clean', errors: [] },
+      Test: { kind: 'Test', ok: true, stampMs: 500, atMs: 650, summary: 'ok', errors: [], tests: { passed: 3, failed: 0 } },
+    }
+    expect(lightsOf(built, ran, [], null)).toEqual(STAGES.map(() => 'passed'))
+    expect(lightsOf(built, ran, [], null, 1000)).toEqual(['stale', 'passed', 'stale', 'passed', 'stale', 'stale', 'stale', 'stale'])
+    const redone: FileFacts = { ...built, specMtimeMs: 1100, logicMtimeMs: 1200, readmeMtimeMs: 1300, codeMtimeMs: 1200, listedVersion: '0.2.0' }
+    const rerun: Results = {
+      Validate: { ...ran.Validate!, stampMs: 1200, atMs: 1400 },
+      Test: { ...ran.Test!, stampMs: 1200, atMs: 1450 },
+    }
+    expect(isGreen(lightsOf(redone, rerun, [], null, 1000))).toBe(true)
+    expect(statusOf(lightsOf(built, ran, [], null, 1000), ran, null, [], false)).toEqual({ text: 'edit · update Spec for this change', tone: 'warn' })
+  })
+
+  test('a running report shows even on a stage that passed; Spec running on a built mod starts an edit', () => {
+    const report = { stage: 'Logic' as const, status: 'running' as const, since: 0 }
+    expect(lightsOf(FULL, { ...ok('Validate'), ...ok('Test') }, [], report)[2]).toBe('running')
+    const spec = { stage: 'Spec' as const, status: 'running' as const, since: 0 }
+    expect(startsGeneration(spec, STAGES.map(() => 'passed'))).toBe(true)
+    expect(startsGeneration(spec, STAGES.map(() => 'pending'))).toBe(false)
+    expect(startsGeneration(spec, null)).toBe(false)
+    expect(startsGeneration({ ...spec, stage: 'Logic' }, STAGES.map(() => 'passed'))).toBe(false)
+    expect(listedVersionOf(JSON.stringify({ plugins: [{ name: 'x', version: '1.0.0' }] }), 'x')).toBe('1.0.0')
+    expect(listedVersionOf('nope', 'x')).toBeNull()
   })
 })

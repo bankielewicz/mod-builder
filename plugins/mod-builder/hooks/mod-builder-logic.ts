@@ -52,6 +52,12 @@ export type FileFacts = {
   description: string | null
   /** README.md is older than the newest code. */
   isReadmeStale: boolean
+  /** When SPEC.md, the newest logic or test file, and README.md were last saved (0 when absent). */
+  specMtimeMs: number
+  logicMtimeMs: number
+  readmeMtimeMs: number
+  /** The version the marketplace lists this mod at, when it does. */
+  listedVersion: string | null
 }
 
 export type ValidateReport = {
@@ -83,6 +89,8 @@ export type RunResult = {
   errors: string[]
   /** How long the run took. */
   durationMs?: number
+  /** When the run finished; judged against an edit's generation. */
+  atMs?: number
   validate?: ValidateReport
   /** Test counts, for "12 tests · clean" and the done line. */
   tests?: { passed: number; failed: number }
@@ -102,32 +110,48 @@ export function lightsOf(
   results: Results,
   running: readonly RunKind[],
   reported: Reported | null,
+  sinceMs: number | null = null,
 ): Light[] {
+  // During an edit (sinceMs set), evidence older than the edit's start is stale:
+  // it passed before, and has to be redone for this change.
+  const isOld = (atMs: number): boolean => sinceMs !== null && atMs < sinceMs
   const runLight = (kind: 'Validate' | 'Test'): Light => {
     if (running.includes(kind)) return 'running'
     const result = results[kind]
     if (!result) return 'pending'
-    if (result.stampMs < facts.codeMtimeMs) return 'stale'
+    if (result.stampMs < facts.codeMtimeMs || isOld(result.atMs ?? 0)) return 'stale'
     return result.ok ? 'passed' : 'failed'
   }
-  const fileLight = (isDone: boolean): Light => (isDone ? 'passed' : 'pending')
+  const fileLight = (isDone: boolean, savedMs?: number): Light =>
+    !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
+  const isReShared = sinceMs === null || (facts.listedVersion !== null && facts.listedVersion === facts.version)
 
   const lights: Light[] = [
-    fileLight(facts.hasSpec && !facts.specHasPlaceholder),
+    fileLight(facts.hasSpec && !facts.specHasPlaceholder, facts.specMtimeMs),
     fileLight(facts.hasManifest && facts.hasHooksJson),
-    fileLight(facts.hasLogic && facts.hasTests),
+    fileLight(facts.hasLogic && facts.hasTests, facts.logicMtimeMs),
     fileLight(facts.hasRegister),
     runLight('Validate'),
     runLight('Test'),
-    fileLight(facts.hasReadme && facts.readmeHasReaches),
-    fileLight(facts.isListed),
+    fileLight(facts.hasReadme && facts.readmeHasReaches, facts.readmeMtimeMs),
+    !facts.isListed ? 'pending' : isReShared ? 'passed' : 'stale',
   ]
 
+  // What the skill says it is doing now always shows, even on a stage that
+  // passed before. A report never passes a stage: the disk does.
   if (reported?.status === 'running') {
     const at = STAGES.indexOf(reported.stage)
-    if (lights[at] === 'pending' || lights[at] === 'stale') lights[at] = 'running'
+    if (lights[at] !== 'failed') lights[at] = 'running'
   }
   return lights
+}
+
+/**
+ * Whether a `Spec running` report starts a new build generation: the mod has
+ * been built before (its Spec stage already passed), so this is an edit.
+ */
+export function startsGeneration(report: Reported, lights: readonly Light[] | null): boolean {
+  return report.stage === 'Spec' && report.status === 'running' && lights !== null && lights[0] !== 'pending'
 }
 
 /** The first failed stage, else the first running, else the first not passed. */
@@ -177,8 +201,25 @@ export function statusOf(
     const note = reported?.stage === stage && reported.note ? reported.note : `${stage.toLowerCase()} in progress`
     return { text: note, tone: 'text' }
   }
-  if (light === 'stale') return { text: `files changed · re-run ${stage}`, tone: 'warn' }
+  if (light === 'stale') {
+    if (stage === 'Validate' || stage === 'Test') return { text: `files changed · re-run ${stage}`, tone: 'warn' }
+    if (stage === 'Share') return { text: 'edit · bump the version and re-list it', tone: 'warn' }
+    return { text: `edit · update ${stage} for this change`, tone: 'warn' }
+  }
   return { text: `next: ${stage}`, tone: 'dim' }
+}
+
+/**
+ * What to re-run for a mod at the end of a turn: Validate when Validate or
+ * Test has gone stale (the code changed after they passed), then Test. Nothing
+ * while a run for that mod is already in flight.
+ */
+export function rerunPlanOf(lights: readonly Light[], isRunning: boolean): RunKind[] {
+  if (isRunning) return []
+  const validate = lights[STAGES.indexOf('Validate')]
+  const test = lights[STAGES.indexOf('Test')]
+  if (validate !== 'stale' && test !== 'stale') return []
+  return test === 'pending' ? ['Validate'] : ['Validate', 'Test']
 }
 
 /** Every light green. */
@@ -224,6 +265,17 @@ export function hasReachesHeading(readme: string): boolean {
 /** Whether a README is finished: the heading is there and no template `<!-- … -->` comment is left. */
 export function isReadmeDone(readme: string): boolean {
   return hasReachesHeading(readme) && !/<!--/.test(readme)
+}
+
+/** The version a marketplace.json lists the mod at, or null when unlisted or unversioned. */
+export function listedVersionOf(marketplace: string, name: string): string | null {
+  try {
+    const parsed = JSON.parse(marketplace) as { plugins?: { name?: unknown; version?: unknown }[] }
+    const entry = (parsed.plugins ?? []).find(plugin => plugin.name === name)
+    return typeof entry?.version === 'string' ? entry.version : null
+  } catch {
+    return null
+  }
 }
 
 /** Whether a marketplace.json lists the mod by name or by a `…/<name>` source. */
@@ -512,24 +564,27 @@ export function lightMarkOf(light: Light, frame = 0): Mark {
   return at === 1 ? { text: '◐', tone: 'accent', dim: true } : { text: at === 2 ? '○' : '◐', tone: 'accent', bold: true }
 }
 
-/** The legend under the lights: pairs alternate dim and dimColor; the pair under a running or failed light lights up. */
-export function legendOf(lights: readonly Light[]): Mark[] {
-  const focus = lights.findIndex(light => light === 'running' || light === 'failed')
-  return LEGEND.map((pair, at) =>
-    at === focus
-      ? { text: pair, tone: lights[at] === 'failed' ? 'error' : 'accent' }
-      : { text: pair, tone: 'dim', dim: at % 2 === 1 },
+/**
+ * The column header above the lights: one stage number per light, at the
+ * lights' pitch of 2 (digit + space). The number over the selected mod's
+ * failed, else running, else stale stage lights up; the rest are dim. The detail panel's
+ * track carries the same numbers beside the stage names, as the key.
+ */
+export function columnsOf(lights: readonly Light[]): Mark[] {
+  const first = (light: Light): number => lights.indexOf(light)
+  const focus = [first('failed'), first('running'), first('stale')].find(at => at >= 0) ?? -1
+  const tone: Tone = lights[focus] === 'failed' ? 'error' : lights[focus] === 'stale' ? 'warn' : 'accent'
+  return STAGES.map((_, at) =>
+    at === focus ? { text: `${at + 1} `, tone, bold: true } : { text: `${at + 1} `, tone: 'dim' },
   )
 }
-
-export const LEGEND = ['Sp', 'Sc', 'Lo', 'Re', 'Va', 'Te', 'RE', 'Sh'] as const
 
 /**
  * The pipeline track: each stage name in its light's colour, then its
  * connector. After a passed stage whose next has started: `━` success. After
  * a running stage: `┅ ━ ┄` by frame, accent. Otherwise `┄` dim.
  */
-export function trackOf(lights: readonly Light[], frame = 0): { name: Mark; joint: Mark | null }[] {
+export function trackOf(lights: readonly Light[], frame = 0): { num: Mark; name: Mark; joint: Mark | null }[] {
   return STAGES.map((stage, at) => {
     const light = lights[at] ?? 'pending'
     const next = lights[at + 1]
@@ -543,11 +598,12 @@ export function trackOf(lights: readonly Light[], frame = 0): { name: Mark; join
             : light === 'stale'
               ? { text: stage, tone: 'warn' }
               : { text: stage, tone: 'dim' }
-    if (at === STAGES.length - 1) return { name, joint: null }
+    const num: Mark = { text: `${at + 1} `, tone: 'dim', dim: true }
+    if (at === STAGES.length - 1) return { num, name, joint: null }
     let joint: Mark = { text: ' ┄ ', tone: 'dim', dim: true }
     if (light === 'running') joint = { text: ` ${['┅', '━', '┄'][frame % 3]} `, tone: 'accent' }
     else if (light === 'passed' && next !== undefined && next !== 'pending') joint = { text: ' ━ ', tone: 'success' }
-    return { name, joint }
+    return { num, name, joint }
   })
 }
 
@@ -589,8 +645,9 @@ export function viewOf(
   runs: readonly Run[],
   reported: Reported | null,
   isFresh: boolean,
+  sinceMs: number | null = null,
 ): ModView {
-  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported)
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
   const validate = results.Validate?.validate
   const focus = focusStageOf(lights)
@@ -799,6 +856,15 @@ export function factsOf(read: FolderRead): FileFacts | null {
     hasReadme: read.readme !== null,
     readmeHasReaches: read.readme !== null && isReadmeDone(read.readme),
     isListed: isListedIn(read.marketplace, read.name),
+    listedVersion: listedVersionOf(read.marketplace, read.name),
+    specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
+    readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
+    logicMtimeMs: Math.max(
+      0,
+      ...[...read.hooks.filter(entry => isLogicModule(entry.name)), ...read.tests.filter(entry => isTestFile(entry.name))].map(
+        entry => entry.mtimeMs,
+      ),
+    ),
     codeMtimeMs,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
     lastMtimeMs: times.length ? Math.max(...times) : 0,
@@ -817,7 +883,8 @@ export function argvOf(kind: RunKind, dir: string): string[] {
 }
 
 /** A finished process → the stored result. */
-export function resultOf(kind: RunKind, exitCode: number, output: string, stampMs: number, durationMs = 0): RunResult {
+export function resultOf(kind: RunKind, exitCode: number, output: string, stampMs: number, durationMs = 0, atMs?: number): RunResult {
+  const at = atMs === undefined ? {} : { atMs }
   if (kind === 'Validate') {
     const validate = parseValidate(output, exitCode)
     return {
@@ -825,6 +892,7 @@ export function resultOf(kind: RunKind, exitCode: number, output: string, stampM
       ok: validate.ok,
       stampMs,
       durationMs,
+      ...at,
       summary: summaryOfRun(kind, validate.ok, { validate }),
       errors: validate.errors.slice(0, 6),
       validate,
@@ -837,6 +905,7 @@ export function resultOf(kind: RunKind, exitCode: number, output: string, stampM
       ok: test.ok,
       stampMs,
       durationMs,
+      ...at,
       summary: summaryOfRun(kind, test.ok, { test }),
       errors: test.failures,
       tests: { passed: test.passed, failed: test.failed },
@@ -845,7 +914,7 @@ export function resultOf(kind: RunKind, exitCode: number, output: string, stampM
   const tscErrors = parseTsc(output)
   const ok = exitCode === 0 && tscErrors.length === 0
   const errors = tscErrors.length || ok ? tscErrors.slice(0, 6) : output.trim().split('\n').slice(-3)
-  return { kind, ok, stampMs, durationMs, summary: summaryOfRun(kind, ok, { tscErrors }), errors }
+  return { kind, ok, stampMs, durationMs, ...at, summary: summaryOfRun(kind, ok, { tscErrors }), errors }
 }
 
 /** The toast for a finished run: `✓ agent-dock: 12 tests passed in 3.4s`. */
