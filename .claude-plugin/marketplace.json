@@ -1,0 +1,13 @@
+{
+  "name": "claudemod",
+  "description": "mod-builder: a spec-first skill for building Claude Code mods, with Mod Lab, a live showcase mod, plus the mods it builds.",
+  "owner": { "name": "Bryan Ankielewicz" },
+  "plugins": [
+    {
+      "name": "mod-builder",
+      "source": "./plugins/mod-builder",
+      "description": "Spec-first Claude Code mod builder skill plus Mod Lab, a pane/band/status showcase that tracks each mod's build pipeline.",
+      "version": "0.1.0"
+    }
+  ]
+}

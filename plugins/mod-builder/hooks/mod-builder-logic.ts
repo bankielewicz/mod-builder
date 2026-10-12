@@ -1,0 +1,982 @@
+/**
+ * Mod Lab's deterministic core: every rule that needs no `$`.
+ *
+ * register.tsx gathers facts from disk and process exit codes, hands them here,
+ * and draws what comes back. Nothing in this file reads the clock, the disk or
+ * the engine, so every rule is unit-tested in tests/mod-builder-logic.test.ts.
+ */
+
+import type { Gate, Light, ModView, Reach, Reported, Run, RunKind, Stage, Tone } from '../types'
+
+export type { Gate, Light, ModView, Reach, Reported, Run, RunKind, Stage, Tone }
+
+export const STAGES = [
+  'Spec',
+  'Scaffold',
+  'Logic',
+  'Register',
+  'Validate',
+  'Test',
+  'README',
+  'Share',
+] as const satisfies readonly Stage[]
+
+/** What register.tsx reads off disk for one mod folder. */
+export type FileFacts = {
+  name: string
+  hasSpec: boolean
+  /** SPEC.md still holds an unfilled `<placeholder>` outside code. */
+  specHasPlaceholder: boolean
+  hasManifest: boolean
+  hasHooksJson: boolean
+  /** hooks/ holds a module other than register.ts(x). */
+  hasLogic: boolean
+  /** tests/ holds at least one *.test.ts(x). */
+  hasTests: boolean
+  hasRegister: boolean
+  hasReadme: boolean
+  /** README.md has a "What it reaches" heading. */
+  readmeHasReaches: boolean
+  /** The marketplace beside the mods folder lists this mod. */
+  isListed: boolean
+  /** Newest mtime of what validate and test read: manifest, hooks/, tests/, types/. */
+  codeMtimeMs: number
+  /** Oldest and newest mtime of anything in the folder, for the build span. */
+  firstMtimeMs: number
+  lastMtimeMs: number
+  /** From SPEC.md's slot table, when present. */
+  archetype: string | null
+  builtOn: string | null
+  /** From plugin.json, when present. */
+  version: string | null
+  description: string | null
+  /** README.md is older than the newest code. */
+  isReadmeStale: boolean
+}
+
+export type ValidateReport = {
+  ok: boolean
+  hooks: string[]
+  calls: string[]
+  gates: Gate[]
+  errors: string[]
+  warnings: string[]
+}
+
+export type TestReport = {
+  ok: boolean
+  passed: number
+  failed: number
+  durationMs: number | null
+  failures: string[]
+}
+
+/** One finished run, kept in `$.store` per mod. */
+export type RunResult = {
+  kind: RunKind
+  ok: boolean
+  /** The mod's codeMtimeMs when the run started; newer code makes it stale. */
+  stampMs: number
+  /** One line for the row and the toast. */
+  summary: string
+  /** The first few error lines, for the detail panel and Fix with Claude. */
+  errors: string[]
+  /** How long the run took. */
+  durationMs?: number
+  validate?: ValidateReport
+  /** Test counts, for "12 tests · clean" and the done line. */
+  tests?: { passed: number; failed: number }
+}
+
+export type Results = Partial<Record<RunKind, RunResult>>
+
+// ── Stages ────────────────────────────────────────────────────────────────
+
+/**
+ * The eight lights of one mod, from the disk, the stored runs and what runs
+ * now. The disk and exit codes decide passed or failed; a report from the
+ * model only ever adds `running` (SPEC non-negotiable 2).
+ */
+export function lightsOf(
+  facts: FileFacts,
+  results: Results,
+  running: readonly RunKind[],
+  reported: Reported | null,
+): Light[] {
+  const runLight = (kind: 'Validate' | 'Test'): Light => {
+    if (running.includes(kind)) return 'running'
+    const result = results[kind]
+    if (!result) return 'pending'
+    if (result.stampMs < facts.codeMtimeMs) return 'stale'
+    return result.ok ? 'passed' : 'failed'
+  }
+  const fileLight = (isDone: boolean): Light => (isDone ? 'passed' : 'pending')
+
+  const lights: Light[] = [
+    fileLight(facts.hasSpec && !facts.specHasPlaceholder),
+    fileLight(facts.hasManifest && facts.hasHooksJson),
+    fileLight(facts.hasLogic && facts.hasTests),
+    fileLight(facts.hasRegister),
+    runLight('Validate'),
+    runLight('Test'),
+    fileLight(facts.hasReadme && facts.readmeHasReaches),
+    fileLight(facts.isListed),
+  ]
+
+  if (reported?.status === 'running') {
+    const at = STAGES.indexOf(reported.stage)
+    if (lights[at] === 'pending' || lights[at] === 'stale') lights[at] = 'running'
+  }
+  return lights
+}
+
+/** The first failed stage, else the first running, else the first not passed. */
+export function focusStageOf(lights: readonly Light[]): { stage: Stage; light: Light } | null {
+  for (const want of ['failed', 'running'] as const) {
+    const at = lights.indexOf(want)
+    if (at >= 0) return { stage: STAGES[at]!, light: want }
+  }
+  const at = lights.findIndex(light => light !== 'passed')
+  return at >= 0 ? { stage: STAGES[at]!, light: lights[at]! } : null
+}
+
+/** What a run in flight is doing, in a few words: `validating`, `running tests · 7 of 12`. */
+export function runningTextOf(run: Pick<Run, 'kind' | 'passed' | 'failed' | 'total'>): string {
+  if (run.kind === 'Validate') return 'validating'
+  if (run.kind === 'Typecheck') return 'type-checking'
+  const done = run.passed + run.failed
+  if (run.total) return `running tests · ${done} of ${run.total}`
+  return done ? `running tests · ${done} so far` : 'running tests'
+}
+
+/** `12 tests · clean`: the quiet status of a green mod. */
+export function cleanTextOf(results: Results): string {
+  const tests = results.Test?.tests
+  const count = tests ? plural(tests.passed, 'test') : 'tests'
+  return `${count} · ${results.Validate?.ok ? 'clean' : 'passing'}`
+}
+
+/** The row's one-line status and its tone, in the design's words. */
+export function statusOf(
+  lights: readonly Light[],
+  results: Results,
+  reported: Reported | null,
+  runs: readonly Run[],
+  isFresh: boolean,
+): { text: string; tone: Tone } {
+  const run = runs[0]
+  if (run) return { text: runningTextOf(run), tone: 'text' }
+  const focus = focusStageOf(lights)
+  if (!focus) return isFresh ? { text: 'ready to share', tone: 'success' } : { text: cleanTextOf(results), tone: 'dim' }
+  const { stage, light } = focus
+  if (light === 'failed') {
+    if (stage === 'Test') return { text: results.Test?.summary ?? 'tests failing', tone: 'error' }
+    return { text: `validate · ${results.Validate?.summary ?? 'failed'}`, tone: 'error' }
+  }
+  if (light === 'running') {
+    const note = reported?.stage === stage && reported.note ? reported.note : `${stage.toLowerCase()} in progress`
+    return { text: note, tone: 'text' }
+  }
+  if (light === 'stale') return { text: `files changed · re-run ${stage}`, tone: 'warn' }
+  return { text: `next: ${stage}`, tone: 'dim' }
+}
+
+/** Every light green. */
+export function isGreen(lights: readonly Light[]): boolean {
+  return lights.length === STAGES.length && lights.every(light => light === 'passed')
+}
+
+// ── Reading files ─────────────────────────────────────────────────────────
+
+/**
+ * Whether a SPEC still holds a `<placeholder>`: an angle-bracketed phrase
+ * outside fenced code, inline code and HTML comments.
+ */
+export function hasPlaceholder(spec: string): boolean {
+  const prose = spec
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`\n]*`/g, '')
+  return /<(?![/!])[^<>\n]{1,120}>/.test(prose)
+}
+
+/**
+ * The SPEC's slot table as `slot → value`: rows of `| slot | kind | value | … |`,
+ * the slot cut at its first space or parenthesis, the value with code ticks dropped.
+ */
+export function slotsOf(spec: string): Record<string, string> {
+  const slots: Record<string, string> = {}
+  for (const line of spec.split('\n')) {
+    const cells = line.split('|').map(cell => cell.trim())
+    if (cells.length < 5 || !/^(REQUIRED|HOUSE|ARCH)/.test(cells[2] ?? '')) continue
+    const slot = (cells[1] ?? '').split(/[\s(]/)[0]!.toLowerCase()
+    const value = (cells[3] ?? '').replace(/`/g, '').trim()
+    if (slot && value) slots[slot] = value
+  }
+  return slots
+}
+
+/** Whether a README has its "What it reaches" heading. */
+export function hasReachesHeading(readme: string): boolean {
+  return /^#{1,6}\s+what it reaches\b/im.test(readme)
+}
+
+/** Whether a README is finished: the heading is there and no template `<!-- … -->` comment is left. */
+export function isReadmeDone(readme: string): boolean {
+  return hasReachesHeading(readme) && !/<!--/.test(readme)
+}
+
+/** Whether a marketplace.json lists the mod by name or by a `…/<name>` source. */
+export function isListedIn(marketplace: string, name: string): boolean {
+  try {
+    const parsed = JSON.parse(marketplace) as { plugins?: { name?: unknown; source?: unknown }[] }
+    return (parsed.plugins ?? []).some(
+      plugin =>
+        plugin.name === name ||
+        (typeof plugin.source === 'string' && plugin.source.replace(/\/+$/, '').endsWith(`/${name}`)),
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Whether a hooks/ file name is a module other than the register entry. */
+export function isLogicModule(file: string): boolean {
+  return /\.(m|c)?(t|j)sx?$/.test(file) && !/^register\./.test(file) && !/\.d\.ts$/.test(file)
+}
+
+/** Whether a tests/ file name is one `claude plugin test` collects. */
+export function isTestFile(file: string): boolean {
+  return /\.test\.tsx?$/.test(file)
+}
+
+// ── Parsing what the commands print ───────────────────────────────────────
+
+/** Splits on commas outside braces and parentheses. */
+export function splitTop(list: string): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let part = ''
+  for (const char of list) {
+    if (char === '{' || char === '(') depth += 1
+    if (char === '}' || char === ')') depth = Math.max(0, depth - 1)
+    if (char === ',' && depth === 0) {
+      if (part.trim()) parts.push(part.trim())
+      part = ''
+    } else {
+      part += char
+    }
+  }
+  if (part.trim()) parts.push(part.trim())
+  return parts
+}
+
+type ValidateSection = {
+  errors?: { path?: string; message?: string }[]
+  warnings?: { path?: string; message?: string }[]
+  notes?: string[]
+  gatingHooks?: { hook?: string; hasCatch?: boolean }[]
+}
+
+type ValidateJson = {
+  success?: boolean
+  manifest?: ValidateSection
+  contents?: ValidateSection[]
+}
+
+/** `claude plugin validate --json` output (and its exit code) → a report. */
+export function parseValidate(stdout: string, exitCode: number): ValidateReport {
+  let json: ValidateJson
+  try {
+    json = JSON.parse(stdout.slice(Math.max(0, stdout.indexOf('{')))) as ValidateJson
+  } catch {
+    const errors = stdout
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .slice(0, 3)
+    return { ok: false, hooks: [], calls: [], gates: [], errors, warnings: [] }
+  }
+  const sections = [json.manifest, ...(json.contents ?? [])].filter(
+    (section): section is ValidateSection => section !== undefined,
+  )
+  const hooks: string[] = []
+  const calls: string[] = []
+  const gates: Gate[] = []
+  const errors: string[] = []
+  const warnings: string[] = []
+  for (const section of sections) {
+    for (const note of section.notes ?? []) {
+      const hooked = note.match(/\bhooks: (.*)$/)
+      if (hooked) hooks.push(...splitTop(hooked[1]!))
+      const called = note.match(/\bcalls: (.*)$/)
+      if (called && called[1] !== 'nothing on $') {
+        calls.push(...splitTop(called[1]!).map(call => call.replace(/\s*\(via .*\)$/, '')))
+      }
+    }
+    for (const gate of section.gatingHooks ?? []) {
+      if (gate.hook) gates.push({ hook: gate.hook, hasCatch: gate.hasCatch === true })
+    }
+    for (const error of section.errors ?? []) errors.push(`${error.path ?? ''}: ${error.message ?? ''}`)
+    for (const warning of section.warnings ?? []) {
+      warnings.push(`${warning.path ?? ''}: ${warning.message ?? ''}`)
+    }
+  }
+  return {
+    ok: exitCode === 0 && json.success !== false,
+    hooks: [...new Set(hooks)],
+    calls: [...new Set(calls)],
+    gates,
+    errors,
+    warnings,
+  }
+}
+
+/** `claude plugin test` output (bun's reporter) and its exit code → a report. */
+export function parseTest(stdout: string, exitCode: number): TestReport {
+  const count = (word: string): number =>
+    Number(stdout.match(new RegExp(`^\\s*(\\d+) ${word}\\s*$`, 'm'))?.[1] ?? 0)
+  const time = stdout.match(/^Ran \d+ tests? across .*\[(\d+(?:\.\d+)?)(ms|s)\]\s*$/m)
+  const durationMs = time ? Math.round(Number(time[1]) * (time[2] === 's' ? 1000 : 1)) : null
+  const lines = stdout.split('\n')
+  const failures: string[] = []
+  lines.forEach((line, at) => {
+    if (!line.startsWith('(fail) ')) return
+    failures.push(line.slice(7).replace(/\s*\[[\d.]+m?s\]$/, ''))
+    const detail = lines
+      .slice(at + 1, at + 3)
+      .map(next => next.trim())
+      .find(Boolean)
+    if (detail && !detail.startsWith('(')) failures.push(`  ${detail}`)
+  })
+  const failed = count('fail')
+  return {
+    ok: exitCode === 0 && failed === 0,
+    passed: count('pass'),
+    failed,
+    durationMs,
+    failures: failures.slice(0, 6),
+  }
+}
+
+/** `tsc -p` output → its error lines, each cut to `file(line,col): message`; none means clean. */
+export function parseTsc(stdout: string): string[] {
+  return stdout
+    .split('\n')
+    .filter(line => /error TS\d+/.test(line))
+    .map(line => line.replace(/^.*?([^/\\]+\.tsx?\(\d+,\d+\))/, '$1').trim())
+}
+
+
+/** A finished run's one-line summary. */
+export function summaryOfRun(
+  kind: RunKind,
+  ok: boolean,
+  detail: { validate?: ValidateReport; test?: TestReport; tscErrors?: readonly string[] },
+): string {
+  if (kind === 'Validate' && detail.validate) {
+    const v = detail.validate
+    if (!ok) return plural(Math.max(1, v.errors.length), 'problem')
+    const gates = v.gates.length ? ` · ${plural(v.gates.length, 'gate')}` : ''
+    return `clean · ${plural(v.hooks.length, 'hook')}${gates}`
+  }
+  if (kind === 'Test' && detail.test) {
+    const t = detail.test
+    if (!ok) return `${plural(Math.max(1, t.failed), 'test')} failing`
+    const time = t.durationMs === null ? '' : ` in ${(t.durationMs / 1000).toFixed(1)}s`
+    return `${plural(t.passed, 'test')} passed${time}`
+  }
+  if (kind === 'Typecheck') {
+    return ok ? 'types clean' : plural(Math.max(1, detail.tscErrors?.length ?? 0), 'type error')
+  }
+  return ok ? 'passed' : 'failed'
+}
+
+/** What a mod reaches, grouped from validate's `calls:` list. */
+export function reachesOf(calls: readonly string[]): Reach[] {
+  const of = (noun: string): string => {
+    const methods = calls.filter(call => call.startsWith(`$.${noun}.`)).map(call => call.slice(noun.length + 3))
+    return methods.length ? methods.join(', ') : 'none'
+  }
+  return [
+    { label: 'processes', value: of('process') },
+    { label: 'files', value: of('fs') },
+    { label: 'network', value: of('http') },
+    { label: 'model', value: of('model') },
+    { label: 'mcp', value: of('mcp') },
+  ]
+}
+
+// ── Text ──────────────────────────────────────────────────────────────────
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/** `0:42`, `12:05`, `3h`, `2d`; an empty string under a second. */
+export function durationOf(ms: number): string {
+  if (!(ms >= 1000)) return ''
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86400)}d`
+}
+
+/** Like durationOf, but `0:00` rather than empty: for clocks that must always show. */
+export function clockOf(ms: number): string {
+  return durationOf(ms) || '0:00'
+}
+
+export type Counts = { mods: number; green: number; building: number; failing: number; stale: number }
+
+export function countsOf(views: readonly ModView[]): Counts {
+  return {
+    mods: views.length,
+    green: views.filter(view => isGreen(view.lights)).length,
+    building: views.filter(view => view.lights.includes('running')).length,
+    failing: views.filter(view => view.lights.includes('failed')).length,
+    stale: views.filter(view => view.lights.includes('stale')).length,
+  }
+}
+
+/** The summary's parts, joined in the pane by a dim ` · `; counts of zero are left out. */
+export function summaryPartsOf(counts: Counts): string[] {
+  if (counts.mods === 0) return ['0 mods']
+  return [
+    plural(counts.mods, 'mod'),
+    counts.green ? `${counts.green} green` : '',
+    counts.building ? `${counts.building} building` : '',
+    counts.failing ? `${counts.failing} failing` : '',
+    counts.stale ? `${counts.stale} stale` : '',
+  ].filter(Boolean)
+}
+
+/** `3 mods · 2 green · 1 building`. */
+export function summaryOf(counts: Counts): string {
+  return counts.mods === 0 ? 'no mods yet' : summaryPartsOf(counts).join(' · ')
+}
+
+/** Letter-spaced text: `mod lab` → `M O D   L A B`. */
+export function spaced(text: string): string {
+  return text
+    .toUpperCase()
+    .split(' ')
+    .map(word => word.split('').join(' '))
+    .join('   ')
+}
+
+/**
+ * The masthead's state word and its tone. While building, `dot` is the `●` that
+ * pulses on its own (the letters never move).
+ */
+export function mastheadOf(counts: Counts): { dot: boolean; word: string; tone: Tone } {
+  if (counts.building) return { dot: true, word: spaced('building'), tone: 'success' }
+  if (counts.failing) return { dot: false, word: spaced(`${counts.failing} failing`), tone: 'error' }
+  if (counts.mods && counts.green === counts.mods) return { dot: false, word: spaced('all green'), tone: 'success' }
+  return { dot: false, word: spaced('standing by'), tone: 'dim' }
+}
+
+/** The building `●` toggles dimColor every 4 ticks (1 Hz at 250 ms). */
+export function isPulseDim(frame: number): boolean {
+  return Math.floor(frame / 4) % 2 === 1
+}
+
+/** The status-line badge; undefined clears it (no mods). Plain text: the host does not colour it. */
+export function badgeOf(counts: Counts): string | undefined {
+  if (counts.mods === 0) return undefined
+  const head = `◆ ${plural(counts.mods, 'mod')}`
+  if (counts.building) return `${head} · ${counts.building} building`
+  if (counts.failing) return `${head} · ${counts.failing} failing`
+  if (counts.green === counts.mods) return `${head} · all green`
+  return `${head} · ${counts.mods - counts.green} in progress`
+}
+
+/** Under 34 columns nothing is drawn (and the too-narrow toast fires once). */
+export type Layout = 'full' | 'medium' | 'compact' | 'none'
+
+export function layoutOf(bodyColumns: number): Layout {
+  if (bodyColumns >= 60) return 'full'
+  if (bodyColumns >= 40) return 'medium'
+  if (bodyColumns >= 34) return 'compact'
+  return 'none'
+}
+
+/** One drawn cell run: a glyph or word with its colour role, bold and dimColor. */
+export type Mark = { text: string; tone: Tone; bold?: boolean; dim?: boolean }
+
+/** A light's glyph at an animation frame. Running cycles ◐ · ◐ dim · ○, all accent. */
+export function lightMarkOf(light: Light, frame = 0): Mark {
+  if (light === 'passed') return { text: '●', tone: 'success' }
+  if (light === 'failed') return { text: '✕', tone: 'error', bold: true }
+  if (light === 'stale') return { text: '◌', tone: 'warn' }
+  if (light === 'pending') return { text: '○', tone: 'dim' }
+  const at = frame % 3
+  return at === 1 ? { text: '◐', tone: 'accent', dim: true } : { text: at === 2 ? '○' : '◐', tone: 'accent', bold: true }
+}
+
+/** The legend under the lights: pairs alternate dim and dimColor; the pair under a running or failed light lights up. */
+export function legendOf(lights: readonly Light[]): Mark[] {
+  const focus = lights.findIndex(light => light === 'running' || light === 'failed')
+  return LEGEND.map((pair, at) =>
+    at === focus
+      ? { text: pair, tone: lights[at] === 'failed' ? 'error' : 'accent' }
+      : { text: pair, tone: 'dim', dim: at % 2 === 1 },
+  )
+}
+
+export const LEGEND = ['Sp', 'Sc', 'Lo', 'Re', 'Va', 'Te', 'RE', 'Sh'] as const
+
+/**
+ * The pipeline track: each stage name in its light's colour, then its
+ * connector. After a passed stage whose next has started: `━` success. After
+ * a running stage: `┅ ━ ┄` by frame, accent. Otherwise `┄` dim.
+ */
+export function trackOf(lights: readonly Light[], frame = 0): { name: Mark; joint: Mark | null }[] {
+  return STAGES.map((stage, at) => {
+    const light = lights[at] ?? 'pending'
+    const next = lights[at + 1]
+    const name: Mark =
+      light === 'passed'
+        ? { text: stage, tone: 'success' }
+        : light === 'running'
+          ? { text: stage, tone: 'accent', bold: true }
+          : light === 'failed'
+            ? { text: stage, tone: 'error', bold: true }
+            : light === 'stale'
+              ? { text: stage, tone: 'warn' }
+              : { text: stage, tone: 'dim' }
+    if (at === STAGES.length - 1) return { name, joint: null }
+    let joint: Mark = { text: ' ┄ ', tone: 'dim', dim: true }
+    if (light === 'running') joint = { text: ` ${['┅', '━', '┄'][frame % 3]} `, tone: 'accent' }
+    else if (light === 'passed' && next !== undefined && next !== 'pending') joint = { text: ' ━ ', tone: 'success' }
+    return { name, joint }
+  })
+}
+
+/** A 15-cell bar filled to `fraction` (0..1), for real progress only. */
+export function barOf(fraction: number, width = 15): { filled: string; empty: string } {
+  const cells = Math.max(0, Math.min(width, Math.round(width * fraction)))
+  return { filled: '━'.repeat(cells), empty: '░'.repeat(width - cells) }
+}
+
+/**
+ * The draft `[F] Fix with Claude` puts in the prompt box: plain words, the
+ * first failure quoted from the error box.
+ */
+export function fixPromptOf(name: string, stage: Stage, errors: readonly string[], failedCount = 1): string {
+  const what =
+    stage === 'Test'
+      ? `the ${failedCount === 1 ? 'failing test' : `${failedCount} failing tests`}`
+      : `the ${stage} problem${failedCount === 1 ? '' : 's'}`
+  const [first, ...rest] = errors
+  const quoted = [`    ✕ ${(first ?? '').trim()}`, ...rest.slice(0, 2).map(line => `      ${line.trim()}`)].join('\n')
+  return `Fix ${what} in mods/${name}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
+}
+
+/** The done box's one line: `ready to share  ·  8/8 stages · 12 tests · validate clean · 1 gate`. */
+export function doneLineOf(results: Results): string {
+  const parts = ['8/8 stages']
+  const tests = results.Test?.tests
+  if (tests) parts.push(plural(tests.passed, 'test'))
+  if (results.Validate?.ok) parts.push('validate clean')
+  const gates = results.Validate?.validate?.gates.length ?? 0
+  if (gates) parts.push(plural(gates, 'gate'))
+  return parts.join(' · ')
+}
+
+/** The view of one mod, from everything gathered. */
+export function viewOf(
+  facts: FileFacts,
+  results: Results,
+  runs: readonly Run[],
+  reported: Reported | null,
+  isFresh: boolean,
+): ModView {
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported)
+  const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
+  const validate = results.Validate?.validate
+  const focus = focusStageOf(lights)
+  const failedStage = focus?.light === 'failed' ? focus.stage : null
+  const failedRun = failedStage === 'Validate' || failedStage === 'Test' ? results[failedStage] : undefined
+  const last = [results.Validate, results.Test].filter((one): one is RunResult => one !== undefined)
+  const lastMs = last.reduce((longest, one) => Math.max(longest, one.durationMs ?? 0), 0)
+  const fresh = isFresh && isGreen(lights)
+  return {
+    name: facts.name,
+    lights,
+    status: text,
+    tone,
+    time: durationOf(lastMs),
+    isDemo: false,
+    isFresh: fresh,
+    version: facts.version,
+    description: facts.description,
+    path: `mods/${facts.name}/`,
+    isReadmeStale: facts.isReadmeStale,
+    doneLine: fresh ? doneLineOf(results) : null,
+    archetype: facts.archetype,
+    builtOn: facts.builtOn,
+    hooks: validate?.hooks ?? [],
+    reaches: validate ? reachesOf(validate.calls) : [],
+    gates: validate?.gates ?? [],
+    errors: failedRun?.errors ?? [],
+    failedStage,
+  }
+}
+
+// ── Demo ──────────────────────────────────────────────────────────────────
+
+/** One beat of the demo: from `atMs`, `stage` shows `light`, with what the row says. */
+export type Beat = { atMs: number; stage: Stage; light: Light; note?: string }
+
+/**
+ * The demo build of `aurora`: every stage runs then passes, Test fails once
+ * and Claude fixes it. Exactly 12 s, then it holds green for 3 s.
+ */
+export function demoTimeline(): Beat[] {
+  const beats: Beat[] = []
+  let at = 0
+  const step = (stage: Stage, runMs: number, light: Light, note: string): void => {
+    beats.push({ atMs: at, stage, light: 'running', note })
+    at += runMs
+    beats.push({ atMs: at, stage, light })
+  }
+  step('Spec', 1000, 'passed', 'writing SPEC.md')
+  step('Scaffold', 800, 'passed', 'scaffolding plugin.json')
+  step('Logic', 1400, 'passed', 'aurora-logic.ts + tests')
+  step('Register', 1000, 'passed', 'register.tsx')
+  step('Validate', 1300, 'passed', 'validating')
+  step('Test', 1300, 'failed', 'running tests')
+  at += 1600
+  step('Test', 1300, 'passed', 'Claude is fixing src/band.tsx')
+  step('README', 1300, 'passed', 'What it reaches')
+  step('Share', 1000, 'passed', 'marketplace entry')
+  return beats
+}
+
+export const DEMO_NAME = 'aurora'
+
+/** How long the demo holds green after its last beat, before the real state returns. */
+export const DEMO_HOLD_MS = 3000
+
+export function demoWalkMs(beats: readonly Beat[] = demoTimeline()): number {
+  return beats[beats.length - 1]?.atMs ?? 0
+}
+
+export function demoLengthMs(beats: readonly Beat[] = demoTimeline()): number {
+  return demoWalkMs(beats) + DEMO_HOLD_MS
+}
+
+/** While the demo runs, the summary row: `aurora is a demo · nothing is written to disk`, and `0:02 / 0:12`. */
+export function demoClockOf(elapsedMs: number, beats: readonly Beat[] = demoTimeline()): { now: string; total: string } {
+  const walk = demoWalkMs(beats)
+  return { now: clockOf(Math.min(elapsedMs, walk)), total: clockOf(walk) }
+}
+
+const DEMO_ERRORS = ['band steps aside when hasSurvey is true', 'expected 0 band rows, received 2', 'at test/band.test.ts:18:5']
+
+/** The line that replaces `[F] Fix with Claude` while the demo's test is failing. */
+export const DEMO_FIXING = 'Claude is fixing src/band.tsx'
+
+/** The demo mod as a view, `elapsedMs` into the demo. */
+export function demoViewAt(elapsedMs: number, beats: readonly Beat[] = demoTimeline()): ModView {
+  const lights: Light[] = STAGES.map(() => 'pending')
+  let current: Beat | undefined
+  for (const beat of beats) {
+    if (beat.atMs > elapsedMs) break
+    lights[STAGES.indexOf(beat.stage)] = beat.light
+    current = beat
+  }
+  const testFailed = lights[STAGES.indexOf('Test')] === 'failed'
+  const isDone = isGreen(lights)
+  let status: { text: string; tone: Tone }
+  if (isDone) status = { text: 'ready to share', tone: 'success' }
+  else if (current?.light === 'running') status = { text: current.note ?? 'running', tone: 'text' }
+  else if (testFailed) status = { text: '1 test failing', tone: 'error' }
+  else status = { text: `next: ${STAGES[lights.findIndex(light => light !== 'passed')] ?? 'Share'}`, tone: 'dim' }
+  const hasValidated = lights[STAGES.indexOf('Validate')] === 'passed'
+  const walk = demoWalkMs(beats)
+  return {
+    name: DEMO_NAME,
+    lights,
+    status: status.text,
+    tone: status.tone,
+    time: clockOf(Math.min(elapsedMs, walk)),
+    isDemo: true,
+    isFresh: isDone,
+    version: 'demo',
+    description: 'A pretend mod. Walks all 8 stages in 12 seconds.',
+    path: 'not written to disk',
+    isReadmeStale: false,
+    doneLine: isDone ? `${DEMO_NAME} walked all 8 stages in ${clockOf(walk)}  ·  demo, nothing saved` : null,
+    archetype: 'band + command',
+    builtOn: null,
+    hooks: hasValidated ? ['session.start', 'command.run{command=aurora}', 'ui.render{component=AbovePrompt}'] : [],
+    reaches: hasValidated ? reachesOf(['$.clock.every', '$.ui.status']) : [],
+    gates: [],
+    errors: testFailed ? DEMO_ERRORS : [],
+    failedStage: testFailed ? 'Test' : null,
+  }
+}
+
+// ── Gathering ─────────────────────────────────────────────────────────────
+
+/** A directory entry as `$.fs.list` gives it, cut to what Mod Lab reads. */
+export type Entry = { name: string; kind: 'file' | 'dir' | 'other'; mtimeMs: number }
+
+/** Resolves `.` and `..` segments in a `/`-separated path. */
+export function normalizePath(path: string): string {
+  const isAbsolute = path.startsWith('/')
+  const parts: string[] = []
+  for (const part of path.replace(/\\/g, '/').split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      if (parts.length && parts[parts.length - 1] !== '..') parts.pop()
+      else if (!isAbsolute) parts.push('..')
+    } else {
+      parts.push(part)
+    }
+  }
+  return (isAbsolute ? '/' : '') + parts.join('/')
+}
+
+/** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */
+export function shortPath(path: string): string {
+  const parts = normalizePath(path).split('/').filter(Boolean)
+  return parts.length <= 2 ? normalizePath(path) : `…/${parts.slice(-2).join('/')}`
+}
+
+/** Everything read from one mod folder, before it is judged. */
+export type FolderRead = {
+  name: string
+  top: readonly Entry[]
+  manifestDir: readonly Entry[]
+  hooks: readonly Entry[]
+  tests: readonly Entry[]
+  types: readonly Entry[]
+  spec: string | null
+  readme: string | null
+  /** plugin.json's text, when present. */
+  manifest: string | null
+  marketplace: string
+}
+
+/** `version` and `description` from a plugin.json's text. */
+export function manifestOf(text: string | null): { version: string | null; description: string | null } {
+  try {
+    const parsed = JSON.parse(text ?? '') as { version?: unknown; description?: unknown }
+    return {
+      version: typeof parsed.version === 'string' ? parsed.version : null,
+      description: typeof parsed.description === 'string' ? parsed.description : null,
+    }
+  } catch {
+    return { version: null, description: null }
+  }
+}
+
+/** One folder's reads → its facts. A folder with neither manifest nor SPEC is no mod: null. */
+export function factsOf(read: FolderRead): FileFacts | null {
+  const has = (list: readonly Entry[], name: string): boolean => list.some(entry => entry.name === name)
+  const hasManifest = has(read.manifestDir, 'plugin.json')
+  const hasSpec = read.spec !== null
+  if (!hasManifest && !hasSpec) return null
+  const manifest = read.manifestDir.filter(entry => entry.name === 'plugin.json')
+  const code = [...manifest, ...read.hooks, ...read.tests, ...read.types].filter(entry => entry.kind === 'file')
+  const all = [...read.top.filter(entry => entry.kind === 'file'), ...code]
+  const times = all.map(entry => entry.mtimeMs)
+  const slots = read.spec ? slotsOf(read.spec) : {}
+  const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
+  const readmeEntry = read.top.find(entry => entry.name === 'README.md')
+  return {
+    ...manifestOf(read.manifest),
+    isReadmeStale: read.readme !== null && readmeEntry !== undefined && readmeEntry.mtimeMs < codeMtimeMs,
+    name: read.name,
+    hasSpec,
+    specHasPlaceholder: read.spec !== null && hasPlaceholder(read.spec),
+    hasManifest,
+    hasHooksJson: has(read.hooks, 'hooks.json'),
+    hasLogic: read.hooks.some(entry => entry.kind === 'file' && isLogicModule(entry.name)),
+    hasTests: read.tests.some(entry => entry.kind === 'file' && isTestFile(entry.name)),
+    hasRegister: read.hooks.some(entry => /^register\.(m|c)?(t|j)sx?$/.test(entry.name)),
+    hasReadme: read.readme !== null,
+    readmeHasReaches: read.readme !== null && isReadmeDone(read.readme),
+    isListed: isListedIn(read.marketplace, read.name),
+    codeMtimeMs,
+    firstMtimeMs: times.length ? Math.min(...times) : 0,
+    lastMtimeMs: times.length ? Math.max(...times) : 0,
+    archetype: slots.archetype ?? null,
+    builtOn: slots.built?.replace(/^Claude Code\s+/i, '') ?? null,
+  }
+}
+
+// ── Runs ──────────────────────────────────────────────────────────────────
+
+/** The command line for a run. */
+export function argvOf(kind: RunKind, dir: string): string[] {
+  if (kind === 'Validate') return ['claude', 'plugin', 'validate', '--json', dir]
+  if (kind === 'Test') return ['claude', 'plugin', 'test', dir]
+  return ['npx', '-y', '-p', 'typescript@5.6', 'tsc', '-p', dir]
+}
+
+/** A finished process → the stored result. */
+export function resultOf(kind: RunKind, exitCode: number, output: string, stampMs: number, durationMs = 0): RunResult {
+  if (kind === 'Validate') {
+    const validate = parseValidate(output, exitCode)
+    return {
+      kind,
+      ok: validate.ok,
+      stampMs,
+      durationMs,
+      summary: summaryOfRun(kind, validate.ok, { validate }),
+      errors: validate.errors.slice(0, 6),
+      validate,
+    }
+  }
+  if (kind === 'Test') {
+    const test = parseTest(output, exitCode)
+    return {
+      kind,
+      ok: test.ok,
+      stampMs,
+      durationMs,
+      summary: summaryOfRun(kind, test.ok, { test }),
+      errors: test.failures,
+      tests: { passed: test.passed, failed: test.failed },
+    }
+  }
+  const tscErrors = parseTsc(output)
+  const ok = exitCode === 0 && tscErrors.length === 0
+  const errors = tscErrors.length || ok ? tscErrors.slice(0, 6) : output.trim().split('\n').slice(-3)
+  return { kind, ok, stampMs, durationMs, summary: summaryOfRun(kind, ok, { tscErrors }), errors }
+}
+
+/** The toast for a finished run: `✓ agent-dock: 12 tests passed in 3.4s`. */
+export function toastOfRun(mod: string, result: RunResult): string {
+  return result.ok ? `✓ ${mod}: ${result.summary}` : `✕ ${mod}: ${result.summary}. Press F in Mod Lab to fix`
+}
+
+/** Test lines streamed so far → the counts: bun prints one `(pass)` or `(fail)` line per test. */
+export function countStreamed(text: string): { passed: number; failed: number } {
+  let passed = 0
+  let failed = 0
+  for (const line of text.split('\n')) {
+    if (line.startsWith('(pass) ')) passed += 1
+    else if (line.startsWith('(fail) ')) failed += 1
+  }
+  return { passed, failed }
+}
+
+// ── lab_report ────────────────────────────────────────────────────────────
+
+/** The model tool's input schema, as `$.tool.register` takes it. */
+export const REPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    mod: { type: 'string', description: 'The mod folder name under the mods folder, e.g. "git-branch".' },
+    stage: { type: 'string', enum: [...STAGES] },
+    status: { type: 'string', enum: ['running', 'passed', 'failed'] },
+    note: { type: 'string', description: 'A few words on what is happening, e.g. "writing tests".' },
+  },
+  required: ['mod', 'stage', 'status'],
+  additionalProperties: false,
+} as const
+
+/** A `lab_report` call's arguments → a checked report, or the reason it was refused. */
+export function reportOf(
+  input: Record<string, unknown>,
+  now: number,
+): { mod: string; report: Reported } | { error: string } {
+  const mod = typeof input.mod === 'string' ? input.mod.trim() : ''
+  const stage = STAGES.find(one => one === input.stage)
+  const status = (['running', 'passed', 'failed'] as const).find(one => one === input.status)
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(mod)) return { error: 'mod must be the mod folder name, kebab-case.' }
+  if (!stage) return { error: `stage must be one of ${STAGES.join(', ')}.` }
+  if (!status) return { error: 'status must be running, passed or failed.' }
+  const note = typeof input.note === 'string' && input.note.trim() ? input.note.trim().slice(0, 60) : undefined
+  return { mod, report: note ? { stage, status, note, since: now } : { stage, status, since: now } }
+}
+
+// ── Band ──────────────────────────────────────────────────────────────────
+
+/** One mod in the band: its bar line, and the detail line beneath when there is room. */
+export type BandEntry = {
+  name: string
+  stage: string
+  since: number
+  /** 0..1 of real progress: tests run of the last total, else stages passed of 8. */
+  fraction: number
+  detail: string
+}
+
+/**
+ * What the band shows: runs first, then reported stages, then the demo; at
+ * most three. The bar fills on real progress only, never on the clock.
+ */
+export function bandEntriesOf(
+  runs: readonly Run[],
+  reported: Readonly<Record<string, Reported>>,
+  demo: { view: ModView; since: number } | null,
+  views: readonly ModView[] = [],
+): BandEntry[] {
+  const stagesDone = (name: string): number =>
+    (views.find(view => view.name === name)?.lights.filter(light => light === 'passed').length ?? 0) / STAGES.length
+  const entries: BandEntry[] = runs.map(run => {
+    const done = run.passed + run.failed
+    const isTest = run.kind === 'Test'
+    return {
+      name: run.mod,
+      stage: run.kind,
+      since: run.startedAt,
+      fraction: isTest && run.total ? done / run.total : stagesDone(run.mod),
+      detail: isTest
+        ? run.total
+          ? `${run.passed} of ${run.total} passed${run.failed ? ` · ${run.failed} failed` : ''}`
+          : `${run.passed} passed so far`
+        : run.kind === 'Validate'
+          ? 'claude plugin validate'
+          : 'tsc -p',
+    }
+  })
+  for (const [name, report] of Object.entries(reported)) {
+    if (report.status === 'running' && !entries.some(entry => entry.name === name)) {
+      entries.push({ name, stage: report.stage, since: report.since, fraction: stagesDone(name), detail: report.note ?? 'in progress' })
+    }
+  }
+  if (demo) {
+    const at = demo.view.lights.indexOf('running')
+    if (at >= 0) {
+      const passed = demo.view.lights.filter(light => light === 'passed').length
+      entries.push({ name: demo.view.name, stage: STAGES[at]!, since: demo.since, fraction: passed / STAGES.length, detail: `${demo.view.status} · demo` })
+    }
+  }
+  return entries.slice(0, 3)
+}
+
+// ── Demo toasts ───────────────────────────────────────────────────────────
+
+/** The toasts the demo raises for beats crossed between two moments. */
+export function demoToastsBetween(fromMs: number, toMs: number, beats: readonly Beat[] = demoTimeline()): string[] {
+  const toasts: string[] = []
+  for (const beat of beats) {
+    if (beat.atMs <= fromMs || beat.atMs > toMs) continue
+    if (beat.stage === 'Validate' && beat.light === 'passed') toasts.push(`✓ ${DEMO_NAME}: validate clean · 3 hooks`)
+    if (beat.stage === 'Test' && beat.light === 'failed') toasts.push(`✕ ${DEMO_NAME}: 1 test failing. Claude is fixing it`)
+    if (beat.stage === 'Test' && beat.light === 'passed') toasts.push(`✓ ${DEMO_NAME}: 6 tests passed in 0.4s`)
+  }
+  return toasts
+}
+
+// ── Report expiry ─────────────────────────────────────────────────────────
+
+/** A `running` report older than this no longer counts: the skill stopped without saying so. */
+export const REPORT_TTL_MS = 10 * 60 * 1000
+
+/** The reports that still count at `now`; finished ones are kept, stale running ones dropped. */
+export function liveReports(
+  reports: Readonly<Record<string, Reported>>,
+  now: number,
+): Record<string, Reported> {
+  const live: Record<string, Reported> = {}
+  for (const [name, report] of Object.entries(reports)) {
+    if (report.status !== 'running' || now - report.since < REPORT_TTL_MS) live[name] = report
+  }
+  return live
+}

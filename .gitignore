@@ -1,0 +1,34 @@
+# Reference material studied while designing (community mod repos, Claude Design bundles).
+# Each is its own upstream project; we borrow ideas, never code.
+tmp/
+
+# Throwaway probes that settled engine questions; their findings live in
+# plugins/mod-builder/skills/build/references/gotchas.md.
+scratch/
+
+# Engine-written typings, regenerated per Claude Code build.
+**/.claude-plugin/types/
+
+# Local Claude Code state for this checkout (settings.local.json, write logs).
+.claude/
+
+# Dependencies and build output.
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Logs and env files.
+*.log
+npm-debug.log*
+.env
+.env.*
+
+# Editors and OS.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+*:Zone.Identifier

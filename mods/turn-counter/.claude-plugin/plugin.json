@@ -1,0 +1,7 @@
+{
+  "name": "turn-counter",
+  "version": "0.1.0",
+  "description": "Counts this turn's tool calls in a band above the prompt.",
+  "author": { "name": "Bryan Ankielewicz" },
+  "types": "./types/index.d.ts"
+}

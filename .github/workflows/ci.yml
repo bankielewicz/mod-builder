@@ -1,0 +1,51 @@
+# GitHub Actions for a folder marketplace of mods: validates the marketplace, then validates and
+# tests every plugin it can find under plugins/ and mods/. Copy to .github/workflows/ci.yml.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mods:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The build the mods are written against. Bump it on purpose, then fix what breaks.
+      CLAUDE_CODE_VERSION: 2.1.296
+      DISABLE_AUTOUPDATER: 1
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && claude --version
+      - name: Validate the marketplace
+        run: claude plugin validate .
+      - name: Validate and test every plugin
+        run: |
+          status=0
+          for manifest in $(git ls-files 'plugins/*/.claude-plugin/plugin.json' 'mods/*/.claude-plugin/plugin.json'); do
+            dir="${manifest%/.claude-plugin/plugin.json}"
+            echo "::group::$dir"
+            claude plugin validate "$dir" || { echo "::error::$dir: validate failed"; status=1; }
+            if [ -d "$dir/tests" ]; then
+              claude plugin test "$dir" || { echo "::error::$dir: tests failed"; status=1; }
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
+      - name: Archetypes still generate working mods
+        if: hashFiles('plugins/mod-builder/skills/build/scripts/check-archetypes.sh') != ''
+        run: bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh

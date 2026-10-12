@@ -1,0 +1,8 @@
+{
+  "name": "__MARKETPLACE__",
+  "description": "__DESCRIPTION__",
+  "owner": { "name": "__AUTHOR__" },
+  "plugins": [
+    { "name": "__NAME__", "source": "./mods/__NAME__", "description": "__DESCRIPTION__", "version": "0.1.0" }
+  ]
+}

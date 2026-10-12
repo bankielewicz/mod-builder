@@ -1,0 +1,2 @@
+/** `claude plugin test` of a mod scaffolded from the command-only archetype, exit 0. Captured on Claude Code 2.1.296. */
+export const testPass = "\ntests/try-notes-logic.test.ts:\n(pass) try-notes-logic > parses the arguments [2.22ms]\n(pass) try-notes-logic > keeps the newest notes and reads the store defensively [0.81ms]\n(pass) try-notes-logic > lists, or says there is nothing [0.30ms]\n\ntests/ui.test.tsx:\n(pass) ui > add, list and clear through the command [38.54ms]\n\n 4 pass\n 0 fail\nRan 4 tests across 2 files. [0.22s]\n"
