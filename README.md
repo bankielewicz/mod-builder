@@ -48,6 +48,10 @@ Choose **User** scope when asked, so it works in every project. Then:
 
 ## What you get
 
+<p align="center">
+  <img src="docs/assets/features.svg" alt="Five cards: One approval, Claude asks only what's missing, then you approve one SPEC. Works first time, 5 tested starting points, logic with unit tests. Live pipeline, 8 stages, re-checked when code changes. Honest edits, changes show exactly what still needs redoing. Know what you install, every mod lists what it can reach." width="100%">
+</p>
+
 - **One approval, not a hundred.** Claude asks only what your request leaves open, then writes a
   SPEC listing every file, process and cost. You approve once.
 - **Mods that work the first time.** Five tested starting points (band, pane, guard, watcher,
