@@ -557,18 +557,18 @@ async function configure($: Engine, words: string[]): Promise<string> {
   return head + Lab.configListText(values, logFile)
 }
 
-/** Writes one option through its `/config` row ('' once written, else why not) and applies it now. */
+/**
+ * Writes one option through this plugin's own `/config` row: '' once written, else why not.
+ * Changing a plugin's options reloads it (types), which empties this module's log buffer, so
+ * the line about the change is written to the file before the set.
+ */
 async function setOption($: Engine, name: Lab.OptionName, value: string | boolean): Promise<string> {
-  const row = (await $.config.list()).find(r => r.key.startsWith('mod-builder') && r.key.endsWith(`.${name}`))
-  if (!row) return `its row is not in /config; use /plugin to configure mod-builder.`
+  const row = (await $.config.list()).find(r => (r.provider as { plugin?: string } | undefined)?.plugin === $.plugin.name && r.key.endsWith(`.${name}`))
+  if (!row) return `this session's /config has no mod-builder rows (seen under claude -p). Change it in /config, or /plugin → mod-builder → options.`
+  logEvent($, 'normal', 'config', `${name} set`, { value })
+  await flushLog($)
   const result = await $.config.set({ key: row.key, value })
-  if (result.deny) return result.deny
-  if (name === 'logging') logLevel = Lab.logLevelOf(value)
-  if (name === 'autoRerun') autoRerun = value === true
-  if (name === 'autoOpen') autoOpen = value === true
-  if (name === 'modsDir') configuredDir = String(value)
-  logEvent($, 'verbose', 'config', `${name} set`, { value })
-  return ''
+  return result.deny ?? ''
 }
 
 /** The session's first line: plugin version, mods folder and level. */

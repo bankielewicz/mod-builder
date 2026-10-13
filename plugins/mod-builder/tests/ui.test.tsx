@@ -38,7 +38,7 @@ const modFiles = (name: string): Disk => ({
 /** Every file's mtime is `ms`, unless `byPath` names its own. */
 type Mtimes = { ms: number; byPath?: Record<string, number> }
 
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[]) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -80,7 +80,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
   on('session.id', () => ({ value: 's1-session' }) as never)
-  on('config.list', () => ({ value: ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'mod-builder' }, isLocked: false })) }) as never)
+  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder' }))
+  on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
   on('config.set', ($, e) => (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
   // streaming process.spawn, so Mod Lab's fallback answers instead.
@@ -581,6 +582,21 @@ describe('logging (Change 0.2.2)', () => {
     expect(text).toContain('NORMAL  session.start  Mod Lab started')
   })
 
+  test('/mod-builder config changes only its own row, and says where to go when it has none', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, [
+      { key: 'mod-builder-extra.logging', plugin: 'mod-builder-extra' },
+      { key: 'mod-builder.logging', plugin: 'mod-builder' },
+    ])
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    await run('config logging debug')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'debug' }])
+    expect((await run('config autoOpen on')).text).toBe(
+      "Could not change autoOpen: this session's /config has no mod-builder rows (seen under claude -p). Change it in /config, or /plugin → mod-builder → options.",
+    )
+  })
+
   test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
     await start($)
@@ -616,6 +632,8 @@ describe('logging (Change 0.2.2)', () => {
     expect(changed).toStartWith('logging is now verbose.')
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
     expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
+    // The change line reaches the file before the set, which reloads the plugin.
+    expect(lastLog(seen)).toContain('NORMAL  config  logging set  {"value":"verbose"}')
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
   })
 })

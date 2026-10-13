@@ -302,7 +302,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **New option** `logging` in `userConfig`: `"type": "string"`, `"options": ["off", "normal", "verbose", "debug"]`, default **`normal`**. It shows in `/config` too.
 - **New command** `/mod-builder config` (probe 2026-10-13: a plugin can register a command equal to its own name, and `/mod-builder:build` and `/mod-builder:edit` still resolve):
   - `/mod-builder config`, or `/mod-builder config list`: every mod-builder option with its current value, plus the path of this session's log file.
-  - `/mod-builder config <option> <value>`, for example `/mod-builder config logging verbose`: changes the option through its `/config` row (`$.config.list` / `$.config.set`, as duet does). It answers with the new value, or the reason it couldn't. A changed `logging` applies from the next hook call, with no reload needed.
+  - `/mod-builder config <option> <value>`, for example `/mod-builder config logging verbose`: changes the option through its `/config` row (`$.config.list` / `$.config.set`, as duet does). It answers with the new value, or the reason it couldn't. Changing a plugin's options reloads the plugin (types), so the change applies on reload, and the log line about it is written to the file before the set. The row is matched by its owner (`provider.plugin`), never by a key prefix. Under `claude -p`, `$.config.list()` returned no plugin rows (code review, PR #21), so there the command says to use `/config` or `/plugin` instead.
 - **Where logs go:**
   - a file, `~/.claude/mod-builder-data/logs/<YYYY-MM-DD>-<first 8 of the session id>.log`, one file per session, so sessions never race;
   - the same line mirrored to Claude Code's debug log with `$.ui.log(line, { to: 'debug' })`, visible under `claude --debug`.
@@ -313,7 +313,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   | Level | Logged |
   |---|---|
   | off | nothing; no file is created |
-  | normal | every unexpected caught error (table below), with site, message and context; session start (plugin version, `modsDir`); each Validate, Test or Type-check result (mod, ok/failed, duration) |
+  | normal | every unexpected caught error (table below), with site, message and context; session start (plugin version, `modsDir`); each Validate, Test or Type-check result (mod, ok/failed, duration); each option change |
   | verbose | + each `lab_report` (mod, stage, status); each scan (`modsDir`, folders found, mods judged, duration); each process started (argv, exit code, duration); each command (`/modlab …`, `/mod-builder …`) |
   | debug | + expected misses (a missing folder or file); each mod's lights after a scan; the last 20 lines of each process's output; `$.store` keys written |
 
