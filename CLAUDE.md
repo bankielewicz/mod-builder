@@ -46,8 +46,12 @@ plugin and the archetype check.
 
 `main` is protected, and the main folder is shared. Several Claude sessions work in it at once, and the
 installed plugins (`mod-builder@claudemod`, `duet@claudemod`, `issue-forge@claudemod`) load from whatever
-branch it is on. So **never edit, commit or switch branches in the main folder.** Every change to this
-repo happens in its own worktree and reaches `main` through a PR:
+branch it is on. So **never edit, commit or switch branches in the main folder**, with one exception.
+After a PR merges, the main folder may be brought up to date so the installed plugins get the merge:
+`git switch main && git merge --ff-only origin/main` after a fetch, then `/reload-plugins` in each
+session. Do that only when the person asks or agrees, the folder has no uncommitted changes, and no
+issue-forge run or other session is working in it. Every change to this repo happens in its own
+worktree and reaches `main` through a PR:
 
 1. `git fetch origin && git worktree add --no-track -b <branch> scratch/<name> origin/main`
    (`scratch/` is gitignored). Edit, test and commit only inside `scratch/<name>`.
