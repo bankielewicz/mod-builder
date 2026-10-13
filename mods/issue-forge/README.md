@@ -57,7 +57,15 @@ This repository's own profile is `.issue-forge.json` at its root.
 
 A run needs an interactive session (`claude -p` exits before the agents finish), a clean working
 tree, `gh` signed in, and `<base>` on `origin`. If an issue names another base (a line
-`Base branch: <name>`), the run asks before using it, because the tests would run from that branch. The run's branch is cut from `origin/<base>`, so
+`Base branch: <name>`), the run asks before using it, because the tests would run from that branch.
+A name git could read as an option or a forced refspec (starting with `-` or `+`, or holding `:`)
+is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refused.
+
+**Limits worth knowing:**
+- Runs were checked with Claude Code's `auto` permission mode. In other modes a phase agent's Edit or
+  Bash may wait on a permission prompt nobody sees; the pane then shows `agent working` until you
+  `/issue-forge stop`. There's no agent timeout yet.
+- G6 checks that a behaviour test file (`behaviourTestGlobs`) is in the red commit, not what it tests. The run's branch is cut from `origin/<base>`, so
 the profile and anything its commands use must already be there.
 
 ## Install
@@ -89,7 +97,7 @@ Changes load with `/reload-plugins` or a new session.
 | `redModel` | `opus` | model for the red agent |
 | `greenModel` | `sonnet` | model for the green agent |
 | `refactorModel` | `opus` | model for the refactor agent |
-| `redAgentType` | `issue-forge:red` | another type runs red as that agent, unnamed, so duet sends it to Codex if the type is in duet's `codexAgents` (Codex needs `codexSandbox: workspace-write` to write tests) |
+| `redAgentType` | `issue-forge:red` | another type runs red as that agent, unnamed, so duet sends it to Codex if the type is in duet's `codexAgents`. Codex needs `codexSandbox: workspace-write`, which also makes duet wait for the run; in duet's read-only background mode the phase would end at once with nothing written |
 | `confirmPublish` | `true` | ask before pushing and opening the pull request; off publishes as soon as the run is ready |
 
 The mod's own agents are spawned with a name, so duet leaves them on Claude even with

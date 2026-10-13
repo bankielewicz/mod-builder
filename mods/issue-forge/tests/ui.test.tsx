@@ -38,6 +38,12 @@ type World = {
   issueBody: string
   /** When set, $.agent.spawn stays pending until this settles. */
   spawnHold: Promise<void> | null
+  /** What refs/heads/<branch> points at; absent, the stub's HEAD. */
+  tip?: string
+  /** When set, the test command stays running until this settles. */
+  testHold: Promise<void> | null
+  /** Successive answers to `rev-parse --abbrev-ref HEAD` (the last repeats); absent, `head`. */
+  heads?: string[]
   argv: string[][]
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
@@ -69,6 +75,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     hold: null,
     issueBody: ISSUE.body,
     spawnHold: null,
+    testHold: null,
     argv: [],
     commits: [],
     spawned: [],
@@ -120,7 +127,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     world.argv.push(argv)
     const [cmd, ...a] = argv
     const s = a.join(' ')
-    if (cmd === 't') return world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit)
+    const testResult = () => (world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit))
+    if (cmd === 't') return world.testHold ? world.testHold.then(testResult) : testResult()
     if (cmd === 'c') return ok('coverage written')
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
@@ -130,8 +138,9 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
-    if (s === 'rev-parse --abbrev-ref HEAD') return ok(`${world.head}\n`)
+    if (s === 'rev-parse --abbrev-ref HEAD') return ok(`${world.heads && world.heads.length > 0 ? (world.heads.length > 1 ? world.heads.shift() : world.heads[0]) : world.head}\n`)
     if (s === 'rev-parse HEAD') return ok(`c${world.commits.length}\n`)
+    if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
     if (s === 'status --porcelain') return ok(world.isDirty ? ' M src/a.ts\n' : '')
     if (a[0] === 'switch') return (world.head = a[3] ?? ''), ok()
     if (a[0] === 'merge-base') return ok('base0\n')
@@ -140,7 +149,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
     if (a[0] === 'diff' && a[1] === '--cached' && a[2] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--name-only') return ok(world.redPaths.join('\0'))
-    if (s === 'diff -U0 --cached base0') return ok(DIFF)
+    if (a[0] === 'diff' && a.includes('-U0')) return ok(DIFF)
     if (a[0] === 'commit') return world.commits.push(e.init?.stdin ?? ''), ok()
     return ok()
   })
@@ -332,7 +341,7 @@ describe('a run, stage by stage', () => {
   })
 
   test('gate R refuses a red phase that touched source: no commit, red again', async ($, on) => {
-    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [{ id: 'old-red', name: 'issue-forge-16-red-1', phase: 'red' }] }) })
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, 'red again')
@@ -347,6 +356,9 @@ describe('a run, stage by stage', () => {
     expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
     await until(w, () => w.spawned.length === 1, 'refactor')
     expect(w.commits[0]).toStartWith('fix(#16): green: Fix the thing')
+    // The coverage diff fixes its prefixes: diff.mnemonicPrefix or diff.noprefix would otherwise hide every changed line.
+    const diff = w.argv.find(a => a[0] === 'git' && a[1] === 'diff' && a.includes('-U0'))!
+    for (const flag of ['--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/']) expect(diff).toContain(flag)
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor', name: 'issue-forge-16-refactor-1', model: 'opus' })
   })
 
@@ -425,7 +437,7 @@ describe('a run, stage by stage', () => {
     await start($)
     await run($, 'publish')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
-    expect((await run($, 'status')).text).toContain(`blocked at publishing: ${BRANCH} moved after gate F (HEAD c0, checked f1)`)
+    expect((await run($, 'status')).text).toContain(`blocked at publishing: ${BRANCH} moved after gate F (now c0, checked f1)`)
     expect(w.argv.some(a => a[1] === 'push' || a[1] === 'pr')).toBe(false)
   })
 
@@ -438,6 +450,41 @@ describe('a run, stage by stage', () => {
     expect(w.commits.length).toBe(0)
     expect(w.argv.some(a => a[1] === 'stash' && a[2] === 'apply')).toBe(false)
     expect(w.spawned[0]!.prompt).toContain('R2: nothing staged')
+  })
+
+  test('publish works after you switched to another branch: it checks and pushes the run\'s branch, not HEAD', async ($, on) => {
+    const w = engine(on, { head: 'main' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    expect(w.argv).toContainEqual(['git', 'rev-parse', '--verify', `refs/heads/${BRANCH}`])
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
+  })
+
+  test('a gate finds HEAD off the run\'s branch (an agent switched): it blocks before staging or committing', async ($, on) => {
+    const w = engine(on, { heads: [BRANCH, 'main'], staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`blocked at gateG: HEAD is on main, not ${BRANCH}`)
+    expect(w.commits.length).toBe(0)
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'add')).toBe(false)
+    expect(w.argv.some(a => a[0] === 't')).toBe(false)
+  })
+
+  test('stop during a gate\'s test run: nothing after it runs, nothing is committed, the run stays stopped', async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, testHold: new Promise<void>(resolve => (release = resolve)), staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.argv.some(a => a[0] === 't'), 'the test run')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    release()
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect(w.argv.some(a => a[0] === 'c')).toBe(false)
+    expect(w.commits.length).toBe(0)
+    expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
   })
 
   test('publish pushes the branch without -u and opens a PR whose body closes the issue', async ($, on) => {
@@ -527,7 +574,8 @@ describe('reloads, resume and stop', () => {
     w.head = BRANCH
     expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
     await until(w, () => w.spawned.length === 1, 'green')
-    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', name: 'issue-forge-16-green-1' })
+    // Attempts reset; the name counts the run's green agents, so it never repeats the earlier one's.
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', name: 'issue-forge-16-green-2' })
     expect((await run($, 'stop')).text).toContain('its agents are refused further tool calls')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-green' } as never)) as any).deny).toContain('issue-forge:')

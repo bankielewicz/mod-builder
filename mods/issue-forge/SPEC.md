@@ -380,3 +380,29 @@ Codex's code and security reviews of 87c8bd0 left 8 inline findings. Each was ch
 Findings 3 and 8 change how agents are started and awaited, which no kit test reaches. A live run is the only check (see C7).
 
 After the round: validate is clean; 82 tests pass (56 logic, 26 UI and behaviour); `tsc` is clean; own logic coverage is 100.00% lines and 99.44% branches; the logic suite counts 56 under both the kit and `claude plugin test`.
+
+## Review: PR #24, round 2 (2026-10-13)
+
+`/code-review` of bd19cbe agreed all 8 Codex findings were real. It found 15 more. Each was checked, and those marked fixed come with tests: on bd19cbe's code 6 of the new UI tests fail and the logic file can't load.
+
+| Finding | Level | Fix |
+|---|---|---|
+| The issue's `Base branch:` name reached `git fetch` unchecked (`+evil:main` force-updates local `main`; `--upload-pack=` is an option) | 1 | `isSafeBranch` for the profile's and the issue's base; an unsafe issue name is ignored and the profile's base stands |
+| `diff.mnemonicPrefix` / `noprefix` hid every changed line, so G4 passed at 0% | 1 | The coverage diff passes `--no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/` |
+| R3 counted a killed or unstartable test run (`exit: null`) as failing as intended | 1 | R3 needs a real non-zero exit |
+| Stop killed only the running command; later commands, commits or stashes could follow | 1 | A stopped command throws; every commit, stash and apply checks the run is still driven first |
+| Finding 4's fix compared the checked-out HEAD, so publish blocked after you switched branches | 1 | It compares `refs/heads/<branch>` |
+| The stop-during-spawn race narrowed but not closed (a blind write) | 1 | `saveRun` never overwrites a stored `stopped` run of the same id; the spawn check also reads the in-memory stop |
+| A gate committed on whatever branch was checked out | 1 | Each gate first checks HEAD is the run's branch, else blocks |
+| `</issue>` in an issue closed the untrusted block in the prompt | 2 | `fenced` writes `<\issue` / `<\/issue` |
+| Brace or bracket globs silently never matched | 2 | Refused at validation |
+| A blocked behaviour pass hid that green's work was in a stash | 2 | `blocked.next` names the stash and the `git stash apply` |
+| Windows absolute `argv0` was joined to the root; `parseLcov` had its own drive-letter regex | 3 | Both use `isAbsolutePath` |
+| Resume of an interrupted run didn't reset attempts; a dead branch in `resumeRun` | 3 | Resume resets the phase's attempts from blocked or interrupted. Agent names count the run's agents, so they never repeat; a retry is "this phase's gate failed last" |
+| G6 checks only that a behaviour-test path is in the red commit | 2 | Documented (README "Limits") |
+| Red on Codex in duet's read-only background mode ends at once | 3 | Documented: `codexSandbox: workspace-write`, under which duet waits |
+| No agent timeout; runs depend on the permission mode | 3 | Documented (README "Limits") |
+
+**Live recheck of round 1 (findings 3 and 8):** worktree `scratch/wt-c7b`, a second run on #16 with bd19cbe loaded. It reached ready in 13 min, each phase on its first attempt: red `8c78ea9`, green `aa948e9`, refactor `9920e4a`. Changed lines 100.00%, changed branches 100.00%, total 97.11% / 91.56%. `gatedHead` = `9920e4a`. The three agents' ids and names are in `issue-forge:agents:<root>`. Nothing pushed. Round 2 changes the spawn path only by an extra in-memory stop check.
+
+After round 2: validate is clean; 90 tests pass (61 logic, 29 UI and behaviour); `tsc` is clean; own logic coverage is 100.00% lines and 99.32% branches; the logic suite counts 61 under both the kit and `claude plugin test`.

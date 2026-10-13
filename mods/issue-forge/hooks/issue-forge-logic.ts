@@ -29,6 +29,23 @@ const DEFAULTS = {
 }
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
+
+/**
+ * A branch name safe to hand git as an argument: letters, digits, `.`, `_`, `-`, `/`; not starting
+ * with `-` (an option) or `+` (a forced refspec), no `..`, `//` or `@{`, no trailing `/`, `.` or `.lock`.
+ */
+export function isSafeBranch(name: string): boolean {
+  return (
+    /^[A-Za-z0-9._/-]+$/.test(name) &&
+    !/^[-+./]/.test(name) &&
+    !/\.\.|\/\/|@\{/.test(name) &&
+    !/[/.]$/.test(name) &&
+    !name.endsWith('.lock')
+  )
+}
+
+/** The glob syntax the design promises (§4.1): `*`, `**`, `?`. Braces, brackets and `!` are refused, not matched literally. */
+const isGlobs = (v: unknown): v is string[] => isStrings(v) && v.every(g => !/[{}[\]!]/.test(g))
 const isArgv = (v: unknown): v is string[] => isStrings(v) && v.length > 0 && v[0] !== ''
 
 /** `~` or `~/x` from `home`; anything else unchanged. */
@@ -63,10 +80,13 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
   need('testCommand', isArgv, 'a non-empty array of strings (argv)')
   need('coverageCommand', isArgv, 'a non-empty array of strings (argv)')
   need('lcovPath', v => typeof v === 'string' && v !== '', 'a non-empty string')
-  need('sourceGlobs', nonEmptyStrings, 'a non-empty array of strings')
-  need('testGlobs', nonEmptyStrings, 'a non-empty array of strings')
-  may('baseBranch', v => typeof v === 'string' && /^[^\s~^:?*[\\]+$/.test(v), 'a branch name')
-  for (const key of ['excludeGlobs', 'unmeasuredGlobs', 'behaviourTestGlobs', 'commitTrailers']) may(key, isStrings, 'an array of strings')
+  const nonEmptyGlobs = (v: unknown) => isGlobs(v) && v.length > 0
+  const GLOBS = 'globs using only * ** ? (no braces, brackets or !)'
+  need('sourceGlobs', nonEmptyGlobs, `a non-empty array of ${GLOBS}`)
+  need('testGlobs', nonEmptyGlobs, `a non-empty array of ${GLOBS}`)
+  may('baseBranch', v => typeof v === 'string' && isSafeBranch(v), 'a branch name (letters, digits, . _ - /; not starting with - or +)')
+  for (const key of ['excludeGlobs', 'unmeasuredGlobs', 'behaviourTestGlobs']) may(key, isGlobs, `an array of ${GLOBS}`)
+  may('commitTrailers', isStrings, 'an array of strings')
   may('checks', v => Array.isArray(v) && v.every(isArgv), 'an array of argv arrays')
   may('threshold', v => typeof v === 'number' && v >= 0 && v <= 100, 'a number from 0 to 100')
   may('regressionTolerance', v => typeof v === 'number' && v >= 0, 'a number ≥ 0')
@@ -132,11 +152,14 @@ export function profileProblems(p: Profile, facts: { isLcovIgnored: boolean | nu
   return problems
 }
 
-/** §2: the issue's first `Base branch: x` line, else the profile's. */
+/**
+ * §2: the issue's first `Base branch: x` line, else the profile's. The name reaches git, and anyone who
+ * can file an issue writes it, so a name `isSafeBranch` refuses is ignored (the profile's base stands).
+ */
 export function baseOf(p: Profile, issueBody: string): string {
   for (const line of issueBody.split(/\r?\n/)) {
     const m = line.match(/^Base branch: (\S+)$/)
-    if (m?.[1]) return m[1]
+    if (m?.[1]) return isSafeBranch(m[1]) ? m[1] : p.baseBranch
   }
   return p.baseBranch
 }
@@ -320,7 +343,7 @@ export function parseLcov(text: string, root: string): Record<string, LcovFile> 
     if (line.startsWith('SF:')) {
       finish()
       const sf = line.slice(3)
-      const isAbs = sf.startsWith('/') || /^[A-Za-z]:[\\/]/.test(sf)
+      const isAbs = isAbsolutePath(sf)
       const rel = isAbs ? relativeTo(root, sf) : normalizePath(sf)
       cur = rel === null || rel.startsWith('..') ? null : { path: rel, lines: {}, branches: [], lf: 0, lh: 0, brf: 0, brh: 0 }
       if (cur === null) cur = { path: '\0dropped', lines: {}, branches: [], lf: 0, lh: 0, brf: 0, brh: 0 }
@@ -467,8 +490,14 @@ export function gateR(p: Profile, f: GateRFacts): Gate {
     check('R2', f.staged.length > 0, f.staged.length > 0 ? `${f.staged.length} test files` : 'nothing staged: red wrote no tests'),
     check(
       'R3',
-      !f.tests.isTimedOut && f.tests.exit !== 0,
-      f.tests.isTimedOut ? `tests ${ended(f.tests, p.commandTimeoutMinutes)}` : f.tests.exit === 0 ? 'tests pass; the new tests must fail first' : `tests fail as intended (exit ${f.tests.exit ?? 'killed'})`,
+      !f.tests.isTimedOut && f.tests.exit !== null && f.tests.exit !== 0,
+      f.tests.isTimedOut
+        ? `tests ${ended(f.tests, p.commandTimeoutMinutes)}`
+        : f.tests.exit === null
+          ? "tests didn't run to the end (killed, or the command couldn't start)"
+          : f.tests.exit === 0
+            ? 'tests pass; the new tests must fail first'
+            : `tests fail as intended (exit ${f.tests.exit})`,
     ),
   ]
   return { gate: 'R', passed: checks.every(c => c.passed), checks }
@@ -647,6 +676,10 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
   if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt(run, run.step, ev.reason, ev.next) : run
   if (ev.type === 'resume') {
+    if (isWorking(run.step)) {
+      const phase = phaseOf(run.step)
+      return phase === 'red' || phase === 'green' || phase === 'refactor' ? { ...run, used: { ...run.used, [phase]: 0 } } : run
+    }
     if (run.step !== 'blocked' || !run.blocked) return run
     const at = run.blocked.at === 'publishing' ? 'ready' : run.blocked.at
     const phase = phaseOf(at)
@@ -682,7 +715,8 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
         return { ...gated, redCommit: ev.commit, redTestTail: ev.testTail, step: 'green', times: { ...end(gated, 'red', now), green: { startedAt: now } } }
       }
       if (canRetry(run, 'red')) return { ...gated, step: 'red' }
-      return blockedAt(gated, 'gateR', `gate R failed after ${run.used.red} attempts: ${firstFailure(ev.gate)}`, 'fix the tests by hand or clarify the issue')
+      const kept = run.greenStash ? `; green's work is in stash ${run.greenStash.sha.slice(0, 7)} "${run.greenStash.message}" (git stash apply ${run.greenStash.sha.slice(0, 7)})` : ''
+      return blockedAt(gated, 'gateR', `gate R failed after ${run.used.red} attempts: ${firstFailure(ev.gate)}`, `fix the tests by hand or clarify the issue${kept}`)
     }
     case 'gateG':
     case 'gateF': {
@@ -758,6 +792,11 @@ function profileLines(p: Profile): string[] {
 }
 
 /** The task each spawn gets: the rules (again, for agent types that aren't the mod's), the issue, the profile, and retry details. */
+/** Issue text with any `<issue` / `</issue` written as `<\issue`, so it can't end or open the block it sits in. */
+export function fenced(text: string): string {
+  return text.replace(/<(\/?)(issue)/gi, (_m, slash: string, word: string) => `<\\${slash}${word}`)
+}
+
 export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): string {
   const p = run.profile
   const out = [
@@ -769,9 +808,9 @@ export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): st
     ...(p ? profileLines(p) : []),
     '',
     `<issue number="${run.issue}" url="${run.url}">`,
-    `Title: ${run.title}`,
+    `Title: ${fenced(run.title)}`,
     '',
-    run.body,
+    fenced(run.body),
     '</issue>',
   ]
   if (extra.behaviourFor && extra.behaviourFor.length > 0) {
@@ -830,7 +869,8 @@ export function stashApplyArgv(stash: StashRef): string[] {
 
 /** The agent name a spawn of the mod's own type carries (duet leaves named calls on Claude). */
 export function agentName(run: Run, phase: Phase): string {
-  return `issue-forge-${run.issue}-${phase}-${run.used[phase] + 1}`
+  // Counted from the agents the run has started, not its attempts (a resume resets those), so a name never repeats.
+  return `issue-forge-${run.issue}-${phase}-${run.agents.filter(a => a.phase === phase).length + 1}`
 }
 
 /** Whether a prompt is the hand-back of one of these agents (`<agent-message from="…">`). */

@@ -25,6 +25,7 @@ import {
   gateR,
   hasSourceRecord,
   hasStash,
+  isAbsolutePath,
   isActive,
   isOwnHandback,
   isWorking,
@@ -131,6 +132,9 @@ async function loadRun($: EngineInterface, root: string): Promise<Run | null> {
 }
 
 async function saveRun($: EngineInterface, run: Run): Promise<Run> {
+  // A stop wins every race: a write that would bring a stopped run back is dropped.
+  const stored = run.step === 'stopped' ? null : await loadRun($, run.root)
+  if (stored && stored.id === run.id && stored.step === 'stopped') return stored
   await $.store.set(storeKey(run.root), run)
   await update($, runAtom, () => run)
   for (const ref of refsOf(run)) knownRefs.add(ref)
@@ -171,20 +175,45 @@ async function runLong($: EngineInterface, argv: string[], root: string, minutes
     end()
   }
   try {
-    for await (const piece of stream) {
-      hasStarted = true
-      text = (text + piece.text).slice(-200_000)
+    let result: CommandResult
+    try {
+      for await (const piece of stream) {
+        hasStarted = true
+        text = (text + piece.text).slice(-200_000)
+      }
+      if (isTimedOut || isStopped) result = { exit: null, isTimedOut, tail: tailLines(text) }
+      else result = { exit: (await stream.result).code, isTimedOut: false, tail: tailLines(text) }
+    } catch (err) {
+      result = hasStarted || isTimedOut || isStopped ? { exit: null, isTimedOut, tail: tailLines(text) } : await runShort($, argv, root, minutes, err)
     }
-    if (isTimedOut || isStopped) return { exit: null, isTimedOut, tail: tailLines(text) }
-    const r = await stream.result
-    return { exit: r.code, isTimedOut: false, tail: tailLines(text) }
-  } catch (err) {
-    if (hasStarted || isTimedOut || isStopped) return { exit: null, isTimedOut, tail: tailLines(text) }
-    return runShort($, argv, root, minutes, err)
+    if (isStopped) throw new Stopped()
+    return result
   } finally {
     timer.cancel()
     stopCommand = null
   }
+}
+
+/** Thrown when /issue-forge stop (or a takeover) ends the run mid-step: nothing after it may touch git. */
+class Stopped extends Error {
+  constructor() {
+    super('stopped')
+  }
+}
+
+/** Whether this module is still driving `run`: false once it was stopped or another drive took it over. */
+function isDriving(run: Run): boolean {
+  return driving !== null && driving.runId === run.id && !driving.isStopped
+}
+
+function stillDriving(run: Run): void {
+  if (!isDriving(run)) throw new Stopped()
+}
+
+/** A gate commits only on the run's own branch: an agent may have switched branches. */
+async function offBranch($: EngineInterface, run: Run): Promise<Blocked | null> {
+  const head = (await gitOut($, run.root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  return head === run.branch ? null : block(`HEAD is on ${head}, not ${run.branch}`, `git switch ${run.branch}`)
 }
 
 async function runShort($: EngineInterface, argv: string[], root: string, minutes: number, why: unknown): Promise<CommandResult> {
@@ -207,7 +236,9 @@ async function readLcov($: EngineInterface, path: string, since: number): Promis
   }
 }
 
-async function commitAll($: EngineInterface, root: string, message: string): Promise<string | undefined> {
+async function commitAll($: EngineInterface, run: Run, message: string): Promise<string | undefined> {
+  stillDriving(run)
+  const root = run.root
   const staged = await git($, root, ['diff', '--cached', '--quiet'])
   if (staged.exitCode === 0) return undefined
   const r = await git($, root, ['commit', '-q', '-F', '-'], message)
@@ -216,7 +247,9 @@ async function commitAll($: EngineInterface, root: string, message: string): Pro
 }
 
 /** Stashes the tree under a unique message and records the entry's SHA (the list is shared by every worktree). */
-async function stashAll($: EngineInterface, root: string, message: string): Promise<StashRef | undefined> {
+async function stashAll($: EngineInterface, run: Run, message: string): Promise<StashRef | undefined> {
+  stillDriving(run)
+  const root = run.root
   await gitOut($, root, ['stash', 'push', '--include-untracked', '-m', message])
   const sha = findStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), message)
   return sha ? { sha, message } : undefined
@@ -250,7 +283,7 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   for (const c of outside.commands) {
     const found =
       c.kind === 'path'
-        ? await $.fs.exists(c.argv0.startsWith('/') ? c.argv0 : `${root}/${c.argv0}`)
+        ? await $.fs.exists(isAbsolutePath(c.argv0) ? c.argv0 : `${root}/${c.argv0}`)
         : (await $.process.run(['sh', '-c', 'command -v "$1"', '_', c.argv0], { cwd: root, timeoutMs: GIT_TIMEOUT })).exitCode === 0
     if (!found) missing.push(c.argv0)
   }
@@ -320,7 +353,8 @@ function waitForAnswer(agentId: string): Promise<string> {
 /** A phase: spawn its agent (named, so duet leaves it on Claude) and wait for its turn.complete. */
 async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Promise<RunEvent | null> {
   const last = run.lastGate
-  const isRetry = !!last && !last.passed && run.used[which] > 0
+  // A retry is this phase's own gate having failed last (an attempt count resets on resume; the failure stays relevant).
+  const isRetry = !!last && !last.passed && last.gate === (which === 'red' ? 'R' : which === 'green' ? 'G' : 'F')
   const redTestPaths = which === 'green' && run.redCommit ? splitZ(await gitOut($, run.root, ['diff', '--name-only', '-z', run.mergeBase, run.redCommit])) : undefined
   const prompt = phasePrompt(which, run, {
     failures: isRetry && last ? failuresOf(last) : undefined,
@@ -342,7 +376,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   void answer?.catch(() => undefined)
   // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
   const latest = await loadRun($, run.root)
-  if (!latest || latest.id !== run.id || latest.step !== run.step) {
+  if (!latest || latest.id !== run.id || latest.step !== run.step || !isDriving(run)) {
     if (agentId) {
       delete waiting[agentId]
       await rememberAgents($, run.root, name ? [agentId, name] : [agentId])
@@ -372,6 +406,9 @@ async function stagedSince($: EngineInterface, root: string, ref: string): Promi
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
 async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
   const root = run.root
+  const away = await offBranch($, run)
+  if (away) return away
+  stillDriving(run)
   await setActivity($, 'staging')
   await gitOut($, root, ['add', '-A'])
   // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
@@ -381,9 +418,10 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   const gate = gateR(p, { staged, tests })
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
-  const commit = await commitAll($, root, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []))
+  const commit = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []))
   if (isBehaviour && run.greenStash) {
     const stash = run.greenStash
+    stillDriving(run)
     if (!hasStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), stash.sha)) return block(`stash ${stash.sha.slice(0, 7)} is gone`, "restore green's work by hand")
     const applied = await git($, root, stashApplyArgv(stash).slice(1))
     if (applied.exitCode !== 0) return block(`could not restore green's work; it is in stash ${stash.sha.slice(0, 7)} "${stash.message}"`, 'apply it by hand')
@@ -395,6 +433,9 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
 async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 'F'): Promise<RunEvent> {
   const root = run.root
   const redCommit = run.redCommit ?? run.mergeBase
+  const away = await offBranch($, run)
+  if (away) return away
+  stillDriving(run)
   await setActivity($, 'staging')
   await gitOut($, root, ['add', '-A'])
   const staged = await stagedSince($, root, run.mergeBase)
@@ -406,7 +447,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   const since = await $.clock.now()
   const coverage = await runLong($, p.coverageCommand, root, p.commandTimeoutMinutes)
   const lcov = coverage.exit === 0 ? await readLcov($, p.lcovPath, since) : null
-  const diff = await gitOut($, root, ['diff', '-U0', '--cached', run.mergeBase])
+  // Fixed prefixes and no external diff: diff.mnemonicPrefix or diff.noprefix would hide every changed line.
+  const diff = await gitOut($, root, ['diff', '-U0', '--cached', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', run.mergeBase])
   const checks: { argv: string[]; result: CommandResult }[] = []
   for (const [i, argv] of p.checks.entries()) {
     await setActivity($, `checks ${i + 1}/${p.checks.length}`)
@@ -414,16 +456,16 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   }
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
   if (gate.passed) {
-    const commit = await commitAll($, root, commitMessage(which === 'G' ? 'green' : 'refactor', run))
+    const commit = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run))
     return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: await headOf($, root) } : {}) }
   }
   if (which === 'G' && gate.isBehaviourOnly && !run.isBehaviourDone) {
     await setActivity($, "stashing green's work")
-    return { type: 'gated', gate, stash: await stashAll($, root, stashMessage('green', run)), testTail: tests.tail }
+    return { type: 'gated', gate, stash: await stashAll($, run, stashMessage('green', run)), testTail: tests.tail }
   }
   if (which === 'F' && !canRetry(run, 'refactor')) {
     await setActivity($, 'stashing the rejected refactor')
-    const stash = await stashAll($, root, stashMessage('refactor', run))
+    const stash = await stashAll($, run, stashMessage('refactor', run))
     return { type: 'gated', gate, stash, testTail: tests.tail, head: await headOf($, root) }
   }
   return { type: 'gated', gate, testTail: tests.tail }
@@ -436,8 +478,8 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   const body = `${dir}/pr.md`
   // Only what gate F checked leaves the machine: HEAD must still be that commit, and that commit is what's pushed.
   if (run.gatedHead) {
-    const head = await headOf($, run.root)
-    if (head !== run.gatedHead) return block(`${run.branch} moved after gate F (HEAD ${head.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
+    const tip = (await gitOut($, run.root, ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
+    if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
   await $.fs.write(body, prBody(run))
   await setActivity($, `git push origin ${run.branch}`)
@@ -594,8 +636,7 @@ async function resumeRun($: EngineInterface): Promise<string> {
   const run = root ? await loadRun($, root) : null
   if (!root || !run || !isActive(run)) return 'no run to resume here.'
   if (driving?.runId === run.id) return `#${run.issue} is running already.`
-  if (run.step !== 'blocked' && !isWorking(run.step) && run.step !== 'ready') return statusText(run, false, await $.clock.now())
-  const back = run.step === 'blocked' ? advance(run, { type: 'resume' }, await $.clock.now()) : run
+  const back = advance(run, { type: 'resume' }, await $.clock.now())
   if (back.branch) {
     const issue = await issueCheck($, back)
     const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
