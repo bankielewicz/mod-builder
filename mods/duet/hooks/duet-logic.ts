@@ -507,8 +507,30 @@ export function reviewArgv(target: ReviewTarget, model: string): string[] {
   return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...which, ...(model ? ['-m', model] : [])]
 }
 
-/** Claude's credentials blanked in Codex's environment (env is laid over the host's). */
-export const BLANKED_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_SESSION_ACCESS_TOKEN'] as const
+/**
+ * Claude Code's credential and provider variables, blanked in Codex's
+ * environment (env is laid over the host's, which can't be listed, so the
+ * names are fixed): direct API keys and tokens, and the Bedrock, Vertex and
+ * Foundry settings.
+ */
+export const BLANKED_ENV = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'ANTHROPIC_BEDROCK_BASE_URL',
+  'ANTHROPIC_VERTEX_PROJECT_ID',
+  'ANTHROPIC_VERTEX_BASE_URL',
+  'ANTHROPIC_FOUNDRY_API_KEY',
+  'ANTHROPIC_FOUNDRY_BASE_URL',
+  'ANTHROPIC_FOUNDRY_RESOURCE',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
 }
@@ -725,12 +747,27 @@ export function lostOnReload(tasks: Task[], mine: ReadonlySet<string>, now: numb
   return { tasks: next, lost }
 }
 
-/** Codex agent runs still going, which the concurrency limit counts. */
 /** Codex runs in flight of any kind (routed agents and reviews): what the concurrency limit admits against. */
 export function codexRunning(tasks: Task[]): number {
   return tasks.filter(t => t.provider === 'codex' && t.status === 'running').length
 }
 
+/** Why a Codex run was refused at the limit. */
+export function limitText(running: number, max: number): string {
+  return `limit: ${running} Codex run${running === 1 ? '' : 's'} already running (maxConcurrent ${max})`
+}
+
+/** The fallback run's ceiling: the engine caps a one-shot process at ten minutes. */
+export const FALLBACK_MAX_MS = 600_000
+
+/** Why a one-shot fallback run failed: a timeout when it ran to its ceiling, else a start failure. */
+export function fallbackFailure(message: string, elapsedMs: number, capMs: number): string {
+  if (/ENOENT|not found|No such file/i.test(message)) return 'codex not found on PATH (install the Codex CLI, then `codex login`)'
+  if (/time(d)? ?out/i.test(message) || elapsedMs >= capMs - 1000) return `timed out after ${Math.round(capMs / 60_000)}m (the fallback runs at most ${Math.round(FALLBACK_MAX_MS / 60_000)} minutes)`
+  return `codex could not start: ${message.split('\n')[0]}`
+}
+
+/** Routed Codex agent runs still going (what the status line counts; reviews excluded). */
 export function liveCount(tasks: Task[]): number {
   return tasks.filter(t => t.provider === 'codex' && t.kind === 'agent' && t.status === 'running').length
 }

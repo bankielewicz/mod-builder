@@ -18,7 +18,7 @@
   review's fixes, never chains review → fix → review, and never routes a review to the provider that implemented.
 - "limits on retries, delegation depth and concurrency": 0 automatic retries; only main-loop Agent
   calls are routed (depth 1); `maxConcurrent` Codex runs at once, beyond which the call is refused.
-- "don't copy Claude credentials into Codex": the Codex child runs with `ANTHROPIC_*` and `CLAUDE_CODE_*` credential variables blanked; Codex uses its own saved sign-in.
+- "don't copy Claude credentials into Codex": the Codex child runs with Claude Code's credential and provider variables blanked (a fixed list, `BLANKED_ENV`: the host environment can't be listed); Codex uses its own saved sign-in.
 - "an explicit policy for which repository content may be sent": before the first handoff of a
   session, the mod asks once, naming the folder Codex will read; "no" refuses every routed call this session.
 - "Never quietly" (house): a Codex failure is a visible refusal with the reason, never a silent fallback to Claude.
@@ -361,3 +361,21 @@ pane's keys; `/reload-plugins` picks up edits.
 - **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, tests; the per-session folders above.
 - **Tests:** an empty tools list is read-only; reviews count against the limit; session folders are filesystem-safe; the background out file is per session.
 - **Done means:** all tests pass, validate is clean.
+
+## Change 0.2.2 (2026-10-12)
+
+> Fixes from the second review of PR #1.
+
+- **What changes:**
+  - `/duet review` works again. Codex rejects a custom prompt alongside `--uncommitted`, `--base` or `--commit`, so reviews now run on Codex's own review instructions, and the pane shows the review's first line.
+  - An agent with no definition duet can find runs read-only, unless it's `general-purpose`. `disallowedTools` removes edit tools.
+  - Changed-file evidence keeps each path whole (porcelain output is no longer trimmed at the start), and compares each dirty file's content hash, so a file edited again counts as changed.
+  - Refused rows take their id inside the same update that adds them, so a refusal can't overwrite a live row.
+  - The limit message counts reviews too.
+  - A fallback run cut off at its 10-minute ceiling reports a timeout, not "could not start".
+  - The pane's selection stops at the last row it draws.
+  - The blanked credential list now covers Bedrock, Vertex, Foundry and `AWS_BEARER_TOKEN_BEDROCK`.
+- **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, tests, README.
+- **Tests:** review argv ends with the target; unresolved agents are read-only; `disallowedTools`; snapshot comparison; limit text; fallback failure; blanked names.
+- **Done means:** all tests pass, validate is clean.
+

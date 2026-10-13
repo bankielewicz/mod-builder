@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
-  isRouted, codexRunning, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isRouted, codexRunning, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -327,3 +327,24 @@ describe('review fixes', () => {
     expect(sessionFolderOf('')).toBe('unknown')
   })
 })
+
+describe('second review round', () => {
+  test('the limit message counts every Codex run, reviews included', () => {
+    expect(limitText(1, 1)).toBe('limit: 1 Codex run already running (maxConcurrent 1)')
+    expect(limitText(2, 2)).toBe('limit: 2 Codex runs already running (maxConcurrent 2)')
+  })
+
+  test('a fallback that ran to its ceiling is a timeout, not a start failure', () => {
+    expect(fallbackFailure('process killed', 600_000, 600_000)).toBe('timed out after 10m (the fallback runs at most 10 minutes)')
+    expect(fallbackFailure('Timed out after 600000ms', 5, 600_000)).toStartWith('timed out after 10m')
+    expect(fallbackFailure('spawn codex ENOENT', 5, 600_000)).toStartWith('codex not found on PATH')
+    expect(fallbackFailure('permission denied\nmore', 5, 600_000)).toBe('codex could not start: permission denied')
+  })
+
+  test("Claude Code's provider credentials are blanked for Codex", () => {
+    for (const name of ['ANTHROPIC_API_KEY', 'AWS_BEARER_TOKEN_BEDROCK', 'ANTHROPIC_FOUNDRY_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_VERTEX']) {
+      expect(BLANKED_ENV).toContain(name)
+    }
+  })
+})
+

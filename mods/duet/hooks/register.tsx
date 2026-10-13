@@ -7,7 +7,7 @@ import {
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, hashablePaths, sessionFolderOf, snapshotOf,
+  codexRunning, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -91,6 +91,17 @@ async function tick($: EngineInterface): Promise<void> {
 async function putTask($: EngineInterface, task: Task): Promise<void> {
   await update($, tasks, list => [task, ...list.filter(t => t.id !== task.id)])
   await refreshStatus($)
+}
+
+/** Adds a refused row, its id taken inside the same update, so it can never land on a live row's id. */
+async function addRefused($: EngineInterface, make: (id: string) => Task): Promise<Task> {
+  let added: Task | null = null
+  await update($, tasks, list => {
+    added = make(idAfter(list))
+    return [added, ...list]
+  })
+  await refreshStatus($)
+  return added!
 }
 
 async function patchTask($: EngineInterface, id: string, patch: Partial<Task>): Promise<void> {
@@ -252,13 +263,14 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
   } catch (err) {
     if (started) return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
     // spawn could not start: try a one-shot run (also the path tests exercise)
+    const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
+    const fallbackAt = Date.now()
     try {
-      const r = await $.process.run(argv, { env, ...(input !== undefined ? { stdin: input } : {}), timeoutMs: Math.min(options.timeoutMs, 600_000) })
+      const r = await $.process.run(argv, { env, ...(input !== undefined ? { stdin: input } : {}), timeoutMs: cap })
       const folded = foldAll(r.stdout)
       return { run: folded, failure: failureOf(folded, r.exitCode, r.stderr) }
     } catch (err2) {
-      const msg = String((err2 as Error)?.message ?? err2)
-      return { run, failure: /ENOENT|not found|No such file/i.test(msg) ? 'codex not found on PATH (install the Codex CLI, then `codex login`)' : `codex could not start: ${msg.split('\n')[0]}` }
+      return { run, failure: fallbackFailure(String((err2 as Error)?.message ?? err2), Date.now() - fallbackAt, cap) }
     }
   } finally {
     timer.cancel()
@@ -311,8 +323,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   const rowOf = (id: string): Task => ({ id, provider: 'codex', kind: 'agent', subagentType: type, model: options.model, status: 'running', startedAt, endedAt: null, tokens: 0, description: e.description, detail: '', envelope: null })
 
   const refuse = async (why: string) => {
-    const t = { ...rowOf(await nextId($)), status: 'refused' as const, endedAt: Date.now(), detail: why }
-    await putTask($, t)
+    await addRefused($, id => ({ ...rowOf(id), status: 'refused', endedAt: Date.now(), detail: why }))
     return { deny: `duet: ${why}; the ${type} subagent did not run.` }
   }
 
@@ -320,8 +331,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   if (blocked) return refuse(blocked)
   const task = await admit($, rowOf)
   if (!task) {
-    const n = liveCount(await read($, tasks))
-    return refuse(`limit: ${n} Codex run${n === 1 ? '' : 's'} already running (maxConcurrent ${options.maxConcurrent})`)
+    return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
   }
 
   const id = task.id
@@ -370,22 +380,21 @@ async function measureClaude($: EngineInterface, e: AgentCall, result: unknown, 
 // ── Review ───────────────────────────────────────────────────────────────
 
 async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
-  const id = await nextId($)
+  const id = ''
   const label = target.kind === 'uncommitted' ? '--uncommitted' : `--${target.kind} ${target.ref}`
   const task: Task = { id, provider: 'codex', kind: 'review', subagentType: label, model: options.model, status: 'running', startedAt: Date.now(), endedAt: null, tokens: 0, description: `review ${label}`, detail: '', envelope: null }
   const cwd = await $.session.cwd()
   const blocked = await ensureConsent($, cwd)
   if (blocked) {
-    await putTask($, { ...task, status: 'refused', endedAt: Date.now(), detail: blocked })
-    $.ui.toast(`${id} review refused: ${blocked}`.slice(0, 80))
+    const row = await addRefused($, newId => ({ ...task, id: newId, status: 'refused', endedAt: Date.now(), detail: blocked }))
+    $.ui.toast(`${row.id} review refused: ${blocked}`.slice(0, 80))
     return
   }
   const admitted = await admit($, newId => ({ ...task, id: newId }))
   if (!admitted) {
-    const n = codexRunning(await read($, tasks))
-    const why = `limit: ${n} Codex run${n === 1 ? '' : 's'} already running (maxConcurrent ${options.maxConcurrent})`
-    await putTask($, { ...task, status: 'refused', endedAt: Date.now(), detail: why })
-    $.ui.toast(`${id} review refused: ${why}`.slice(0, 80))
+    const why = limitText(codexRunning(await read($, tasks)), options.maxConcurrent)
+    const row = await addRefused($, newId => ({ ...task, id: newId, status: 'refused', endedAt: Date.now(), detail: why }))
+    $.ui.toast(`${row.id} review refused: ${why}`.slice(0, 80))
     return
   }
   Object.assign(task, { id: admitted.id })
@@ -423,9 +432,12 @@ async function startDemo($: EngineInterface): Promise<void> {
   await openPane($)
 }
 
+// How many task rows the pane last drew; selection never goes past them.
+let drawnRows = Number.POSITIVE_INFINITY
+
 async function move($: EngineInterface, by: number): Promise<void> {
-  const count = (await read($, isDemo)) ? demoTasks(0).length : (await read($, tasks)).length
-  await update($, selected, at => moved(at, by, count))
+  const listed = (await read($, isDemo)) ? demoTasks(0).length : (await read($, tasks)).filter(t => t.provider === 'codex').length
+  await update($, selected, at => moved(at, by, Math.min(listed, drawnRows)))
 }
 
 /** Writes one option through the `/config` row's writer: '' once written, else why not. */
@@ -689,6 +701,7 @@ export const register: Register = (on, raw) => {
     const width = Math.max(20, e.props.bodyColumns - 2)
     const layout = layoutOf(width)
     const room = rowsThatFit(e.props.scroll.bodyRows)
+    drawnRows = room
     const focused = e.props.isFocused
     const head = layout === 'compact' ? 'DUET' : 'D U E T'
     const counts = list.length ? countsOf(list) : ''
