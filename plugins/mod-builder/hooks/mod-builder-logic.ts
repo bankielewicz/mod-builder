@@ -278,33 +278,33 @@ export function isReadmeDone(readme: string): boolean {
   return hasReachesHeading(readme) && !/<!--/.test(readme)
 }
 
-/** The version a marketplace.json lists the mod at, or null when unlisted or unversioned. */
-export function listedVersionOf(marketplace: string, name: string): string | null {
+type MarketplaceEntry = { name?: unknown; source?: unknown; version?: unknown }
+
+/** The marketplace entry for a mod: by name, or by a `…/<name>` source. Null when unlisted or unreadable. */
+export function findEntry(marketplace: string, name: string): MarketplaceEntry | null {
   try {
-    const parsed = JSON.parse(marketplace) as { plugins?: { name?: unknown; source?: unknown; version?: unknown }[] }
-    const entry = (parsed.plugins ?? []).find(
-      plugin =>
-        plugin.name === name ||
-        (typeof plugin.source === 'string' && plugin.source.replace(/\/+$/, '').endsWith(`/${name}`)),
+    const parsed = JSON.parse(marketplace) as { plugins?: MarketplaceEntry[] }
+    return (
+      (parsed.plugins ?? []).find(
+        plugin =>
+          plugin.name === name ||
+          (typeof plugin.source === 'string' && plugin.source.replace(/\/+$/, '').endsWith(`/${name}`)),
+      ) ?? null
     )
-    return typeof entry?.version === 'string' ? entry.version : null
   } catch {
     return null
   }
 }
 
+/** The version a marketplace.json lists the mod at, or null when unlisted or unversioned. */
+export function listedVersionOf(marketplace: string, name: string): string | null {
+  const version = findEntry(marketplace, name)?.version
+  return typeof version === 'string' ? version : null
+}
+
 /** Whether a marketplace.json lists the mod by name or by a `…/<name>` source. */
 export function isListedIn(marketplace: string, name: string): boolean {
-  try {
-    const parsed = JSON.parse(marketplace) as { plugins?: { name?: unknown; source?: unknown }[] }
-    return (parsed.plugins ?? []).some(
-      plugin =>
-        plugin.name === name ||
-        (typeof plugin.source === 'string' && plugin.source.replace(/\/+$/, '').endsWith(`/${name}`)),
-    )
-  } catch {
-    return false
-  }
+  return findEntry(marketplace, name) !== null
 }
 
 /** Whether a hooks/ file name is a module other than the register entry. */

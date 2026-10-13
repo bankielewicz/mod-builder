@@ -268,3 +268,19 @@ eight are green.
 
 Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod with `/mod-builder:build <idea>`.
 `/reload-plugins` picks up changes.
+
+## Change 0.2.0 (2026-10-12)
+
+> Everything since 0.1.0: the edit skill, Mod Lab's new behaviour, and fixes from both reviews of PR #1.
+
+- **New:** `/mod-builder:edit`; build generations for edits; `autoRerun`; the selection follows the active build; the numbered `MODS 1–8` header and numbered track; rows follow streamed test progress; a keyboard hint line.
+- **Fixes:**
+  - `scan()` waits for a scan in progress, so an edit's start is never missed.
+  - A Validate that fails on current code blocks a stale Test instead of re-running every turn.
+  - A run that can't start shows as failed, with Fix.
+  - During an edit, Share needs a version different from the one the edit started from.
+  - Results carry a signature of every code file, so a delete or rename goes stale.
+  - A stale Test re-runs even when Validate was never run.
+  - Marketplace matching is shared (`findEntry`).
+- **Tests:** 51 (logic and UI).
+
