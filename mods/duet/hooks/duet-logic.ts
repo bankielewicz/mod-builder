@@ -608,30 +608,77 @@ export function reviewArgv(target: ReviewTarget, model: string): string[] {
 
 /**
  * Claude Code's credential and provider variables, blanked in Codex's
- * environment (env is laid over the host's, which can't be listed, so the
- * names are fixed): direct API keys and tokens, and the Bedrock, Vertex and
- * Foundry settings.
+ * environment. env is laid over the host's, which can't be listed, so the
+ * names are fixed (SPEC, Change 0.2.5). Blanking sets '' and can't unset, and
+ * '' in a path or profile name changes what a tool does (`CLAUDE_CONFIG_DIR`
+ * becomes an empty config dir), so only secrets and provider switches go here,
+ * never a path, directory or profile name. The one exception is the messaging
+ * socket, where the empty path is the point: Codex gets no inbox to post to. Never add what Codex itself needs:
+ * `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
  */
 export const BLANKED_ENV = [
+  // Anthropic API, and Claude Code's own sign-in state
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_CUSTOM_HEADERS',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+  'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+  'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  // A path, blanked on purpose: on macOS and Linux the token is optional, and Codex is a child Claude Code trusts
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  // Workload Identity Federation: the identity provider's JWT itself
+  'ANTHROPIC_IDENTITY_TOKEN',
+  // Bedrock, and Bedrock Mantle
+  'CLAUDE_CODE_USE_BEDROCK',
   'ANTHROPIC_BEDROCK_BASE_URL',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  'CLAUDE_CODE_USE_MANTLE',
+  'ANTHROPIC_BEDROCK_MANTLE_BASE_URL',
+  // Claude Platform on AWS
+  'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+  'ANTHROPIC_AWS_API_KEY',
+  'ANTHROPIC_AWS_BASE_URL',
+  'ANTHROPIC_AWS_WORKSPACE_ID',
+  // AWS credentials, and the container credential provider's token (ECS, EKS Pod Identity)
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_CONTAINER_AUTHORIZATION_TOKEN',
+  // Vertex
+  'CLAUDE_CODE_USE_VERTEX',
   'ANTHROPIC_VERTEX_PROJECT_ID',
   'ANTHROPIC_VERTEX_BASE_URL',
+  // Foundry
+  'CLAUDE_CODE_USE_FOUNDRY',
   'ANTHROPIC_FOUNDRY_API_KEY',
+  'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
   'ANTHROPIC_FOUNDRY_BASE_URL',
   'ANTHROPIC_FOUNDRY_RESOURCE',
-  'AWS_BEARER_TOKEN_BEDROCK',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
-  'CLAUDE_CODE_USE_BEDROCK',
-  'CLAUDE_CODE_USE_VERTEX',
-  'CLAUDE_CODE_USE_FOUNDRY',
+  // Foundry's Entra path: the Azure SDK's default credential chain (names from the Azure SDK docs, not Claude's)
+  'AZURE_CLIENT_ID',
+  'AZURE_TENANT_ID',
+  'AZURE_CLIENT_SECRET',
+  'AZURE_CLIENT_CERTIFICATE_PASSWORD',
+  'AZURE_PASSWORD',
+  // Azure managed identity (App Service, Functions): the token endpoint's secret header
+  'IDENTITY_HEADER',
 ] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
+}
+
+export type CodexLaunch = { argv: string[]; env: Record<string, string>; input?: string }
+
+/**
+ * How Codex starts: argv, the blanked env, and any stdin. `$.process.spawn`
+ * takes it whole, and the `$.process.run` fallback takes its parts, so the
+ * env is decided here once; tests can't reach spawn itself (it can't be stubbed).
+ */
+export function codexLaunch(argv: string[], input: string | undefined): CodexLaunch {
+  return { argv, env: childEnv(), ...(input !== undefined ? { input } : {}) }
 }
 
 // ── Codex JSONL ──────────────────────────────────────────────────────────

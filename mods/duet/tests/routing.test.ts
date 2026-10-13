@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
+import { BLANKED, PASSED_THROUGH } from './env-names'
 
 const OK_JSONL = [
   '{"type":"thread.started","thread_id":"t1"}',
@@ -81,6 +82,15 @@ describe('routing', () => {
     expect(seen.stdin[0]).toContain('List callers of parseConfig.')
     expect(seen.env[0]!.ANTHROPIC_API_KEY).toBe('')
     expect(seen.files['/home/u/.claude/duet-data/runs.jsonl']).toContain('"provider":"codex"')
+  })
+
+  test("a routed call blanks cloud-provider credentials in Codex's env and leaves what Codex needs", { options: { codexAgents: 'general-purpose', codexRunMode: 'wait' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await $.tool.call(call() as never)
+    const env = seen.env[0]!
+    for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 
   test('an unrouted type reaches Claude untouched and is measured', { options: { codexAgents: 'general-purpose' } }, async ($, on) => {
@@ -292,5 +302,16 @@ describe('review admission', () => {
     await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv).toEqual([])
+  })
+
+  test("a review blanks cloud-provider credentials in Codex's env and leaves what Codex needs", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+    const env = seen.env[0]!
+    for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 })

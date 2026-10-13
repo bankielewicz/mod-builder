@@ -2,12 +2,13 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   modelWarning, parseModelCatalog,
-  agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
+  agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
   isRouted, codexRunning, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
 } from '../hooks/duet-logic'
+import { BLANKED, PASSED_THROUGH } from './env-names'
 
 // Captured from codex-cli 0.162.1: `codex exec --json -s read-only "Reply with the single word ok."`
 const REAL_JSONL = [
@@ -96,6 +97,19 @@ describe('codex process', () => {
   test('Claude credentials are blanked in Codex env', () => {
     const env = childEnv()
     for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']) expect(env[k]).toBe('')
+  })
+
+  test('cloud-provider credentials are blanked in Codex env; what must reach Codex is left alone', () => {
+    const env = childEnv()
+    for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
+  })
+
+  test("codexLaunch gives Codex's spawn the blanked env, and stdin only when there is input", () => {
+    const launch = codexLaunch(['codex', 'exec', '--json'], 'the task')
+    expect(launch).toEqual({ argv: ['codex', 'exec', '--json'], env: childEnv(), input: 'the task' })
+    for (const k of BLANKED) expect([k, launch.env[k]]).toEqual([k, ''])
+    expect(codexLaunch(['codex', 'exec', 'review'], undefined)).toEqual({ argv: ['codex', 'exec', 'review'], env: childEnv() })
   })
 
   test('folds the real 0.162.1 JSONL; a mid-run error item is a warning', () => {
@@ -345,6 +359,13 @@ describe('second review round', () => {
     for (const name of ['ANTHROPIC_API_KEY', 'AWS_BEARER_TOKEN_BEDROCK', 'ANTHROPIC_FOUNDRY_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_VERTEX']) {
       expect(BLANKED_ENV).toContain(name)
     }
+  })
+
+  test('BLANKED_ENV is exactly the literal list, once each, and never names what must reach Codex', () => {
+    const names: readonly string[] = BLANKED_ENV
+    expect([...names].sort()).toEqual([...BLANKED].sort())
+    expect(new Set(names).size).toBe(names.length)
+    for (const name of PASSED_THROUGH) expect([name, names.includes(name)]).toEqual([name, false])
   })
 })
 

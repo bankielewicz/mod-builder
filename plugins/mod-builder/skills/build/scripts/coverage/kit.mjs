@@ -50,6 +50,7 @@ function make(actual, negate) {
     toHaveLength: e => check(actual.length === e, 'toHaveLength', e),
     toBeLessThanOrEqual: e => check(actual <= e, 'toBeLessThanOrEqual', e),
     toBeGreaterThan: e => check(actual > e, 'toBeGreaterThan', e),
+    toBeGreaterThanOrEqual: e => check(actual >= e, 'toBeGreaterThanOrEqual', e),
   }
 }
 export function expect(actual) {
