@@ -378,11 +378,37 @@ export type AgentDef = {
 
 const LIST_KEYS = ['tools', 'disallowedTools']
 
-/** A frontmatter value without its ` # comment`. */
-const uncommented = (value: string): string => value.replace(/(^|\s)#.*$/, '').trim()
+/**
+ * A frontmatter value without its ` # comment`. As in YAML, a `#` stays inside a quoted
+ * value or a quoted `[a, b]` item; in an unquoted value, quotes are just characters.
+ */
+function uncommented(value: string): string {
+  const v = value.trim()
+  const isFlow = v.startsWith('[')
+  let quote = ''
+  let isItemStart = true
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i]!
+    if (quote) {
+      if (quote === '"' && ch === '\\') i++
+      else if (ch === quote) quote = ''
+      continue
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(v[i - 1]!))) return v.slice(0, i).trim()
+    if ((ch === '"' || ch === "'") && isItemStart) quote = ch
+    if (!/\s/.test(ch)) isItemStart = isFlow && (ch === '[' || ch === ',')
+  }
+  return v
+}
 
-/** A list value duet reads as written: no block scalar, mapping, anchor, alias or tag, and a `[` closes on its line. */
-const isReadable = (value: string): boolean => !/^([>|{&!]|\*\S)/.test(value) && (!value.startsWith('[') || value.endsWith(']'))
+/**
+ * A list value duet reads as written: no block scalar, mapping, anchor, alias or tag, a `[`
+ * closes on its line, and a quoted value ends at its closing quote.
+ */
+const isReadable = (value: string): boolean =>
+  !/^([>|{&!]|\*\S)/.test(value) &&
+  (!value.startsWith('[') || value.endsWith(']')) &&
+  (!/^["']/.test(value) || (value.length > 1 && value.endsWith(value[0]!)))
 
 /**
  * A frontmatter list (`a, b`, `[a, b]`, quoted or not) as tool names; `[]` or an
@@ -428,11 +454,11 @@ export function parseAgentFile(text: string): AgentDef | null {
       delete blocks[key]
       continue
     }
-    const rest = uncommented(line)
-    if (!LIST_KEYS.includes(key) || rest === '') continue
+    const rest = line.trim()
+    if (!LIST_KEYS.includes(key) || rest === '' || rest.startsWith('#')) continue
     // A `- item` line, indented or not, under an empty value is a block list; any other line continues the value.
     const item = rest.match(/^-(?:\s+(.*))?$/)
-    if (item && uncommented(fields[key] ?? '') === '') (blocks[key] ??= []).push(item[1] ?? '')
+    if (item && uncommented(fields[key] ?? '') === '') (blocks[key] ??= []).push(uncommented(item[1] ?? ''))
     else isToolsUnread = true
   }
   const listField = (name: string): string[] | null => {

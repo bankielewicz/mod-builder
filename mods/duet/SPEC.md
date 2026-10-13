@@ -386,9 +386,9 @@ pane's keys; `/reload-plugins` picks up edits.
 
 - **What changes:**
   - `tools` and `disallowedTools` are read as a YAML block list (`- Write` lines, indented or at the key's own indent) as well as one line. Before, a block list read as empty, so a block `disallowedTools` naming all four edit tools still ran Codex under `workspace-write`.
-  - A trailing ` # comment` is dropped from each value, and a permission specifier names its whole tool (`Write(src/**)` is `Write`; a comma inside the parentheses doesn't split).
-  - A `tools` or `disallowedTools` value duet doesn't read (a `>` or `|` block, a `{` mapping, an `&` anchor, a `[` list that wraps, a value continued on the next line) makes the agent `read-only`.
+  - A trailing ` # comment` is dropped from each value, as in YAML: a `#` inside a quoted value or a quoted `[a, b]` item stays. A permission specifier names its whole tool (`Write(src/**)` is `Write`; a comma inside the parentheses doesn't split).
+  - A `tools` or `disallowedTools` value duet doesn't read (a `>` or `|` block, a `{` mapping, an `&` anchor, a `[` list that wraps, a value continued on the next line, text after a closing quote) makes the agent `read-only`.
   - User-level agents are looked up under `USERPROFILE` when `HOME` is unset, as `dataDir` already did; with neither, only the project's `.claude/agents` is read.
 - **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, tests, README.
-- **Tests:** block lists at both indents, a block `tools` that grants `Edit`, comments, specifiers, eight unread forms, other fields unchanged, the `USERPROFILE` lookup. Five of the six new tests fail on 0.2.2.
+- **Tests:** block lists at both indents, a block `tools` that grants `Edit`, comments, specifiers, a `#` inside quotes, nine unread forms, other fields unchanged, the `USERPROFILE` lookup. Six of the seven new tests fail on 0.2.2; the seventh checks that other fields read as before.
 - **Done means:** all tests pass, validate is clean.

@@ -377,6 +377,14 @@ describe('third review round: tool lists in any YAML form', () => {
     expect(agent('tools: C#Tool')?.tools).toEqual(['C#Tool'])
   })
 
+  test('a # inside a quoted value or quoted item is not a comment; in an unquoted value it is', () => {
+    expect(sandboxOf('disallowedTools: "x # y, Write, Edit, NotebookEdit, MultiEdit"')).toBe('read-only')
+    expect(sandboxOf("disallowedTools: 'x # y, Write, Edit, NotebookEdit, MultiEdit' # all edits")).toBe('read-only')
+    expect(sandboxOf('disallowedTools: ["x # y", Write, Edit, NotebookEdit, MultiEdit]')).toBe('read-only')
+    expect(sandboxOf('disallowedTools:\n  - "x # y"\n  - Write\n  - Edit\n  - NotebookEdit\n  - MultiEdit')).toBe('read-only')
+    expect(agent('tools: Read, Bash(echo "a # b"), Edit')?.tools).toEqual(['Read', 'Bash'])
+  })
+
   test('a list value duet cannot read runs read-only', () => {
     for (const frontmatter of [
       'disallowedTools: >\n  Write, Edit, NotebookEdit, MultiEdit',
@@ -387,6 +395,7 @@ describe('third review round: tool lists in any YAML form', () => {
       'disallowedTools: &deny [Write]',
       'tools: {Edit: true}',
       'tools:\n  - Edit\n  nested: value',
+      'disallowedTools: "Write # x", Edit, NotebookEdit, MultiEdit',
     ]) {
       expect(agent(frontmatter)?.isToolsUnread).toBe(true)
       expect(sandboxOf(frontmatter)).toBe('read-only')
