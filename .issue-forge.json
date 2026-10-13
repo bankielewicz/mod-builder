@@ -1,0 +1,17 @@
+{
+  "baseBranch": "main",
+  "testCommand": ["bash", "-c", "for d in plugins/* mods/*; do claude plugin test \"$d\" || exit 1; done"],
+  "coverageCommand": ["bash", "-c", "mkdir -p \"$HOME/.claude/issue-forge-data\" && node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test --experimental-test-coverage --test-coverage-include='**/hooks/*-logic.ts' --test-reporter=lcov --test-reporter-destination=\"$HOME/.claude/issue-forge-data/coverage.lcov\" $(ls plugins/*/tests/*-logic.test.ts mods/*/tests/*-logic.test.ts)"],
+  "lcovPath": "~/.claude/issue-forge-data/coverage.lcov",
+  "sourceGlobs": ["plugins/*/hooks/**", "mods/*/hooks/**"],
+  "testGlobs": ["plugins/*/tests/**", "mods/*/tests/**"],
+  "excludeGlobs": ["**/hooks.json"],
+  "unmeasuredGlobs": ["**/hooks/register.tsx", "**/hooks/register.ts"],
+  "behaviourTestGlobs": ["**/tests/ui.test.tsx", "**/tests/routing.test.ts", "**/tests/config.test.ts"],
+  "checks": [
+    ["bash", "-c", "claude plugin validate . && for d in plugins/* mods/*; do claude plugin validate \"$d\" || exit 1; done"],
+    ["bash", "plugins/mod-builder/skills/build/scripts/check-archetypes.sh"]
+  ],
+  "commitTrailers": ["Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"],
+  "notes": "Read CLAUDE.md first. Pure rules go in hooks/<name>-logic.ts; every $ call in hooks/register.tsx. Bump the plugin's version in its plugin.json and in .claude-plugin/marketplace.json, and add a dated '## Change <version> (<date>)' section to its SPEC.md."
+}

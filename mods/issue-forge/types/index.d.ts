@@ -1,0 +1,124 @@
+// Issue Forge's state contract. Self-contained: no imports.
+
+export type Phase = 'red' | 'green' | 'refactor'
+
+/** Where a run is (SPEC "How it works" 14). `blocked` and `stopped` hold no work. */
+export type Step =
+  | 'preflight'
+  | 'baseline'
+  | 'red'
+  | 'gateR'
+  | 'green'
+  | 'gateG'
+  | 'refactor'
+  | 'gateF'
+  | 'ready'
+  | 'publishing'
+  | 'done'
+  | 'blocked'
+  | 'stopped'
+
+/** `.issue-forge.json`, validated, defaults filled, `~` expanded (§4). */
+export type Profile = {
+  baseBranch: string
+  testCommand: string[]
+  coverageCommand: string[]
+  lcovPath: string
+  sourceGlobs: string[]
+  testGlobs: string[]
+  excludeGlobs: string[]
+  unmeasuredGlobs: string[]
+  behaviourTestGlobs: string[]
+  checks: string[][]
+  threshold: number
+  regressionTolerance: number
+  attempts: { red: number; green: number; refactor: number }
+  commandTimeoutMinutes: number
+  notes: string
+  commitTrailers: string[]
+}
+
+/** A percentage rounded to two decimals, or null for "n/a". */
+export type Pct = number | null
+
+export type Check = { id: string; passed: boolean; detail: string }
+
+export type Coverage = {
+  diffLines: Pct
+  diffBranches: Pct
+  totalLines: Pct
+  totalBranches: Pct
+  /** `path: 3-5, 9` for each changed measured file with uncovered lines. */
+  uncovered: string[]
+}
+
+export type Gate = {
+  gate: 'R' | 'G' | 'F'
+  passed: boolean
+  checks: Check[]
+  coverage?: Coverage
+  /** G6 failed and nothing else did: the run goes back to red once. */
+  isBehaviourOnly?: boolean
+  /** Unmeasured source files changed since the merge base. */
+  unmeasured?: string[]
+}
+
+export type Baseline = { lines: Pct; branches: Pct }
+
+export type AgentRef = { id: string; name?: string; phase: Phase }
+
+/** A stash entry the mod made, found by its unique message and kept by its commit. */
+export type StashRef = { sha: string; message: string }
+
+export type PhaseTime = { startedAt: number; endedAt?: number }
+
+export type Run = {
+  id: string
+  root: string
+  issue: number
+  title: string
+  body: string
+  url: string
+  branch: string
+  base: string
+  mergeBase: string
+  profile: Profile | null
+  step: Step
+  /** Spawns used in each phase since it last started or was resumed. */
+  used: { red: number; green: number; refactor: number }
+  redCommit?: string
+  greenCommit?: string
+  refactorCommit?: string
+  baseline: Baseline | null
+  /** The latest result of each gate. */
+  gates: { R?: Gate; G?: Gate; F?: Gate }
+  lastGate?: Gate
+  /** Last 200 lines of the test output red's gate saw: green's first prompt gets them. */
+  redTestTail?: string
+  /** Last 200 lines of the latest gate's test output: a retry's prompt gets them. */
+  lastTestTail?: string
+  redAnswer?: string
+  /** Set while red adds a behaviour test for these files (G6's one return). */
+  behaviourFor?: string[]
+  isBehaviourDone?: boolean
+  /** The stash entry holding green's work during that return; applied by its SHA only. */
+  greenStash?: StashRef
+  isRefactorRejected?: boolean
+  refactorStash?: StashRef
+  times: { red?: PhaseTime; green?: PhaseTime; refactor?: PhaseTime; publish?: PhaseTime }
+  startedAt: number
+  agents: AgentRef[]
+  prUrl?: string
+  /** HEAD when the run reached ready (after gate F): publish pushes exactly this commit, and refuses if HEAD moved. */
+  gatedHead?: string
+  blocked?: { at: Step; reason: string; next: string }
+}
+
+/** What the module is doing right now inside a step: a label and since when. */
+export type Activity = { label: string; since: number }
+
+declare module 'claude-code' {
+  interface PluginState {
+    'issue-forge': { run: Run | null; activity: Activity | null; now: number; demo: string | null }
+  }
+}

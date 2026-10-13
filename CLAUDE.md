@@ -51,8 +51,11 @@ every PR automatically; triage its findings by severity, verify each against the
   of each turn (`autoRerun`), and treats an edit as a **build generation** (evidence older than the edit
   goes stale). `SPEC.md` sections "Design" and "Edits" record why.
 
-**`mods/*`**: `git-branch`, `duet` (delegates subagents/reviews to the Codex CLI), `turn-counter` (left
-as raw scaffold output on purpose). Each has the same layout and its own `SPEC.md` with dated changes.
+**`mods/*`**: `git-branch`, `duet` (delegates subagents/reviews to the Codex CLI), `issue-forge` (a
+GitHub issue to a PR via red/green/refactor subagents behind a diff-coverage gate; this repo's profile
+is `.issue-forge.json`, its coverage kit `plugins/mod-builder/skills/build/scripts/coverage/`),
+`turn-counter` (left as raw scaffold output on purpose). Each has the same layout and its own
+`SPEC.md` with dated changes.
 
 **Template files are `*.tpl`** so `claude plugin test`/`validate` never pick them up as real plugins.
 

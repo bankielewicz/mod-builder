@@ -352,3 +352,12 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - The `/config` row key is `<plugin>.<field>` (bundled `claude-code.d.ts`, around line 2049), so `setOption` matches `mod-builder.logging`. A live set wasn't run, because it writes `~/.claude/settings.json`.
   - Live, `claude -p --plugin-dir plugins/mod-builder "/mod-builder config"` from the worktree listed the four options and wrote `~/.claude/mod-builder-data/logs/2026-10-13-<session>.log`, holding `NORMAL  session.start  Mod Lab started  {"version":"0.2.2","modsDir":"<worktree>/mods","logging":"normal"}`.
   - Worktree check: loaded with `--plugin-dir` from a worktree, the default `modsDir` is that worktree's `mods/`, so it follows the plugin's own folder (`$.plugin.root`). The installed copy loads from the main checkout, so a session in a worktree watches the main checkout's `mods/`. The direct check, a worktree session with the installed plugin at `logging: verbose`, can run once this merges.
+
+## Change 0.2.3 (2026-10-13)
+
+> For issue-forge (`docs/specs/issue-forge.md`, checkpoints C0 and C1).
+
+- **New:** `skills/build/scripts/coverage/` (`kit.mjs`, `hooks.mjs`, `register.mjs`) lets Node 24's test runner run a mod's logic tests with coverage. It stands in for `claude-code/testing`, and `register.mjs` maps that import to the kit. Logic tests only; UI tests need the real kit. Checked: mod-builder 28/28, duet 38/38, git-branch 4/4, turn-counter 2/2, the same counts as `claude plugin test`.
+- **New:** `references/gotchas.md` gets a "Subagents a mod spawns" section, seven `[probe]` entries: other plugins see a mod's spawn as a `tool.call` of `Agent`; a detached spawn outlives the command; plain `-p` exits first; how to drop the hand-back prompt; in-line answers have no `turn.complete`; `$.ui.ask` from a detached promise; `return()` kills a spawned child; under `claude plugin test` a spawn never gets an `agentId`.
+- **Unchanged:** Mod Lab's code and tests.
+- **Version:** 0.2.3, since 0.2.2 (logging, PR #21) merged first.

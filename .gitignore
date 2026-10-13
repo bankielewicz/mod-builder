@@ -16,6 +16,8 @@ scratch/
 node_modules/
 dist/
 coverage/
+# ...but the coverage kit is source (docs/specs/issue-forge.md, Appendix A).
+!plugins/mod-builder/skills/build/scripts/coverage/
 *.tsbuildinfo
 
 # Logs and env files.
