@@ -37,7 +37,7 @@ export type ModView = {
   isFresh: boolean
   version: string | null
   description: string | null
-  /** The mod's folder as the session reads it, with a trailing `/`, for the detail header: `mods/<name>/` under the default `modsDir`. */
+  /** The mod's folder as the session read it at the last scan, with a trailing `/` (`mods/<name>/` under the default `modsDir`); the demo's is `not written to disk`. The detail header works it out again when it draws. */
   path: string
   /** README.md is older than the code it describes. */
   isReadmeStale: boolean
