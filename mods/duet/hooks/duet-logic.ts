@@ -474,15 +474,14 @@ export function parseReviewArgs(args: string): ReviewTarget | null {
   return null
 }
 
-export const REVIEW_PROMPT =
-  'Review this change independently. Judge only the code that is there; trust no summary of intent. ' +
-  'Report each finding as path:line, severity (high/medium/low), what breaks and the input that breaks it. ' +
-  'End with one line: "verdict: approve" or "verdict: changes requested (N high, N medium, N low)".'
-
-/** `codex exec review`, always read-only and never asking. */
+/**
+ * `codex exec review`, always read-only and never asking. A target
+ * (`--uncommitted`, `--base`, `--commit`) and a custom prompt can't be combined
+ * (Codex exits 2), so the review runs on Codex's own review instructions.
+ */
 export function reviewArgv(target: ReviewTarget, model: string): string[] {
   const which = target.kind === 'uncommitted' ? ['--uncommitted'] : [`--${target.kind}`, target.ref]
-  return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...which, ...(model ? ['-m', model] : []), REVIEW_PROMPT]
+  return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...which, ...(model ? ['-m', model] : [])]
 }
 
 /** Claude's credentials blanked in Codex's environment (env is laid over the host's). */

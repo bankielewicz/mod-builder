@@ -79,6 +79,9 @@ describe('codex process', () => {
     const r = reviewArgv({ kind: 'base', ref: 'main' }, '')
     expect(r).toContain('sandbox_mode="read-only"')
     expect(r).toContain('approval_policy="never"')
+    // Codex rejects a positional prompt next to --uncommitted/--base/--commit: the target must be last.
+    expect(r.slice(-2)).toEqual(['--base', 'main'])
+    expect(reviewArgv({ kind: 'uncommitted' }, 'm').slice(-3)).toEqual(['--uncommitted', '-m', 'm'])
     for (const argv of [a, r]) expect(argv.join(' ')).not.toMatch(/dangerously|approve-for-me|full-access/)
   })
 
