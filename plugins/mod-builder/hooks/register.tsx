@@ -751,7 +751,12 @@ export const register: Register = (on, options) => {
   // A session ending: write its lines, then start a fresh buffer and file. After `/clear` or a
   // resume the process goes on under a new session id, and no session.start fires (types).
   on('session.end', async ($, e, next) => {
-    await flushLog($)
+    // Wait until no write is queued behind the one awaited: a check finishing now may log meanwhile.
+    let settled: Promise<void>
+    do {
+      settled = flushLog($)
+      await settled
+    } while (settled !== logChain)
     flushTimer?.cancel()
     flushTimer = null
     logBuffer = Lab.EMPTY_LOG
