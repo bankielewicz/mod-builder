@@ -320,7 +320,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   let handedOff = false
   try {
     const def: AgentDef | null = role ? roleDef(role) : await agentDef($, cwd, type)
-    const sandbox = effectiveSandbox(options.sandbox, def)
+    const sandbox = effectiveSandbox(options.sandbox, def, type)
     const baseSha = await baseCommit($)
     const before = sandbox === 'read-only' ? '' : await porcelain($)
     const handoff = buildHandoff({ id, description: e.description, prompt: e.prompt, base: baseSha, cwd, sandbox, def, subagentType: type })

@@ -364,11 +364,28 @@ export function modelsText(models: CodexModel[], current: string): string {
 
 // ── Custom agents (.claude/agents/<type>.md) ─────────────────────────────
 
-export type AgentDef = { name: string; description: string; tools: string[] | null; body: string }
+export type AgentDef = {
+  name: string
+  description: string
+  /** The `tools` line as a list; null when there is no `tools` line (every tool). */
+  tools: string[] | null
+  /** The `disallowedTools` line as a list. */
+  disallowed?: string[]
+  body: string
+}
 
-/** Frontmatter (`name`, `description`, `tools`) and body of an agent file; null when it has none. */
+/** A frontmatter list (`a, b`, `[a, b]`, quoted or not) as names; `[]` or an empty value is an empty list. */
+function listOf(raw: string): string[] {
+  return raw
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map(s => s.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+}
+
+/** Frontmatter (`name`, `description`, `tools`, `disallowedTools`) and body of an agent file; null when it has none. */
 export function parseAgentFile(text: string): AgentDef | null {
-  const m = text.replace(/^﻿/, '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+  const m = text.replace(/^\uFEFF/, '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
   if (!m) return null
   const fields: Record<string, string> = {}
   for (const line of (m[1] ?? '').split(/\r?\n/)) {
@@ -376,26 +393,32 @@ export function parseAgentFile(text: string): AgentDef | null {
     if (kv) fields[kv[1]!] = (kv[2] ?? '').trim()
   }
   // An absent `tools` line means every tool; a present but empty one (`tools: []`) means none.
-  const toolsRaw = fields.tools?.replace(/^\[|\]$/g, '')
-  const tools =
-    toolsRaw === undefined ? null : toolsRaw.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
-  return { name: fields.name ?? '', description: fields.description ?? '', tools, body: (m[2] ?? '').trim() }
+  const tools = fields.tools === undefined ? null : listOf(fields.tools)
+  const disallowed = fields.disallowedTools === undefined ? [] : listOf(fields.disallowedTools)
+  return { name: fields.name ?? '', description: fields.description ?? '', tools, disallowed, body: (m[2] ?? '').trim() }
 }
 
-/** Whether an agent's tools let it edit; no `tools:` line means every tool. */
 /** A filesystem-safe folder name for a session id. */
 export function sessionFolderOf(sessionId: string): string {
   return sessionId.replace(/[^\w.-]/g, '_').slice(0, 80) || 'unknown'
 }
 
-export function canEdit(def: AgentDef | null): boolean {
-  if (!def || def.tools === null) return true
-  return def.tools.some(t => EDIT_TOOLS.includes(t) || t === '*')
+/**
+ * Whether an agent may edit. A definition: its `tools` (none listed means
+ * every tool) minus `disallowedTools` must keep an edit tool. No definition
+ * found: only Claude's `general-purpose` agent edits; anything unresolved
+ * (a built-in like Explore or Plan, a plugin's agent, a file duet can't find)
+ * is read-only, so a lookup miss never raises the sandbox.
+ */
+export function canEdit(def: AgentDef | null, type: string = DEFAULT_TYPE): boolean {
+  if (!def) return type === DEFAULT_TYPE
+  const allowed = def.tools === null || def.tools.includes('*') ? EDIT_TOOLS : EDIT_TOOLS.filter(t => def.tools!.includes(t))
+  return allowed.some(t => !(def.disallowed ?? []).includes(t))
 }
 
 /** An agent can only lower the sandbox, never raise it. */
-export function effectiveSandbox(configured: Sandbox, def: AgentDef | null): Sandbox {
-  return configured === 'workspace-write' && canEdit(def) ? 'workspace-write' : 'read-only'
+export function effectiveSandbox(configured: Sandbox, def: AgentDef | null, type: string = DEFAULT_TYPE): Sandbox {
+  return configured === 'workspace-write' && canEdit(def, type) ? 'workspace-write' : 'read-only'
 }
 
 // ── Handoff ──────────────────────────────────────────────────────────────

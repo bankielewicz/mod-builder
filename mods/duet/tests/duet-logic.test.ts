@@ -293,6 +293,16 @@ describe('0.2.0 rules', () => {
 })
 
 describe('review fixes', () => {
+  test('an unresolved agent is read-only unless it is general-purpose; disallowedTools can take edits away', () => {
+    expect(effectiveSandbox('workspace-write', null, 'general-purpose')).toBe('workspace-write')
+    for (const type of ['Explore', 'Plan', 'some-plugin:agent', 'missing-file']) expect(effectiveSandbox('workspace-write', null, type)).toBe('read-only')
+    const noEdits = parseAgentFile('---\nname: r\ndisallowedTools: Write, Edit, NotebookEdit, MultiEdit\n---\nx')
+    expect(noEdits?.disallowed).toEqual(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
+    expect(effectiveSandbox('workspace-write', noEdits, 'r')).toBe('read-only')
+    expect(effectiveSandbox('workspace-write', parseAgentFile('---\nname: w\ndisallowedTools: Write\n---\nx'), 'w')).toBe('workspace-write')
+    expect(effectiveSandbox('workspace-write', parseAgentFile('---\nname: w\ntools: Edit\ndisallowedTools: [Edit]\n---\nx'), 'w')).toBe('read-only')
+  })
+
   test('an explicitly empty tools list is read-only; an absent one is every tool', () => {
     expect(parseAgentFile('---\nname: none\ntools: []\n---\nx')?.tools).toEqual([])
     expect(effectiveSandbox('workspace-write', parseAgentFile('---\nname: none\ntools: []\n---\nx'))).toBe('read-only')
