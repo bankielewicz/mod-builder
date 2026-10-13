@@ -424,6 +424,7 @@ pane's keys; `/reload-plugins` picks up edits.
   - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`.
   - Foundry: `ANTHROPIC_FOUNDRY_AUTH_TOKEN`. The Foundry and Claude Platform on AWS names were checked against the provider and env-vars pages on 2026-10-13: `ANTHROPIC_AWS_API_KEY` is on the Claude Platform on AWS and env-vars pages, `ANTHROPIC_FOUNDRY_AUTH_TOKEN` on the Foundry and env-vars pages.
   - Azure SDK default credential chain: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`. The Foundry page's Entra path says only "the Azure SDK default credential chain" and names no `AZURE_*` variable (none appears on any of the five pages), so these come from the Azure SDK's documentation, not Claude's.
+  - Workload Identity Federation (Anthropic's WIF reference; added on PR #30 review): `ANTHROPIC_IDENTITY_TOKEN`, "the literal JWT" from the identity provider, which Claude Code honors. Its file, config directory and IDs (`ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_CONFIG_DIR`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`) aren't secrets and pass through.
   - Never blanked, because Codex needs them: `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
   - Never blanked, because `''` isn't unset: paths, directories and profile names (`CLAUDE_CONFIG_DIR`, `ANTHROPIC_PROFILE`, `AWS_PROFILE`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`). The green phase blanked them; review on PR #30 found that a `claude` run by Codex then uses an empty config directory (`CLAUDE_CONFIG_DIR= claude auth status` reports `configDirectory: ""`, probed on 2.1.296). Their values aren't secrets, and the files they name stay readable either way. `init.env` is typed `Record<string, string>`, so a variable can't be unset instead.
   - The README Install paragraph names the groups; its Environment row says "blanks the 38 names in `BLANKED_ENV`".
@@ -443,3 +444,4 @@ pane's keys; `/reload-plugins` picks up edits.
   - The tests' name lists live once, in `tests/env-names.ts`; `BLANKED_ENV` must equal them exactly, once each.
   - Secrets only: the eight paths and profile names above pass through.
   - A Bedrock-backed Codex is pointed at an AWS profile (README, Limits).
+  - `ANTHROPIC_IDENTITY_TOKEN` is blanked (Codex).

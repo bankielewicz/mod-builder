@@ -14,6 +14,7 @@ export const CLOUD_ENV = {
   claudePlatformOnAws: ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'ANTHROPIC_AWS_WORKSPACE_ID', 'ANTHROPIC_AWS_BASE_URL', 'ANTHROPIC_AWS_API_KEY'],
   bedrockMantle: ['CLAUDE_CODE_USE_MANTLE', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL'],
   claudeCode: ['CLAUDE_CODE_OAUTH_REFRESH_TOKEN'],
+  workloadIdentity: ['ANTHROPIC_IDENTITY_TOKEN'],
   foundry: ['ANTHROPIC_FOUNDRY_AUTH_TOKEN'],
   azureSdk: ['AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET'],
 }
@@ -24,11 +25,12 @@ export const BLANKED: readonly string[] = [...ORIGINAL_ENV, ...Object.values(CLO
 /** Codex itself needs these, so they must reach it. */
 export const CODEX_NEEDS = ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy']
 
-/** Paths and profile names: '' isn't unset, and an empty one changes what a tool does, so they pass through. */
-export const PATHS_AND_PROFILES = [
+/** Not secrets: paths, profile names, endpoints and IDs. '' isn't unset, and an empty path changes what a tool does, so they pass through. */
+export const NOT_SECRETS = [
   'CLAUDE_CONFIG_DIR', 'ANTHROPIC_PROFILE', 'AWS_PROFILE', 'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE',
   'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_CERTIFICATE_PATH', 'AZURE_FEDERATED_TOKEN_FILE',
+  'ANTHROPIC_IDENTITY_TOKEN_FILE', 'ANTHROPIC_CONFIG_DIR', 'ANTHROPIC_FEDERATION_RULE_ID', 'ANTHROPIC_ORGANIZATION_ID', 'ANTHROPIC_SERVICE_ACCOUNT_ID', 'ANTHROPIC_WORKSPACE_ID',
 ]
 
 /** Every name that must reach Codex unchanged. */
-export const PASSED_THROUGH: readonly string[] = [...CODEX_NEEDS, ...PATHS_AND_PROFILES]
+export const PASSED_THROUGH: readonly string[] = [...CODEX_NEEDS, ...NOT_SECRETS]
