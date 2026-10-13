@@ -421,7 +421,7 @@ pane's keys; `/reload-plugins` picks up edits.
   - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`.
   - Claude Platform on AWS page: `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_API_KEY`.
   - Bedrock page (Mantle): `CLAUDE_CODE_USE_MANTLE`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`.
-  - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`.
+  - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`; on PR #30 review, the owner added `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` ("Passphrase for encrypted `CLAUDE_CODE_CLIENT_KEY`") and `CLAUDE_CODE_MESSAGING_TOKEN` (the per-session token Claude Code exports to hooks and Bash commands alongside `CLAUDE_CODE_MESSAGING_SOCKET`, for posting to the session's inbox). `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY` and `CLAUDE_CODE_MESSAGING_SOCKET` are paths and pass through.
   - Foundry: `ANTHROPIC_FOUNDRY_AUTH_TOKEN`. The Foundry and Claude Platform on AWS names were checked against the provider and env-vars pages on 2026-10-13: `ANTHROPIC_AWS_API_KEY` is on the Claude Platform on AWS and env-vars pages, `ANTHROPIC_FOUNDRY_AUTH_TOKEN` on the Foundry and env-vars pages.
   - Azure SDK default credential chain: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`. The Foundry page's Entra path says only "the Azure SDK default credential chain" and names no `AZURE_*` variable (none appears on any of the five pages), so these come from the Azure SDK's documentation, not Claude's.
   - Workload Identity Federation (Anthropic's WIF reference; added on PR #30 review): `ANTHROPIC_IDENTITY_TOKEN`, "the literal JWT" from the identity provider, which Claude Code honors. Its file, config directory and IDs (`ANTHROPIC_IDENTITY_TOKEN_FILE`, `ANTHROPIC_CONFIG_DIR`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`, `ANTHROPIC_WORKSPACE_ID`) aren't secrets and pass through.
@@ -436,7 +436,6 @@ pane's keys; `/reload-plugins` picks up edits.
   - The list is explicit: a credential variable not named here still reaches Codex (a new cloud provider, a variable a user invented). New names are added as they are found.
   - Blanking hides variables, not files: Codex can read `~/.aws/credentials`, a file a path variable names, or any other file the user can (issue #3).
   - Codex 0.162.1 has an Amazon Bedrock provider (its binary contains `amazon-bedrock`, `AWS_PROFILE` and `AWS_BEARER_TOKEN_BEDROCK`; not run). Its AWS key variables are Claude Code's too, so a Bedrock-backed Codex gets them empty and must use a profile, which passes through. The README says so.
-  - Named on the env-vars page and not blanked here, left for the owner to decide: `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY` and `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` (mTLS to Anthropic; the key is a path, the passphrase a secret), and `CLAUDE_CODE_MESSAGING_TOKEN` (a per-session token Claude Code exports to hooks and Bash commands).
 - **What gets touched:** `hooks/duet-logic.ts` (`BLANKED_ENV` only; both `process.run`/`spawn` call sites already take `childEnv()`), `.claude-plugin/plugin.json`, README, `plugins/mod-builder/skills/build/references/gotchas.md`, tests. The coverage kit (`plugins/mod-builder/skills/build/scripts/coverage/kit.mjs`) also gets a `toBeGreaterThanOrEqual` matcher, which these tests use; mod-builder's version is unchanged.
 - **Tests:** `childEnv()` and `BLANKED_ENV` against a literal list of the new names (not derived from `BLANKED_ENV`), the originals, and the names Codex needs; a routed call, a review and `/duet config models` each get the cloud names as `''` and none of the Codex names.
 - **Done means:** all tests pass, validate is clean.
@@ -445,3 +444,4 @@ pane's keys; `/reload-plugins` picks up edits.
   - Secrets only: the eight paths and profile names above pass through.
   - A Bedrock-backed Codex is pointed at an AWS profile (README, Limits).
   - `ANTHROPIC_IDENTITY_TOKEN` is blanked (Codex).
+  - `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` (Codex) and `CLAUDE_CODE_MESSAGING_TOKEN` (`/code-review`) are blanked, the owner's call.

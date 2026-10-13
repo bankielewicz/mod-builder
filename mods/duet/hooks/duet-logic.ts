@@ -624,6 +624,8 @@ export const BLANKED_ENV = [
   'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
   'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+  'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
   // Workload Identity Federation: the identity provider's JWT itself
   'ANTHROPIC_IDENTITY_TOKEN',
   // Bedrock, and Bedrock Mantle
