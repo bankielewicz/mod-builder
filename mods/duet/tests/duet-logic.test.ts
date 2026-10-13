@@ -9,6 +9,25 @@ import {
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
 } from '../hooks/duet-logic'
 
+// Literal lists, not derived from BLANKED_ENV, so a deleted name is caught.
+const CLOUD_ENV = {
+  aws: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'],
+  google: ['GOOGLE_APPLICATION_CREDENTIALS'],
+  claudePlatformOnAws: ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'ANTHROPIC_AWS_WORKSPACE_ID', 'ANTHROPIC_AWS_BASE_URL', 'ANTHROPIC_AWS_API_KEY'],
+  bedrockMantle: ['CLAUDE_CODE_USE_MANTLE', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL'],
+  claudeCode: ['CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_PROFILE', 'CLAUDE_CONFIG_DIR'],
+  foundry: ['ANTHROPIC_FOUNDRY_AUTH_TOKEN'],
+  azureSdk: ['AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_CLIENT_CERTIFICATE_PATH', 'AZURE_FEDERATED_TOKEN_FILE'],
+}
+const ALL_CLOUD_ENV = Object.values(CLOUD_ENV).flat()
+const ORIGINAL_ENV = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_VERTEX_PROJECT_ID',
+  'ANTHROPIC_VERTEX_BASE_URL', 'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_BASE_URL', 'ANTHROPIC_FOUNDRY_RESOURCE', 'AWS_BEARER_TOKEN_BEDROCK',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_SESSION_ACCESS_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+]
+// Codex itself needs these, so they must reach it.
+const CODEX_NEEDS = ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy']
+
 // Captured from codex-cli 0.162.1: `codex exec --json -s read-only "Reply with the single word ok."`
 const REAL_JSONL = [
   '{"type":"thread.started","thread_id":"01a1317d-0458-74c2-91a6-12d24585db32"}',
@@ -96,6 +115,15 @@ describe('codex process', () => {
   test('Claude credentials are blanked in Codex env', () => {
     const env = childEnv()
     for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']) expect(env[k]).toBe('')
+  })
+
+  test('cloud-provider credentials are blanked in Codex env; what Codex needs is left alone', () => {
+    const env = childEnv()
+    for (const [group, names] of Object.entries(CLOUD_ENV)) {
+      for (const k of names) expect([group, k, env[k]]).toEqual([group, k, ''])
+    }
+    for (const k of ORIGINAL_ENV) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of CODEX_NEEDS) expect([k, k in env]).toEqual([k, false])
   })
 
   test('folds the real 0.162.1 JSONL; a mid-run error item is a warning', () => {
@@ -345,6 +373,16 @@ describe('second review round', () => {
     for (const name of ['ANTHROPIC_API_KEY', 'AWS_BEARER_TOKEN_BEDROCK', 'ANTHROPIC_FOUNDRY_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_VERTEX']) {
       expect(BLANKED_ENV).toContain(name)
     }
+  })
+
+  test('BLANKED_ENV names every cloud-provider credential and credential path, keeps the originals, and never names what Codex needs', () => {
+    const names: readonly string[] = BLANKED_ENV
+    for (const [group, list] of Object.entries(CLOUD_ENV)) {
+      for (const name of list) expect([group, name, names.includes(name)]).toEqual([group, name, true])
+    }
+    for (const name of ORIGINAL_ENV) expect([name, names.includes(name)]).toEqual([name, true])
+    for (const name of CODEX_NEEDS) expect([name, names.includes(name)]).toEqual([name, false])
+    expect(new Set(names).size).toBeGreaterThanOrEqual(ORIGINAL_ENV.length + ALL_CLOUD_ENV.length)
   })
 })
 

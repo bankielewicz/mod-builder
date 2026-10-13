@@ -83,6 +83,19 @@ describe('routing', () => {
     expect(seen.files['/home/u/.claude/duet-data/runs.jsonl']).toContain('"provider":"codex"')
   })
 
+  test("a routed call blanks cloud-provider credentials in Codex's env and leaves what Codex needs", { options: { codexAgents: 'general-purpose', codexRunMode: 'wait' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await $.tool.call(call() as never)
+    const env = seen.env[0]!
+    expect(env.AWS_SECRET_ACCESS_KEY).toBe('')
+    expect(env.ANTHROPIC_AWS_API_KEY).toBe('')
+    for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'AZURE_CLIENT_SECRET']) {
+      expect([k, env[k]]).toEqual([k, ''])
+    }
+    for (const k of ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME']) expect([k, k in env]).toEqual([k, false])
+  })
+
   test('an unrouted type reaches Claude untouched and is measured', { options: { codexAgents: 'general-purpose' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
@@ -292,5 +305,18 @@ describe('review admission', () => {
     await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv).toEqual([])
+  })
+
+  test("a review blanks cloud-provider credentials in Codex's env and leaves what Codex needs", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+    const env = seen.env[0]!
+    for (const k of ['AWS_SECRET_ACCESS_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'ANTHROPIC_AWS_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_SECRET']) {
+      expect([k, env[k]]).toEqual([k, ''])
+    }
+    for (const k of ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME']) expect([k, k in env]).toEqual([k, false])
   })
 })

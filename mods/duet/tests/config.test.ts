@@ -10,10 +10,11 @@ const CATALOG = JSON.stringify({ models: [
   { slug: 'gpt-reserve', display_name: 'GPT-Reserve', description: '', visibility: 'hide' },
 ] })
 
-function engine(on: any, opts: { deny?: string; opened?: string[]; cutOnce?: boolean; codex?: 'ok' | 'missing' | 'fail'; fetches?: string[][]; panes?: string[] } = {}) {
+function engine(on: any, opts: { deny?: string; opened?: string[]; cutOnce?: boolean; codex?: 'ok' | 'missing' | 'fail'; fetches?: string[][]; envs?: Record<string, string>[]; panes?: string[] } = {}) {
   const sets: { key: string; value: unknown }[] = []
   on('process.run', ($: any, e: any) => {
     opts.fetches?.push(e.argv)
+    opts.envs?.push(e.init?.env ?? {})
     if (opts.codex === 'missing') return { deny: 'spawn codex ENOENT' }
     if (opts.codex === 'fail') return { value: { exitCode: 1, stdout: '', stderr: 'Error: not logged in\nmore', isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: CATALOG, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -195,6 +196,17 @@ describe('Codex models in /duet config', () => {
     expect(text).toMatch(/✓ gpt-6-sol/)
     expect(text).toContain('gpt-reserve')
     expect(text).toContain('(hidden)')
+  })
+
+  test('/duet config models blanks cloud-provider credentials in the codex call', async ($, on) => {
+    const envs: Record<string, string>[] = []
+    engine(on, { envs })
+    await run($, 'config models')
+    const env = envs[0]!
+    for (const k of ['AWS_SECRET_ACCESS_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'ANTHROPIC_AWS_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN']) {
+      expect([k, env[k]]).toEqual([k, ''])
+    }
+    for (const k of ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME']) expect([k, k in env]).toEqual([k, false])
   })
 
   test('/duet config models says when codex is missing', async ($, on) => {
