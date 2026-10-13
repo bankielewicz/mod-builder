@@ -57,7 +57,7 @@ and measures every run so you route by evidence rather than by assumption.
 ## Install
 
 Needs the [Codex CLI](https://github.com/openai/codex) on PATH, signed in once with `codex login`.
-Duet uses Codex's own sign-in and usage limits. Codex runs with Claude Code's credential and provider variables blanked (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, the Bedrock, Vertex and Foundry settings and `AWS_BEARER_TOKEN_BEDROCK`; the full list is `BLANKED_ENV` in `hooks/duet-logic.ts`). Other variables in your environment are passed through.
+Duet uses Codex's own sign-in and usage limits. Codex runs with Claude Code's credential and provider variables blanked (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and its refresh token; the Bedrock, Vertex, Foundry, Claude Platform on AWS and Bedrock Mantle settings; the AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`) and the profile and file paths they are read from; `GOOGLE_APPLICATION_CREDENTIALS`; the Foundry auth token; Claude Code's `ANTHROPIC_PROFILE` and `CLAUDE_CONFIG_DIR`; and the Azure SDK's default-credential variables; the full list is `BLANKED_ENV` in `hooks/duet-logic.ts`). Other variables in your environment are passed through, including `OPENAI_API_KEY`, which Codex needs when you sign in with an API key. Blanking hides variables, not files: a credentials file Codex can read (for example `~/.aws/credentials`) is still readable, as the paragraph below says.
 
 Codex's sandbox limits writes, not reads. In either mode Codex can read any file your account can read and send it to OpenAI; under `workspace-write` it can also write in the session folder and in `/tmp`, where Claude Code keeps its own working files (measured with Codex 0.162.1 on Linux; see SPEC, Change 0.2.4). The handoff asks Codex to stay in scope, but that's a request to the model, not enforcement. A routed agent's instructions come from `.claude/agents/<type>.md` in the checkout, so route only agents you trust, in repositories you trust, and use `workspace-write` only there.
 
@@ -123,7 +123,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Files | reads `<cwd>/.claude/agents/<type>.md`, `~/.claude/agents/<type>.md`; writes `~/.claude/duet-data/runs.jsonl` (no prompt text), `sessions/<session>/review-<id>.md` and `sessions/<session>/d<n>.out.md` (a background run's answer; per session, since ids restart at d1) |
 | Network | none directly; **Codex sends the handoff and whatever it reads to OpenAI** under your Codex sign-in. It can read any file your account can read, not only the session folder |
 | Model calls | none by the mod directly; Codex usage per routed call and review; each delivered background answer is a Claude turn |
-| Environment | reads `HOME`, `USERPROFILE`; Codex's child env blanks `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_SESSION_ACCESS_TOKEN` |
+| Environment | reads `HOME`, `USERPROFILE`; Codex's child env blanks the 38 names in `BLANKED_ENV` (see Install); other variables pass through |
 | Asks | `$.ui.ask` once per session before sending to Codex (unless `codexConsent: allow`) |
 | Gating hooks | `tool.call{tool=Agent}` with `.catch` (refuses on failure; never falls through) |
 

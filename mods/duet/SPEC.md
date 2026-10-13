@@ -299,7 +299,7 @@ Background agent duet-d3 (duet:codex-reviewer) finished on Codex · gpt-6.1-sol 
 2. `foldEvent` over the **real 0.162.1 JSONL** captured during orientation → text `ok`, usage `{in:22059, cached:11264, out:5}`; an `error` item mid-run is a warning, not a failure.
 3. `buildHandoff` contains task id, spec version, base commit, allowed scope, the prohibited-actions list and required output; the prompt verbatim.
 4. `codexArgv`: always `-c approval_policy="never"`, `-s` the configured sandbox; review always `read-only`; never contains `dangerously` or `approve-for-me`; `danger-full-access` in config is clamped to `read-only`.
-5. `childEnv` blanks `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`.
+5. `childEnv` blanks `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` (the list has grown since: Changes 0.2.2 and 0.2.5).
 6. `agentResult` has every required field of the Agent `completed` record (status, agentId, content, prompt, totalToolUseCount, totalDurationMs, totalTokens, usage with nullable keys).
 7. Event: a routed `general-purpose` Agent call with `process.run` stubbed (spawn can't be stubbed) and consent "Yes" → the Agent tool never runs beneath; the result text holds Codex's answer and the `[duet d1 · codex` footer.
 8. Event: an unrouted `Plan` call → reaches the tool beneath untouched.
@@ -407,4 +407,34 @@ pane's keys; `/reload-plugins` picks up edits.
   - No behaviour change: limiting what Codex can read or write is part B of #3.
 - **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, `.claude-plugin/plugin.json`, README, tests.
 - **Tests:** the consent text for both sandboxes.
+- **Done means:** all tests pass, validate is clean.
+
+## Change 0.2.5 (2026-10-13)
+
+> Issue #2: cloud-provider credentials still reached Codex. `BLANKED_ENV` held 16 names; `env` is laid over the host's environment, so every other variable passed through, among them `AWS_SECRET_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SESSION_TOKEN`, `ANTHROPIC_AWS_API_KEY`, `ANTHROPIC_FOUNDRY_AUTH_TOKEN` and `GOOGLE_APPLICATION_CREDENTIALS`.
+
+- **Probed** (Claude Code 2.1.296, `[probe]` in `gotchas.md`, Modules): a throwaway mod ran `$.process.run(['printenv', name])` for `AWS_SECRET_ACCESS_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_AWS_API_KEY`, each set to `dummy` in the shell that started `claude -p`.
+  - Without `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: all three reached the child (`dummy`).
+  - With `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`: all three were removed (`printenv` exit 1). So Claude Code's scrub does cover a mod's `$.process.run` children, and it removes `OPENAI_API_KEY` too, which Codex needs when signed in with an API key. The scrub is opt-in, so duet doesn't rely on it.
+  - `env: { NAME: '' }` sets the variable to an empty string (`printenv` exit 0, empty output); it doesn't unset it. "Blanked" means present and empty.
+- **What changes:** `BLANKED_ENV` goes from 16 names to 38, by these groups:
+  - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`.
+  - Vertex page: `GOOGLE_APPLICATION_CREDENTIALS`.
+  - Claude Platform on AWS page: `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_API_KEY`.
+  - Bedrock page (Mantle): `CLAUDE_CODE_USE_MANTLE`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`.
+  - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, `ANTHROPIC_PROFILE`, `CLAUDE_CONFIG_DIR`.
+  - Foundry: `ANTHROPIC_FOUNDRY_AUTH_TOKEN`. The Foundry and Claude Platform on AWS names were checked against the provider and env-vars pages on 2026-10-13: `ANTHROPIC_AWS_API_KEY` is on the Claude Platform on AWS and env-vars pages, `ANTHROPIC_FOUNDRY_AUTH_TOKEN` on the Foundry and env-vars pages.
+  - Azure SDK default credential chain: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`. The Foundry page's Entra path says only "the Azure SDK default credential chain" and names no `AZURE_*` variable (none of the five appears on any of the five pages), so these come from the Azure SDK's documentation, not Claude's.
+  - Never blanked, because Codex needs them: `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
+  - The README Install paragraph names the groups; its Environment row says "blanks the 38 names in `BLANKED_ENV`".
+- **Considered and not taken:**
+  - Enumerating the inherited environment (`$.process.run(['env'])`, `cmd /c set` on Windows) and blanking by pattern: one extra process per Codex run, and the names it blanks are invisible to `claude plugin validate`, so the README's reach row couldn't be generated from them.
+  - A `sh -c` wrapper that unsets variables before `exec codex`: POSIX only and harder to audit.
+  - Relying on `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: opt-in, and it would also remove `OPENAI_API_KEY`.
+- **Limits:**
+  - The list is explicit: a credential variable not named here still reaches Codex (a new cloud provider, a variable a user invented). New names are added as they are found.
+  - Blanking hides variables, not files. `AWS_PROFILE` and `AWS_SHARED_CREDENTIALS_FILE` blanked only stops a named profile or file being selected: the AWS SDK still reads the `default` profile from `~/.aws/credentials`, and Codex can read any file the user can (issue #3).
+  - Named on the env-vars page and not blanked here, left for the owner to decide: `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY` and `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` (mTLS to Anthropic; the key is a path, the passphrase a secret), and `CLAUDE_CODE_MESSAGING_TOKEN` (a per-session token Claude Code exports to hooks and Bash commands).
+- **What gets touched:** `hooks/duet-logic.ts` (`BLANKED_ENV` only; both `process.run`/`spawn` call sites already take `childEnv()`), `.claude-plugin/plugin.json`, README, `plugins/mod-builder/skills/build/references/gotchas.md`, tests.
+- **Tests:** `childEnv()` and `BLANKED_ENV` against a literal list of the new names (not derived from `BLANKED_ENV`), the originals, and the names Codex needs; a routed call, a review and `/duet config models` each get the cloud names as `''` and none of the Codex names.
 - **Done means:** all tests pass, validate is clean.

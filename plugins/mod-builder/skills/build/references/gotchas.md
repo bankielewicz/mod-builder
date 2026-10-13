@@ -64,6 +64,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** Spell the `command.run` matcher and the `$.command.register` name as the same literal.
   Validate then lists it as "answers its own command" rather than as a gate without `.catch`.
   The same goes for a tool matcher: a template string shows as `tool.call{tool=?}`.
+- **[probe]** A child from `$.process.run` inherits the host environment unless Claude Code's opt-in
+  `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` is set. Probed on 2.1.296 with `AWS_SECRET_ACCESS_KEY`,
+  `OPENAI_API_KEY` and `ANTHROPIC_AWS_API_KEY` set to `dummy`: `printenv` found all three without the
+  scrub, and none with it (exit 1), `OPENAI_API_KEY` included. `init.env: { NAME: '' }` sets the
+  variable to an empty string (exit 0, empty output); it doesn't unset it. `$.env` can't list
+  variables, so a mod that must keep a secret from a child blanks an explicit list of names.
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every

@@ -283,7 +283,7 @@ Results go in `gotchas.md` as `[probe]` and in the Checkpoints table below.
 `tests/issue-forge-logic.test.ts` also runs under the Appendix A kit, so it uses only the
 kit's matchers (`toBe`, `toEqual`, `toContain`, `toMatchObject`, `toBeNull`, `toBeUndefined`,
 `toBeDefined`, `toStartWith`, `toMatch`, `toHaveLength`, `toBeLessThanOrEqual`, `toBeGreaterThan`,
-their `not.` forms, and the six `expect.*` helpers) and never imports `register.tsx`.
+`toBeGreaterThanOrEqual`, their `not.` forms, and the six `expect.*` helpers) and never imports `register.tsx`.
 
 1. **Profile (C2):** defaults fill (`baseBranch` `main`, `threshold` 95, `attempts` `{2,3,1}`,
    `commandTimeoutMinutes` 15); each missing required field, each wrong type, empty

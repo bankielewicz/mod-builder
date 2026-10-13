@@ -609,8 +609,12 @@ export function reviewArgv(target: ReviewTarget, model: string): string[] {
 /**
  * Claude Code's credential and provider variables, blanked in Codex's
  * environment (env is laid over the host's, which can't be listed, so the
- * names are fixed): direct API keys and tokens, and the Bedrock, Vertex and
- * Foundry settings.
+ * names are fixed): direct API keys and tokens, the Bedrock, Vertex, Foundry,
+ * Claude Platform on AWS and Bedrock Mantle settings, the AWS credentials and
+ * credential-file paths, `GOOGLE_APPLICATION_CREDENTIALS`, Claude Code's OAuth
+ * refresh token, profile and config folder, and the Azure SDK's default
+ * credential variables. Never add what Codex itself needs (`OPENAI_API_KEY`,
+ * `CODEX_HOME`, `PATH`, `HOME`, the proxy variables).
  */
 export const BLANKED_ENV = [
   'ANTHROPIC_API_KEY',
@@ -629,6 +633,35 @@ export const BLANKED_ENV = [
   'CLAUDE_CODE_USE_BEDROCK',
   'CLAUDE_CODE_USE_VERTEX',
   'CLAUDE_CODE_USE_FOUNDRY',
+  // AWS credentials and the files or profile they are read from
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'AWS_PROFILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'AWS_CONFIG_FILE',
+  // Vertex
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  // Claude Platform on AWS
+  'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+  'ANTHROPIC_AWS_WORKSPACE_ID',
+  'ANTHROPIC_AWS_BASE_URL',
+  'ANTHROPIC_AWS_API_KEY',
+  // Bedrock Mantle
+  'CLAUDE_CODE_USE_MANTLE',
+  'ANTHROPIC_BEDROCK_MANTLE_BASE_URL',
+  // Claude Code's own sign-in state
+  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+  'ANTHROPIC_PROFILE',
+  'CLAUDE_CONFIG_DIR',
+  // Foundry
+  'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
+  // Azure SDK default credential chain (Foundry's Entra path)
+  'AZURE_CLIENT_ID',
+  'AZURE_TENANT_ID',
+  'AZURE_CLIENT_SECRET',
+  'AZURE_CLIENT_CERTIFICATE_PATH',
+  'AZURE_FEDERATED_TOKEN_FILE',
 ] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
