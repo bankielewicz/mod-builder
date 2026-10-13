@@ -138,6 +138,13 @@ Re-check [field] items against the d.ts after a Claude Code update.
   Atoms survive the reload, and module variables and pane focus don't.
 - **[probe]** A row computed at scan time goes stale while a run streams. Anything that changes
   during a run (status, time) has to be read from the live run when drawing.
+- **[probe]** `$.session.cwd()` follows `/cd` and not a shell `cd`. Probed on 2.1.296 with Mod Lab's
+  detail header: after `/cd mods` the header switched to the path relative to the new folder, with no
+  rescan, so a `/cd` also redraws the pane; after `!cd mods` the header didn't change. A path shown
+  relative to the working directory should be worked out when drawing, not cached at scan time.
+- **[probe]** With a relative `--plugin-dir` (`claude --plugin-dir plugins/mod-builder`), after `/cd`
+  the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
+  installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
 
 ## Testing and checking
 
