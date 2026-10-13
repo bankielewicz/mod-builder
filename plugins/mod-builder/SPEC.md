@@ -366,7 +366,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 > Fix for issue #16: Mod Lab wrote `mods/<name>` in the Fix prompt and the detail header whatever `modsDir` was.
 
-- **Fix:** both now show the mod's real folder (`${modsDir}/<name>`) as the session reads it: relative to the working directory when inside it (`mods/foo`, `other/foo`, or `foo` after a `/cd` into `modsDir`), and absolute when outside. With the default `modsDir` the text is unchanged.
+- **Fix:** both now show the mod's real folder (`${modsDir}/<name>`) as the session reads it: relative to the working directory when inside it (`mods/foo`, `other/foo`, or `foo` after a `/cd` into `modsDir`), and absolute when outside. With the default `modsDir` the text is unchanged only when the session runs at the marketplace root: an installed Mod Lab used from another project shows the absolute path, which the header cuts from its start to fit (PR #37 review).
 - **New (logic):** `displayPathOf(path, cwd)`. `fixPromptOf` takes the display path as a required fifth parameter, and `viewOf` a required trailing `path` after `fromVersion`; both stay pure.
 - **Register:** the working directory comes from `$.session.cwd()`, read in `fillFix` when F is pressed and when the pane draws the detail header, so a `/cd` shows at the next render and the header always matches what F writes (PR #37 review). Probed live: `cwd()` follows `/cd` and not a shell `cd` (`!cd`). If it can't be read the full path is shown and the failure is logged once.
 - **Tests:** 84 (logic and UI). The 9 new ones fail on 0.2.3.
