@@ -51,6 +51,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     sets: [] as { key: string; value: unknown }[],
     sessionId: 's1-session',
     failReads: [] as string[],
+    denySet: '',
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -87,7 +88,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   // Owners as seen live: the plugin name plus its install source.
   const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
-  on('config.set', ($, e) => (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
+  on('config.set', ($, e) => seen.denySet ? { deny: seen.denySet } : (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
   // streaming process.spawn, so Mod Lab's fallback answers instead.
   on('process.run', async ($, e) => {
@@ -612,10 +613,10 @@ describe('logging (Change 0.2.2)', () => {
     await clock.advance(3000)
     const second = seen.writes.filter(w => w.path.includes('-s2-sessi.log')).at(-1)?.text ?? ''
     const first = seen.writes.filter(w => w.path.includes('-s1-sessi.log')).at(-1)?.text ?? ''
-    expect(second).toContain('NORMAL  config  logging set')
+    expect(second).toContain('NORMAL  config  logging changing')
     expect(second).not.toContain('Mod Lab started')
     expect(first).toContain('Mod Lab started')
-    expect(first).not.toContain('logging set')
+    expect(first).not.toContain('logging changing')
   })
 
   test('the same error at the same site is logged once', OPTIONS, async ($, on) => {
@@ -657,6 +658,18 @@ describe('logging (Change 0.2.2)', () => {
     expect(seen.writes.length).toBeGreaterThanOrEqual(before)
   })
 
+  test('a refused change is logged as refused, not as made', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    seen.denySet = 'the row is locked by policy'
+    await start($)
+    await clock.advance(10)
+    const reply = (await $.command.run({ command: 'mod-builder', args: 'config logging debug', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }
+    await clock.advance(3000)
+    expect(reply.text).toBe('Could not change logging: the row is locked by policy')
+    expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"debug"}')
+    expect(lastLog(seen)).toContain('NORMAL  config  logging change refused  {"value":"debug","reason":"the row is locked by policy"}')
+  })
+
   test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
     await start($)
@@ -694,7 +707,7 @@ describe('logging (Change 0.2.2)', () => {
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
     expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
     // The change line reaches the file before the set, which reloads the plugin.
-    expect(lastLog(seen)).toContain('NORMAL  config  logging set  {"value":"verbose"}')
+    expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"verbose"}')
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
   })
 })

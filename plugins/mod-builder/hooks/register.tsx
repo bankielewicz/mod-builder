@@ -606,9 +606,11 @@ async function setOption($: Engine, name: Lab.OptionName, value: string | boolea
   const key = `${$.plugin.name}.${name}`
   const row = (await $.config.list()).find(r => r.key === key && Lab.isOwnRow((r.provider as { plugin?: string } | undefined)?.plugin, $.plugin.name))
   if (!row) return `no /config row ${key} in this session (headless sessions list no plugin options). Change it in /config, or /plugin → mod-builder → options.`
-  logEvent($, 'normal', 'config', `${name} set`, { value })
+  logEvent($, 'normal', 'config', `${name} changing`, { value })
   await flushLog($)
   const result = await $.config.set({ key: row.key, value })
+  // A refusal doesn't reload the plugin, so this module can still record it.
+  if (result.deny) logEvent($, 'normal', 'config', `${name} change refused`, { value, reason: result.deny })
   return result.deny ?? ''
 }
 
