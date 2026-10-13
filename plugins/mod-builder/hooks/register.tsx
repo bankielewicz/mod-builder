@@ -80,8 +80,14 @@ const resultsOf = async ($: Engine): Promise<StoredResults> =>
   ((await $.store.get(RESULTS_KEY)) ?? {}) as StoredResults
 
 /** When each mod's current edit started (a build generation), for mods being edited. */
-const generationsOf = async ($: Engine): Promise<Record<string, number>> =>
-  ((await $.store.get(GENERATIONS_KEY)) ?? {}) as Record<string, number>
+type Generation = { since: number; fromVersion: string | null }
+const generationsOf = async ($: Engine): Promise<Record<string, Generation>> =>
+  Object.fromEntries(
+    Object.entries(((await $.store.get(GENERATIONS_KEY)) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
+      mod,
+      typeof gen === 'number' ? { since: gen, fromVersion: null } : gen,
+    ]),
+  )
 
 // ── Scanning ──────────────────────────────────────────────────────────────
 
@@ -150,7 +156,8 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         inFlight.filter(one => one.mod === facts.name),
         reports[facts.name] ?? null,
         freshNames.includes(facts.name),
-        generations[facts.name] ?? null,
+        generations[facts.name]?.since ?? null,
+        generations[facts.name]?.fromVersion ?? null,
       ),
     )
   const newlyGreen = await announceGreen($, judge([]), isAnnounced)
@@ -176,11 +183,11 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
  * notification (when announced). Returns the mods that just turned green.
  */
 async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean): Promise<string[]> {
-  const done = ((await $.store.get(DONE_KEY)) ?? {}) as Record<string, number>
+  const done = ((await $.store.get(DONE_KEY)) ?? {}) as Record<string, number | string>
   const newly: string[] = []
   let isChanged = false
   for (const view of judged) {
-    const stamp = factsByMod.get(view.name)?.codeMtimeMs ?? 0
+    const stamp = factsByMod.get(view.name)?.codeSig ?? ''
     if (!Lab.isGreen(view.lights) || done[view.name] === stamp) continue
     done[view.name] = stamp
     isChanged = true
@@ -298,6 +305,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   await scan($, false)
 
   const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
+  const codeSig = factsByMod.get(mod)?.codeSig
   let result: Lab.RunResult
   try {
     const { exitCode, output } = await execute($, entry, dir)
@@ -307,6 +315,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
     const endedAt = await $.clock.now()
     result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary: 'could not run', errors: [String(error).slice(0, 200)] }
   }
+  if (codeSig !== undefined) result = { ...result, codeSig }
   const results = await resultsOf($)
   await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
@@ -485,7 +494,7 @@ export const register: Register = (on, options) => {
       known = (await read($, views)).find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      await $.store.set(GENERATIONS_KEY, { ...(await generationsOf($)), [mod]: now })
+      await $.store.set(GENERATIONS_KEY, { ...(await generationsOf($)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {

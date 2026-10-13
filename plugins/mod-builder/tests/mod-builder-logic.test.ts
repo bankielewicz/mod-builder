@@ -40,6 +40,7 @@ import {
   reachesOf,
   REPORT_TTL_MS,
   reportOf,
+  signatureOf,
   startsGeneration,
   listedVersionOf,
   rerunPlanOf,
@@ -79,6 +80,7 @@ const EMPTY: FileFacts = {
   readmeHasReaches: false,
   isListed: false,
   codeMtimeMs: 1000,
+  codeSig: 'sig-a',
   firstMtimeMs: 0,
   lastMtimeMs: 42_000,
   archetype: null,
@@ -399,6 +401,7 @@ describe('mod-builder-logic', () => {
     expect(rerunPlanOf(lights('stale', 'stale'), false)).toEqual(['Validate', 'Test'])
     expect(rerunPlanOf(lights('passed', 'stale'), false)).toEqual(['Test'])
     expect(rerunPlanOf(lights('failed', 'stale'), false)).toEqual([])
+    expect(rerunPlanOf(lights('pending', 'stale'), false)).toEqual(['Test'])
     expect(rerunPlanOf(lights('stale', 'pending'), false)).toEqual(['Validate'])
     expect(rerunPlanOf(lights('stale', 'stale'), true)).toEqual([])
     expect(rerunPlanOf(lights('failed', 'pending'), false)).toEqual([])
@@ -432,5 +435,22 @@ describe('mod-builder-logic', () => {
     expect(listedVersionOf(JSON.stringify({ plugins: [{ name: 'x', version: '1.0.0' }] }), 'x')).toBe('1.0.0')
     expect(listedVersionOf('nope', 'x')).toBeNull()
     expect(listedVersionOf(JSON.stringify({ plugins: [{ name: 'other-name', source: './mods/x', version: '2.0.0' }] }), 'x')).toBe('2.0.0')
+  })
+
+  test('a deletion or rename makes results stale even when no mtime rises', () => {
+    const before = signatureOf(['a-logic.ts@100', 'b.test.ts@200'])
+    expect(signatureOf(['b.test.ts@200', 'a-logic.ts@100'])).toBe(before)
+    expect(signatureOf(['b.test.ts@200'])).not.toBe(before)
+    expect(signatureOf(['c-logic.ts@100', 'b.test.ts@200'])).not.toBe(before)
+    const ran: Results = { Validate: { kind: 'Validate', ok: true, stampMs: 200, codeSig: before, summary: 'clean', errors: [] } }
+    expect(lightsOf({ ...FULL, codeMtimeMs: 200, codeSig: before }, ran, [], null)[4]).toBe('passed')
+    expect(lightsOf({ ...FULL, codeMtimeMs: 200, codeSig: signatureOf(['b.test.ts@200']) }, ran, [], null)[4]).toBe('stale')
+  })
+
+  test('during an edit, Share needs a version different from the one the edit started from', () => {
+    const listed: FileFacts = { ...FULL, version: '0.1.0', listedVersion: '0.1.0' }
+    expect(lightsOf(listed, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
+    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.2.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('passed')
+    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.1.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
   })
 })

@@ -41,6 +41,8 @@ export type FileFacts = {
   isListed: boolean
   /** Newest mtime of what validate and test read: manifest, hooks/, tests/, types/. */
   codeMtimeMs: number
+  /** A signature of every code file's name and mtime: changes on an edit, an add, a delete or a rename. */
+  codeSig: string
   /** Oldest and newest mtime of anything in the folder, for the build span. */
   firstMtimeMs: number
   lastMtimeMs: number
@@ -83,6 +85,8 @@ export type RunResult = {
   ok: boolean
   /** The mod's codeMtimeMs when the run started; newer code makes it stale. */
   stampMs: number
+  /** The mod's codeSig when the run started; any difference makes it stale (older results lack it). */
+  codeSig?: string
   /** One line for the row and the toast. */
   summary: string
   /** The first few error lines, for the detail panel and Fix with Claude. */
@@ -111,6 +115,7 @@ export function lightsOf(
   running: readonly RunKind[],
   reported: Reported | null,
   sinceMs: number | null = null,
+  fromVersion: string | null = null,
 ): Light[] {
   // During an edit (sinceMs set), evidence older than the edit's start is stale:
   // it passed before, and has to be redone for this change.
@@ -119,12 +124,16 @@ export function lightsOf(
     if (running.includes(kind)) return 'running'
     const result = results[kind]
     if (!result) return 'pending'
-    if (result.stampMs < facts.codeMtimeMs || isOld(result.atMs ?? 0)) return 'stale'
+    const isChanged = result.codeSig !== undefined ? result.codeSig !== facts.codeSig : result.stampMs < facts.codeMtimeMs
+    if (isChanged || isOld(result.atMs ?? 0)) return 'stale'
     return result.ok ? 'passed' : 'failed'
   }
   const fileLight = (isDone: boolean, savedMs?: number): Light =>
     !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
-  const isReShared = sinceMs === null || (facts.listedVersion !== null && facts.listedVersion === facts.version)
+  // During an edit, Share needs a new version (not the one the edit started from) that the marketplace lists.
+  const isReShared =
+    sinceMs === null ||
+    (facts.listedVersion !== null && facts.listedVersion === facts.version && (fromVersion === null || facts.version !== fromVersion))
 
   const lights: Light[] = [
     fileLight(facts.hasSpec && !facts.specHasPlaceholder, facts.specMtimeMs),
@@ -220,7 +229,7 @@ export function rerunPlanOf(lights: readonly Light[], isRunning: boolean): RunKi
   const test = lights[STAGES.indexOf('Test')]
   // A Validate that failed on the current code blocks Test; re-running it changes nothing.
   if (validate === 'stale') return test === 'pending' ? ['Validate'] : ['Validate', 'Test']
-  if (validate === 'passed' && test === 'stale') return ['Test']
+  if ((validate === 'passed' || validate === 'pending') && test === 'stale') return ['Test']
   return []
 }
 
@@ -652,8 +661,9 @@ export function viewOf(
   reported: Reported | null,
   isFresh: boolean,
   sinceMs: number | null = null,
+  fromVersion: string | null = null,
 ): ModView {
-  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs)
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
   const validate = results.Validate?.validate
   const focus = focusStageOf(lights)
@@ -835,6 +845,16 @@ export function manifestOf(text: string | null): { version: string | null; descr
   }
 }
 
+/** A short, order-independent hash of a list of strings (FNV-1a over the sorted list). */
+export function signatureOf(items: readonly string[]): string {
+  let h = 0x811c9dc5
+  for (const ch of [...items].sort().join('\n')) {
+    h ^= ch.codePointAt(0)!
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return `${items.length}:${h.toString(36)}`
+}
+
 /** One folder's reads → its facts. A folder with neither manifest nor SPEC is no mod: null. */
 export function factsOf(read: FolderRead): FileFacts | null {
   const has = (list: readonly Entry[], name: string): boolean => list.some(entry => entry.name === name)
@@ -847,6 +867,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}
   const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
+  const codeSig = signatureOf(code.map(entry => `${entry.name}@${entry.mtimeMs}`))
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
   return {
     ...manifestOf(read.manifest),
@@ -872,6 +893,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
       ),
     ),
     codeMtimeMs,
+    codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
     lastMtimeMs: times.length ? Math.max(...times) : 0,
     archetype: slots.archetype ?? null,
