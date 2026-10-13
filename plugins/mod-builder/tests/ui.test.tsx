@@ -50,7 +50,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     writes: [] as { path: string; text: string }[],
     sets: [] as { key: string; value: unknown }[],
     sessionId: 's1-session',
-    cwd: '/m',
+    cwd: '/m' as string | null,
     failReads: [] as string[],
     denySet: '',
   }
@@ -84,7 +84,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
-  on('session.cwd', () => ({ value: seen.cwd }) as never)
+  on('session.cwd', () => (seen.cwd === null ? { deny: 'cwd unavailable' } : ({ value: seen.cwd } as never)))
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
@@ -339,6 +339,18 @@ describe('modsDir that is not mods/ under the working directory', () => {
     await clock.advance(10)
     const ui = await mountPane($)
     expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · other\/git-branch\// })).toBeDefined()
+  })
+
+  test('the detail header shows the full path when the working directory cannot be read, and logs that once', { options: { modsDir: OTHER } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch', OTHER))
+    seen.cwd = null
+    await start($)
+    await clock.advance(10)
+    await command($, 'git-branch')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · \/m\/other\/git-branch\// })).toBeDefined()
+    expect(seen.logs.filter(line => line.includes('session.cwd')).length).toBe(1)
   })
 
   test('the detail header follows a /cd at the next scan', { options: { modsDir: OTHER } }, async ($, on) => {

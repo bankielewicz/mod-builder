@@ -166,9 +166,6 @@ const modsDirOf = ($: Engine): string => Lab.normalizePath(configuredDir || `${$
 const cwdOf = ($: Engine): Promise<string | null> =>
   $.session.cwd().catch((error: unknown) => (logCaught($, 'session.cwd', error), null))
 
-/** A mod folder as the session reads it; the full path when the working directory is unknown. */
-const shownPath = (path: string, cwd: string | null): string => (cwd === null ? Lab.normalizePath(path) : Lab.displayPathOf(path, cwd))
-
 const list = ($: Engine, path: string): Promise<Lab.Entry[]> =>
   $.fs
     .list(path)
@@ -298,7 +295,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         freshNames.includes(facts.name),
         generations[facts.name]?.since ?? null,
         generations[facts.name]?.fromVersion ?? null,
-        shownPath(`${dir}/${facts.name}`, cwd),
+        Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
       ),
     )
   const newlyGreen = await announceGreen($, judge([]), isAnnounced)
@@ -565,7 +562,7 @@ async function moveSelection($: Engine, by: number): Promise<void> {
 
 async function fillFix($: Engine, view: ModView): Promise<void> {
   const failed = (await resultsOf($))[view.name]?.Test?.tests?.failed ?? 1
-  const path = shownPath(`${modsDirOf($)}/${view.name}`, await cwdOf($))
+  const path = Lab.displayPathOf(`${modsDirOf($)}/${view.name}`, await cwdOf($))
   await $.prompt.fill({ text: Lab.fixPromptOf(view.name, view.failedStage ?? 'Test', view.errors, failed, path) })
 }
 

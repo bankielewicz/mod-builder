@@ -821,10 +821,12 @@ export function normalizePath(path: string): string {
 
 /**
  * A path as the session reads it: relative to `cwd` when inside it
- * (`mods/foo`), `.` when it is `cwd`, absolute otherwise.
+ * (`mods/foo`), `.` when it is `cwd`, absolute otherwise, and absolute when
+ * the working directory couldn't be read (`cwd` null).
  */
-export function displayPathOf(path: string, cwd: string): string {
+export function displayPathOf(path: string, cwd: string | null): string {
   const target = normalizePath(path)
+  if (cwd === null) return target
   const root = normalizePath(cwd)
   if (target === root) return '.'
   // `normalizePath` keeps a trailing `/` only for the root itself: cwd `/` gives prefix `/`, not `//`.

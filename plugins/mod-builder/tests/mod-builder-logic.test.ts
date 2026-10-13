@@ -85,8 +85,8 @@ import { validateClean } from './fixtures/validate-clean'
 import { validateMissing } from './fixtures/validate-missing'
 
 /** Read off the namespace, so a rule that is not there yet fails its assertion instead of the import. */
-const displayPathOf = (path: string, cwd: string): string | undefined =>
-  (Logic as unknown as { displayPathOf?: (path: string, cwd: string) => string }).displayPathOf?.(path, cwd)
+const displayPathOf = (path: string, cwd: string | null): string | undefined =>
+  (Logic as unknown as { displayPathOf?: (path: string, cwd: string | null) => string }).displayPathOf?.(path, cwd)
 
 const EMPTY: FileFacts = {
   name: 'git-branch',
@@ -336,6 +336,11 @@ describe('mod-builder-logic', () => {
     expect(displayPathOf('/m', '/m')).toBe('.')
     expect(displayPathOf('/work/mods/foo', '/m')).toBe('/work/mods/foo')
     expect(displayPathOf('/m2/mods/foo', '/m')).toBe('/m2/mods/foo')
+  })
+
+  test('displayPathOf: with no working directory to compare, the path stays absolute', () => {
+    expect(displayPathOf('/m/mods/foo', null)).toBe('/m/mods/foo')
+    expect(displayPathOf('/m/./mods//foo', null)).toBe('/m/mods/foo')
   })
 
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {
