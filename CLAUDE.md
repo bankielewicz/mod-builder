@@ -24,6 +24,14 @@ claude -p --plugin-dir mods/<name> "/<name> demo"                    # headless 
 claude --plugin-dir plugins/mod-builder                              # interactive session; the folder is watched and hot-reloads
 ```
 
+One logic test file, or one test by name, runs under node through the coverage kit's loader. UI tests
+(`*.test.tsx`) only run under `claude plugin test`.
+
+```sh
+node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test mods/duet/tests/duet-logic.test.ts
+node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test --test-name-pattern='BLANKED_ENV' mods/duet/tests/duet-logic.test.ts
+```
+
 Typecheck (needs the bundled API types from the built-in `plugin-authoring` skill, at
 `/tmp/claude-*/bundled-skills/<version>/*/plugin-authoring/types/claude-code.d.ts` once that skill has
 loaded): copy `plugins/mod-builder/skills/build/templates/tsconfig.check.json` **outside** the repo,
@@ -32,8 +40,69 @@ replace `__TYPES__` and `__MOD__`, then `npx -y -p typescript@5.6 tsc -p <copy>`
 interactive session loads the mod (gitignored).
 
 CI (`.github/workflows/ci.yml`) runs validate + test for every `:(glob)plugins/*` and `:(glob)mods/*`
-plugin and the archetype check. **`main` is protected: work on a branch and open a PR.** Codex reviews
-every PR automatically; triage its findings by severity, verify each against the code, fix with tests.
+plugin and the archetype check.
+
+## Changing files: a worktree, then a PR
+
+`main` is protected, and the main folder is shared. Several Claude sessions work in it at once, and the
+installed plugins (`mod-builder@claudemod`, `duet@claudemod`, `issue-forge@claudemod`) load from whatever
+branch it is on. So **never edit, commit or switch branches in the main folder**, with one exception.
+After a PR merges, the main folder may be brought up to date so the installed plugins get the merge:
+`git switch main && git merge --ff-only origin/main` after a fetch, then `/reload-plugins` in each
+session. Do that only when the person asks or agrees, the folder has no uncommitted changes, and no
+issue-forge run or other session is working in it. Every change to this repo happens in its own
+worktree and reaches `main` through a PR:
+
+1. `git fetch origin && git worktree add --no-track -b <branch> scratch/<name> origin/main`
+   (`scratch/` is gitignored). Edit, test and commit only inside `scratch/<name>`.
+2. Test the worktree's code, not the installed copy, which still loads from the main folder. From
+   inside the worktree, the commands above work as written (`claude plugin test mods/duet`); a live
+   session there is `claude --plugin-dir <plugin>`. Mod Lab started in a worktree still watches the
+   main folder's `mods/` (#23).
+3. Push and open the PR: `git push -u origin <branch>`, then `gh pr create --base main --head <branch>`.
+   Commit and push each fix on its own. Codex reviews every PR automatically: triage its findings by
+   severity, verify each against the code, and fix real ones with a test.
+4. The stash list is shared by every worktree. Apply a stash by its SHA, never with a bare
+   `git stash pop`.
+5. Remove the worktree from a plain shell after the PR merges (`git worktree remove scratch/<name>`).
+   Run from Claude Code's sandbox, it fails partway.
+6. Even `git status` takes `.git/index.lock`, so a git command in a checkout where another session or
+   an issue-forge run is committing can make that commit fail (#28). To only read, use
+   `GIT_OPTIONAL_LOCKS=0 git status`.
+
+## TDD: red, green, refactor, QA
+
+Every code change goes through these four phases in order, in any language: TypeScript for mods,
+JavaScript for scripts, Python or anything else a change adds. A phase is done only when its command
+output shows it. In the commands below, `<kit>` stands for
+`./plugins/mod-builder/skills/build/scripts/coverage/register.mjs`.
+
+1. **Red.** Write the test that states the change, and run it. It must fail by assertion, for the
+   reason the change exists; a failed import or a syntax error doesn't count. A bug fix starts with a
+   test that reproduces the bug. In mods:
+   - pure rules go in `hooks/<name>-logic.ts`, and their tests in `tests/<name>-logic.test.ts`;
+   - `$` behaviour is tested in `tests/ui.test.tsx`, with an `on(...)` stub for every call (see
+     "Rules the engine enforces").
+2. **Green.** Write the least code that makes the new test pass, without editing the red tests. Then
+   run the plugin's whole suite (`claude plugin test <plugin>`); everything passes.
+3. **Refactor.** Tidy the code, keeping behaviour the same. Run the tests after each step. No test is
+   edited to make the refactor pass.
+4. **QA.** Before pushing, run and show:
+   - `claude plugin validate .`, plus `claude plugin validate` and `claude plugin test` for every
+     plugin touched;
+   - the archetype check, when a template or the build skill changed;
+   - the typecheck above;
+   - coverage of the changed logic: `node --import <kit> --test --experimental-test-coverage
+     --test-coverage-include='**/hooks/*-logic.ts' <logic test files>`. Changed lines and branches
+     are covered (issue-forge's gate is 95%), and total coverage doesn't drop;
+   - a live check of the behaviour: `claude -p --plugin-dir …` for a command's answer, or an
+     interactive session with `--plugin-dir` for panes and keys.
+
+   Put these results in the PR description.
+
+A test that turns out to be wrong is fixed in its own commit, which says why. It is never loosened to
+let code pass. `/issue-forge <N>` automates red, green and refactor for a GitHub issue behind these
+gates; run it from a worktree.
 
 ## Architecture
 
@@ -82,4 +151,4 @@ is `.issue-forge.json`, its coverage kit `plugins/mod-builder/skills/build/scrip
   every release (Mod Lab's Share stage checks they match).
 - New engine findings go in `gotchas.md` with a source tag: `[d.ts]`, `[probe]` (verified live) or
   `[field]`. Only add what was verified.
-- `scratch/` (probes) and `tmp/` are gitignored.
+- `scratch/` (probes and worktrees) and `tmp/` are gitignored.
