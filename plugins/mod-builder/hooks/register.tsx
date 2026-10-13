@@ -444,7 +444,13 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind)) return
   const dir = `${modsDirOf($)}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
-  if (kind === 'Typecheck' && !(await $.fs.exists(typesPath).catch((error: unknown) => (logCaught($, 'fs.exists', error, 'debug', { path: typesPath }), false)))) {
+  const hasTypes =
+    kind !== 'Typecheck' ||
+    (await $.fs.exists(typesPath).catch((error: unknown) => {
+      logCaught($, 'fs.exists', error, 'debug', { path: typesPath })
+      return false
+    }))
+  if (!hasTypes) {
     $.ui.toast(`${mod}: type-check needs the engine's types. Load the mod once in a session (/reload-plugins), then press K`)
     return
   }

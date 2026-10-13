@@ -153,7 +153,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `command.run{modlab}` and `command.run{mod-builder}` (each answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
+| Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
 | Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. |
 | Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
