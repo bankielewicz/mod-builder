@@ -61,6 +61,22 @@ import {
   type ModView,
   type Results,
   type Run,
+  configListText,
+  continueLog,
+  isNewCaught,
+  isOwnRow,
+  valuesAfterSet,
+  EMPTY_LOG,
+  errorText,
+  LOG_CONTEXT_MAX,
+  logFileOf,
+  logLevelOf,
+  logLineOf,
+  logText,
+  outputTail,
+  parseConfigCommand,
+  pushLine,
+  shouldLog,
 } from '../hooks/mod-builder-logic'
 import { testFail } from './fixtures/test-fail'
 import { testPass } from './fixtures/test-pass'
@@ -471,5 +487,112 @@ describe('mod-builder-logic', () => {
     expect(lightsOf(listed, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
     expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.2.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('passed')
     expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.1.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
+  })
+})
+
+describe('logging and /mod-builder config', () => {
+  test('the logging option: four levels, anything else is normal; each level includes the ones above it', () => {
+    expect(logLevelOf('verbose')).toBe('verbose')
+    expect(logLevelOf(' DEBUG ')).toBe('debug')
+    expect(logLevelOf('loud')).toBe('normal')
+    expect(logLevelOf(undefined)).toBe('normal')
+    expect(shouldLog('off', 'normal')).toBe(false)
+    expect(shouldLog('normal', 'normal')).toBe(true)
+    expect(shouldLog('normal', 'verbose')).toBe(false)
+    expect(shouldLog('verbose', 'verbose')).toBe(true)
+    expect(shouldLog('verbose', 'debug')).toBe(false)
+    expect(shouldLog('debug', 'debug')).toBe(true)
+    expect(shouldLog('debug', 'normal')).toBe(true)
+  })
+
+  test('a line: ISO time, padded level, site, one-line message, JSON context cut to its limit', () => {
+    const at = Date.parse('2026-10-13T14:02:11.123Z')
+    expect(logLineOf(at, 'normal', 'run', 'git-branch Test failed', { durationMs: 900 })).toBe(
+      '2026-10-13T14:02:11.123Z NORMAL  run  git-branch Test failed  {"durationMs":900}',
+    )
+    expect(logLineOf(at, 'verbose', 'scan', 'two\nlines')).toBe('2026-10-13T14:02:11.123Z VERBOSE scan  two ⏎ lines')
+    const long = logLineOf(at, 'debug', 'x', 'm', { text: 'a'.repeat(5000) })
+    expect(long.length).toBeLessThanOrEqual(80 + LOG_CONTEXT_MAX)
+    expect(long.endsWith('…')).toBe(true)
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    expect(logLineOf(at, 'debug', 'x', 'm', cyclic)).toContain('[object Object]')
+  })
+
+  test('errors read as name and message; non-errors as text', () => {
+    expect(errorText(new TypeError('no implementation for fs.write'))).toBe('TypeError: no implementation for fs.write')
+    expect(errorText('ENOENT')).toBe('ENOENT')
+    expect(errorText(new Error('a\nb'))).toBe('Error: a ⏎ b')
+  })
+
+  test('a caught error repeated at one site is logged once, until that site fails differently', () => {
+    const first = isNewCaught({}, 'render.band', 'TypeError: x')
+    expect(first.isNew).toBe(true)
+    expect(isNewCaught(first.last, 'render.band', 'TypeError: x').isNew).toBe(false)
+    expect(isNewCaught(first.last, 'render.band', 'TypeError: y').isNew).toBe(true)
+    expect(isNewCaught(first.last, 'tick', 'TypeError: x').isNew).toBe(true)
+  })
+
+  test('the buffer keeps the newest lines and says how many it dropped', () => {
+    let buffer = EMPTY_LOG
+    for (const n of [1, 2, 3, 4]) buffer = pushLine(buffer, `line ${n}`, 3)
+    expect(buffer).toEqual({ lines: ['line 2', 'line 3', 'line 4'], dropped: 1 })
+    expect(logText(buffer)).toBe('… 1 earlier line dropped\nline 2\nline 3\nline 4\n')
+    expect(logText(pushLine(EMPTY_LOG, 'only'))).toBe('only\n')
+  })
+
+  test('a reloaded module continues the session file: earlier lines first, the dropped count carried over', () => {
+    expect(continueLog('a\nb\n', pushLine(EMPTY_LOG, 'c'))).toEqual({ lines: ['a', 'b', 'c'], dropped: 0 })
+    expect(continueLog('… 5 earlier lines dropped\na\nb\n', pushLine(EMPTY_LOG, 'c'), 2)).toEqual({ lines: ['b', 'c'], dropped: 6 })
+    expect(continueLog('', pushLine(EMPTY_LOG, 'c'))).toEqual({ lines: ['c'], dropped: 0 })
+  })
+
+  test('one log file per session and day, under the data folder', () => {
+    const at = Date.parse('2026-10-13T23:59:00Z')
+    expect(logFileOf('/home/u', at, 'b48cba1d-4e93-4ff3')).toBe('/home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
+    expect(logFileOf('C:\\Users\\u', at, '')).toBe('C:/Users/u/.claude/mod-builder-data/logs/2026-10-13-unknown.log')
+    expect(outputTail('a\n\nb\nc\n', 2)).toEqual(['b', 'c'])
+  })
+
+  test('/mod-builder config: list, set each option, and say what a bad value should be', () => {
+    expect(parseConfigCommand([])).toEqual({ kind: 'list' })
+    expect(parseConfigCommand(['list'])).toEqual({ kind: 'list' })
+    expect(parseConfigCommand(['logging', 'Verbose'])).toEqual({ kind: 'set', name: 'logging', value: 'verbose' })
+    expect(parseConfigCommand(['logging', 'loud'])).toEqual({ kind: 'error', text: 'logging must be one of off · normal · verbose · debug.' })
+    expect(parseConfigCommand(['logging'])).toEqual({ kind: 'error', text: 'logging needs a value: off · normal · verbose · debug.' })
+    expect(parseConfigCommand(['autorerun', 'off'])).toEqual({ kind: 'set', name: 'autoRerun', value: false })
+    expect(parseConfigCommand(['autoOpen', 'yes'])).toEqual({ kind: 'set', name: 'autoOpen', value: true })
+    expect(parseConfigCommand(['autoOpen', 'maybe'])).toEqual({ kind: 'error', text: 'autoOpen must be on or off.' })
+    expect(parseConfigCommand(['modsDir', '/work', 'mods'])).toEqual({ kind: 'set', name: 'modsDir', value: '/work mods' })
+    expect(parseConfigCommand(['modsDir', 'default'])).toEqual({ kind: 'set', name: 'modsDir', value: '' })
+    const unknown = parseConfigCommand(['colour', 'red'])
+    expect(unknown.kind).toBe('error')
+    expect((unknown as { text: string }).text).toStartWith('No option "colour". Options: logging, autoRerun, autoOpen, modsDir.')
+  })
+
+  test("a /config row is mod-builder's own when its owner is mod-builder or mod-builder@<source>", () => {
+    expect(isOwnRow('mod-builder@claudemod', 'mod-builder')).toBe(true)
+    expect(isOwnRow('mod-builder@inline', 'mod-builder')).toBe(true)
+    expect(isOwnRow('mod-builder', 'mod-builder')).toBe(true)
+    expect(isOwnRow('mod-builder-extra@x', 'mod-builder')).toBe(false)
+    expect(isOwnRow(undefined, 'mod-builder')).toBe(false)
+  })
+
+  test('after a change the listing shows the new value; a reset modsDir shows the real default', () => {
+    expect(valuesAfterSet('logging', 'debug', '/p/mods')).toEqual({ logging: 'debug' })
+    expect(valuesAfterSet('autoOpen', true, '/p/mods')).toEqual({ autoOpen: true })
+    expect(valuesAfterSet('modsDir', '', '/a/b/ClaudeMod/mods')).toEqual({ modsDir: '', modsDirShown: '…/ClaudeMod/mods' })
+    expect(valuesAfterSet('modsDir', '/work/x/mods', '/p/mods')).toEqual({ modsDir: '/work/x/mods', modsDirShown: '…/x/mods' })
+  })
+
+  test('the listing shows each value and the log file, or why there is none', () => {
+    const values = { logging: 'verbose' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods' }
+    const text = configListText(values, '/home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
+    expect(text).toContain('logging    verbose')
+    expect(text).toContain('autoRerun  on')
+    expect(text).toContain('modsDir    default (…/ClaudeMod/mods)')
+    expect(text).toContain('Log file: /home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
+    expect(configListText({ ...values, logging: 'off' }, '')).toContain('Log file: none (logging is off)')
+    expect(configListText(values, '')).toContain('Log file: not written yet this session')
   })
 })

@@ -38,7 +38,7 @@ const modFiles = (name: string): Disk => ({
 /** Every file's mtime is `ms`, unless `byPath` names its own. */
 type Mtimes = { ms: number; byPath?: Record<string, number> }
 
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[]) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -46,6 +46,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     argv: [] as string[][],
     filled: [] as string[],
     notified: [] as string[],
+    logs: [] as string[],
+    writes: [] as { path: string; text: string }[],
+    sets: [] as { key: string; value: unknown }[],
+    sessionId: 's1-session',
+    failReads: [] as string[],
+    denySet: '',
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -70,9 +76,19 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   })
   on('fs.read', ($, e) => {
     const path = (e as { path: string }).path
+    if (seen.failReads.includes(path)) return { deny: 'EIO: read failed' }
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
   })
   on('fs.exists', ($, e) => ({ value: (e as { path: string }).path in disk }) as never)
+  on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
+  on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
+  on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
+  on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
+  on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
+  // Owners as seen live: the plugin name plus its install source.
+  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
+  on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
+  on('config.set', ($, e) => seen.denySet ? { deny: seen.denySet } : (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
   // streaming process.spawn, so Mod Lab's fallback answers instead.
   on('process.run', async ($, e) => {
@@ -537,5 +553,161 @@ describe('command', () => {
     await clock.advance(3_000)
     const ui = await mountPane($)
     expect(await ui.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeDefined()
+  })
+})
+
+describe('logging (Change 0.2.2)', () => {
+  const LOG = /^\/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log$/
+  const lastLog = (seen: { writes: { path: string; text: string }[] }) => seen.writes.filter(w => LOG.test(w.path)).at(-1)?.text ?? ''
+
+  test('normal: a check that cannot run is logged with its site; expected misses are not', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(3000)
+    const text = lastLog(seen)
+    expect(text).toContain('NORMAL  session.start  Mod Lab started')
+    // A stub that throws is skipped by the kit, so the caller sees "no implementation".
+    expect(text).toMatch(/NORMAL  run  \w+: [^\n]+ {2}\{"mod":"git-branch","kind":"Validate"\}/)
+    expect(text).toContain('NORMAL  run  git-branch Validate failed')
+    expect(text).not.toContain('VERBOSE')
+    expect(text).not.toContain('DEBUG')
+    expect(seen.logs.some(line => line.includes('NORMAL  run  git-branch Validate failed'))).toBe(true)
+  })
+
+  test('after a reload the session file is continued, not replaced', OPTIONS, async ($, on) => {
+    const day = new Date().toISOString().slice(0, 10)
+    const path = `/home/u/.claude/mod-builder-data/logs/${day}-s1-sessi.log`
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), [path]: '2026-10-13T09:00:00.000Z NORMAL  session.start  before the reload\n' })
+    await start($)
+    await clock.advance(3000)
+    const text = lastLog(seen)
+    expect(text).toStartWith('2026-10-13T09:00:00.000Z NORMAL  session.start  before the reload\n')
+    expect(text).toContain('NORMAL  session.start  Mod Lab started')
+  })
+
+  test('/mod-builder config changes only its own row, and says where to go when it has none', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, [
+      { key: 'mod-builder-extra.logging', plugin: 'mod-builder-extra@claudemod' },
+      { key: 'mod-builder.logging', plugin: 'mod-builder@inline' },
+    ])
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    await run('config logging debug')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'debug' }])
+    expect((await run('config autoOpen on')).text).toBe(
+      'Could not change autoOpen: no /config row mod-builder.autoOpen in this session (headless sessions list no plugin options). Change it in /config, or /plugin → mod-builder → options.',
+    )
+  })
+
+  test('after /clear the next lines go to the new session file', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(3000)
+    await $.session.end({ reason: 'clear', sessionId: 's1-session', resume: { sessionId: 's1-session' } } as never)
+    seen.sessionId = 's2-session'
+    await $.command.run({ command: 'mod-builder', args: 'config logging debug', origin: COMPOSER, presentation: PRESENTATION })
+    await clock.advance(3000)
+    const second = seen.writes.filter(w => w.path.includes('-s2-sessi.log')).at(-1)?.text ?? ''
+    const first = seen.writes.filter(w => w.path.includes('-s1-sessi.log')).at(-1)?.text ?? ''
+    expect(second).toContain('NORMAL  config  logging changing')
+    expect(second).not.toContain('Mod Lab started')
+    expect(first).toContain('Mod Lab started')
+    expect(first).not.toContain('logging changing')
+  })
+
+  test('the same error at the same site is logged once', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    await ui.press({ key: 'validate' })
+    await clock.advance(3000)
+    const caught = lastLog(seen).split('\n').filter(line => /NORMAL  run  \w+Error: /.test(line))
+    expect(caught).toHaveLength(1)
+    expect(lastLog(seen).split('\n').filter(line => line.includes('git-branch Validate failed'))).toHaveLength(2)
+  })
+
+  test('a log that exists but cannot be read is never overwritten', OPTIONS, async ($, on) => {
+    const day = new Date().toISOString().slice(0, 10)
+    const path = `/home/u/.claude/mod-builder-data/logs/${day}-s1-sessi.log`
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), [path]: 'earlier lines\n' })
+    seen.failReads.push(path)
+    await start($)
+    await clock.advance(3000)
+    expect(seen.writes.filter(w => w.path === path)).toEqual([])
+  })
+
+  test('without a session id the log gets its own name; nothing changed means nothing rewritten', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    seen.sessionId = ''
+    await start($)
+    await clock.advance(3000)
+    const logs = seen.writes.filter(w => w.path.includes('mod-builder-data'))
+    expect(logs.length).toBeGreaterThan(0)
+    expect(logs[0]!.path).toMatch(/\/logs\/\d{4}-\d{2}-\d{2}-x[a-z0-9]{1,7}\.log$/)
+    const before = seen.writes.length
+    await $.turn.complete({ answer: 'nothing new' } as never)
+    await clock.advance(3000)
+    expect(seen.writes.filter(w => w.path.includes('mod-builder-data')).length).toBe(logs.length)
+    expect(seen.writes.length).toBeGreaterThanOrEqual(before)
+  })
+
+  test('a refused change is logged as refused, not as made', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    seen.denySet = 'the row is locked by policy'
+    await start($)
+    await clock.advance(10)
+    const reply = (await $.command.run({ command: 'mod-builder', args: 'config logging debug', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }
+    await clock.advance(3000)
+    expect(reply.text).toBe('Could not change logging: the row is locked by policy')
+    expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"debug"}')
+    expect(lastLog(seen)).toContain('NORMAL  config  logging change refused  {"value":"debug","reason":"the row is locked by policy"}')
+  })
+
+  test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(3000)
+    expect(seen.logs).toEqual([])
+    expect(seen.writes.filter(w => w.path.includes('mod-builder-data'))).toEqual([])
+  })
+
+  test('verbose: each scan names the mods folder; debug adds expected misses', { options: { modsDir: MODS, logging: 'debug' } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(3000)
+    const text = lastLog(seen)
+    expect(text).toContain('VERBOSE scan  1 folders, 1 mods in')
+    expect(text).toContain('{"modsDir":"/m/mods"}')
+    expect(text).toContain('DEBUG   fs.read')
+    expect(text).toContain('DEBUG   scan.lights  lights per mod')
+  })
+
+  test('/mod-builder config lists the options and the log file; setting logging writes its /config row', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(3000)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    const listed = (await run('config')).text ?? ''
+    expect(listed).toContain('logging    normal')
+    expect(listed).toContain('modsDir    /m/mods')
+    expect(listed).toMatch(/Log file: \/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log/)
+    const changed = (await run('config logging verbose')).text ?? ''
+    expect(changed).toStartWith('logging is now verbose.')
+    expect(changed).toContain('logging    verbose')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
+    expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
+    // The change line reaches the file before the set, which reloads the plugin.
+    expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"verbose"}')
+    expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
   })
 })
