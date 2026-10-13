@@ -417,7 +417,7 @@ pane's keys; `/reload-plugins` picks up edits.
   - Without `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: all three reached the child (`dummy`).
   - With `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`: all three were removed (`printenv` exit 1). So Claude Code's scrub does cover a mod's `$.process.run` children, and it removes `OPENAI_API_KEY` too, which Codex needs when signed in with an API key. The scrub is opt-in, so duet doesn't rely on it.
   - `env: { NAME: '' }` sets the variable to an empty string (`printenv` exit 0, empty output); it doesn't unset it. "Blanked" means present and empty.
-- **What changes:** `BLANKED_ENV` goes from 16 names to 38, by these groups:
+- **What changes:** `BLANKED_ENV` goes from 16 names to these groups:
   - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`; on PR #30 review, `AWS_CONTAINER_AUTHORIZATION_TOKEN` (the AWS SDK reference's container credential provider: "an authorization token in plain text", used by EKS Pod Identity). The provider's URIs and token file (`AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) and web identity's `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN` and `AWS_ROLE_SESSION_NAME` are endpoints, paths and IDs, and pass through. On ECS the SDK appends the relative URI to the local endpoint `169.254.170.2` to fetch the task's credentials, so a Codex in that task may still fetch them (Limits).
   - Claude Platform on AWS page: `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_API_KEY`.
   - Bedrock page (Mantle): `CLAUDE_CODE_USE_MANTLE`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`.
@@ -428,7 +428,7 @@ pane's keys; `/reload-plugins` picks up edits.
   - Azure managed identity (App Service's managed-identity page; added on PR #30 review): `IDENTITY_HEADER`, the header the local token endpoint requires ("The platform rotates the value"). `IDENTITY_ENDPOINT` is a local URL and passes through. `MSI_SECRET` isn't on the current page, so it isn't added.
   - Never blanked, because Codex needs them: `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
   - Never blanked, because `''` isn't unset: paths, directories and profile names (`CLAUDE_CONFIG_DIR`, `ANTHROPIC_PROFILE`, `AWS_PROFILE`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`). The green phase blanked them; review on PR #30 found that a `claude` run by Codex then uses an empty config directory (`CLAUDE_CONFIG_DIR= claude auth status` reports `configDirectory: ""`, probed on 2.1.296). Their values aren't secrets, and the files they name stay readable either way. `init.env` is typed `Record<string, string>`, so a variable can't be unset instead.
-  - The README Install paragraph names the groups; its Environment row says "blanks the 38 names in `BLANKED_ENV`".
+  - The README Install paragraph names the groups; its Environment row points to `BLANKED_ENV` without a count, which `BLANKED_ENV`'s exact-list test makes unnecessary.
 - **Considered and not taken:**
   - Enumerating the inherited environment (`$.process.run(['env'])`, `cmd /c set` on Windows) and blanking by pattern: one extra process per Codex run, and the names it blanks are invisible to `claude plugin validate`, so the README's reach row couldn't be generated from them.
   - A `sh -c` wrapper that unsets variables before `exec codex`: POSIX only and harder to audit.
@@ -451,3 +451,4 @@ pane's keys; `/reload-plugins` picks up edits.
   - `IDENTITY_HEADER` is blanked; `IDENTITY_ENDPOINT` passes through, and `MSI_SECRET` isn't added, as it's unverified (Codex).
   - `codexLaunch` builds Codex's spawn request (argv, blanked env, stdin), which `$.process.spawn` takes whole and the `$.process.run` fallback takes in parts, and a test checks it. Before, removing `env` from the spawn call left all 88 tests passing; removing it from `codexLaunch` now fails 4. The one line no test reaches is `$.process.spawn(launch)`, as spawn can't be stubbed (`/code-review`).
   - The README says that under `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` Codex needs `codex login`, since the scrub removes `OPENAI_API_KEY` (the probe above, which used `$.process.run`; `--with-api-key` from `codex login --help`, 0.162.1) (`/code-review`).
+  - No count of names in the README or this section: it went stale with every change, and the exact-list test pins the names instead (`/code-review`).

@@ -123,7 +123,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Files | reads `<cwd>/.claude/agents/<type>.md`, `~/.claude/agents/<type>.md`; writes `~/.claude/duet-data/runs.jsonl` (no prompt text), `sessions/<session>/review-<id>.md` and `sessions/<session>/d<n>.out.md` (a background run's answer; per session, since ids restart at d1) |
 | Network | none directly; **Codex sends the handoff and whatever it reads to OpenAI** under your Codex sign-in. It can read any file your account can read, not only the session folder |
 | Model calls | none by the mod directly; Codex usage per routed call and review; each delivered background answer is a Claude turn |
-| Environment | reads `HOME`, `USERPROFILE`; Codex's child env blanks the 38 names in `BLANKED_ENV` (see Install); other variables pass through |
+| Environment | reads `HOME`, `USERPROFILE`; Codex's child env blanks the secrets named in `BLANKED_ENV` (see Install); other variables pass through |
 | Asks | `$.ui.ask` once per session before sending to Codex (unless `codexConsent: allow`) |
 | Gating hooks | `tool.call{tool=Agent}` with `.catch` (refuses on failure; never falls through) |
 
