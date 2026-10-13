@@ -434,6 +434,7 @@ pane's keys; `/reload-plugins` picks up edits.
 - **Limits:**
   - The list is explicit: a credential variable not named here still reaches Codex (a new cloud provider, a variable a user invented). New names are added as they are found.
   - Blanking hides variables, not files: Codex can read `~/.aws/credentials`, a file a path variable names, or any other file the user can (issue #3).
+  - Codex 0.162.1 has an Amazon Bedrock provider (its binary contains `amazon-bedrock`, `AWS_PROFILE` and `AWS_BEARER_TOKEN_BEDROCK`; not run). Its AWS key variables are Claude Code's too, so a Bedrock-backed Codex gets them empty and must use a profile, which passes through. The README says so.
   - Named on the env-vars page and not blanked here, left for the owner to decide: `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY` and `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` (mTLS to Anthropic; the key is a path, the passphrase a secret), and `CLAUDE_CODE_MESSAGING_TOKEN` (a per-session token Claude Code exports to hooks and Bash commands).
 - **What gets touched:** `hooks/duet-logic.ts` (`BLANKED_ENV` only; both `process.run`/`spawn` call sites already take `childEnv()`), `.claude-plugin/plugin.json`, README, `plugins/mod-builder/skills/build/references/gotchas.md`, tests. The coverage kit (`plugins/mod-builder/skills/build/scripts/coverage/kit.mjs`) also gets a `toBeGreaterThanOrEqual` matcher, which these tests use; mod-builder's version is unchanged.
 - **Tests:** `childEnv()` and `BLANKED_ENV` against a literal list of the new names (not derived from `BLANKED_ENV`), the originals, and the names Codex needs; a routed call, a review and `/duet config models` each get the cloud names as `''` and none of the Codex names.
@@ -441,3 +442,4 @@ pane's keys; `/reload-plugins` picks up edits.
 - **PR #30 review** (Codex and `/code-review`, 2026-10-13), one commit each:
   - The tests' name lists live once, in `tests/env-names.ts`; `BLANKED_ENV` must equal them exactly, once each.
   - Secrets only: the eight paths and profile names above pass through.
+  - A Bedrock-backed Codex is pointed at an AWS profile (README, Limits).
