@@ -65,6 +65,7 @@ import {
   continueLog,
   isNewCaught,
   isOwnRow,
+  valuesAfterSet,
   EMPTY_LOG,
   errorText,
   LOG_CONTEXT_MAX,
@@ -575,6 +576,13 @@ describe('logging and /mod-builder config', () => {
     expect(isOwnRow('mod-builder', 'mod-builder')).toBe(true)
     expect(isOwnRow('mod-builder-extra@x', 'mod-builder')).toBe(false)
     expect(isOwnRow(undefined, 'mod-builder')).toBe(false)
+  })
+
+  test('after a change the listing shows the new value; a reset modsDir shows the real default', () => {
+    expect(valuesAfterSet('logging', 'debug', '/p/mods')).toEqual({ logging: 'debug' })
+    expect(valuesAfterSet('autoOpen', true, '/p/mods')).toEqual({ autoOpen: true })
+    expect(valuesAfterSet('modsDir', '', '/a/b/ClaudeMod/mods')).toEqual({ modsDir: '', modsDirShown: '…/ClaudeMod/mods' })
+    expect(valuesAfterSet('modsDir', '/work/x/mods', '/p/mods')).toEqual({ modsDir: '/work/x/mods', modsDirShown: '…/x/mods' })
   })
 
   test('the listing shows each value and the log file, or why there is none', () => {

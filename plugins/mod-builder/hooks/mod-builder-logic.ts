@@ -1239,12 +1239,13 @@ export function isOwnRow(owner: string | undefined, plugin: string): boolean {
   return owner === plugin || (owner?.startsWith(`${plugin}@`) ?? false)
 }
 
-/** The listing's values once `name` is set to `value`. */
-export function valuesAfterSet(name: OptionName, value: string | boolean): Partial<OptionValues> {
+/** The listing's values once `name` is set to `value`; `defaultDir` is the folder an empty `modsDir` means. */
+export function valuesAfterSet(name: OptionName, value: string | boolean, defaultDir: string): Partial<OptionValues> {
   if (name === 'logging') return { logging: logLevelOf(value) }
   if (name === 'autoRerun') return { autoRerun: value === true }
   if (name === 'autoOpen') return { autoOpen: value === true }
-  return { modsDir: String(value), ...(value ? { modsDirShown: String(value) } : {}) }
+  const dir = String(value)
+  return { modsDir: dir, modsDirShown: shortPath(dir || defaultDir) }
 }
 
 /** Current values as `/mod-builder config` lists them. */

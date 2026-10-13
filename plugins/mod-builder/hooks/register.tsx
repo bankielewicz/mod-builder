@@ -589,7 +589,7 @@ async function configure($: Engine, words: string[]): Promise<string> {
     modsDirShown: Lab.shortPath(modsDirOf($)),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
-  if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value))
+  if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, Lab.normalizePath(`${$.plugin.root}/../../mods`)))
   const shown = (value: string | boolean): string => (typeof value === 'boolean' ? (value ? 'on' : 'off') : value || 'default')
   const head = command.kind === 'set' ? `${command.name} is now ${shown(command.value)}.\n` : ''
   return head + Lab.configListText(values, logFile)
