@@ -20,6 +20,7 @@ const PANE = 'modlab'
 const TOOL = 'lab_report'
 const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
+const GENERATIONS_KEY = 'modlab:generations'
 const FRAME_MS = 250
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
@@ -54,11 +55,12 @@ type StoredResults = Record<string, Lab.Results>
 // starts it afresh; what must survive lives in atoms and $.store.
 let configuredDir = ''
 let autoOpen = false
+let autoRerun = true
 let clock: Timer | null = null
 let lastTickMs = 0
-let isScanning = false
+let scanning: Promise<void> | null = null
 let isScanQueued = false
-let hasTouchedMods = false
+let isQueuedAnnounced = false
 const factsByMod = new Map<string, Lab.FileFacts>()
 
 // Every function that takes `$` is declared here, at the top of the file: the
@@ -74,26 +76,65 @@ const list = ($: Engine, path: string): Promise<Lab.Entry[]> =>
 
 const readText = ($: Engine, path: string): Promise<string | null> => $.fs.read(path).catch(() => null)
 
+/**
+ * The files in `folder`'s subfolders (from its `entries`), up to `depth` levels down, named by
+ * their path from the mod folder `at`. Sibling folders are listed at once, since /mnt/c is slow;
+ * dot-folders and node_modules are skipped.
+ */
+async function nestedFiles($: Engine, at: string, folder: string, entries: readonly Lab.Entry[], depth = 3): Promise<Lab.Entry[]> {
+  if (depth === 0) return []
+  const subfolders = entries.filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+  const found = await Promise.all(
+    subfolders.map(async sub => {
+      const path = `${folder}/${sub.name}`
+      const inner = await list($, `${at}/${path}`)
+      const files = inner.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${path}/${entry.name}` }))
+      return [...files, ...(await nestedFiles($, at, path, inner, depth - 1))]
+    }),
+  )
+  return found.flat()
+}
+
 const resultsOf = async ($: Engine): Promise<StoredResults> =>
   ((await $.store.get(RESULTS_KEY)) ?? {}) as StoredResults
 
+/** When each mod's current edit started (a build generation), for mods being edited. */
+type Generation = { since: number; fromVersion: string | null }
+const generationsOf = async ($: Engine): Promise<Record<string, Generation>> =>
+  Object.fromEntries(
+    Object.entries(((await $.store.get(GENERATIONS_KEY)) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
+      mod,
+      typeof gen === 'number' ? { since: gen, fromVersion: null } : gen,
+    ]),
+  )
+
 // ── Scanning ──────────────────────────────────────────────────────────────
 
-/** Reads every mod folder, judges it and redraws. Single-flight; a call during a scan queues one more. */
-async function scan($: Engine, isAnnounced: boolean): Promise<void> {
-  if (isScanning) {
+/**
+ * Reads every mod folder, judges it and redraws. Single-flight: a call during
+ * a scan queues one more pass, and every caller waits until the passes end,
+ * so what it reads afterwards reflects the disk as of its call.
+ */
+function scan($: Engine, isAnnounced: boolean): Promise<void> {
+  if (scanning) {
     isScanQueued = true
-    return
+    isQueuedAnnounced ||= isAnnounced
+    return scanning
   }
-  isScanning = true
-  try {
-    do {
-      isScanQueued = false
-      await scanOnce($, isAnnounced)
-    } while (isScanQueued)
-  } finally {
-    isScanning = false
-  }
+  scanning = scanPasses($, isAnnounced).finally(() => {
+    scanning = null
+  })
+  return scanning
+}
+
+async function scanPasses($: Engine, isAnnounced: boolean): Promise<void> {
+  let announce = isAnnounced
+  do {
+    isScanQueued = false
+    await scanOnce($, announce)
+    announce = isQueuedAnnounced
+    isQueuedAnnounced = false
+  } while (isScanQueued)
 }
 
 async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
@@ -101,6 +142,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
   const marketplace = (await readText($, `${dir}/../.claude-plugin/marketplace.json`)) ?? ''
   const results = await resultsOf($)
+  const generations = await generationsOf($)
   const inFlight = await read($, runs)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
   factsByMod.clear()
@@ -108,14 +150,25 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
     const at = `${dir}/${folder.name}`
     const top = await list($, at)
     const has = (name: string): boolean => top.some(entry => entry.name === name)
-    const manifestDir = has('.claude-plugin') ? await list($, `${at}/.claude-plugin`) : []
+    const [manifestDir, hooks, tests, types] = await Promise.all([
+      has('.claude-plugin') ? list($, `${at}/.claude-plugin`) : Promise.resolve([]),
+      has('hooks') ? list($, `${at}/hooks`) : Promise.resolve([]),
+      has('tests') ? list($, `${at}/tests`) : Promise.resolve([]),
+      has('types') ? list($, `${at}/types`) : Promise.resolve([]),
+    ])
+    const nested = await Promise.all([
+      nestedFiles($, at, 'hooks', hooks),
+      nestedFiles($, at, 'tests', tests),
+      nestedFiles($, at, 'types', types),
+    ])
     const facts = Lab.factsOf({
       name: folder.name,
       top,
       manifestDir,
-      hooks: has('hooks') ? await list($, `${at}/hooks`) : [],
-      tests: has('tests') ? await list($, `${at}/tests`) : [],
-      types: has('types') ? await list($, `${at}/types`) : [],
+      hooks,
+      tests,
+      types,
+      nested: nested.flat(),
       spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
       readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
       manifest: manifestDir.some(entry => entry.name === 'plugin.json')
@@ -133,12 +186,21 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         inFlight.filter(one => one.mod === facts.name),
         reports[facts.name] ?? null,
         freshNames.includes(facts.name),
+        generations[facts.name]?.since ?? null,
+        generations[facts.name]?.fromVersion ?? null,
       ),
     )
   const newlyGreen = await announceGreen($, judge([]), isAnnounced)
   const freshNames = [...new Set([...(await read($, fresh)), ...newlyGreen])]
   if (newlyGreen.length) await update($, fresh, () => freshNames)
   const next = judge(freshNames)
+  // An edit's generation ends when every stage is green again.
+  const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
+  if (finished.length) {
+    const remaining = { ...generations }
+    for (const view of finished) delete remaining[view.name]
+    await $.store.set(GENERATIONS_KEY, remaining)
+  }
   await update($, views, () => next)
   await update($, selected, current =>
     current && (next.some(view => view.name === current) || current === Lab.DEMO_NAME) ? current : (next[0]?.name ?? null),
@@ -151,11 +213,11 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
  * notification (when announced). Returns the mods that just turned green.
  */
 async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean): Promise<string[]> {
-  const done = ((await $.store.get(DONE_KEY)) ?? {}) as Record<string, number>
+  const done = ((await $.store.get(DONE_KEY)) ?? {}) as Record<string, number | string>
   const newly: string[] = []
   let isChanged = false
   for (const view of judged) {
-    const stamp = factsByMod.get(view.name)?.codeMtimeMs ?? 0
+    const stamp = factsByMod.get(view.name)?.codeSig ?? ''
     if (!Lab.isGreen(view.lights) || done[view.name] === stamp) continue
     done[view.name] = stamp
     isChanged = true
@@ -273,18 +335,38 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   await scan($, false)
 
   const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
+  const codeSig = factsByMod.get(mod)?.codeSig
   let result: Lab.RunResult
   try {
     const { exitCode, output } = await execute($, entry, dir)
-    result = Lab.resultOf(kind, exitCode, output, stamp, (await $.clock.now()) - startedAt)
+    const endedAt = await $.clock.now()
+    result = Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
   } catch (error) {
-    result = { kind, ok: false, stampMs: stamp, summary: 'could not run', errors: [String(error).slice(0, 200)] }
+    const endedAt = await $.clock.now()
+    result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary: 'could not run', errors: [String(error).slice(0, 200)] }
   }
+  if (codeSig !== undefined) result = { ...result, codeSig }
   const results = await resultsOf($)
   await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
   $.ui.toast(Lab.toastOfRun(mod, result))
   await scan($, true)
+}
+
+/**
+ * After a turn: rescan (edits may have come from any tool, Bash included), then
+ * re-run what went stale. Validate first; Test only if Validate passes.
+ */
+async function rerunStale($: Engine): Promise<void> {
+  await scan($, true)
+  if (!autoRerun) return
+  const inFlight = await read($, runs)
+  for (const view of await read($, views)) {
+    const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
+    if (plan.includes('Validate')) await run($, view.name, 'Validate')
+    const validated = (await resultsOf($))[view.name]?.Validate
+    if (plan.includes('Test') && validated?.ok) await run($, view.name, 'Test')
+  }
 }
 
 function runInBackground($: Engine, mod: string | null, kind: RunKind): void {
@@ -363,6 +445,7 @@ export const register: Register = (on, options) => {
   const config = (options ?? {}) as Record<string, unknown>
   configuredDir = String(config.modsDir ?? '').trim()
   autoOpen = config.autoOpen === true
+  autoRerun = config.autoRerun !== false
 
   on('session.start', async ($, e, next) => {
     await $.command
@@ -434,8 +517,19 @@ export const register: Register = (on, options) => {
     const checked = Lab.reportOf(e as unknown as Record<string, unknown>, now)
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
+    // A Spec report on a mod built before starts an edit: older evidence goes stale.
+    let known = (await read($, views)).find(view => view.name === mod)
+    if (!known && report.stage === 'Spec') {
+      await scan($, false)
+      known = (await read($, views)).find(view => view.name === mod)
+    }
+    if (Lab.startsGeneration(report, known?.lights ?? null)) {
+      await $.store.set(GENERATIONS_KEY, { ...(await generationsOf($)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
+    }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {
+      // Follow the active build, unless a README is open in the pane.
+      if (!(await read($, readme))) await update($, selected, () => mod)
       startClock($)
       if (autoOpen && !(await isPaneOpen($))) void openPane($).catch(() => undefined)
     }
@@ -447,18 +541,8 @@ export const register: Register = (on, options) => {
     return { result: `Mod Lab: ${mod} ${report.stage} ${report.status}.` }
   }).catch(() => ({ result: 'Mod Lab: noted (the lab could not update just now).' }))
 
-  on('tool.call', { tool: ['Write', 'Edit'] }, async ($, e, next) => {
-    const ran = await next(e)
-    const path = 'file_path' in e && typeof e.file_path === 'string' ? Lab.normalizePath(e.file_path) : ''
-    if (path.startsWith(`${modsDirOf($)}/`)) hasTouchedMods = true
-    return ran
-  }).catch(($, e, next) => next(e))
-
   on('turn.complete', async ($, e, next) => {
-    if (!e.agentId && hasTouchedMods) {
-      hasTouchedMods = false
-      void scan($, true).catch(() => undefined)
-    }
+    if (!e.agentId) void rerunStale($).catch(() => undefined)
     return next(e)
   })
 
@@ -747,10 +831,16 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const legend =
+    // Column header (as in the mockups): MODS over the names, a stage number over each light.
+    const columns =
       layout === 'compact' ? null : (
-        <Box key="legend" paddingLeft={NAME_COLUMN}>
-          {Lab.legendOf(current?.lights ?? []).map((m, at) => mark(m, `leg-${at}`))}
+        <Box key="columns">
+          <Box width={NAME_COLUMN} flexShrink={0}>
+            {dim('  MODS')}
+          </Box>
+          <Box width={16} flexShrink={0}>
+            {Lab.columnsOf(current?.lights ?? []).map((m, at) => mark(m, `col-${at}`))}
+          </Box>
         </Box>
       )
 
@@ -781,6 +871,7 @@ export const register: Register = (on, options) => {
         <Box key="d-track" flexWrap="wrap">
           {Lab.trackOf(current.lights, n).map((step, at) => (
             <Text key={`t-${at}`}>
+              {mark(step.num)}
               {mark(step.name)}
               {step.joint && mark(step.joint)}
             </Text>
@@ -895,7 +986,7 @@ export const register: Register = (on, options) => {
 
     const isDemoPick = current?.isDemo === true
     return frameOf(
-      [...rows, ...(legend ? [legend] : []), ...detail],
+      [...(columns ? [columns] : []), ...rows, ...detail],
       buttonRows([
         [
           button('validate', 'v', 'Validate', press.run('Validate'), { busy: isRunning('Validate') || isDemoPick }),

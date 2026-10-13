@@ -1,6 +1,6 @@
 ---
 name: build
-description: This skill should be used when the user wants a Claude Code mod built spec-first and kept, with "/mod-builder:build", "build this mod properly", "spec it out first", "with tests", "add it to my mods folder or marketplace", or "ship a mod". It writes a SPEC.md for one approval, scaffolds from a tested archetype, verifies with validate, test and tsc, and hands off. For API questions or a throwaway session mod, use plugin-authoring instead.
+description: This skill should be used when the user wants a Claude Code mod built spec-first and kept, with "/mod-builder:build", "build this mod properly", "spec it out first", "with tests", "add it to my mods folder or marketplace", or "ship a mod". It writes a SPEC.md for one approval, scaffolds from a tested archetype, verifies with validate, test and tsc, and hands off. To change an existing mod, use /mod-builder:edit. For API questions or a throwaway session mod, use plugin-authoring instead.
 ---
 
 # mod-builder:build
@@ -130,7 +130,8 @@ tests inside a session with `CLAUDE_CONFIG_DIR=$(mktemp -d)` if they touch real 
 Load it live. Fastest: a new session with `claude --plugin-dir <mods>/<name>`. Or, once it's listed
 in the marketplace (Share), install it once with `/plugin install <name>@<marketplace>`. After that,
 `/reload-plugins` picks up edits. `/reload-plugins` alone never loads a plugin that isn't installed. Walk through the demo and every "Done means" bullet.
-Report failures as failures, with the output.
+Report failures as failures, with the output. Any edit to the mod's code after Verify passed makes
+those results stale: run Verify again (and report Validate and Test again) before you hand off.
 
 ## 5. Ship and hand off
 

@@ -1,0 +1,9 @@
+{
+  "name": "git-branch",
+  "version": "0.1.1",
+  "description": "A band above the prompt showing the current git branch",
+  "author": {
+    "name": "Bryan Ankielewicz"
+  },
+  "types": "./types/index.d.ts"
+}

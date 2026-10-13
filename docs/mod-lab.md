@@ -1,0 +1,100 @@
+# Mod Lab
+
+[← README](../README.md)
+
+`/modlab` opens a pane that tracks every mod in your mods folder through eight stages, judged from
+the files on disk and the exit codes of real runs. The skills report each stage as they work, so
+the pane lights up live.
+
+![Mod Lab live in Claude Code](assets/modlab-live.svg)
+
+## Reading the pane
+
+- **Header row:** `MODS` over the names, a stage number over each light. The number over the
+  selected mod's failed (red), running (coral) or stale (gold) stage lights up. The track in the
+  detail panel repeats the numbers beside each stage name.
+- **Lights:**
+
+  | Light | Meaning |
+  |---|---|
+  | `●` | passed |
+  | `◐` | running |
+  | `✕` | failed |
+  | `○` | not done yet |
+  | `◌` | stale: it passed, but the code changed afterwards, or an edit started |
+
+- **Status and time** follow a run as it streams (`running tests · 7 of 12`).
+- **The selection follows the active build.** <kbd>J</kbd>/<kbd>P</kbd> still move it.
+
+## The eight stages
+
+![The eight stages](assets/pipeline.svg)
+
+| # | Stage | Passes when | During an edit, re-passes when |
+|---|---|---|---|
+| 1 | Spec | `SPEC.md` has no `<placeholder>` left | `SPEC.md` is saved again |
+| 2 | Scaffold | `plugin.json` and `hooks/hooks.json` exist | stays green |
+| 3 | Logic | a logic module and a `*.test.ts` exist | a logic or test file changes |
+| 4 | Register | `hooks/register.tsx` exists | stays green |
+| 5 | Validate | the last `claude plugin validate` passed, with no code changed since | it runs again |
+| 6 | Test | the last `claude plugin test` passed, with no code changed since | it runs again |
+| 7 | README | it has "What it reaches" and no template comments left | it's saved again |
+| 8 | Share | the marketplace lists the mod | the marketplace lists the new version |
+
+## What it uses
+
+| Surface | What Mod Lab puts there |
+|---|---|
+| Pane | Stage lights; a detail panel (version, description, track, HOOKS, REACHES, gating hooks); an error box with **[F] Fix with Claude**; a "ready to share" box |
+| Band above the prompt | Each running stage, with a 15-cell bar that fills on real progress (streamed test counts, one test file at a time) |
+| Status line | `◆ 3 mods · 1 building` |
+| Toasts and a native notification | When runs finish, and when a mod is ready to share |
+| Pre-filled prompts | New mod (`N`), and a fix request quoting the first failure (`F`) |
+| `lab_report` tool | The skills report stages; the disk and exit codes still decide pass or fail |
+
+## Checks re-run themselves
+
+With `autoRerun` on (the default), Mod Lab rescans every mod at the end of each of Claude's turns.
+Edits from any tool count, Bash included. A mod whose Validate or Test went stale gets Validate
+re-run, then Test if Validate passes. Nothing runs mid-turn or on a timer.
+
+## Edits
+
+`/mod-builder:edit` starts a **build generation** with its first report. Everything that passed
+before the edit turns `◌`, then green again as the change redoes it (see the table above). Each
+stage the skill reports lights `◐`, even one that was green. The generation ends, and "ready to
+share" fires again, when all eight are green.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/modlab` | Open the pane; again to fold it to the status line |
+| `/modlab demo` | Play the demo (12 s, nothing written to disk); <kbd>D</kbd> again stops it |
+| `/modlab <mod>` | Open the pane on that mod |
+| `/modlab new <idea>` | Put `/mod-builder:build <idea>` in the prompt box |
+
+## Keys
+
+Press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to give the pane the keyboard (again, or
+<kbd>esc</kbd>, to hand it back). A dim line above the buttons says so.
+
+| Key | Action |
+|---|---|
+| <kbd>V</kbd> / <kbd>T</kbd> | Run `claude plugin validate` / `claude plugin test` on the selected mod |
+| <kbd>K</kbd> | Run `tsc` (needs the mod loaded once in a session) |
+| <kbd>O</kbd> | Show the mod's README in the pane; <kbd>B</kbd> goes back |
+| <kbd>J</kbd> / <kbd>P</kbd> | Next / previous mod (or README) |
+| <kbd>N</kbd> | Put `/mod-builder:build ` in the prompt box |
+| <kbd>D</kbd> | Start or stop the demo |
+| <kbd>F</kbd> | Fix with Claude |
+
+## Options
+
+Set them on the install options screen, or in `/config`.
+
+| Option | Default | What it does |
+|---|---|---|
+| Mods folder (`modsDir`) | the `mods/` next to the plugin's marketplace | The folder Mod Lab tracks. Set it to your project's `mods/`. |
+| `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide) |
+| `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |

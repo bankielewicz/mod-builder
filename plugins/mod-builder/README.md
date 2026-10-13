@@ -1,51 +1,95 @@
 # mod-builder
 
-Build Claude Code mods spec-first, and watch each one come together live.
+Build Claude Code mods spec-first, change them the same way, and watch each one come together
+live.
 
-The plugin has two halves:
+The plugin has three parts:
 
-- **`/mod-builder:build <idea>`** is a skill. It turns an idea into a working mod in five steps:
-  1. **Interview:** it asks only about gaps in the request.
-  2. **SPEC.md:** the one thing you approve.
-  3. **Build:** a scaffold from one of five tested archetypes, then logic first, then hooks.
-  4. **Verify:** `claude plugin validate`, `claude plugin test` and `tsc`.
-  5. **Hand off:** a README with a "What it reaches" table, plus a marketplace entry.
+| Part | Command | What it does |
+|---|---|---|
+| **build** (skill) | `/mod-builder:build <idea>` | Turns an idea into a working mod in five steps around one approval: interview for gaps, a `SPEC.md` you approve, a scaffold from one of five tested archetypes with logic first, verify (`claude plugin validate`, `claude plugin test`, `tsc`, a headless smoke test), then ship with a "What it reaches" README and a marketplace entry. |
+| **edit** (skill) | `/mod-builder:edit <mod> <change>` | Changes an existing mod the same way: appends a dated change to its SPEC for one approval, bumps the version by semver, changes logic first, re-verifies and re-ships. It never re-scaffolds. |
+| **Mod Lab** (mod) | `/modlab` | Tracks every mod in your mods folder through eight stages, live, on every surface a mod can draw on. |
 
-  It builds on Claude Code's built-in `plugin-authoring` skill for the API, and adds the house
-  conventions, a UI-state checklist and a list of engine gotchas, each one verified.
-- **Mod Lab (`/modlab`)** is a mod. It shows off what a mod can do while it tracks every mod under
-  `mods/`:
+Both skills build on Claude Code's built-in `plugin-authoring` skill for the API. They add house
+conventions, a UI-state checklist, 14 patterns and a list of 43 engine gotchas, each tagged by how
+it was verified.
+
+## Mod Lab
 
 ```
   M O D   L A B                                          ● B U I L D I N G
 
   3 mods · 2 green · 1 building                          modsDir  …/mod-builder/mods
 
-  ▸ agent-dock      ● ● ● ● ◐ ○ ○ ○   validating                      0:07
+    MODS            1 2 3 4 5 6 7 8
+  ▸ agent-dock      ● ● ● ● ◐ ○ ○ ○   running tests · 7 of 12          0:07
     inbox-zero      ● ● ● ● ● ● ● ●   12 tests · clean                2:14
-    tab-namer       ● ● ● ● ● ● ● ●   6 tests · clean                 1:38
-                    SpScLoReVaTeRESh
+    tab-namer       ● ● ● ● ◌ ◌ ● ●   files changed · re-run Validate 1:38
   ────────────────────────────────────────────────────────────────────────
   agent-dock                                  v0.1.0 · mods/agent-dock/
   Docks every sub-agent's output beside the transcript.
 
-  Spec ━ Scaffold ━ Logic ━ Register ━ Validate ┅ Test ┄ README ┄ Share
+  1 Spec ━ 2 Scaffold ━ 3 Logic ━ 4 Register ━ 5 Validate ━ 6 Test ┅ 7 README ┄ 8 Share
 
-  [V] Validate  [T] Test  [K] Type-check  [O] README
-  [J] Next  [P] Prev  [N] New mod  [D] Demo
+  ctrl+x tab, then V validate · T test · K types · O readme · J/P move · N new · D demo · esc to leave
+  [ Validate ]  [ Test ]  [ Type-check ]  [ README ]
+  [ Next ]  [ Prev ]  [ New mod ]  [ Demo ]
 ```
 
-  It uses every surface a mod can draw on:
+**Reading the pane**
 
-  | Surface | What Mod Lab puts there |
+- **The header row** puts `MODS` over the names and a stage number over each light. The number over
+  the selected mod's failed (red), running (coral) or stale (gold) stage lights up. The track below
+  repeats the numbers beside each stage name, so `5` is Validate.
+- **The lights:**
+
+  | Light | Meaning |
   |---|---|
-  | Pane beside the transcript | eight stage lights per mod, judged from disk and exit codes |
-  | Band above the prompt | each running stage, with a sweep and a timer |
-  | Status line | `◆ 3 mods · 1 building` |
-  | Toasts and a native notification | when validate or test finishes, and when a mod is ready to share |
-  | Hotkey buttons | V T K O N D, plus `[F] Fix with Claude` on a failure |
-  | Pre-filled prompts | `[N]` and `[F]` |
-  | A model-callable tool | `lab_report`, which the skill calls so the stage it's on lights up as it works |
+  | `●` | passed |
+  | `◐` | running |
+  | `✕` | failed |
+  | `○` | not done yet |
+  | `◌` | stale: it passed, but the code changed afterwards, or an edit started |
+
+- **The row's status** follows a run as it streams (`running tests · 7 of 12`), and the time column
+  shows the run's elapsed time.
+- **The selection follows the active build.** When the skill reports a stage on a mod, that mod is
+  selected. <kbd>J</kbd>/<kbd>P</kbd> still move it.
+
+**What Mod Lab uses**
+
+| Surface | What Mod Lab puts there |
+|---|---|
+| Pane beside the transcript | Stage lights per mod, judged from disk and exit codes; a detail panel with version, description, the numbered track, HOOKS, REACHES and gating hooks; an error box with **[F] Fix with Claude**; a "ready to share" box |
+| Band above the prompt | Each running stage, with a 15-cell bar that fills on **real** progress: streamed test counts against the last run's total, otherwise stages passed of 8 |
+| Status line | `◆ 3 mods · 1 building` |
+| Toasts and a native notification | When validate or test finishes, and when a mod is ready to share |
+| Hotkey buttons | V T K O J P N D, and F on a failure; <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> gives the pane the keyboard (a dim line says so) |
+| Pre-filled prompts | `[N]` for a new mod; `[F]` for a fix request quoting the first failure |
+| A model-callable tool | `lab_report`: the skills report each stage as they work, so the pane lights up live. The disk and exit codes always decide pass or fail. |
+
+**Stages, and what an edit asks for**
+
+| # | Stage | Passes when | During an edit, re-passes when |
+|---|---|---|---|
+| 1 | Spec | `SPEC.md` has no `<placeholder>` left | `SPEC.md` is saved again |
+| 2 | Scaffold | `plugin.json` and `hooks/hooks.json` exist | stays green |
+| 3 | Logic | a logic module and a `*.test.ts` exist | a logic or test file changes |
+| 4 | Register | `hooks/register.tsx` exists | stays green |
+| 5 | Validate | the last validate passed, with no code changed since | it runs again |
+| 6 | Test | the last test run passed, with no code changed since | it runs again |
+| 7 | README | it has "What it reaches" and no template comments | it's saved again |
+| 8 | Share | the marketplace lists the mod | the marketplace lists the new version |
+
+An edit starts a **build generation** with its first report. Everything that passed before turns
+`◌` and turns green again as the change redoes it. The generation ends, and "ready to share"
+fires again, when all eight are green.
+
+**Checks re-run themselves.** With `autoRerun` on (the default), at the end of each of Claude's
+turns Mod Lab rescans every mod. Edits made by any tool count, Bash included. Any mod whose
+Validate or Test went stale gets Validate re-run, then Test if Validate passes. Nothing runs
+mid-turn or on a timer.
 
 ## Try it
 
@@ -56,11 +100,19 @@ The plugin has two halves:
 A pretend mod, `aurora`, walks through every stage in 12 seconds. One test fails and Claude
 fixes it. Press D again to stop it. Nothing is written to disk.
 
-Then start a real one:
+Then start a real one, and change it later:
 
 ```
 /mod-builder:build a band above the prompt showing the current git branch
+/mod-builder:edit git-branch also show how many commits are unpushed
 ```
+
+| `/modlab` command | What it does |
+|---|---|
+| `/modlab` | Open the pane; again to fold it to the status line |
+| `/modlab demo` | Play the demo |
+| `/modlab <mod>` | Open the pane on that mod |
+| `/modlab new <idea>` | Put `/mod-builder:build <idea>` in the prompt box |
 
 ## Install
 
@@ -80,12 +132,16 @@ claude plugin marketplace add ./mod-builder
 Edits to the folder load with `/reload-plugins`. While developing:
 `claude --plugin-dir plugins/mod-builder`.
 
+Each way of loading the plugin (`--plugin-dir`, or an installed copy) keeps its own store. If you
+switch, Validate and Test show `○` until you press V and T once.
+
 ## Options
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `modsDir` | the marketplace's `mods/` | The folder whose child folders Mod Lab tracks |
-| `autoOpen` | `false` | Open Mod Lab when the skill reports a running stage, if the window is at least 144 columns wide |
+| `modsDir` | empty: the `mods/` next to the plugin's marketplace | The folder whose child folders Mod Lab tracks. In your own project, set it to your `mods/`. |
+| `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
+| `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
 
 ## What it reaches
 
@@ -94,25 +150,29 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `tool.call{Write\|Edit}` (watch only: it never blocks or rewrites), `turn.complete`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
-| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, or when the skill reports a Validate or Test stage. Never on a timer. |
+| Hooks | `session.start`, `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
+| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. |
 | Files | Reads under `modsDir` and the marketplace file beside it. Writes nothing. |
+| Store | Its own `$.store`: last results per mod, which mods were announced, and edit generations |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
 | Tools it adds | `lab_report`, which records progress and runs nothing beyond the Validate and Test above |
-| Gating hooks | 3, all with `.catch`: `lab_report`, the `Write\|Edit` watch, `ui.close` |
+| Gating hooks | 2, both with `.catch`: `lab_report`, `ui.close` |
 
 ## Development
 
 ```
 claude plugin validate plugins/mod-builder
-claude plugin test plugins/mod-builder               # 38 tests: logic and UI
+claude plugin test plugins/mod-builder               # 46 tests: logic and UI
 bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # all five archetypes
 ```
 
 - `hooks/mod-builder-logic.ts` holds every rule. It has no `$` calls and is unit-tested.
 - `hooks/register.tsx` is the only file that calls `$`.
-- `SPEC.md` is Mod Lab's own spec, written from the skill's template.
-- `design/CLAUDE_DESIGN_PROMPT.md` is the brief for UI mockups. The mockups it produced (`tmp/mod-lab-mockups-review/`) are what the pane follows; SPEC.md's Design section lists the decisions.
+- `skills/build/` and `skills/edit/` are the two skills; `edit` reuses build's references and
+  templates.
+- `SPEC.md` is Mod Lab's own spec, written from the skill's template. Its Design section records
+  how the pane follows the Claude Design mockups, and its Edits section covers build generations.
+- `design/` holds the two Claude Design briefs (the pane mockups, and the repo README).
 
 Built on Claude Code 2.1.296. Function hooks are early access, so the API may change between releases.

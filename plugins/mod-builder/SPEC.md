@@ -22,12 +22,12 @@
 | --- | --- | --- | --- |
 | name | REQUIRED | `mod-builder` (plugin) · pane id `modlab` · command `/modlab` | plan |
 | archetype | REQUIRED | pane+command, plus band, watcher (status/toast/notify), model tool | plan |
-| triggers | REQUIRED | `session.start`, `command.run {command:'modlab'}`, `ui.render {Pane, requestId:'modlab'}`, `ui.render {AbovePrompt}`, `tool.call {tool:'mcp__mod-builder__lab_report'}`, `tool.call {tool:['Write','Edit']}` (watch only, never blocks), `turn.complete`, `ui.close` | plan |
+| triggers | REQUIRED | `session.start`, `command.run {command:'modlab'}`, `ui.render {Pane, requestId:'modlab'}`, `ui.render {AbovePrompt}`, `tool.call {tool:'mcp__mod-builder__lab_report'}`, `turn.complete`, `ui.close` | plan |
 | commands | REQUIRED | `/modlab` toggle · `/modlab demo` · `/modlab <mod>` focus · `/modlab new` | plan |
 | states drawn | REQUIRED | empty · idle · live · done · error · folded · too-narrow · demo | ui-states.md |
 | done means | REQUIRED | see below | |
 | state lifetime | ARCH | atoms (session) for view state; `$.store` `modlab:results` for last validate/test result per mod, keyed by mod + newest file mtime | decided |
-| external reach | ARCH | **processes:** `claude plugin validate <dir>`, `claude plugin test <dir>`, `tsc -p <dir>`, all on button press or `lab_report`, never on a timer. **Files:** read-only under `modsDir`. No network, no model calls. | decided |
+| external reach | ARCH | **processes:** `claude plugin validate <dir>`, `claude plugin test <dir>`, `tsc -p <dir>`, on button press, on `lab_report`, or (option `autoRerun`, on by default) at the end of a main-loop turn for a mod whose Validate or Test went stale; never on a timer. **Files:** read-only under `modsDir`. No network, no model calls. | decided |
 | depends on | ARCH | none (the skill calls its tool; works without it) | |
 | options | ARCH | `modsDir: directory` (empty means `<plugin root>/../../mods`), `autoOpen: boolean = false` | decided |
 | home / tsconfig / state API / logic split / tests / demo | HOUSE | per conventions.md: `hooks/mod-builder-logic.ts` (`$`-free), `hooks/register.tsx`, `tests/mod-builder-logic.test.ts`, `tests/ui.test.tsx` | conventions.md |
@@ -53,7 +53,6 @@ The pane, docked beside the transcript, at about 76 columns:
  ▸ git-branch     ● ● ● ● ● ● ● ○    ready to share                       0:42
    agent-dock     ● ● ● ● ◐ ○ ○ ○    Validate · running                   1:12
    inbox-zero     ● ● ✕ ○ ○ ○ ○ ○    Logic · 2 tests failing                —
-                  SpScLoReVaTeRESh
 ────────────────────────────────────────────────────────────────────────────────
  agent-dock  ·  pane + command  ·  built on 2.1.296
 
@@ -87,7 +86,10 @@ The pane, docked beside the transcript, at about 76 columns:
   | `○` (dim) | pending |
   | `◌` (warn) | stale: files changed since the last validate or test |
 
-  A one-line legend sits under the lights (`SpScLoReVaTeRESh`: two letters per stage).
+  A header row reads `MODS` over the names and `1 2 3 4 5 6 7 8` over the lights; the number over the
+  selected mod's running or failed stage lights up. The detail panel's track carries the same numbers
+  (`1 Spec ━ 2 Scaffold …`) as the key. (Replaced the run-together `SpScLoReVaTeRESh` legend, which
+  read as bunched letters.)
 - **Detail panel**, for the selected mod:
   - **Pipeline track:** stage names joined by `━` once done, `┅` while running, `┄` while pending.
   - **HOOKS:** the event/matcher list parsed from `claude plugin validate`.
@@ -179,6 +181,24 @@ while building it:
   - the native notification firing only while unfocused (there's no focus signal)
   - the README scroll thumb (the host's scroll)
 
+## Edits: build generations (2026-10-12)
+
+`/mod-builder:edit` changes a mod that already exists. Its first `lab_report` (`Spec running`) on
+a mod whose Spec already passed starts a **generation** (stored under `modlab:generations`). While
+it lasts, evidence older than its start shows `◌` stale:
+
+| Stage | During an edit |
+|---|---|
+| Spec, README | stale until the file is saved again |
+| Logic | stale until a logic or test file changes |
+| Validate, Test | stale until they run again |
+| Share | stale until the marketplace lists the version in `plugin.json` |
+| Scaffold, Register | stay green on purpose: an edit rarely touches them |
+
+A `running` report now shows on any stage that hasn't failed, green ones included, so an edit's
+progress is visible from Spec on. The generation ends, and "ready to share" fires again, when all
+eight are green.
+
 ## How it works
 
 1. **Boot (`session.start`):**
@@ -199,7 +219,7 @@ while building it:
    | README | `README.md` with a "What it reaches" heading |
    | Share | an entry in `marketplace.json` |
 
-   Rescans happen on `/modlab`, on any button, after `lab_report`, and on `turn.complete` when a `Write` or `Edit` touched `modsDir` during the turn. There's no polling.
+   Rescans happen on `/modlab`, on any button, after `lab_report`, and at the end of every main-loop turn (edits can come from any tool, Bash included); then, with `autoRerun`, stale Validate and Test re-run. There's no polling.
 3. **Runs (`$.process.run`):**
    - Validate, Test and Type-check run `claude plugin validate <dir>`, `claude plugin test <dir>` and `tsc -p <dir>` in the background (`void … .catch`).
    - Logic `parseValidate` and `parseTest` turn the output into `{ ok, hooks[], calls[], gates[], errors[] }` and `{ ok, passed, failed, durationMs, failures[] }`.
@@ -248,3 +268,29 @@ while building it:
 
 Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod with `/mod-builder:build <idea>`.
 `/reload-plugins` picks up changes.
+
+## Change 0.2.0 (2026-10-12)
+
+> Everything since 0.1.0: the edit skill, Mod Lab's new behaviour, and fixes from both reviews of PR #1.
+
+- **New:** `/mod-builder:edit`; build generations for edits; `autoRerun`; the selection follows the active build; the numbered `MODS 1–8` header and numbered track; rows follow streamed test progress; a keyboard hint line.
+- **Fixes:**
+  - `scan()` waits for a scan in progress, so an edit's start is never missed.
+  - A Validate that fails on current code blocks a stale Test instead of re-running every turn.
+  - A run that can't start shows as failed, with Fix.
+  - During an edit, Share needs a version different from the one the edit started from.
+  - Results carry a signature of every code file, so a delete or rename goes stale.
+  - A stale Test re-runs even when Validate was never run.
+  - Marketplace matching is shared (`findEntry`).
+- **Tests:** 51 (logic and UI).
+
+
+## Change 0.2.1 (2026-10-12)
+
+> Fix from the third Codex review of PR #1.
+
+- **Fix:** the code signature (0.2.0, "every code file") covered only files directly in `hooks/`, `tests/` and `types/`. It now also covers their subfolders up to 3 levels down, skipping dot-folders and `node_modules`, so an edit to `hooks/lib/parser.ts` makes Validate and Test stale and `autoRerun` re-runs them. Sibling folders are listed at once.
+- **Fix:** each signature entry carries its folder (`hooks/register.tsx@<mtime>`), so a file moved between `hooks/` and `tests/` with an unchanged mtime goes stale.
+- **Unchanged:** the Logic and Register stages still look only at files directly in `hooks/` and `tests/`; a nested `hooks/lib/x-logic.ts` doesn't count as the logic module.
+- **On upgrade:** results stored by 0.2.0 carry the old signature format, so every mod's Validate and Test read stale once and `autoRerun` re-runs them at the end of the next turn.
+- **Tests:** 53 (logic and UI). The two new ones fail on 0.2.0.

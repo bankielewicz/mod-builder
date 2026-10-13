@@ -1,13 +1,27 @@
 {
   "name": "claudemod",
   "description": "mod-builder: a spec-first skill for building Claude Code mods, with Mod Lab, a live showcase mod, plus the mods it builds.",
-  "owner": { "name": "Bryan Ankielewicz" },
+  "owner": {
+    "name": "Bryan Ankielewicz"
+  },
   "plugins": [
     {
       "name": "mod-builder",
       "source": "./plugins/mod-builder",
       "description": "Spec-first Claude Code mod builder skill plus Mod Lab, a pane/band/status showcase that tracks each mod's build pipeline.",
-      "version": "0.1.0"
+      "version": "0.2.1"
+    },
+    {
+      "name": "git-branch",
+      "source": "./mods/git-branch",
+      "description": "A band above the prompt showing the current git branch, changed files and ahead/behind.",
+      "version": "0.1.1"
+    },
+    {
+      "name": "duet",
+      "source": "./mods/duet",
+      "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on; independent Codex reviews; measures every run.",
+      "version": "0.2.4"
     }
   ]
 }
