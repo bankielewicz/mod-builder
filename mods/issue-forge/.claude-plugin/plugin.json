@@ -1,0 +1,39 @@
+{
+  "name": "issue-forge",
+  "version": "0.1.0",
+  "description": "Takes one GitHub issue to a pull request test-first: red, green and refactor subagents, each phase checked by commands and a 95% diff-coverage gate; pushes only after you confirm",
+  "author": { "name": "Bryan Ankielewicz" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "redModel": {
+      "type": "string",
+      "title": "Red phase model",
+      "description": "Model for the agent that writes the failing tests: an alias (opus, sonnet, haiku) or a full model id.",
+      "default": "opus"
+    },
+    "greenModel": {
+      "type": "string",
+      "title": "Green phase model",
+      "description": "Model for the agent that makes the tests pass.",
+      "default": "sonnet"
+    },
+    "refactorModel": {
+      "type": "string",
+      "title": "Refactor phase model",
+      "description": "Model for the agent that tidies the change without changing behaviour.",
+      "default": "opus"
+    },
+    "redAgentType": {
+      "type": "string",
+      "title": "Red phase agent type",
+      "description": "issue-forge:red runs red on Claude. Another type runs red as that agent, unnamed, so duet sends it to Codex when the type is in duet's codexAgents (Codex then needs codexSandbox workspace-write to write tests).",
+      "default": "issue-forge:red"
+    },
+    "confirmPublish": {
+      "type": "boolean",
+      "title": "Ask before pushing",
+      "description": "Ask before pushing the branch and opening the pull request. Off: a run that reaches ready publishes at once.",
+      "default": true
+    }
+  }
+}

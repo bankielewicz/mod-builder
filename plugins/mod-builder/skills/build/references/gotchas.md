@@ -97,6 +97,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** Calling `return()` on a `$.process.spawn` stream while its child is silent ends the
   `for await` loop at once and kills the child: a `sleep 37` was gone 10 ms later. That is
   enough to enforce a timeout; no `timeout` wrapper is needed.
+- **[probe]** Under `claude plugin test`, a mod's `$.agent.spawn` never gets an `agentId`. The test's
+  `agent.spawn` stub has to answer the event's shape `{ model }` (`{ value: … }` is skipped with
+  "returned neither { model } nor { deny }"), and an `agentId` in that answer is dropped. A
+  `tool.call {tool:'Agent'}` stub isn't reached either. To test the steps either side of a spawn,
+  seed `$.store` (`mock.store`) at the step after it and resume from there. A test-side
+  `$.prompt.submit` does carry the `origin` it is given, so a `peer` hand-back drop can be tested.
 
 ## Plugins and skills
 

@@ -209,9 +209,14 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N>` or `/issue-forg
    (`git stash push --include-untracked -m "issue-forge #<N> green before behaviour test"`), spawn
    red with `"add a behaviour test for <files>"`, check gate R against the merge base as usual,
    commit `test(#<N>): red: behaviour test for <files>`, which becomes the red commit (G1
-   compares against it from then on). Then `git stash apply` (never `pop`: stashes are never
-   deleted) and run gate G on green's restored work first. Green is spawned again only if that
-   gate fails, and that spawn counts as a green attempt. If the apply conflicts:
+   compares against it from then on). Then `git stash apply <sha>` (never `pop`: stashes are
+   never deleted) and run gate G on green's restored work first. Green is spawned again only if that
+   gate fails, and that spawn counts as a green attempt. **Stashes by SHA:** the stash list is
+   shared by every worktree and session of the repository, so each message is unique
+   (`… (run <id>, attempt <k>)`). Right after the push, the mod finds that message in
+   `git stash list --format=%H%x09%gs` and stores the entry's SHA in the run (it survives a
+   reload). It restores with `git stash apply <sha>`, never a bare `apply` or `stash@{n}`. If the
+   SHA is no longer listed: `blocked: stash <sha> is gone; restore by hand`. If the apply conflicts:
    `blocked: could not restore green's work; it is in stash "<message>"`.
 9. **Stop (`/issue-forge stop`, `[ Stop ]`; `tool.call` guard):** `$.agent` has no way to end a
    subagent, so the run is marked `stopped` (archived, no longer active), the running command's
@@ -312,7 +317,13 @@ their `not.` forms, and the six `expect.*` helpers) and never imports `register.
    each demo state shows its copy (`No run here.`, `agent working`, `gate G · running`,
    `diff branch 91.30% < 95`, `blocked at baseline`, `interrupted during`, `Push issue-16-`,
    `pull request opened`); `[ Next state ]` steps; `isPlaced: false` toasts the too-narrow text.
-10. **Commands (`tests/ui.test.tsx`, stubbed `process.run`/`fs`/`store`):** `/issue-forge 16`
+10. **Commands and the run (`tests/ui.test.tsx`, stubbed `process.run`/`fs`/`store`):** under
+   `claude plugin test` a spawn never gets an `agentId` (gotchas.md), so each stage is driven from a
+   run stored at the step after its spawn: gate R commits red with the trailer, or refuses a source
+   change and spawns red again; gate G commits green, or refuses edited tests (G1) and spawns green
+   again with the failure; gate F with nothing to commit reaches ready and asks; publish pushes
+   without `-u` and opens the PR. A reload reads as interrupted, and the old agents' tool calls and
+   hand-backs are refused. `/issue-forge 16`
    outside a git repository → blocked "not in a git repository"; a dirty tree → blocked naming the
    check; a second start while active → the active run's status; `status` with no run → profile
    validity; `stop` marks the run stopped and the guard then denies a retired agent's tool call;
@@ -323,11 +334,11 @@ their `not.` forms, and the six `expect.*` helpers) and never imports `register.
 | # | Checkpoint | Proven by | Result |
 |---|---|---|---|
 | C0 | Probes P1, P2 (+P3) | two `gotchas.md` entries | **Passed 2026-10-13.** P1: a mod's spawn reaches other plugins as `tool.call {Agent}` (origin the mod), then `agent.spawn`; duet routed it (denied for consent under `-p`). An in-line answer resolves the spawn as `{ model: 'codex', agentId: 'duet-…' }` with no `turn.complete`. P2: the spawn outlived the handler; `turn.complete` with `agentId` and `PROBE DONE` arrived 10 s later; the subagent's Write and Bash ran (`defaultMode: auto`); its hand-back is a `peer` prompt, dropped with `{ drop }`; plain `-p` exits before the spawn resolves; `$.ui.ask` from a detached promise showed `Plugin ifprobe: did this question appear?` interactively and rejected under `-p`. P3: `return()` killed `sleep 37` at once. Six `[probe]` entries in `gotchas.md`, under "Subagents a mod spawns". |
-| C1 | Appendix A kit committed; four logic suites under kit = under `claude plugin test` | per-suite pass counts | |
-| C2 | Profile parse/validate | `claude plugin test mods/issue-forge` | |
-| C3 | Coverage §5.3 on real fixtures | same | |
-| C4 | Gates and states | same | |
-| C5 | Scaffold + register; UI tests | validate clean, tests pass, `tsc` clean | |
+| C1 | Appendix A kit committed; four logic suites under kit = under `claude plugin test` | per-suite pass counts | **Passed 2026-10-13.** Kit = `claude plugin test` per logic suite: mod-builder 28 = 28, duet 38 = 38, git-branch 4 = 4, turn-counter 2 = 2 (and issue-forge 52 = 52). |
+| C2 | Profile parse/validate | `claude plugin test mods/issue-forge` | **Passed.** `profile (§4)` tests: defaults, each missing field, wrong types, empty globs, `lcovPath` inside and not ignored, `~`, the issue's `Base branch:` line. |
+| C3 | Coverage §5.3 on real fixtures | same | **Passed.** `tests/fixtures/real.ts`: Node 24's LCOV for git-branch and turn-counter at 688d8db, and real `git diff -U0` (new, deleted, modified, a quoted path with a space). |
+| C4 | Gates and states | same | **Passed.** One test per check R1–R3, G1–G7, gate F, and per transition: resume with attempts reset, G6's single return to red, retries then blocked. 52 logic tests in all. |
+| C5 | Scaffold + register; UI tests | validate clean, tests pass, `tsc` clean | **Passed.** `claude plugin validate`: passed; every gating hook has `.catch`. `claude plugin test`: 71 pass (52 logic, 19 UI and behaviour). `tsc` (typescript 5.6, scratch tsconfig): exit 0. `claude -p --plugin-dir mods/issue-forge "/issue-forge demo"` printed its text. All eight demo states drew live in an interactive session, with no refused tree. Issue-forge's own logic under the C1 kit: 100.00% lines, 99.43% branches. |
 | C6 | Pilot profile validates; baseline recorded | `/issue-forge status` | |
 | C7 | Dry run on #16, answer no at publish | branch has red, green (refactor) commits; pane shows ready | |
 | C8 | Done means (below) | gate on issue-forge's own logic | |
