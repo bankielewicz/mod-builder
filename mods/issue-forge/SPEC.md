@@ -67,8 +67,8 @@ as they pass. Section numbers like §3 refer to that document.
     condition). Step 2 cuts the run's branch from `origin/<base>`, and the pilot's test
     and coverage commands need the kit and the profile on that base, which `origin/main` doesn't
     have yet. So before C7, `git push origin issue-forge-mod` (a feature branch; `main` stays
-    protected), the profile's `baseBranch` set to `issue-forge-mod` for the dry run, then set back
-    to `main` in one commit before the PR is opened.
+    protected). The profile's `baseBranch` was set to `issue-forge-mod` only in a local commit on
+    the C7 worktree's branch `c7-dry-run`, so the pushed branch keeps `"main"` and needs no revert.
   - C7 itself creates local branch `issue-16-mod-lab-fix-prompt-and-path-header-hardc` with 2–3
     commits, and possibly a stash named `issue-forge #16 rejected refactor`. I answer **no** at
     publish, so nothing more is pushed and no PR is opened.
@@ -340,8 +340,8 @@ their `not.` forms, and the six `expect.*` helpers) and never imports `register.
 | C4 | Gates and states | same | **Passed.** One test per check R1–R3, G1–G7, gate F, and per transition: resume with attempts reset, G6's single return to red, retries then blocked. 52 logic tests in all. |
 | C5 | Scaffold + register; UI tests | validate clean, tests pass, `tsc` clean | **Passed.** `claude plugin validate`: passed; every gating hook has `.catch`. `claude plugin test`: 72 pass (52 logic, 20 UI and behaviour). `tsc` (typescript 5.6, scratch tsconfig): exit 0. `claude -p --plugin-dir mods/issue-forge "/issue-forge demo"` printed its text. All eight demo states drew live in an interactive session, with no refused tree. Issue-forge's own logic under the C1 kit: 100.00% lines, 99.43% branches. |
 | C6 | Pilot profile validates; baseline recorded | `/issue-forge status` | **Passed on `issue-forge-mod`, 2026-10-13.** `.issue-forge.json` (Appendix A, `baseBranch: "main"`) committed. `claude -p --plugin-dir mods/issue-forge "/issue-forge status"`: `.issue-forge.json validates: base main, threshold 95%, 2 checks.` Its `testCommand` exits 0 (53 + 83 + 7 + 71 + 3 tests), its `coverageCommand` exits 0 with `SF:` records for all five logic modules, and both `checks` exit 0. The mod's own `parseLcov` + `totals` give the baseline **lines 96.94%, branches 91.37%**. A run records it at step 3 only once `origin/<base>` has the kit and the profile, so the run's own baseline is checked in C7. |
-| C7 | Dry run on #16, answer no at publish | branch has red, green (refactor) commits; pane shows ready | |
-| C8 | Done means (below) | gate on issue-forge's own logic | |
+| C7 | Dry run on #16, answer no at publish | branch has red, green (refactor) commits; pane shows ready | **Passed 2026-10-13**, in worktree `scratch/wt-c7` (an interactive `claude --plugin-dir mods/issue-forge` session driven through a pty), profile base `issue-forge-mod` in a local-only commit. First attempt: blocked at baseline, `coverage produced no data`, because `.gitignore` had hidden the kit (fixed in 0b2bd59). `/issue-forge resume` then fast-forwarded the run's branch to the fixed base (the "fix the base, then resume" path) and ran to ready in 14 min, each phase on its first attempt: red 6m08s → `30bb329` (logic test + `ui.test.tsx`; R1 2 test files, R3 exit 1); green 2m28s → `7db4eed` (G1–G7 pass: diff lines 100.00% · branches 100.00%, total 97.10% / 91.51% vs baseline 97.09% / 91.42%, G6 `ui.test.tsx` covers `register.tsx`, 2 checks pass); refactor 5m16s → `64b4256` (gate F the same). Agents ran as `issue-forge-16-{red,green,refactor}-1` on Claude with duet's `codexAgents: "*"`. The pane showed `Push issue-16-mod-lab-fix-prompt-and-path-header-hardc and open a pull request against issue-forge-mod?`; the question was dismissed (no), and the toast said `#16 is ready`. Nothing pushed: no `issue-16*` branch on origin, no PR. Checked by hand on the branch: mod-builder 79 tests pass, validate clean. |
+| C8 | Done means (below) | gate on issue-forge's own logic | **Passed 2026-10-13.** C0–C7 recorded above. Own coverage under the C1 kit: `hooks/issue-forge-logic.ts` 100.00% lines, 99.43% branches. README has the install line and a "What it reaches" table from `claude plugin validate`; marketplace entry and `plugin.json` both 0.1.0. |
 
 ## Done means
 
