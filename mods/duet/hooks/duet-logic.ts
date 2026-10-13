@@ -612,7 +612,8 @@ export function reviewArgv(target: ReviewTarget, model: string): string[] {
  * names are fixed (SPEC, Change 0.2.5). Blanking sets '' and can't unset, and
  * '' in a path or profile name changes what a tool does (`CLAUDE_CONFIG_DIR`
  * becomes an empty config dir), so only secrets and provider switches go here,
- * never a path, directory or profile name. Never add what Codex itself needs:
+ * never a path, directory or profile name. The one exception is the messaging
+ * socket, where the empty path is the point: Codex gets no inbox to post to. Never add what Codex itself needs:
  * `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
  */
 export const BLANKED_ENV = [
@@ -626,6 +627,8 @@ export const BLANKED_ENV = [
   'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
   'CLAUDE_CODE_CLIENT_KEY_PASSPHRASE',
   'CLAUDE_CODE_MESSAGING_TOKEN',
+  // A path, blanked on purpose: on macOS and Linux the token is optional, and Codex is a child Claude Code trusts
+  'CLAUDE_CODE_MESSAGING_SOCKET',
   // Workload Identity Federation: the identity provider's JWT itself
   'ANTHROPIC_IDENTITY_TOKEN',
   // Bedrock, and Bedrock Mantle
