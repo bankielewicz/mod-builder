@@ -58,8 +58,9 @@ let autoOpen = false
 let autoRerun = true
 let clock: Timer | null = null
 let lastTickMs = 0
-let isScanning = false
+let scanning: Promise<void> | null = null
 let isScanQueued = false
+let isQueuedAnnounced = false
 const factsByMod = new Map<string, Lab.FileFacts>()
 
 // Every function that takes `$` is declared here, at the top of the file: the
@@ -84,21 +85,31 @@ const generationsOf = async ($: Engine): Promise<Record<string, number>> =>
 
 // ── Scanning ──────────────────────────────────────────────────────────────
 
-/** Reads every mod folder, judges it and redraws. Single-flight; a call during a scan queues one more. */
-async function scan($: Engine, isAnnounced: boolean): Promise<void> {
-  if (isScanning) {
+/**
+ * Reads every mod folder, judges it and redraws. Single-flight: a call during
+ * a scan queues one more pass, and every caller waits until the passes end,
+ * so what it reads afterwards reflects the disk as of its call.
+ */
+function scan($: Engine, isAnnounced: boolean): Promise<void> {
+  if (scanning) {
     isScanQueued = true
-    return
+    isQueuedAnnounced ||= isAnnounced
+    return scanning
   }
-  isScanning = true
-  try {
-    do {
-      isScanQueued = false
-      await scanOnce($, isAnnounced)
-    } while (isScanQueued)
-  } finally {
-    isScanning = false
-  }
+  scanning = scanPasses($, isAnnounced).finally(() => {
+    scanning = null
+  })
+  return scanning
+}
+
+async function scanPasses($: Engine, isAnnounced: boolean): Promise<void> {
+  let announce = isAnnounced
+  do {
+    isScanQueued = false
+    await scanOnce($, announce)
+    announce = isQueuedAnnounced
+    isQueuedAnnounced = false
+  } while (isScanQueued)
 }
 
 async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {

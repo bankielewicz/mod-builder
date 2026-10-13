@@ -35,7 +35,7 @@ const modFiles = (name: string): Disk => ({
  * The world beneath Mod Lab: a disk from `disk`, the clock and store from
  * memory, processes answered from `outputs`, and every UI call recorded.
  */
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime = { ms: 1000 }) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime = { ms: 1000 }, listHold?: Promise<void>) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -60,7 +60,11 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('turn.complete', () => ({ text: '' }) as never)
   on('command.register', () => ({ value: undefined }) as never)
   on('tool.register', ($, e) => ({ value: { tool: `mcp__mod-builder__${e.name}` } }) as never)
-  on('fs.list', ($, e) => ({ value: entriesOf((e as { path: string }).path) }) as never)
+  let lists = 0
+  on('fs.list', async ($, e) => {
+    if (listHold && lists++ === 0) await listHold
+    return { value: entriesOf((e as { path: string }).path) } as never
+  })
   on('fs.read', ($, e) => {
     const path = (e as { path: string }).path
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
@@ -413,6 +417,22 @@ describe('edit failures', () => {
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /validate · could not run/ })).toBeDefined()
     expect(await after.find({ key: 'fix' })).toBeDefined()
+  })
+})
+
+describe('scan waits', () => {
+  test('a command during the startup scan waits for it, and sees the mods', OPTIONS, async ($, on) => {
+    let release = () => {}
+    const listHold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, listHold)
+    await start($)
+    const asked = command($, 'git-branch')
+    await clock.advance(10)
+    release()
+    await asked
+    await clock.advance(10)
+    expect(seen.toasts.filter(text => text.startsWith('No mod named'))).toEqual([])
+    expect(seen.opened).toContain('modlab')
   })
 })
 
