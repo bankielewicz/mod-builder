@@ -1,6 +1,6 @@
 {
   "name": "duet",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on, with independent Codex reviews; measures every run",
   "author": {
     "name": "Bryan Ankielewicz"
@@ -16,7 +16,7 @@
     "codexSandbox": {
       "type": "string",
       "title": "Codex sandbox",
-      "description": "read-only: Codex can read and answer but not edit. workspace-write: Codex may edit files under the session folder. A custom agent whose tools cannot edit always runs read-only.",
+      "description": "read-only: Codex reads and answers but writes nothing. workspace-write: Codex may also write in the session folder and /tmp. In both, Codex can read any file your account can read. A custom agent whose tools cannot edit always runs read-only.",
       "options": [
         "read-only",
         "workspace-write"

@@ -239,7 +239,7 @@ export type ConfigField = { field: string; alias: string; kind: 'text' | 'number
 /** The manifest's `userConfig` fields, in its order, each with a short alias. */
 export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'codexAgents', alias: 'agents', kind: 'text', fallback: '', help: 'comma-separated subagent types sent to Codex; * = every type; empty = none' },
-  { field: 'codexSandbox', alias: 'sandbox', kind: 'text', choices: ['read-only', 'workspace-write'], fallback: 'read-only', help: 'workspace-write lets Codex edit files under the session folder' },
+  { field: 'codexSandbox', alias: 'sandbox', kind: 'text', choices: ['read-only', 'workspace-write'], fallback: 'read-only', help: 'workspace-write lets Codex write in the session folder and /tmp; both modes read any file you can' },
   { field: 'codexModel', alias: 'model', kind: 'text', fallback: '', help: "passed to codex as -m; empty = Codex's own configured model" },
   { field: 'maxConcurrent', alias: 'max', kind: 'number', fallback: 2, help: 'live Codex runs at once; a call beyond this is refused' },
   { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: 'a Codex run past this is stopped' },
@@ -515,6 +515,20 @@ export function specVersion(text: string): string {
   return h.toString(16).padStart(8, '0').slice(0, 7)
 }
 
+/**
+ * The consent question. What Codex can reach was measured with Codex 0.162.1 on
+ * Linux (SPEC, Change 0.2.4): both sandboxes read any file the user can read;
+ * read-only writes nothing; workspace-write writes in the project and /tmp.
+ */
+export function consentText(cwd: string, sandbox: Sandbox): string {
+  const writes =
+    sandbox === 'workspace-write'
+      ? `Agents that edit can write inside ${cwd} and in temporary folders such as /tmp.`
+      : 'It runs read-only and writes nothing.'
+  return `Send this task to Codex (OpenAI)? Codex can read any file your user account can read, not only ${cwd}, and sends what it reads to OpenAI under your Codex sign-in. ${writes} Allow for the rest of this session?`
+}
+
+/** Rules the handoff asks Codex to follow. A request to the model: only the sandbox enforces anything. */
 export const PROHIBITED = [
   'no git commits, pushes, merges, rebases, resets or branch changes',
   'no package installs or other network access',

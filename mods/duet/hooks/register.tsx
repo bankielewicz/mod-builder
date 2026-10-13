@@ -7,7 +7,7 @@ import {
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -217,7 +217,7 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
   try {
-    answer = await $.ui.ask(`Send this task to Codex (OpenAI)? Codex can read ${cwd} under your Codex sign-in, for the rest of this session?`, [YES, NO])
+    answer = await $.ui.ask(consentText(cwd, options.sandbox), [YES, NO])
   } catch {
     return 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
   }

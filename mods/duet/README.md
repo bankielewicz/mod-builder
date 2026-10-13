@@ -59,6 +59,8 @@ and measures every run so you route by evidence rather than by assumption.
 Needs the [Codex CLI](https://github.com/openai/codex) on PATH, signed in once with `codex login`.
 Duet uses Codex's own sign-in and usage limits. Codex runs with Claude Code's credential and provider variables blanked (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, the Bedrock, Vertex and Foundry settings and `AWS_BEARER_TOKEN_BEDROCK`; the full list is `BLANKED_ENV` in `hooks/duet-logic.ts`). Other variables in your environment are passed through.
 
+Codex's sandbox limits writes, not reads. In either mode Codex can read any file your account can read and send it to OpenAI; under `workspace-write` it can also write in the session folder and in `/tmp`, where Claude Code keeps its own working files (measured with Codex 0.162.1 on Linux; see SPEC, Change 0.2.4). The handoff asks Codex to stay in scope, but that's a request to the model, not enforcement. A routed agent's instructions come from `.claude/agents/<type>.md` in the checkout, so route only agents you trust, in repositories you trust, and use `workspace-write` only there.
+
 ```
 /plugin install duet --marketplace bankielewicz/mod-builder
 ```
@@ -76,7 +78,7 @@ While developing: `claude --plugin-dir <path-to>/duet`. Changes load with `/relo
 | Option | Default | What it does |
 | --- | --- | --- |
 | `codexAgents` | empty (only the `duet:` roles) | Comma-separated subagent types Codex runs, e.g. `general-purpose, code-explorer`. `*` routes every type, Claude Code's own `Explore` and `Plan` included. Named, isolated and nested calls stay on Claude. |
-| `codexSandbox` | `read-only` | `read-only` investigates and answers; `workspace-write` lets Codex edit files under the session folder. Agents that can't edit always run read-only. There is no full-access option. |
+| `codexSandbox` | `read-only` | `read-only` investigates and answers, writing nothing; `workspace-write` lets Codex write in the session folder and in `/tmp`. In both, Codex can read any file your account can read. Agents that can't edit always run read-only. There is no full-access option. |
 | `codexModel` | empty | `-m` for Codex; empty uses Codex's configured model. |
 | `maxConcurrent` | `2` | Codex runs at once; beyond it, the call is refused with a reason. |
 | `timeoutMinutes` | `20` | A Codex run past this is stopped and the call refused. |
@@ -119,7 +121,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Settings | `$.config.list` / `$.config.set` on duet's own rows, from `/duet config` |
 | Processes | `$.process.spawn` / `$.process.run`: `codex exec --json …`, `codex exec review --json …`, `codex debug models`, `git rev-parse`, `git status --porcelain` |
 | Files | reads `<cwd>/.claude/agents/<type>.md`, `~/.claude/agents/<type>.md`; writes `~/.claude/duet-data/runs.jsonl` (no prompt text), `sessions/<session>/review-<id>.md` and `sessions/<session>/d<n>.out.md` (a background run's answer; per session, since ids restart at d1) |
-| Network | none directly; **Codex sends the handoff and whatever it reads under the session folder to OpenAI** under your Codex sign-in |
+| Network | none directly; **Codex sends the handoff and whatever it reads to OpenAI** under your Codex sign-in. It can read any file your account can read, not only the session folder |
 | Model calls | none by the mod directly; Codex usage per routed call and review; each delivered background answer is a Claude turn |
 | Environment | reads `HOME`, `USERPROFILE`; Codex's child env blanks `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_SESSION_ACCESS_TOKEN` |
 | Asks | `$.ui.ask` once per session before sending to Codex (unless `codexConsent: allow`) |

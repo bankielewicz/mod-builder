@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
-  isRouted, codexRunning, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isRouted, codexRunning, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -408,5 +408,18 @@ describe('third review round: tool lists in any YAML form', () => {
     expect(def?.description).toBe('|')
     expect(sandboxOf('description: Fixes issue #12\ntools: Read, Edit')).toBe('workspace-write')
     expect(agent('tools: [Read, Edit]')?.tools).toEqual(['Read', 'Edit'])
+  })
+})
+
+describe('fourth review round: what the consent says Codex can reach', () => {
+  test('both sandboxes say Codex can read beyond the project; only workspace-write mentions writes', () => {
+    const ro = consentText('/w/proj', 'read-only')
+    expect(ro).toContain('any file your user account can read, not only /w/proj')
+    expect(ro).toContain('sends what it reads to OpenAI')
+    expect(ro).toContain('It runs read-only and writes nothing.')
+    const ww = consentText('/w/proj', 'workspace-write')
+    expect(ww).toContain('any file your user account can read, not only /w/proj')
+    expect(ww).toContain('can write inside /w/proj and in temporary folders such as /tmp')
+    expect(ww).not.toContain('writes nothing')
   })
 })

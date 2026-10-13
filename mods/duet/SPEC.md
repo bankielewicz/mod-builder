@@ -392,3 +392,19 @@ pane's keys; `/reload-plugins` picks up edits.
 - **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, tests, README.
 - **Tests:** block lists at both indents, a block `tools` that grants `Edit`, comments, specifiers, a `#` inside quotes, nine unread forms, other fields unchanged, the `USERPROFILE` lookup. Six of the seven new tests fail on 0.2.2; the seventh checks that other fields read as before.
 - **Done means:** all tests pass, validate is clean.
+
+## Change 0.2.4 (2026-10-13)
+
+> Part A of issue #3: say what Codex can actually reach.
+
+- **Measured** (Codex CLI 0.162.1, `x86_64-unknown-linux-musl`, WSL2 Linux; local `codex sandbox` runs with `sandbox_mode` set as duet's `-s` sets it):
+  - `read-only`: a file outside the project could be read; writing to the project, a sibling folder or `/tmp` failed with "Read-only file system".
+  - `workspace-write`: a file outside the project could be read; writing to the project and `/tmp` worked; writing to a sibling folder or `$HOME` failed.
+  - Not measured: `codex exec` itself, macOS and Windows.
+- **What changes:**
+  - The consent question (`consentText`) says Codex can read any file the user can read and sends it to OpenAI. Under `read-only` it says Codex writes nothing; under `workspace-write`, that agents that edit can write in the project and in temporary folders such as `/tmp`.
+  - The README (Install, the `codexSandbox` row, the "What it reaches" Network row), the `codexSandbox` description in `plugin.json` and its `/duet config` help say the same. The README notes that `/tmp` holds Claude Code's own working files, that the handoff's rules (`PROHIBITED`) are a request to the model, and that a routed agent's instructions come from the checkout.
+  - No behaviour change: limiting what Codex can read or write is part B of #3.
+- **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, `.claude-plugin/plugin.json`, README, tests.
+- **Tests:** the consent text for both sandboxes.
+- **Done means:** all tests pass, validate is clean.
