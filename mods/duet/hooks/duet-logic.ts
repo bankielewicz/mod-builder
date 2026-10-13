@@ -608,32 +608,33 @@ export function reviewArgv(target: ReviewTarget, model: string): string[] {
 
 /**
  * Claude Code's credential and provider variables, blanked in Codex's
- * environment (env is laid over the host's, which can't be listed, so the
- * names are fixed): direct API keys and tokens, the Bedrock, Vertex, Foundry,
- * Claude Platform on AWS and Bedrock Mantle settings, the AWS credentials and
- * credential-file paths, `GOOGLE_APPLICATION_CREDENTIALS`, Claude Code's OAuth
- * refresh token, profile and config folder, and the Azure SDK's default
- * credential variables. Never add what Codex itself needs (`OPENAI_API_KEY`,
- * `CODEX_HOME`, `PATH`, `HOME`, the proxy variables).
+ * environment. env is laid over the host's, which can't be listed, so the
+ * names are fixed (SPEC, Change 0.2.5). Never add what Codex itself needs:
+ * `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
  */
 export const BLANKED_ENV = [
+  // Anthropic API, and Claude Code's own sign-in state
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_CUSTOM_HEADERS',
-  'ANTHROPIC_BEDROCK_BASE_URL',
-  'ANTHROPIC_VERTEX_PROJECT_ID',
-  'ANTHROPIC_VERTEX_BASE_URL',
-  'ANTHROPIC_FOUNDRY_API_KEY',
-  'ANTHROPIC_FOUNDRY_BASE_URL',
-  'ANTHROPIC_FOUNDRY_RESOURCE',
-  'AWS_BEARER_TOKEN_BEDROCK',
+  'ANTHROPIC_PROFILE',
   'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
   'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
+  'CLAUDE_CONFIG_DIR',
+  // Bedrock, and Bedrock Mantle
   'CLAUDE_CODE_USE_BEDROCK',
-  'CLAUDE_CODE_USE_VERTEX',
-  'CLAUDE_CODE_USE_FOUNDRY',
-  // AWS credentials and the files or profile they are read from
+  'ANTHROPIC_BEDROCK_BASE_URL',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  'CLAUDE_CODE_USE_MANTLE',
+  'ANTHROPIC_BEDROCK_MANTLE_BASE_URL',
+  // Claude Platform on AWS
+  'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+  'ANTHROPIC_AWS_API_KEY',
+  'ANTHROPIC_AWS_BASE_URL',
+  'ANTHROPIC_AWS_WORKSPACE_ID',
+  // AWS credentials, and the profile and files they are read from
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
   'AWS_SESSION_TOKEN',
@@ -641,22 +642,17 @@ export const BLANKED_ENV = [
   'AWS_SHARED_CREDENTIALS_FILE',
   'AWS_CONFIG_FILE',
   // Vertex
+  'CLAUDE_CODE_USE_VERTEX',
+  'ANTHROPIC_VERTEX_PROJECT_ID',
+  'ANTHROPIC_VERTEX_BASE_URL',
   'GOOGLE_APPLICATION_CREDENTIALS',
-  // Claude Platform on AWS
-  'CLAUDE_CODE_USE_ANTHROPIC_AWS',
-  'ANTHROPIC_AWS_WORKSPACE_ID',
-  'ANTHROPIC_AWS_BASE_URL',
-  'ANTHROPIC_AWS_API_KEY',
-  // Bedrock Mantle
-  'CLAUDE_CODE_USE_MANTLE',
-  'ANTHROPIC_BEDROCK_MANTLE_BASE_URL',
-  // Claude Code's own sign-in state
-  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-  'ANTHROPIC_PROFILE',
-  'CLAUDE_CONFIG_DIR',
   // Foundry
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'ANTHROPIC_FOUNDRY_API_KEY',
   'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
-  // Azure SDK default credential chain (Foundry's Entra path)
+  'ANTHROPIC_FOUNDRY_BASE_URL',
+  'ANTHROPIC_FOUNDRY_RESOURCE',
+  // Foundry's Entra path: the Azure SDK's default credential chain (names from the Azure SDK docs, not Claude's)
   'AZURE_CLIENT_ID',
   'AZURE_TENANT_ID',
   'AZURE_CLIENT_SECRET',

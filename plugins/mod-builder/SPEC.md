@@ -361,3 +361,11 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **New:** `references/gotchas.md` gets a "Subagents a mod spawns" section, seven `[probe]` entries: other plugins see a mod's spawn as a `tool.call` of `Agent`; a detached spawn outlives the command; plain `-p` exits first; how to drop the hand-back prompt; in-line answers have no `turn.complete`; `$.ui.ask` from a detached promise; `return()` kills a spawned child; under `claude plugin test` a spawn never gets an `agentId`.
 - **Unchanged:** Mod Lab's code and tests.
 - **Version:** 0.2.3, since 0.2.2 (logging, PR #21) merged first.
+
+## Change 0.2.4 (2026-10-13)
+
+> For duet issue #2 (cloud-provider credentials reached Codex; duet's SPEC, Change 0.2.5).
+
+- **New:** `references/gotchas.md`, Modules: a `[probe]` entry. A `$.process.run` child inherits the host environment unless Claude Code's opt-in `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` is set, and the scrub removes `OPENAI_API_KEY` too; `init.env: { NAME: '' }` sets a variable to an empty string rather than unsetting it.
+- **New:** the coverage kit (`skills/build/scripts/coverage/kit.mjs`) gets a `toBeGreaterThanOrEqual` matcher, which duet's tests use; the copy in `docs/specs/issue-forge.md` (Appendix A) and the matcher list in issue-forge's SPEC match it.
+- **Unchanged:** Mod Lab's code and tests.
