@@ -451,7 +451,7 @@ pane's keys; `/reload-plugins` picks up edits.
   - `AZURE_CLIENT_CERTIFICATE_PASSWORD` and `AZURE_PASSWORD` are blanked; `AZURE_USERNAME` passes through (Codex, two comments).
   - `IDENTITY_HEADER` is blanked; `IDENTITY_ENDPOINT` passes through, and `MSI_SECRET` isn't added, as it's unverified (Codex).
   - `codexLaunch` builds Codex's spawn request (argv, blanked env, stdin), which `$.process.spawn` takes whole and the `$.process.run` fallback takes in parts, and a test checks it. Before, removing `env` from the spawn call left all 88 tests passing; removing it from `codexLaunch` now fails 4. The one line no test reaches is `$.process.spawn(launch)`, as spawn can't be stubbed (`/code-review`).
-  - The README says that under `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` Codex needs `codex login`, since the scrub removes `OPENAI_API_KEY` (the probe above, which used `$.process.run`; `--with-api-key` from `codex login --help`, 0.162.1) (`/code-review`).
+  - The README says that under `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` Codex needs `codex login`, since the scrub removes `OPENAI_API_KEY` (the probe above, which used `$.process.run`; `printenv OPENAI_API_KEY | codex login --with-api-key` from `codex login --help`, 0.162.1, since the option reads stdin) (`/code-review`; the stdin pipe from Codex's third review).
   - No count of names in the README or this section: it went stale with every change, and the exact-list test pins the names instead (`/code-review`).
   - Limits and README say blanking isn't a barrier: Claude Code's environment is readable at `/proc/<pid>/environ` (checked).
   - Follow-ups filed: #32 (the list lags; blanking isn't a barrier) and #33 (the coverage kit's missing matchers).
