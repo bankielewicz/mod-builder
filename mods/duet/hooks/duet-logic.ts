@@ -660,6 +660,8 @@ export const BLANKED_ENV = [
   'AZURE_CLIENT_SECRET',
   'AZURE_CLIENT_CERTIFICATE_PASSWORD',
   'AZURE_PASSWORD',
+  // Azure managed identity (App Service, Functions): the token endpoint's secret header
+  'IDENTITY_HEADER',
 ] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
