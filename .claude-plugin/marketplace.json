@@ -22,6 +22,12 @@
       "source": "./mods/duet",
       "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on; independent Codex reviews; measures every run.",
       "version": "0.2.4"
+    },
+    {
+      "name": "issue-forge",
+      "source": "./mods/issue-forge",
+      "description": "Takes one GitHub issue to a pull request test-first: red, green and refactor subagents, each phase checked by commands and a 95% diff-coverage gate; pushes only after you confirm.",
+      "version": "0.1.0"
     }
   ]
 }
