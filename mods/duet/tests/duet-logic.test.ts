@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   modelWarning, parseModelCatalog,
-  agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
+  agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
   isRouted, codexRunning, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
@@ -103,6 +103,13 @@ describe('codex process', () => {
     const env = childEnv()
     for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
     for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
+  })
+
+  test("codexLaunch gives Codex's spawn the blanked env, and stdin only when there is input", () => {
+    const launch = codexLaunch(['codex', 'exec', '--json'], 'the task')
+    expect(launch).toEqual({ argv: ['codex', 'exec', '--json'], env: childEnv(), input: 'the task' })
+    for (const k of BLANKED) expect([k, launch.env[k]]).toEqual([k, ''])
+    expect(codexLaunch(['codex', 'exec', 'review'], undefined)).toEqual({ argv: ['codex', 'exec', 'review'], env: childEnv() })
   })
 
   test('folds the real 0.162.1 JSONL; a mid-run error item is a warning', () => {

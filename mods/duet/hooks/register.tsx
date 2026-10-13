@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import {
-  agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, countsOf, demoTasks, effectiveSandbox,
+  agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
@@ -232,12 +232,12 @@ type Ran = { run: Run; failure: string }
 
 /** Runs Codex, folding its JSONL into the task as it streams; stops at the timeout. */
 async function runCodex($: EngineInterface, id: string, argv: string[], input: string | undefined): Promise<Ran> {
-  const env = childEnv()
+  const launch = codexLaunch(argv, input)
   let run = EMPTY_RUN
   let carry = ''
   let timedOut = false
   let started = false
-  const stream = $.process.spawn({ argv, env, ...(input !== undefined ? { input } : {}) })
+  const stream = $.process.spawn(launch)
   let elapsed = 0
   const timer = $.clock.every(5000, () => {
     elapsed += 5000
@@ -270,7 +270,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
     const fallbackAt = Date.now()
     try {
-      const r = await $.process.run(argv, { env, ...(input !== undefined ? { stdin: input } : {}), timeoutMs: cap })
+      const r = await $.process.run(launch.argv, { env: launch.env, ...(launch.input !== undefined ? { stdin: launch.input } : {}), timeoutMs: cap })
       const folded = foldAll(r.stdout)
       return { run: folded, failure: failureOf(folded, r.exitCode, r.stderr) }
     } catch (err2) {

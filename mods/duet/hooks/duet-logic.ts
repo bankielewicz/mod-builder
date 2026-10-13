@@ -667,6 +667,17 @@ export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
 }
 
+export type CodexLaunch = { argv: string[]; env: Record<string, string>; input?: string }
+
+/**
+ * How Codex starts: argv, the blanked env, and any stdin. `$.process.spawn`
+ * takes it whole, and the `$.process.run` fallback takes its parts, so the
+ * env is decided here once; tests can't reach spawn itself (it can't be stubbed).
+ */
+export function codexLaunch(argv: string[], input: string | undefined): CodexLaunch {
+  return { argv, env: childEnv(), ...(input !== undefined ? { input } : {}) }
+}
+
 // ── Codex JSONL ──────────────────────────────────────────────────────────
 
 export type Run = {
