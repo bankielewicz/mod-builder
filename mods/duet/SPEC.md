@@ -450,3 +450,4 @@ pane's keys; `/reload-plugins` picks up edits.
   - `AZURE_CLIENT_CERTIFICATE_PASSWORD` and `AZURE_PASSWORD` are blanked; `AZURE_USERNAME` passes through (Codex, two comments).
   - `IDENTITY_HEADER` is blanked; `IDENTITY_ENDPOINT` passes through, and `MSI_SECRET` isn't added, as it's unverified (Codex).
   - `codexLaunch` builds Codex's spawn request (argv, blanked env, stdin), which `$.process.spawn` takes whole and the `$.process.run` fallback takes in parts, and a test checks it. Before, removing `env` from the spawn call left all 88 tests passing; removing it from `codexLaunch` now fails 4. The one line no test reaches is `$.process.spawn(launch)`, as spawn can't be stubbed (`/code-review`).
+  - The README says that under `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` Codex needs `codex login`, since the scrub removes `OPENAI_API_KEY` (the probe above, which used `$.process.run`; `--with-api-key` from `codex login --help`, 0.162.1) (`/code-review`).
