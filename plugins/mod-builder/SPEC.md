@@ -306,7 +306,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Where logs go:**
   - a file, `~/.claude/mod-builder-data/logs/<YYYY-MM-DD>-<first 8 of the session id>.log`, one file per session, so sessions never race;
   - the same line mirrored to Claude Code's debug log with `$.ui.log(line, { to: 'debug' })`, visible under `claude --debug`.
-- **How the file is written:** `$.fs.write` writes whole files only, so lines collect in a module-level buffer, capped at 2000 lines (oldest dropped, with a `… N earlier lines dropped` marker), and the whole file is rewritten on each flush. The buffer flushes on every `normal`-level line, at the end of each main-loop turn, and two seconds after the last line (`$.clock.after`). A reload loses only lines since the last flush.
+- **How the file is written:** `$.fs.write` writes whole files only, so lines collect in a module-level buffer, capped at 2000 lines (oldest dropped, with a `… N earlier lines dropped` marker), and the whole file is rewritten on each flush. The buffer flushes on every `normal`-level line, at the end of each main-loop turn, and two seconds after the first line not yet written (`$.clock.after`). After a reload, the module's first write reads the session's existing file and continues it, so a reload loses only lines not yet written.
 - **Line format:** `2026-10-13T14:02:11.123Z NORMAL  <site>  <message>  {context as JSON}`, one line per event. Context is trimmed to 2000 characters. Environment values are never logged; process argv (paths and flags) is.
 - **What each level adds** (each level includes the ones above it):
 
@@ -346,7 +346,8 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Live check after the build:** a session started in a git worktree, with `logging: verbose`, logs the `modsDir` its scan used. That settles whether Mod Lab watches the worktree's `mods/` or the main checkout's (pending issue).
 - **Done means:** all tests pass; validate is clean (it will now list `$.fs.write`, `$.ui.log` and `$.config.*`); the archetype check passes; the live check is recorded.
 - **Results (2026-10-13):**
-  - `claude plugin test plugins/mod-builder`: 64 pass, 0 fail (11 new). With `register.tsx` at 688d8db, 3 of the 4 new UI tests fail; the fourth (`off` writes nothing) is a guard.
+  - `claude plugin test plugins/mod-builder`: 66 pass, 0 fail (13 new, including a reload test: the session file is continued, not replaced). With `register.tsx` at 688d8db, 3 of the 4 new UI tests fail; the fourth (`off` writes nothing) is a guard.
   - `claude plugin validate`: clean, 3 gating hooks with `.catch`. Archetype check: all pass. `tsc`: clean.
+  - The `/config` row key is `<plugin>.<field>` (bundled `claude-code.d.ts`, around line 2049), so `setOption` matches `mod-builder.logging`. A live set wasn't run, because it writes `~/.claude/settings.json`.
   - Live, `claude -p --plugin-dir plugins/mod-builder "/mod-builder config"` from the worktree listed the four options and wrote `~/.claude/mod-builder-data/logs/2026-10-13-<session>.log`, holding `NORMAL  session.start  Mod Lab started  {"version":"0.2.2","modsDir":"<worktree>/mods","logging":"normal"}`.
   - Worktree check: loaded with `--plugin-dir` from a worktree, the default `modsDir` is that worktree's `mods/`, so it follows the plugin's own folder (`$.plugin.root`). The installed copy loads from the main checkout, so a session in a worktree watches the main checkout's `mods/`. The direct check, a worktree session with the installed plugin at `logging: verbose`, can run once this merges.

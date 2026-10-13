@@ -570,6 +570,17 @@ describe('logging (Change 0.2.2)', () => {
     expect(seen.logs.some(line => line.includes('NORMAL  run  git-branch Validate failed'))).toBe(true)
   })
 
+  test('after a reload the session file is continued, not replaced', OPTIONS, async ($, on) => {
+    const day = new Date().toISOString().slice(0, 10)
+    const path = `/home/u/.claude/mod-builder-data/logs/${day}-s1-sessi.log`
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), [path]: '2026-10-13T09:00:00.000Z NORMAL  session.start  before the reload\n' })
+    await start($)
+    await clock.advance(3000)
+    const text = lastLog(seen)
+    expect(text).toStartWith('2026-10-13T09:00:00.000Z NORMAL  session.start  before the reload\n')
+    expect(text).toContain('NORMAL  session.start  Mod Lab started')
+  })
+
   test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
     await start($)

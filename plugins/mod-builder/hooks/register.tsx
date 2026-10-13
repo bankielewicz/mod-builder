@@ -121,7 +121,11 @@ async function writeLog($: Engine): Promise<void> {
     const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
     if (!home) return
     const sessionId = await $.session.id().catch(() => 'unknown')
-    logFile = Lab.logFileOf(home, Date.now(), sessionId)
+    const file = Lab.logFileOf(home, Date.now(), sessionId)
+    // After a reload this module starts empty: continue the session's file rather than replace it.
+    const earlier = await readText($, file)
+    if (earlier) logBuffer = Lab.continueLog(earlier, logBuffer)
+    logFile = file
   }
   await $.fs.write(logFile, Lab.logText(logBuffer))
 }

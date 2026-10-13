@@ -1158,6 +1158,20 @@ export function logText(buffer: LogBuffer): string {
   return `${[...marker, ...buffer.lines].join('\n')}\n`
 }
 
+/**
+ * The session's log file as written before (by this module before a reload),
+ * with `buffer` after it: earlier lines first, the marker's count carried over,
+ * the newest `cap` kept. Lets a reloaded module continue the file, not replace it.
+ */
+export function continueLog(earlier: string, buffer: LogBuffer, cap: number = LOG_CAP): LogBuffer {
+  const lines = earlier.split('\n').filter(line => line !== '')
+  const marker = lines[0]?.match(/^… (\d+) earlier lines? dropped$/)
+  const kept = marker ? lines.slice(1) : lines
+  const all = [...kept, ...buffer.lines]
+  const over = Math.max(0, all.length - cap)
+  return { lines: all.slice(over), dropped: (marker ? Number(marker[1]) : 0) + buffer.dropped + over }
+}
+
 /** `<home>/.claude/mod-builder-data/logs/<YYYY-MM-DD>-<first 8 of the session id>.log`. */
 export function logFileOf(home: string, atMs: number, sessionId: string): string {
   const day = new Date(atMs).toISOString().slice(0, 10)

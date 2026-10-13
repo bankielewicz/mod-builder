@@ -62,6 +62,7 @@ import {
   type Results,
   type Run,
   configListText,
+  continueLog,
   EMPTY_LOG,
   errorText,
   LOG_CONTEXT_MAX,
@@ -527,6 +528,12 @@ describe('logging and /mod-builder config', () => {
     expect(buffer).toEqual({ lines: ['line 2', 'line 3', 'line 4'], dropped: 1 })
     expect(logText(buffer)).toBe('… 1 earlier line dropped\nline 2\nline 3\nline 4\n')
     expect(logText(pushLine(EMPTY_LOG, 'only'))).toBe('only\n')
+  })
+
+  test('a reloaded module continues the session file: earlier lines first, the dropped count carried over', () => {
+    expect(continueLog('a\nb\n', pushLine(EMPTY_LOG, 'c'))).toEqual({ lines: ['a', 'b', 'c'], dropped: 0 })
+    expect(continueLog('… 5 earlier lines dropped\na\nb\n', pushLine(EMPTY_LOG, 'c'), 2)).toEqual({ lines: ['b', 'c'], dropped: 6 })
+    expect(continueLog('', pushLine(EMPTY_LOG, 'c'))).toEqual({ lines: ['c'], dropped: 0 })
   })
 
   test('one log file per session and day, under the data folder', () => {
