@@ -639,10 +639,11 @@ export const BLANKED_ENV = [
   'ANTHROPIC_AWS_API_KEY',
   'ANTHROPIC_AWS_BASE_URL',
   'ANTHROPIC_AWS_WORKSPACE_ID',
-  // AWS credentials
+  // AWS credentials, and the container credential provider's token (ECS, EKS Pod Identity)
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
   'AWS_SESSION_TOKEN',
+  'AWS_CONTAINER_AUTHORIZATION_TOKEN',
   // Vertex
   'CLAUDE_CODE_USE_VERTEX',
   'ANTHROPIC_VERTEX_PROJECT_ID',

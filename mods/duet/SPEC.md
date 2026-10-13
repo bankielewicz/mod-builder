@@ -418,7 +418,7 @@ pane's keys; `/reload-plugins` picks up edits.
   - With `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`: all three were removed (`printenv` exit 1). So Claude Code's scrub does cover a mod's `$.process.run` children, and it removes `OPENAI_API_KEY` too, which Codex needs when signed in with an API key. The scrub is opt-in, so duet doesn't rely on it.
   - `env: { NAME: '' }` sets the variable to an empty string (`printenv` exit 0, empty output); it doesn't unset it. "Blanked" means present and empty.
 - **What changes:** `BLANKED_ENV` goes from 16 names to 38, by these groups:
-  - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`.
+  - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`; on PR #30 review, `AWS_CONTAINER_AUTHORIZATION_TOKEN` (the AWS SDK reference's container credential provider: "an authorization token in plain text", used by EKS Pod Identity). The provider's URIs and token file (`AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`) and web identity's `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN` and `AWS_ROLE_SESSION_NAME` are endpoints, paths and IDs, and pass through. On ECS the SDK appends the relative URI to the local endpoint `169.254.170.2` to fetch the task's credentials, so a Codex in that task may still fetch them (Limits).
   - Claude Platform on AWS page: `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_API_KEY`.
   - Bedrock page (Mantle): `CLAUDE_CODE_USE_MANTLE`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`.
   - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`; on PR #30 review, the owner added `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` ("Passphrase for encrypted `CLAUDE_CODE_CLIENT_KEY`") and `CLAUDE_CODE_MESSAGING_TOKEN` (the per-session token Claude Code exports to hooks and Bash commands alongside `CLAUDE_CODE_MESSAGING_SOCKET`, for posting to the session's inbox). `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY` and `CLAUDE_CODE_MESSAGING_SOCKET` are paths and pass through.
@@ -445,3 +445,4 @@ pane's keys; `/reload-plugins` picks up edits.
   - A Bedrock-backed Codex is pointed at an AWS profile (README, Limits).
   - `ANTHROPIC_IDENTITY_TOKEN` is blanked (Codex).
   - `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` (Codex) and `CLAUDE_CODE_MESSAGING_TOKEN` (`/code-review`) are blanked, the owner's call.
+  - `AWS_CONTAINER_AUTHORIZATION_TOKEN` is blanked; the container URIs and web-identity file and IDs pass through (Codex, two comments).
