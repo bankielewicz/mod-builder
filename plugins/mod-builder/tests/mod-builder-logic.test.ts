@@ -64,6 +64,7 @@ import {
   configListText,
   continueLog,
   isNewCaught,
+  isOwnRow,
   EMPTY_LOG,
   errorText,
   LOG_CONTEXT_MAX,
@@ -566,6 +567,14 @@ describe('logging and /mod-builder config', () => {
     const unknown = parseConfigCommand(['colour', 'red'])
     expect(unknown.kind).toBe('error')
     expect((unknown as { text: string }).text).toStartWith('No option "colour". Options: logging, autoRerun, autoOpen, modsDir.')
+  })
+
+  test("a /config row is mod-builder's own when its owner is mod-builder or mod-builder@<source>", () => {
+    expect(isOwnRow('mod-builder@claudemod', 'mod-builder')).toBe(true)
+    expect(isOwnRow('mod-builder@inline', 'mod-builder')).toBe(true)
+    expect(isOwnRow('mod-builder', 'mod-builder')).toBe(true)
+    expect(isOwnRow('mod-builder-extra@x', 'mod-builder')).toBe(false)
+    expect(isOwnRow(undefined, 'mod-builder')).toBe(false)
   })
 
   test('the listing shows each value and the log file, or why there is none', () => {

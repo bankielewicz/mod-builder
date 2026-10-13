@@ -588,6 +588,8 @@ async function configure($: Engine, words: string[]): Promise<string> {
     modsDir: configuredDir,
     modsDirShown: Lab.shortPath(modsDirOf($)),
   }
+  // The set reloads the plugin rather than changing this module's values, so show the new one.
+  if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value))
   const shown = (value: string | boolean): string => (typeof value === 'boolean' ? (value ? 'on' : 'off') : value || 'default')
   const head = command.kind === 'set' ? `${command.name} is now ${shown(command.value)}.\n` : ''
   return head + Lab.configListText(values, logFile)
@@ -599,8 +601,11 @@ async function configure($: Engine, words: string[]): Promise<string> {
  * the line about the change is written to the file before the set.
  */
 async function setOption($: Engine, name: Lab.OptionName, value: string | boolean): Promise<string> {
-  const row = (await $.config.list()).find(r => (r.provider as { plugin?: string } | undefined)?.plugin === $.plugin.name && r.key.endsWith(`.${name}`))
-  if (!row) return `this session's /config has no mod-builder rows (seen under claude -p). Change it in /config, or /plugin → mod-builder → options.`
+  // A plugin option's row is keyed `<plugin>.<field>`; its owner names the install, e.g.
+  // `mod-builder@claudemod` or `mod-builder@inline` under --plugin-dir (seen live, 2026-10-13).
+  const key = `${$.plugin.name}.${name}`
+  const row = (await $.config.list()).find(r => r.key === key && Lab.isOwnRow((r.provider as { plugin?: string } | undefined)?.plugin, $.plugin.name))
+  if (!row) return `no /config row ${key} in this session (headless sessions list no plugin options). Change it in /config, or /plugin → mod-builder → options.`
   logEvent($, 'normal', 'config', `${name} set`, { value })
   await flushLog($)
   const result = await $.config.set({ key: row.key, value })

@@ -84,7 +84,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
-  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder' }))
+  // Owners as seen live: the plugin name plus its install source.
+  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
   on('config.set', ($, e) => (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
@@ -588,8 +589,8 @@ describe('logging (Change 0.2.2)', () => {
 
   test('/mod-builder config changes only its own row, and says where to go when it has none', OPTIONS, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, [
-      { key: 'mod-builder-extra.logging', plugin: 'mod-builder-extra' },
-      { key: 'mod-builder.logging', plugin: 'mod-builder' },
+      { key: 'mod-builder-extra.logging', plugin: 'mod-builder-extra@claudemod' },
+      { key: 'mod-builder.logging', plugin: 'mod-builder@inline' },
     ])
     await start($)
     await clock.advance(10)
@@ -597,7 +598,7 @@ describe('logging (Change 0.2.2)', () => {
     await run('config logging debug')
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'debug' }])
     expect((await run('config autoOpen on')).text).toBe(
-      "Could not change autoOpen: this session's /config has no mod-builder rows (seen under claude -p). Change it in /config, or /plugin → mod-builder → options.",
+      'Could not change autoOpen: no /config row mod-builder.autoOpen in this session (headless sessions list no plugin options). Change it in /config, or /plugin → mod-builder → options.',
     )
   })
 
@@ -689,6 +690,7 @@ describe('logging (Change 0.2.2)', () => {
     expect(listed).toMatch(/Log file: \/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log/)
     const changed = (await run('config logging verbose')).text ?? ''
     expect(changed).toStartWith('logging is now verbose.')
+    expect(changed).toContain('logging    verbose')
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
     expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
     // The change line reaches the file before the set, which reloads the plugin.

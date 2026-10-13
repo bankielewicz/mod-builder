@@ -1234,6 +1234,19 @@ export function parseConfigCommand(words: readonly string[]): ConfigCommand {
   return { kind: 'set', name: field.name, value: raw.toLowerCase() === 'default' ? '' : raw }
 }
 
+/** Whether a `/config` row's owner is this plugin: `mod-builder`, or `mod-builder@<source>`. */
+export function isOwnRow(owner: string | undefined, plugin: string): boolean {
+  return owner === plugin || (owner?.startsWith(`${plugin}@`) ?? false)
+}
+
+/** The listing's values once `name` is set to `value`. */
+export function valuesAfterSet(name: OptionName, value: string | boolean): Partial<OptionValues> {
+  if (name === 'logging') return { logging: logLevelOf(value) }
+  if (name === 'autoRerun') return { autoRerun: value === true }
+  if (name === 'autoOpen') return { autoOpen: value === true }
+  return { modsDir: String(value), ...(value ? { modsDirShown: String(value) } : {}) }
+}
+
 /** Current values as `/mod-builder config` lists them. */
 export type OptionValues = { logging: LogLevel; autoRerun: boolean; autoOpen: boolean; modsDir: string; modsDirShown: string }
 
