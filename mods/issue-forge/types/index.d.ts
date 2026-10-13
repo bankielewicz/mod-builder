@@ -109,6 +109,8 @@ export type Run = {
   startedAt: number
   agents: AgentRef[]
   prUrl?: string
+  /** HEAD when the run reached ready (after gate F): publish pushes exactly this commit, and refuses if HEAD moved. */
+  gatedHead?: string
   blocked?: { at: Step; reason: string; next: string }
 }
 

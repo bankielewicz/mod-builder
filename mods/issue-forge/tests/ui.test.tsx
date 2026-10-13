@@ -34,6 +34,10 @@ type World = {
   answer: string | null
   /** When set, the publish question stays open until this settles with the label chosen. */
   hold: Promise<string> | null
+  /** The issue body gh returns. */
+  issueBody: string
+  /** When set, $.agent.spawn stays pending until this settles. */
+  spawnHold: Promise<void> | null
   argv: string[][]
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
@@ -63,6 +67,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     hasChanges: true,
     answer: 'Not now',
     hold: null,
+    issueBody: ISSUE.body,
+    spawnHold: null,
     argv: [],
     commits: [],
     spawned: [],
@@ -97,7 +103,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   })
   on('agent.spawn', ($: any, e: any) => {
     world.spawned.push({ subagentType: e.subagentType ?? e.subagent_type, name: e.name, model: e.model, prompt: e.prompt, cwd: e.cwd })
-    return { model: e.model ?? 'claude', agentId: `a${world.spawned.length}` }
+    const answer = { model: e.model ?? 'claude', agentId: `a${world.spawned.length}` }
+    return world.spawnHold ? world.spawnHold.then(() => answer) : answer
   })
   const profilePath = `${ROOT}/.issue-forge.json`
   on('fs.exists', ($: any, e: any) => ({ value: (e.path === profilePath && world.hasProfile) || e.path in world.files }))
@@ -118,7 +125,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
-      if (a[0] === 'issue') return ok(JSON.stringify(ISSUE))
+      if (a[0] === 'issue') return ok(JSON.stringify({ ...ISSUE, body: world.issueBody }))
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
@@ -368,7 +375,7 @@ describe('a run, stage by stage', () => {
   })
 
   test('no answer possible counts as no: the run stays ready and nothing is pushed', async ($, on) => {
-    const w = engine(on, { answer: null, head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2' }) })
+    const w = engine(on, { answer: null, head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
     await start($)
     expect((await run($, 'resume')).text).toContain('resuming #16 at ready')
     await until(w, () => w.asked.length === 1, 'the question')
@@ -378,12 +385,12 @@ describe('a run, stage by stage', () => {
   })
 
   test('confirmPublish off: a ready run publishes without asking', { options: { confirmPublish: false } }, async ($, on) => {
-    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2' }) })
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
     await start($)
     await run($, 'resume')
     await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
     expect(w.asked.length).toBe(0)
-    expect(w.argv).toContainEqual(['git', 'push', 'origin', BRANCH])
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
   })
 
   test('a red type other than issue-forge:red is spawned unnamed (duet may route it), with the red rules in its prompt', { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
@@ -399,7 +406,7 @@ describe('a run, stage by stage', () => {
   test('publish while the question is still open: one push, one PR, and the late answer changes nothing', async ($, on) => {
     let release: (label: string) => void = () => undefined
     const hold = new Promise<string>(resolve => (release = resolve))
-    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2' }) })
+    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
     await start($)
     await run($, 'resume')
     await until(w, () => w.asked.length === 1, 'the question')
@@ -413,13 +420,33 @@ describe('a run, stage by stage', () => {
     expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
   })
 
+  test('publish refuses when the branch moved after gate F, and pushes nothing', async ($, on) => {
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'f1' }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`blocked at publishing: ${BRANCH} moved after gate F (HEAD c0, checked f1)`)
+    expect(w.argv.some(a => a[1] === 'push' || a[1] === 'pr')).toBe(false)
+  })
+
+  test("a behaviour pass that adds no test fails gate R against the red commit, and red goes again", async ($, on) => {
+    const stash = { sha: 'abc123', message: 'issue-forge #16 green before behaviour test (run 16-1, attempt 1)' }
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], sinceRed: [] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { behaviourFor: ['src/register.tsx'], greenStash: stash, used: { red: 1, green: 1, refactor: 0 } }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'red again')
+    expect(w.commits.length).toBe(0)
+    expect(w.argv.some(a => a[1] === 'stash' && a[2] === 'apply')).toBe(false)
+    expect(w.spawned[0]!.prompt).toContain('R2: nothing staged')
+  })
+
   test('publish pushes the branch without -u and opens a PR whose body closes the issue', async ($, on) => {
-    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2' }) })
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
     await start($)
     expect((await run($, 'publish')).text).toContain(`pushing ${BRANCH}`)
     await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
     expect(w.asked.length).toBe(0)
-    expect(w.argv).toContainEqual(['git', 'push', 'origin', BRANCH])
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
     const pr = w.argv.find(a => a[0] === 'gh' && a[1] === 'pr')!
     expect(pr.slice(0, 7)).toEqual(['gh', 'pr', 'create', '--base', 'main', '--head', BRANCH])
     expect(pr[8]).toBe('Fix the thing (#16)')
@@ -433,6 +460,46 @@ describe('a run, stage by stage', () => {
 })
 
 describe('reloads, resume and stop', () => {
+  test("an issue's Base branch line is used only once you confirm it; no answer blocks before any checkout", async ($, on) => {
+    const w = engine(on, { issueBody: 'Make it work.\nBase branch: evil', answer: 'Use main' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.asked[0]).toBe('Issue #16 asks to branch from evil, not main, and the tests will run from that branch. Which base?')
+    expect(w.argv).toContainEqual(['git', 'switch', '--no-track', '-c', BRANCH, 'origin/main'])
+    expect(w.argv.some(a => a.includes('evil') || a.includes('origin/evil'))).toBe(false)
+  })
+
+  test('an unconfirmed Base branch blocks at preflight and checks nothing out', async ($, on) => {
+    const w = engine(on, { issueBody: 'Base branch: evil', answer: null })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at preflight: issue #16 asks for base evil, not main, and nobody confirmed it')
+    expect(w.argv.some(a => a[1] === 'fetch' || a[1] === 'switch')).toBe(false)
+  })
+
+  test("a stopped run's agents stay refused after a new run starts, and agents remembered from earlier runs too", async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('stopped'), [`issue-forge:agents:${ROOT}`]: ['ghost-1'] })
+    await start($)
+    expect((await run($, '17')).text).toContain('starting #17')
+    for (const id of ['old-red', 'old-green', 'ghost-1']) expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: id } as never)) as any).deny).toContain('issue-forge:')
+  })
+
+  test('a stop while a spawn is still pending keeps the run stopped', async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, spawnHold: new Promise<void>(resolve => (release = resolve)) }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'the spawn')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    release()
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
+  })
+
+
   test("after a reload the run reads as interrupted, and its old agents' tool calls and hand-backs are refused", async ($, on) => {
     const w = engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
     await start($)

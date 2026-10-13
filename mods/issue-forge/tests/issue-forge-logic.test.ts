@@ -153,6 +153,22 @@ describe('profile (§4)', () => {
     expect(profileProblems(profile(), { isLcovIgnored: null, missing: [] })).toEqual([])
   })
 
+  test('unmeasured code needs a behaviour-test glob, or G6 could never pass', () => {
+    for (const behaviour of [undefined, []]) {
+      const { profile: p, errors } = parseProfile(JSON.stringify({ ...MIN_PROFILE, unmeasuredGlobs: ['src/register.tsx'], behaviourTestGlobs: behaviour }), HOME)
+      expect(p).toBeUndefined()
+      expect(errors).toEqual(['behaviourTestGlobs must name at least one glob when unmeasuredGlobs does (G6 could never pass)'])
+    }
+    expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, unmeasuredGlobs: [], behaviourTestGlobs: [] }), HOME).errors).toEqual([])
+  })
+
+  test('Windows paths: a drive-letter lcovPath is outside the repository; a backslash argv0 is a path', () => {
+    const win = profile({ lcovPath: 'C:\\cov\\lcov.info', testCommand: ['scripts\\test.cmd'] })
+    expect(outsideChecks(win, ROOT)).toEqual({ lcovInside: null, commands: [{ argv0: 'scripts\\test.cmd', kind: 'path' }, { argv0: 'npm', kind: 'name' }] })
+    expect(outsideChecks(profile({ lcovPath: 'C:/cov/lcov.info' }), ROOT).lcovInside).toBeNull()
+    expect(outsideChecks(profile({ lcovPath: 'C:\\repo\\cov\\lcov.info' }), 'C:/repo').lcovInside).toBe('cov/lcov.info')
+  })
+
   test('an issue line "Base branch: x" overrides the base; the first one wins', () => {
     const p = profile()
     expect(baseOf(p, 'Fix it.\r\nBase branch: release/2\nBase branch: other')).toBe('release/2')
@@ -177,7 +193,7 @@ describe('globs and paths', () => {
   })
 
   test('kinds: tests win, then source minus excludes, unmeasured apart', () => {
-    const p = profile({ excludeGlobs: ['**/hooks.json'], unmeasuredGlobs: ['**/hooks/register.tsx'], sourceGlobs: ['mods/*/hooks/**', 'mods/*/tests/**'] })
+    const p = profile({ excludeGlobs: ['**/hooks.json'], unmeasuredGlobs: ['**/hooks/register.tsx'], behaviourTestGlobs: ['**/tests/ui.test.tsx'], sourceGlobs: ['mods/*/hooks/**', 'mods/*/tests/**'] })
     expect(kindOf(p, 'mods/a/tests/x.test.ts')).toBe('test')
     expect(kindOf(p, 'mods/a/hooks/a-logic.ts')).toBe('measured')
     expect(kindOf(p, 'mods/a/hooks/register.tsx')).toBe('unmeasured')
@@ -244,7 +260,7 @@ describe('coverage (§5), on real tool output', () => {
   })
 
   test('diff coverage: lines without DA are skipped, a file missing from LCOV counts uncovered, tests and unmeasured are ignored', () => {
-    const p = profile({ unmeasuredGlobs: ['**/register.tsx'] })
+    const p = profile({ unmeasuredGlobs: ['**/register.tsx'], behaviourTestGlobs: ['**/ui.test.tsx'] })
     const lcov = parseLcov(LCOV_REAL, '/mnt/c/Projects/ClaudeMod')
     const cov = diffCoverage(p, { 'mods/turn-counter/hooks/turn-counter-logic.ts': [12, 13, 30] }, lcov)
     expect(cov.lines).toEqual({ covered: 2, measured: 2, pct: 100 })
@@ -436,6 +452,17 @@ describe('state (§7.4)', () => {
     const r = advance(run({ step: 'gateF', used: { red: 1, green: 1, refactor: 1 }, greenCommit: 'g1' }), { type: 'gated', gate: failG('F'), stash }, 9)
     expect(r).toMatchObject({ step: 'ready', isRefactorRejected: true, refactorStash: stash, greenCommit: 'g1' })
     expect(advance(run({ step: 'gateF', used: { red: 1, green: 1, refactor: 1 }, profile: profile({ attempts: { refactor: 2 } }) }), { type: 'gated', gate: failG('F') }, 9).step).toBe('refactor')
+  })
+
+  test('ready records the HEAD gate F checked, whether the refactor passed or was rejected', () => {
+    expect(advance(run({ step: 'gateF', used: { red: 1, green: 1, refactor: 1 } }), { type: 'gated', gate: pass('F'), commit: 'f1', head: 'f1' }, 9)).toMatchObject({ step: 'ready', gatedHead: 'f1' })
+    const rejected = advance(run({ step: 'gateF', used: { red: 1, green: 1, refactor: 1 }, greenCommit: 'g1' }), { type: 'gated', gate: failG('F'), head: 'g1' }, 9)
+    expect(rejected).toMatchObject({ step: 'ready', isRefactorRejected: true, gatedHead: 'g1' })
+  })
+
+  test('a behaviour pass that commits nothing keeps the red commit', () => {
+    const r = run({ step: 'gateR', redCommit: 'r1', behaviourFor: ['src/register.tsx'], used: { red: 1, green: 1, refactor: 0 } })
+    expect(advance(r, { type: 'gated', gate: pass('R') }, 4)).toMatchObject({ step: 'gateG', redCommit: 'r1', isBehaviourDone: true })
   })
 
   test('G6 alone sends the run back to red once, then gate G runs on the restored work', () => {

@@ -77,8 +77,12 @@ let driving: { runId: string; isStopped: boolean } | null = null
 let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
 let liveAgent: string | null = null
-/** The active run's agent ids and names, kept in memory for the tool.call guard and the hand-back drop. */
-let runRefs: string[] = []
+/**
+ * Every agent id and name a run of this repository has started, in memory for the tool.call guard
+ * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
+ * can't be ended, only refused).
+ */
+let knownRefs = new Set<string>()
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
 
 function readOptions(raw: unknown): Options {
@@ -94,6 +98,8 @@ function readOptions(raw: unknown): Options {
 }
 
 const storeKey = (root: string) => `issue-forge:run:${root}`
+const agentsKey = (root: string) => `issue-forge:agents:${root}`
+const MAX_KNOWN = 500
 
 function refsOf(run: Run | null): string[] {
   return run ? run.agents.flatMap(a => (a.name ? [a.id, a.name] : [a.id])) : []
@@ -127,8 +133,16 @@ async function loadRun($: EngineInterface, root: string): Promise<Run | null> {
 async function saveRun($: EngineInterface, run: Run): Promise<Run> {
   await $.store.set(storeKey(run.root), run)
   await update($, runAtom, () => run)
-  runRefs = refsOf(run)
+  for (const ref of refsOf(run)) knownRefs.add(ref)
   return run
+}
+
+/** Adds agents to the repository's known list (memory and store); they are refused tools unless live. */
+async function rememberAgents($: EngineInterface, root: string, refs: readonly string[]): Promise<void> {
+  for (const ref of refs) knownRefs.add(ref)
+  const stored = ((await $.store.get(agentsKey(root))) as string[] | undefined) ?? []
+  const merged = [...new Set([...stored, ...refs])].slice(-MAX_KNOWN)
+  await $.store.set(agentsKey(root), merged)
 }
 
 async function setActivity($: EngineInterface, label: string | null): Promise<void> {
@@ -255,7 +269,9 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   await setActivity($, `reading ${PROFILE_FILE}`)
   const { profile, errors } = await loadProfile($, root)
   if (!profile) return block(errors[0] ?? `no ${PROFILE_FILE} in ${root}`, `fix ${PROFILE_FILE} (see the README)`)
-  const base = baseOf(profile, issue.body)
+  const asked = baseOf(profile, issue.body)
+  const base = asked === profile.baseBranch ? asked : await chooseBase($, run.issue, asked, profile.baseBranch)
+  if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profile.baseBranch}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
   await setActivity($, `git fetch origin ${base}`)
   const fetched = await git($, root, ['fetch', 'origin', base])
   if (fetched.exitCode !== 0) return block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
@@ -302,7 +318,7 @@ function waitForAnswer(agentId: string): Promise<string> {
 }
 
 /** A phase: spawn its agent (named, so duet leaves it on Claude) and wait for its turn.complete. */
-async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Promise<RunEvent> {
+async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Promise<RunEvent | null> {
   const last = run.lastGate
   const isRetry = !!last && !last.passed && run.used[which] > 0
   const redTestPaths = which === 'green' && run.redCommit ? splitZ(await gitOut($, run.root, ['diff', '--name-only', '-z', run.mergeBase, run.redCommit])) : undefined
@@ -318,19 +334,35 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: run.root, ...(name ? { name } : {}) })
-  if (spawned.deny !== undefined || !spawned.agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
   const agentId = spawned.agentId
-  liveAgent = agentId
-  await saveRun($, advance(run, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()))
-  await setActivity($, 'agent working')
   // An agent another plugin answered in-line (duet's Codex) has no loop and no turn.complete (C0).
-  const isInline = spawned.model.startsWith('codex') || agentId.startsWith('duet-')
+  const isInline = !!agentId && (spawned.model.startsWith('codex') || agentId.startsWith('duet-'))
+  // Wait before any other await, so a fast agent's turn.complete finds its waiter.
+  const answer = agentId && !isInline ? waitForAnswer(agentId) : null
+  void answer?.catch(() => undefined)
+  // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
+  const latest = await loadRun($, run.root)
+  if (!latest || latest.id !== run.id || latest.step !== run.step) {
+    if (agentId) {
+      delete waiting[agentId]
+      await rememberAgents($, run.root, name ? [agentId, name] : [agentId])
+    }
+    return null
+  }
+  if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
+  liveAgent = agentId
+  await rememberAgents($, run.root, name ? [agentId, name] : [agentId])
+  await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()))
+  await setActivity($, 'agent working')
   try {
-    const answer = isInline ? '' : await waitForAnswer(agentId)
-    return { type: 'agentDone', answer }
+    return { type: 'agentDone', answer: answer ? await answer : '' }
   } finally {
     if (liveAgent === agentId) liveAgent = null
   }
+}
+
+async function headOf($: EngineInterface, root: string): Promise<string> {
+  return (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
 }
 
 async function stagedSince($: EngineInterface, root: string, ref: string): Promise<string[]> {
@@ -342,7 +374,8 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   const root = run.root
   await setActivity($, 'staging')
   await gitOut($, root, ['add', '-A'])
-  const staged = await stagedSince($, root, run.mergeBase)
+  // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
+  const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase)
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
   const gate = gateR(p, { staged, tests })
@@ -380,14 +413,18 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
     checks.push({ argv, result: await runLong($, argv, root, p.commandTimeoutMinutes) })
   }
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
-  if (gate.passed) return { type: 'gated', gate, commit: await commitAll($, root, commitMessage(which === 'G' ? 'green' : 'refactor', run)), testTail: tests.tail }
+  if (gate.passed) {
+    const commit = await commitAll($, root, commitMessage(which === 'G' ? 'green' : 'refactor', run))
+    return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: await headOf($, root) } : {}) }
+  }
   if (which === 'G' && gate.isBehaviourOnly && !run.isBehaviourDone) {
     await setActivity($, "stashing green's work")
     return { type: 'gated', gate, stash: await stashAll($, root, stashMessage('green', run)), testTail: tests.tail }
   }
   if (which === 'F' && !canRetry(run, 'refactor')) {
     await setActivity($, 'stashing the rejected refactor')
-    return { type: 'gated', gate, stash: await stashAll($, root, stashMessage('refactor', run)), testTail: tests.tail }
+    const stash = await stashAll($, root, stashMessage('refactor', run))
+    return { type: 'gated', gate, stash, testTail: tests.tail, head: await headOf($, root) }
   }
   return { type: 'gated', gate, testTail: tests.tail }
 }
@@ -397,14 +434,34 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   if (!run.branch || run.branch === run.base) return block(`refusing to push ${run.branch || 'no branch'} onto ${run.base}`, 'check the run')
   const dir = `${home}/.claude/issue-forge-data/${run.id}`
   const body = `${dir}/pr.md`
+  // Only what gate F checked leaves the machine: HEAD must still be that commit, and that commit is what's pushed.
+  if (run.gatedHead) {
+    const head = await headOf($, run.root)
+    if (head !== run.gatedHead) return block(`${run.branch} moved after gate F (HEAD ${head.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
+  }
   await $.fs.write(body, prBody(run))
   await setActivity($, `git push origin ${run.branch}`)
-  const pushed = await git($, run.root, ['push', 'origin', run.branch])
+  const pushed = await git($, run.root, ['push', 'origin', run.gatedHead ? `${run.gatedHead}:refs/heads/${run.branch}` : run.branch])
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
   await setActivity($, 'gh pr create')
   const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
   return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '' }
+}
+
+/**
+ * An issue's `Base branch:` line names a branch anyone with push access may have written, and the
+ * profile's commands run from it: confirm it first. No answer possible counts as no.
+ */
+async function chooseBase($: EngineInterface, issue: number, asked: string, profileBase: string): Promise<string | null> {
+  try {
+    const useAsked = `Use ${asked}`
+    const useProfile = `Use ${profileBase}`
+    const answer = await $.ui.ask(`Issue #${issue} asks to branch from ${asked}, not ${profileBase}, and the tests will run from that branch. Which base?`, [useAsked, useProfile])
+    return answer === useAsked ? asked : answer === useProfile ? profileBase : null
+  } catch {
+    return null
+  }
 }
 
 /** Asks before anything leaves the machine; no answer possible (claude -p, dismissed) counts as no. */
@@ -633,7 +690,8 @@ async function restore($: EngineInterface): Promise<void> {
   home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? ''
   const root = await rootOf($)
   const run = root ? await loadRun($, root) : null
-  runRefs = refsOf(run)
+  const stored = root ? (((await $.store.get(agentsKey(root))) as string[] | undefined) ?? []) : []
+  knownRefs = new Set([...stored, ...refsOf(run)])
   await update($, runAtom, () => run)
 }
 
@@ -674,13 +732,13 @@ export const register: Register = (on, raw) => {
   // A run's agent that isn't the live one (stopped, or orphaned by a reload) may not use tools.
   on('tool.call', async ($, e, next) => {
     const id = e.agentId
-    if (id && id !== liveAgent && runRefs.includes(id)) return { deny: 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.' }
+    if (id && id !== liveAgent && knownRefs.has(id)) return { deny: 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.' }
     return next(e)
   }).catch(($, e, next) => next(e))
 
   // A phase agent's report reaches the main loop as a peer prompt; the pane already has it (C0).
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin?.kind === 'peer' && runRefs.length > 0 && isOwnHandback(e.text, runRefs)) return { drop: 'issue-forge: a phase agent finished; the pane has the result.' }
+    if (e.origin?.kind === 'peer' && knownRefs.size > 0 && isOwnHandback(e.text, [...knownRefs])) return { drop: 'issue-forge: a phase agent finished; the pane has the result.' }
     return next(e)
   }).catch(($, e, next) => next(e))
 

@@ -78,6 +78,8 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
     v => v !== null && typeof v === 'object' && !Array.isArray(v) && ['red', 'green', 'refactor'].every(k => isCount((v as Record<string, unknown>)[k])),
     'an object { red, green, refactor } of whole numbers ≥ 1',
   )
+  const nonEmpty = (v: unknown) => Array.isArray(v) && v.length > 0
+  if (nonEmpty(o.unmeasuredGlobs) && !nonEmpty(o.behaviourTestGlobs)) errors.push('behaviourTestGlobs must name at least one glob when unmeasuredGlobs does (G6 could never pass)')
   if (errors.length > 0) return { errors }
   const attempts = (o.attempts ?? {}) as Partial<Profile['attempts']>
   const profile: Profile = {
@@ -114,11 +116,11 @@ export type OutsideChecks = {
 }
 
 export function outsideChecks(p: Profile, root: string): OutsideChecks {
-  const abs = p.lcovPath.startsWith('/') ? normalizePath(p.lcovPath) : normalizePath(`${root}/${p.lcovPath}`)
+  const abs = isAbsolutePath(p.lcovPath) ? normalizePath(p.lcovPath) : normalizePath(`${root}/${p.lcovPath}`)
   const argv0s = [...new Set([p.testCommand[0] as string, p.coverageCommand[0] as string])]
   return {
     lcovInside: relativeTo(root, abs),
-    commands: argv0s.map(argv0 => ({ argv0, kind: argv0.includes('/') ? 'path' : 'name' })),
+    commands: argv0s.map(argv0 => ({ argv0, kind: /[\\/]/.test(argv0) ? 'path' : 'name' })),
   }
 }
 
@@ -176,9 +178,14 @@ export function kindOf(p: Profile, path: string): PathKind {
   return matchesAny(path, p.unmeasuredGlobs) ? 'unmeasured' : 'measured'
 }
 
+/** `/x` or a Windows drive path (`C:\x`, `C:/x`). */
+export function isAbsolutePath(path: string): boolean {
+  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+}
+
 /** `/`-separated, `.` and `..` resolved, no trailing `/`. */
 export function normalizePath(path: string): string {
-  const isAbsolute = path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+  const isAbsolute = isAbsolutePath(path)
   const parts: string[] = []
   for (const part of path.replace(/\\/g, '/').split('/')) {
     if (part === '' || part === '.') continue
@@ -570,7 +577,7 @@ export type RunEvent =
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
-  | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string }
+  | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string }
   | { type: 'block'; reason: string; next: string }
   | { type: 'resume' }
   | { type: 'stop' }
@@ -670,7 +677,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.gate.passed) {
         if (run.behaviourFor) {
           const { behaviourFor: _, ...rest } = gated
-          return { ...rest, redCommit: ev.commit, isBehaviourDone: true, step: 'gateG' }
+          return { ...rest, redCommit: ev.commit ?? run.redCommit, isBehaviourDone: true, step: 'gateG' }
         }
         return { ...gated, redCommit: ev.commit, redTestTail: ev.testTail, step: 'green', times: { ...end(gated, 'red', now), green: { startedAt: now } } }
       }
@@ -683,13 +690,13 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       const isF = run.step === 'gateF'
       const gated = { ...run, lastGate: ev.gate, gates: { ...run.gates, [isF ? 'F' : 'G']: ev.gate }, lastTestTail: ev.testTail }
       if (ev.gate.passed) {
-        if (isF) return { ...gated, refactorCommit: ev.commit, step: 'ready', times: end(gated, 'refactor', now) }
+        if (isF) return { ...gated, refactorCommit: ev.commit, gatedHead: ev.head, step: 'ready', times: end(gated, 'refactor', now) }
         const greenTimes = end(gated, 'green', now)
         return { ...gated, greenCommit: ev.commit, step: 'refactor', times: { ...greenTimes, refactor: { startedAt: now } } }
       }
       if (isF) {
         if (canRetry(run, 'refactor')) return { ...gated, step: 'refactor' }
-        return { ...gated, step: 'ready', isRefactorRejected: true, refactorStash: ev.stash, times: end(gated, 'refactor', now) }
+        return { ...gated, step: 'ready', isRefactorRejected: true, refactorStash: ev.stash, gatedHead: ev.head, times: end(gated, 'refactor', now) }
       }
       if (ev.gate.isBehaviourOnly && !run.isBehaviourDone) {
         return { ...gated, step: 'red', behaviourFor: ev.gate.unmeasured ?? [], greenStash: ev.stash, used: { ...run.used, red: 0 } }

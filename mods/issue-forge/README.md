@@ -56,7 +56,8 @@ Every field, with Python and pilot examples, is in [the design](../../docs/specs
 This repository's own profile is `.issue-forge.json` at its root.
 
 A run needs an interactive session (`claude -p` exits before the agents finish), a clean working
-tree, `gh` signed in, and `<base>` on `origin`. The run's branch is cut from `origin/<base>`, so
+tree, `gh` signed in, and `<base>` on `origin`. If an issue names another base (a line
+`Base branch: <name>`), the run asks before using it, because the tests would run from that branch. The run's branch is cut from `origin/<base>`, so
 the profile and anything its commands use must already be there.
 
 ## Install
@@ -102,7 +103,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the repository root: `git` (rev-parse, status, check-ignore, fetch, for-each-ref, ls-remote, switch -c, merge-base, rev-list, merge --ff-only, add -A, diff, commit, stash push/list/apply, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks` |
+| Processes | `$.process.run` and `$.process.spawn`, in the repository root: `git` (rev-parse, status, check-ignore, fetch, for-each-ref, ls-remote, switch -c, merge-base, rev-list, merge --ff-only, add -A, diff, commit, stash push/list/apply, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file; writes `~/.claude/issue-forge-data/<run>/pr.md`; the run in `$.store`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
