@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
+import { BLANKED, PASSED_THROUGH } from './env-names'
 
 const OK_JSONL = [
   '{"type":"thread.started","thread_id":"t1"}',
@@ -88,12 +89,8 @@ describe('routing', () => {
     await start($)
     await $.tool.call(call() as never)
     const env = seen.env[0]!
-    expect(env.AWS_SECRET_ACCESS_KEY).toBe('')
-    expect(env.ANTHROPIC_AWS_API_KEY).toBe('')
-    for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'AZURE_CLIENT_SECRET']) {
-      expect([k, env[k]]).toEqual([k, ''])
-    }
-    for (const k of ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME']) expect([k, k in env]).toEqual([k, false])
+    for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 
   test('an unrouted type reaches Claude untouched and is measured', { options: { codexAgents: 'general-purpose' } }, async ($, on) => {
@@ -314,9 +311,7 @@ describe('review admission', () => {
     await seen.clock.advance(1000)
     expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
     const env = seen.env[0]!
-    for (const k of ['AWS_SECRET_ACCESS_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'ANTHROPIC_AWS_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_SECRET']) {
-      expect([k, env[k]]).toEqual([k, ''])
-    }
-    for (const k of ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME']) expect([k, k in env]).toEqual([k, false])
+    for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 })

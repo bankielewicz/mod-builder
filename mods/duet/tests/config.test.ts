@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
+import { BLANKED, PASSED_THROUGH } from './env-names'
 
 const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 160 } as const
@@ -203,10 +204,8 @@ describe('Codex models in /duet config', () => {
     engine(on, { envs })
     await run($, 'config models')
     const env = envs[0]!
-    for (const k of ['AWS_SECRET_ACCESS_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'ANTHROPIC_AWS_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN']) {
-      expect([k, env[k]]).toEqual([k, ''])
-    }
-    for (const k of ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME']) expect([k, k in env]).toEqual([k, false])
+    for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
+    for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 
   test('/duet config models says when codex is missing', async ($, on) => {
