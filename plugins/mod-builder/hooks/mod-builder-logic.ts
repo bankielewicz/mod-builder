@@ -1141,6 +1141,16 @@ export function logLineOf(atMs: number, level: LineLevel, site: string, message:
   return `${time} ${level.toUpperCase().padEnd(7)} ${site}  ${oneLine(message)}${tail}`
 }
 
+/**
+ * Whether a caught error is worth a line: not when the same site last logged the same message.
+ * A render that fails on every frame (about four a second) would otherwise flood the log.
+ * Returns the updated record of each site's last message.
+ */
+export function isNewCaught(last: Readonly<Record<string, string>>, site: string, message: string): { isNew: boolean; last: Record<string, string> } {
+  if (last[site] === message) return { isNew: false, last: { ...last } }
+  return { isNew: true, last: { ...last, [site]: message } }
+}
+
 /** A session's lines so far, and how many older ones the cap dropped. */
 export type LogBuffer = { lines: readonly string[]; dropped: number }
 export const EMPTY_LOG: LogBuffer = { lines: [], dropped: 0 }

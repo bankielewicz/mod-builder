@@ -68,6 +68,7 @@ let logBuffer: Lab.LogBuffer = Lab.EMPTY_LOG
 let logFile = ''
 let logChain: Promise<void> = Promise.resolve()
 let flushTimer: Timer | null = null
+let lastCaught: Record<string, string> = {}
 
 // Every function that takes `$` is declared here, at the top of the file: the
 // engine follows `$` only into functions it can see at this level.
@@ -92,9 +93,15 @@ function logEvent($: Engine, level: Lab.LineLevel, site: string, message: string
   }
 }
 
-/** A caught error, logged where it was caught; `normal` unless the miss is expected. */
+/** A caught error, logged where it was caught; `normal` unless the miss is expected. Repeats at one site are logged once. */
 function logCaught($: Engine, site: string, error: unknown, level: Lab.LineLevel = 'normal', context?: unknown): void {
-  logEvent($, level, site, Lab.errorText(error), context)
+  const message = Lab.errorText(error)
+  if (level === 'normal') {
+    const seen = Lab.isNewCaught(lastCaught, site, message)
+    lastCaught = seen.last
+    if (!seen.isNew) return
+  }
+  logEvent($, level, site, message, context)
 }
 
 function scheduleFlush($: Engine): void {

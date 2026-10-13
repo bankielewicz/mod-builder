@@ -63,6 +63,7 @@ import {
   type Run,
   configListText,
   continueLog,
+  isNewCaught,
   EMPTY_LOG,
   errorText,
   LOG_CONTEXT_MAX,
@@ -520,6 +521,14 @@ describe('logging and /mod-builder config', () => {
     expect(errorText(new TypeError('no implementation for fs.write'))).toBe('TypeError: no implementation for fs.write')
     expect(errorText('ENOENT')).toBe('ENOENT')
     expect(errorText(new Error('a\nb'))).toBe('Error: a ⏎ b')
+  })
+
+  test('a caught error repeated at one site is logged once, until that site fails differently', () => {
+    const first = isNewCaught({}, 'render.band', 'TypeError: x')
+    expect(first.isNew).toBe(true)
+    expect(isNewCaught(first.last, 'render.band', 'TypeError: x').isNew).toBe(false)
+    expect(isNewCaught(first.last, 'render.band', 'TypeError: y').isNew).toBe(true)
+    expect(isNewCaught(first.last, 'tick', 'TypeError: x').isNew).toBe(true)
   })
 
   test('the buffer keeps the newest lines and says how many it dropped', () => {

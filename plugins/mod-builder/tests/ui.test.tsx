@@ -615,6 +615,20 @@ describe('logging (Change 0.2.2)', () => {
     expect(first).not.toContain('logging set')
   })
 
+  test('the same error at the same site is logged once', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    await ui.press({ key: 'validate' })
+    await clock.advance(3000)
+    const caught = lastLog(seen).split('\n').filter(line => /NORMAL  run  \w+Error: /.test(line))
+    expect(caught).toHaveLength(1)
+    expect(lastLog(seen).split('\n').filter(line => line.includes('git-branch Validate failed'))).toHaveLength(2)
+  })
+
   test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
     await start($)
