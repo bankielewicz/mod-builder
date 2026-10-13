@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   modelWarning, parseModelCatalog,
-  agentResult, appendLog, buildHandoff, candidateOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
+  agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, effectiveSandbox, failureOf, foldAll,
   isRouted, codexRunning, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
@@ -130,8 +130,18 @@ describe('agent result', () => {
 
   test('evidence and verdict lines', () => {
     // a tree already dirty before the run is not blamed on it
-    expect(candidateOf(' M a.ts\n?? notes.md\n', ' M a.ts\n?? notes.md\n')).toBe('no files changed by this run')
-    expect(candidateOf(' M a.ts\n', ' M a.ts\n?? tests/b.test.ts\n M c.ts\n')).toBe('files changed during this run: 2 (c.ts, tests/b.test.ts)')
+    const snap = (porcelain: string, hashes: Record<string, string> = {}) => snapshotOf(porcelain, hashes)
+    expect(candidateOf(snap(' M a.ts\n?? notes.md\n', { 'a.ts': 'h1' }), snap(' M a.ts\n?? notes.md\n', { 'a.ts': 'h1' }))).toBe('no files changed by this run')
+    expect(candidateOf(snap(' M a.ts\n'), snap(' M a.ts\n?? tests/b.test.ts\n M c.ts\n'))).toBe('files changed during this run: 2 (c.ts, tests/b.test.ts)')
+    // An already-modified file that the run modifies again: same status, new content.
+    expect(candidateOf(snap(' M a.ts', { 'a.ts': 'h1' }), snap(' M a.ts', { 'a.ts': 'h2' }))).toBe('files changed during this run: 1 (a.ts)')
+    // The leading space is part of the status: the path keeps its first character.
+    expect(pathsOf(' M hooks/register.tsx\nR  old.ts -> new.ts\n D gone.ts')).toEqual([
+      { status: ' M', path: 'hooks/register.tsx' },
+      { status: 'R ', path: 'new.ts' },
+      { status: ' D', path: 'gone.ts' },
+    ])
+    expect(hashablePaths(' M a.ts\n D gone.ts\n?? n.md')).toEqual(['a.ts', 'n.md'])
     expect(candidateOf('', '')).toBe('no files changed by this run')
     expect(verdictOf('finding 1\n**verdict: changes requested (1 high, 0 medium, 0 low)**')).toBe('verdict: changes requested (1 high, 0 medium, 0 low)')
   })

@@ -649,14 +649,54 @@ export function deliveryText(a: { id: string; label: string; model: string; sand
 
 export const READ_ONLY_CANDIDATE = 'read-only run: no files changed'
 
-/** What changed during an editing run: porcelain entries that differ between before and after it. */
+/**
+ * `git status --porcelain` lines as status + path. The leading space is part
+ * of the status column (` M a.ts`), so lines must not be trimmed at the
+ * start. A rename (`R  old -> new`) is its new path.
+ */
+export function pathsOf(porcelain: string): { status: string; path: string }[] {
+  return porcelain
+    .split('\n')
+    .map(l => l.replace(/\r$/, ''))
+    .filter(l => l.length > 3)
+    .map(l => ({ status: l.slice(0, 2), path: l.slice(3).split(' -> ').pop()!.replace(/^"|"$/g, '') }))
+}
+
+/** Paths whose content can be hashed (not deleted). */
+export function hashablePaths(porcelain: string): string[] {
+  return pathsOf(porcelain)
+    .filter(p => !p.status.includes('D'))
+    .map(p => p.path)
+}
+
+/**
+ * A snapshot of the dirty tree: one `status<TAB>path<TAB>hash` line per path,
+ * the hash being the file's content hash (`git hash-object`), so a file that
+ * was already modified and is modified again still counts as changed.
+ */
+export function snapshotOf(porcelain: string, hashes: Readonly<Record<string, string>>): string {
+  return pathsOf(porcelain)
+    .map(p => `${p.status}\t${p.path}\t${hashes[p.path] ?? ''}`)
+    .join('\n')
+}
+
+/** What changed during an editing run: paths whose status or content differs between two snapshots. */
 export function candidateOf(before: string, after: string): string {
-  const set = (t: string) => new Set(t.split('\n').map(l => l.trimEnd()).filter(l => l.trim()))
-  const a = set(before)
-  const b = set(after)
+  const read = (t: string) =>
+    new Map(
+      t
+        .split('\n')
+        .filter(Boolean)
+        .map(l => {
+          const [status = '', path = '', hash = ''] = l.split('\t')
+          return [path, `${status}\t${hash}`] as const
+        }),
+    )
+  const a = read(before)
+  const b = read(after)
   const paths = new Set<string>()
-  for (const l of b) if (!a.has(l)) paths.add(l.slice(3))
-  for (const l of a) if (!b.has(l)) paths.add(l.slice(3))
+  for (const [path, state] of b) if (a.get(path) !== state) paths.add(path)
+  for (const path of a.keys()) if (!b.has(path)) paths.add(path)
   if (!paths.size) return 'no files changed by this run'
   const list = [...paths].sort()
   const shown = list.slice(0, 3).join(', ') + (list.length > 3 ? ` +${list.length - 3} more` : '')

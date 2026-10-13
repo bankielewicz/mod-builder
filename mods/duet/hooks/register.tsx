@@ -7,7 +7,7 @@ import {
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, sessionFolderOf,
+  codexRunning, hashablePaths, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -169,7 +169,8 @@ async function agentDef($: EngineInterface, cwd: string, type: string): Promise<
 async function git($: EngineInterface, args: string[]): Promise<string> {
   try {
     const r = await $.process.run(['git', '--no-optional-locks', ...args], { timeoutMs: 10_000 })
-    return r.exitCode === 0 ? r.stdout.trim() : ''
+    // Trim only the end: `git status --porcelain` lines start with a meaningful space.
+    return r.exitCode === 0 ? r.stdout.replace(/\s+$/, '') : ''
   } catch {
     return ''
   }
@@ -179,8 +180,16 @@ async function baseCommit($: EngineInterface): Promise<string> {
   return (await git($, ['rev-parse', '--short', 'HEAD'])) || 'none'
 }
 
+/** The dirty tree with each file's content hash, for comparing before and after an editing run. */
 async function porcelain($: EngineInterface): Promise<string> {
-  return git($, ['status', '--porcelain', '--untracked-files=all'])
+  const status = await git($, ['status', '--porcelain', '--untracked-files=all'])
+  const paths = hashablePaths(status).slice(0, 500)
+  const hashes: Record<string, string> = {}
+  if (paths.length) {
+    const out = (await git($, ['hash-object', '--', ...paths])).split('\n')
+    paths.forEach((path, at) => (hashes[path] = out[at] ?? ''))
+  }
+  return snapshotOf(status, hashes)
 }
 
 // ── Consent ──────────────────────────────────────────────────────────────
