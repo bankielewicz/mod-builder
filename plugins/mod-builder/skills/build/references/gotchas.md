@@ -35,6 +35,10 @@ Re-check [field] items against the d.ts after a Claude Code update.
 
 ## Commands and panes
 
+- **[probe]** A plugin can register a command named the same as itself (`mod-builder` registering
+  `/mod-builder`) while it also has skills `mod-builder:build` and `mod-builder:edit`. Under
+  `claude -p --plugin-dir`, `/mod-builder config` reached the command and both skills were still
+  listed (2026-10-13, 2.1.296).
 - **[field]** A `command.run` hook that awaits its own pane can deadlock or time out, with the
   message "registered /x but no command.run hook answered it". Return `{ text }` at once, and open
   the pane in `void (async () => …)().catch(…)`.

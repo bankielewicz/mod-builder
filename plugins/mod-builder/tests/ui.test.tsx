@@ -46,6 +46,9 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     argv: [] as string[][],
     filled: [] as string[],
     notified: [] as string[],
+    logs: [] as string[],
+    writes: [] as { path: string; text: string }[],
+    sets: [] as { key: string; value: unknown }[],
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -73,6 +76,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
   })
   on('fs.exists', ($, e) => ({ value: (e as { path: string }).path in disk }) as never)
+  on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
+  on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
+  on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
+  on('session.id', () => ({ value: 's1-session' }) as never)
+  on('config.list', () => ({ value: ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'mod-builder' }, isLocked: false })) }) as never)
+  on('config.set', ($, e) => (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
   // streaming process.spawn, so Mod Lab's fallback answers instead.
   on('process.run', async ($, e) => {
@@ -537,5 +546,65 @@ describe('command', () => {
     await clock.advance(3_000)
     const ui = await mountPane($)
     expect(await ui.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeDefined()
+  })
+})
+
+describe('logging (Change 0.2.2)', () => {
+  const LOG = /^\/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log$/
+  const lastLog = (seen: { writes: { path: string; text: string }[] }) => seen.writes.filter(w => LOG.test(w.path)).at(-1)?.text ?? ''
+
+  test('normal: a check that cannot run is logged with its site; expected misses are not', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(3000)
+    const text = lastLog(seen)
+    expect(text).toContain('NORMAL  session.start  Mod Lab started')
+    // A stub that throws is skipped by the kit, so the caller sees "no implementation".
+    expect(text).toMatch(/NORMAL  run  \w+: [^\n]+ {2}\{"mod":"git-branch","kind":"Validate"\}/)
+    expect(text).toContain('NORMAL  run  git-branch Validate failed')
+    expect(text).not.toContain('VERBOSE')
+    expect(text).not.toContain('DEBUG')
+    expect(seen.logs.some(line => line.includes('NORMAL  run  git-branch Validate failed'))).toBe(true)
+  })
+
+  test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(3000)
+    expect(seen.logs).toEqual([])
+    expect(seen.writes.filter(w => w.path.includes('mod-builder-data'))).toEqual([])
+  })
+
+  test('verbose: each scan names the mods folder; debug adds expected misses', { options: { modsDir: MODS, logging: 'debug' } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(3000)
+    const text = lastLog(seen)
+    expect(text).toContain('VERBOSE scan  1 folders, 1 mods in')
+    expect(text).toContain('{"modsDir":"/m/mods"}')
+    expect(text).toContain('DEBUG   fs.read')
+    expect(text).toContain('DEBUG   scan.lights  lights per mod')
+  })
+
+  test('/mod-builder config lists the options and the log file; setting logging writes its /config row', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(3000)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    const listed = (await run('config')).text ?? ''
+    expect(listed).toContain('logging    normal')
+    expect(listed).toContain('modsDir    /m/mods')
+    expect(listed).toMatch(/Log file: \/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log/)
+    const changed = (await run('config logging verbose')).text ?? ''
+    expect(changed).toStartWith('logging is now verbose.')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
+    expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
+    expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
   })
 })

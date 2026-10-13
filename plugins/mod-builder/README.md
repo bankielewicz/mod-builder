@@ -142,6 +142,9 @@ switch, Validate and Test show `○` until you press V and T once.
 | `modsDir` | empty: the `mods/` next to the plugin's marketplace | The folder whose child folders Mod Lab tracks. In your own project, set it to your `mods/`. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
 | `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
+| `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
+
+`/mod-builder config` lists these with their current values and this session's log file; `/mod-builder config <option> <value>` changes one (for example `/mod-builder config logging verbose`). They're also in `/config`.
 
 ## What it reaches
 
@@ -150,14 +153,16 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
+| Hooks | `session.start`, `command.run{modlab}` and `command.run{mod-builder}` (each answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
 | Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. |
-| Files | Reads under `modsDir` and the marketplace file beside it. Writes nothing. |
+| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
+| Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
+| Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |
 | Store | Its own `$.store`: last results per mod, which mods were announced, and edit generations |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
 | Tools it adds | `lab_report`, which records progress and runs nothing beyond the Validate and Test above |
-| Gating hooks | 2, both with `.catch`: `lab_report`, `ui.close` |
+| Gating hooks | 3, all with `.catch`: `/mod-builder` (command), `lab_report`, `ui.close` |
 
 ## Development
 
