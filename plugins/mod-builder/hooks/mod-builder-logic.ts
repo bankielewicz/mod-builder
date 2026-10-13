@@ -39,9 +39,12 @@ export type FileFacts = {
   readmeHasReaches: boolean
   /** The marketplace beside the mods folder lists this mod. */
   isListed: boolean
-  /** Newest mtime of what validate and test read: manifest, hooks/, tests/, types/. */
+  /** Newest mtime of what validate and test read: manifest, hooks/, tests/, types/ and their subfolders. */
   codeMtimeMs: number
-  /** A signature of every code file's name and mtime: changes on an edit, an add, a delete or a rename. */
+  /**
+   * A signature of every code file's path and mtime, subfolders up to 3 deep: changes on an
+   * edit, an add, a delete, a rename or a move between folders.
+   */
   codeSig: string
   /** Oldest and newest mtime of anything in the folder, for the build span. */
   firstMtimeMs: number
@@ -825,6 +828,8 @@ export type FolderRead = {
   hooks: readonly Entry[]
   tests: readonly Entry[]
   types: readonly Entry[]
+  /** Files in subfolders of hooks/, tests/ and types/, named by their path from the mod folder (`hooks/lib/parser.ts`). */
+  nested?: readonly Entry[]
   spec: string | null
   readme: string | null
   /** plugin.json's text, when present. */
@@ -862,7 +867,16 @@ export function factsOf(read: FolderRead): FileFacts | null {
   const hasSpec = read.spec !== null
   if (!hasManifest && !hasSpec) return null
   const manifest = read.manifestDir.filter(entry => entry.name === 'plugin.json')
-  const code = [...manifest, ...read.hooks, ...read.tests, ...read.types].filter(entry => entry.kind === 'file')
+  // Named by folder, so a file moved between folders without a new mtime still changes the signature.
+  const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
+    entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  const code = [
+    ...inFolder('.claude-plugin', manifest),
+    ...inFolder('hooks', read.hooks),
+    ...inFolder('tests', read.tests),
+    ...inFolder('types', read.types),
+    ...(read.nested ?? []).filter(entry => entry.kind === 'file'),
+  ]
   const all = [...read.top.filter(entry => entry.kind === 'file'), ...code]
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}

@@ -35,7 +35,10 @@ const modFiles = (name: string): Disk => ({
  * The world beneath Mod Lab: a disk from `disk`, the clock and store from
  * memory, processes answered from `outputs`, and every UI call recorded.
  */
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime = { ms: 1000 }, listHold?: Promise<void>) {
+/** Every file's mtime is `ms`, unless `byPath` names its own. */
+type Mtimes = { ms: number; byPath?: Record<string, number> }
+
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -54,7 +57,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
       const [head, ...tail] = path.slice(dir.length + 1).split('/')
       names.set(head!, tail.length ? 'dir' : 'file')
     }
-    return [...names].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: mtime.ms, isLink: false }))
+    return [...names].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: mtime.byPath?.[`${dir}/${name}`] ?? mtime.ms, isLink: false }))
   }
   on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
@@ -318,6 +321,27 @@ describe('auto re-run', () => {
     expect(seen.argv.slice(2).map(argv => argv[2])).toEqual(['validate', 'test'])
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /files changed/ })).toBeUndefined()
+  })
+
+  test('a file in a subfolder edited after a pass: the end of the turn re-runs Validate, then Test', OPTIONS, async ($, on) => {
+    const mtime: Mtimes = { ms: 1000 }
+    const disk = { ...modFiles('git-branch'), [`${MODS}/git-branch/hooks/lib/parser.ts`]: '' }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    await ui.unmount()
+    await $.turn.complete({ answer: 'nothing yet' } as never)
+    await clock.advance(1000)
+    expect(seen.argv).toHaveLength(2)
+    mtime.byPath = { [`${MODS}/git-branch/hooks/lib/parser.ts`]: 5000 }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.slice(2).map(argv => argv[2])).toEqual(['validate', 'test'])
   })
 
   test('nothing changed: the end of the turn runs nothing', OPTIONS, async ($, on) => {

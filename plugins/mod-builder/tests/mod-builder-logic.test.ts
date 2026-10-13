@@ -447,6 +447,25 @@ describe('mod-builder-logic', () => {
     expect(lightsOf({ ...FULL, codeMtimeMs: 200, codeSig: signatureOf(['b.test.ts@200']) }, ran, [], null)[4]).toBe('stale')
   })
 
+  test('the signature sees files in subfolders and moves between folders; nested files never count as the logic module', () => {
+    const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, mtimeMs })
+    const read = {
+      name: 'x', top: [], manifestDir: [file('plugin.json', 100)],
+      hooks: [file('register.tsx', 100), { name: 'lib', kind: 'dir' as const, mtimeMs: 100 }],
+      tests: [file('x.test.ts', 100)], types: [],
+      nested: [file('hooks/lib/parser.ts', 100), file('hooks/lib/x-logic.ts', 100)],
+      spec: '# x', readme: null, manifest: null, marketplace: '',
+    }
+    const before = factsOf(read)!
+    expect(before.hasLogic).toBe(false)
+    const edited = factsOf({ ...read, nested: [file('hooks/lib/parser.ts', 900), file('hooks/lib/x-logic.ts', 100)] })!
+    expect(edited.codeSig).not.toBe(before.codeSig)
+    expect(edited.codeMtimeMs).toBe(900)
+    const moved = factsOf({ ...read, hooks: [file('register.tsx', 100), file('x.test.ts', 100)], tests: [] })!
+    expect(moved.codeSig).not.toBe(before.codeSig)
+    expect(factsOf({ ...read, nested: [{ name: 'hooks/lib/deeper', kind: 'dir' as const, mtimeMs: 900 }, ...read.nested] })!.codeSig).toBe(before.codeSig)
+  })
+
   test('during an edit, Share needs a version different from the one the edit started from', () => {
     const listed: FileFacts = { ...FULL, version: '0.1.0', listedVersion: '0.1.0' }
     expect(lightsOf(listed, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')

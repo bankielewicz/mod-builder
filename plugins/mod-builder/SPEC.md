@@ -284,3 +284,13 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - Marketplace matching is shared (`findEntry`).
 - **Tests:** 51 (logic and UI).
 
+
+## Change 0.2.1 (2026-10-12)
+
+> Fix from the third Codex review of PR #1.
+
+- **Fix:** the code signature (0.2.0, "every code file") covered only files directly in `hooks/`, `tests/` and `types/`. It now also covers their subfolders up to 3 levels down, skipping dot-folders and `node_modules`, so an edit to `hooks/lib/parser.ts` makes Validate and Test stale and `autoRerun` re-runs them. Sibling folders are listed at once.
+- **Fix:** each signature entry carries its folder (`hooks/register.tsx@<mtime>`), so a file moved between `hooks/` and `tests/` with an unchanged mtime goes stale.
+- **Unchanged:** the Logic and Register stages still look only at files directly in `hooks/` and `tests/`; a nested `hooks/lib/x-logic.ts` doesn't count as the logic module.
+- **On upgrade:** results stored by 0.2.0 carry the old signature format, so every mod's Validate and Test read stale once and `autoRerun` re-runs them at the end of the next turn.
+- **Tests:** 53 (logic and UI). The two new ones fail on 0.2.0.

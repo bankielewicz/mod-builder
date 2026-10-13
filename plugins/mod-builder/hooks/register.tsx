@@ -76,6 +76,25 @@ const list = ($: Engine, path: string): Promise<Lab.Entry[]> =>
 
 const readText = ($: Engine, path: string): Promise<string | null> => $.fs.read(path).catch(() => null)
 
+/**
+ * The files in `folder`'s subfolders (from its `entries`), up to `depth` levels down, named by
+ * their path from the mod folder `at`. Sibling folders are listed at once, since /mnt/c is slow;
+ * dot-folders and node_modules are skipped.
+ */
+async function nestedFiles($: Engine, at: string, folder: string, entries: readonly Lab.Entry[], depth = 3): Promise<Lab.Entry[]> {
+  if (depth === 0) return []
+  const subfolders = entries.filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+  const found = await Promise.all(
+    subfolders.map(async sub => {
+      const path = `${folder}/${sub.name}`
+      const inner = await list($, `${at}/${path}`)
+      const files = inner.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${path}/${entry.name}` }))
+      return [...files, ...(await nestedFiles($, at, path, inner, depth - 1))]
+    }),
+  )
+  return found.flat()
+}
+
 const resultsOf = async ($: Engine): Promise<StoredResults> =>
   ((await $.store.get(RESULTS_KEY)) ?? {}) as StoredResults
 
@@ -131,14 +150,25 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
     const at = `${dir}/${folder.name}`
     const top = await list($, at)
     const has = (name: string): boolean => top.some(entry => entry.name === name)
-    const manifestDir = has('.claude-plugin') ? await list($, `${at}/.claude-plugin`) : []
+    const [manifestDir, hooks, tests, types] = await Promise.all([
+      has('.claude-plugin') ? list($, `${at}/.claude-plugin`) : Promise.resolve([]),
+      has('hooks') ? list($, `${at}/hooks`) : Promise.resolve([]),
+      has('tests') ? list($, `${at}/tests`) : Promise.resolve([]),
+      has('types') ? list($, `${at}/types`) : Promise.resolve([]),
+    ])
+    const nested = await Promise.all([
+      nestedFiles($, at, 'hooks', hooks),
+      nestedFiles($, at, 'tests', tests),
+      nestedFiles($, at, 'types', types),
+    ])
     const facts = Lab.factsOf({
       name: folder.name,
       top,
       manifestDir,
-      hooks: has('hooks') ? await list($, `${at}/hooks`) : [],
-      tests: has('tests') ? await list($, `${at}/tests`) : [],
-      types: has('types') ? await list($, `${at}/types`) : [],
+      hooks,
+      tests,
+      types,
+      nested: nested.flat(),
       spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
       readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
       manifest: manifestDir.some(entry => entry.name === 'plugin.json')
