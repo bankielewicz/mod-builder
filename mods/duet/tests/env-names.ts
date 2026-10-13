@@ -10,13 +10,12 @@ export const ORIGINAL_ENV = [
 
 /** The names issue #2 adds, by provider. */
 export const CLOUD_ENV = {
-  aws: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'],
-  google: ['GOOGLE_APPLICATION_CREDENTIALS'],
+  aws: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'],
   claudePlatformOnAws: ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'ANTHROPIC_AWS_WORKSPACE_ID', 'ANTHROPIC_AWS_BASE_URL', 'ANTHROPIC_AWS_API_KEY'],
   bedrockMantle: ['CLAUDE_CODE_USE_MANTLE', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL'],
-  claudeCode: ['CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'ANTHROPIC_PROFILE', 'CLAUDE_CONFIG_DIR'],
+  claudeCode: ['CLAUDE_CODE_OAUTH_REFRESH_TOKEN'],
   foundry: ['ANTHROPIC_FOUNDRY_AUTH_TOKEN'],
-  azureSdk: ['AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_CLIENT_CERTIFICATE_PATH', 'AZURE_FEDERATED_TOKEN_FILE'],
+  azureSdk: ['AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET'],
 }
 
 /** Every name Codex's env blanks, exactly. */
@@ -25,5 +24,11 @@ export const BLANKED: readonly string[] = [...ORIGINAL_ENV, ...Object.values(CLO
 /** Codex itself needs these, so they must reach it. */
 export const CODEX_NEEDS = ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy']
 
+/** Paths and profile names: '' isn't unset, and an empty one changes what a tool does, so they pass through. */
+export const PATHS_AND_PROFILES = [
+  'CLAUDE_CONFIG_DIR', 'ANTHROPIC_PROFILE', 'AWS_PROFILE', 'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE',
+  'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_CERTIFICATE_PATH', 'AZURE_FEDERATED_TOKEN_FILE',
+]
+
 /** Every name that must reach Codex unchanged. */
-export const PASSED_THROUGH: readonly string[] = [...CODEX_NEEDS]
+export const PASSED_THROUGH: readonly string[] = [...CODEX_NEEDS, ...PATHS_AND_PROFILES]

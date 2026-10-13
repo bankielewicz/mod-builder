@@ -70,6 +70,9 @@ Re-check [field] items against the d.ts after a Claude Code update.
   scrub, and none with it (exit 1), `OPENAI_API_KEY` included. `init.env: { NAME: '' }` sets the
   variable to an empty string (exit 0, empty output); it doesn't unset it. `$.env` can't list
   variables, so a mod that must keep a secret from a child blanks an explicit list of names.
+  `init.env` is typed `Record<string, string>` [d.ts], so it can't unset a variable either, and an
+  empty value isn't neutral for a path: with `CLAUDE_CONFIG_DIR=''`, `claude auth status` reports
+  `configDirectory: ""` (probed on 2.1.296). Blank secrets, never paths or profile names.
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every

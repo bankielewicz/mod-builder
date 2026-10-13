@@ -418,14 +418,14 @@ pane's keys; `/reload-plugins` picks up edits.
   - With `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`: all three were removed (`printenv` exit 1). So Claude Code's scrub does cover a mod's `$.process.run` children, and it removes `OPENAI_API_KEY` too, which Codex needs when signed in with an API key. The scrub is opt-in, so duet doesn't rely on it.
   - `env: { NAME: '' }` sets the variable to an empty string (`printenv` exit 0, empty output); it doesn't unset it. "Blanked" means present and empty.
 - **What changes:** `BLANKED_ENV` goes from 16 names to 38, by these groups:
-  - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`.
-  - Vertex page: `GOOGLE_APPLICATION_CREDENTIALS`.
+  - AWS (Bedrock page): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`.
   - Claude Platform on AWS page: `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `ANTHROPIC_AWS_WORKSPACE_ID`, `ANTHROPIC_AWS_BASE_URL`, `ANTHROPIC_AWS_API_KEY`.
   - Bedrock page (Mantle): `CLAUDE_CODE_USE_MANTLE`, `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`.
-  - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, `ANTHROPIC_PROFILE`, `CLAUDE_CONFIG_DIR`.
+  - Env-vars page: `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`.
   - Foundry: `ANTHROPIC_FOUNDRY_AUTH_TOKEN`. The Foundry and Claude Platform on AWS names were checked against the provider and env-vars pages on 2026-10-13: `ANTHROPIC_AWS_API_KEY` is on the Claude Platform on AWS and env-vars pages, `ANTHROPIC_FOUNDRY_AUTH_TOKEN` on the Foundry and env-vars pages.
-  - Azure SDK default credential chain: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`. The Foundry page's Entra path says only "the Azure SDK default credential chain" and names no `AZURE_*` variable (none of the five appears on any of the five pages), so these come from the Azure SDK's documentation, not Claude's.
+  - Azure SDK default credential chain: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_SECRET`. The Foundry page's Entra path says only "the Azure SDK default credential chain" and names no `AZURE_*` variable (none appears on any of the five pages), so these come from the Azure SDK's documentation, not Claude's.
   - Never blanked, because Codex needs them: `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
+  - Never blanked, because `''` isn't unset: paths, directories and profile names (`CLAUDE_CONFIG_DIR`, `ANTHROPIC_PROFILE`, `AWS_PROFILE`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`). The green phase blanked them; review on PR #30 found that a `claude` run by Codex then uses an empty config directory (`CLAUDE_CONFIG_DIR= claude auth status` reports `configDirectory: ""`, probed on 2.1.296). Their values aren't secrets, and the files they name stay readable either way. `init.env` is typed `Record<string, string>`, so a variable can't be unset instead.
   - The README Install paragraph names the groups; its Environment row says "blanks the 38 names in `BLANKED_ENV`".
 - **Considered and not taken:**
   - Enumerating the inherited environment (`$.process.run(['env'])`, `cmd /c set` on Windows) and blanking by pattern: one extra process per Codex run, and the names it blanks are invisible to `claude plugin validate`, so the README's reach row couldn't be generated from them.
@@ -433,8 +433,11 @@ pane's keys; `/reload-plugins` picks up edits.
   - Relying on `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: opt-in, and it would also remove `OPENAI_API_KEY`.
 - **Limits:**
   - The list is explicit: a credential variable not named here still reaches Codex (a new cloud provider, a variable a user invented). New names are added as they are found.
-  - Blanking hides variables, not files. `AWS_PROFILE` and `AWS_SHARED_CREDENTIALS_FILE` blanked only stops a named profile or file being selected: the AWS SDK still reads the `default` profile from `~/.aws/credentials`, and Codex can read any file the user can (issue #3).
+  - Blanking hides variables, not files: Codex can read `~/.aws/credentials`, a file a path variable names, or any other file the user can (issue #3).
   - Named on the env-vars page and not blanked here, left for the owner to decide: `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY` and `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE` (mTLS to Anthropic; the key is a path, the passphrase a secret), and `CLAUDE_CODE_MESSAGING_TOKEN` (a per-session token Claude Code exports to hooks and Bash commands).
 - **What gets touched:** `hooks/duet-logic.ts` (`BLANKED_ENV` only; both `process.run`/`spawn` call sites already take `childEnv()`), `.claude-plugin/plugin.json`, README, `plugins/mod-builder/skills/build/references/gotchas.md`, tests. The coverage kit (`plugins/mod-builder/skills/build/scripts/coverage/kit.mjs`) also gets a `toBeGreaterThanOrEqual` matcher, which these tests use; mod-builder's version is unchanged.
 - **Tests:** `childEnv()` and `BLANKED_ENV` against a literal list of the new names (not derived from `BLANKED_ENV`), the originals, and the names Codex needs; a routed call, a review and `/duet config models` each get the cloud names as `''` and none of the Codex names.
 - **Done means:** all tests pass, validate is clean.
+- **PR #30 review** (Codex and `/code-review`, 2026-10-13), one commit each:
+  - The tests' name lists live once, in `tests/env-names.ts`; `BLANKED_ENV` must equal them exactly, once each.
+  - Secrets only: the eight paths and profile names above pass through.

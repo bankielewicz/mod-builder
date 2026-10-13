@@ -609,7 +609,10 @@ export function reviewArgv(target: ReviewTarget, model: string): string[] {
 /**
  * Claude Code's credential and provider variables, blanked in Codex's
  * environment. env is laid over the host's, which can't be listed, so the
- * names are fixed (SPEC, Change 0.2.5). Never add what Codex itself needs:
+ * names are fixed (SPEC, Change 0.2.5). Blanking sets '' and can't unset, and
+ * '' in a path or profile name changes what a tool does (`CLAUDE_CONFIG_DIR`
+ * becomes an empty config dir), so only secrets and provider switches go here,
+ * never a path, directory or profile name. Never add what Codex itself needs:
  * `OPENAI_API_KEY`, `CODEX_HOME`, `PATH`, `HOME`, the proxy variables.
  */
 export const BLANKED_ENV = [
@@ -618,11 +621,9 @@ export const BLANKED_ENV = [
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_CUSTOM_HEADERS',
-  'ANTHROPIC_PROFILE',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
   'CLAUDE_CODE_SESSION_ACCESS_TOKEN',
-  'CLAUDE_CONFIG_DIR',
   // Bedrock, and Bedrock Mantle
   'CLAUDE_CODE_USE_BEDROCK',
   'ANTHROPIC_BEDROCK_BASE_URL',
@@ -634,18 +635,14 @@ export const BLANKED_ENV = [
   'ANTHROPIC_AWS_API_KEY',
   'ANTHROPIC_AWS_BASE_URL',
   'ANTHROPIC_AWS_WORKSPACE_ID',
-  // AWS credentials, and the profile and files they are read from
+  // AWS credentials
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
   'AWS_SESSION_TOKEN',
-  'AWS_PROFILE',
-  'AWS_SHARED_CREDENTIALS_FILE',
-  'AWS_CONFIG_FILE',
   // Vertex
   'CLAUDE_CODE_USE_VERTEX',
   'ANTHROPIC_VERTEX_PROJECT_ID',
   'ANTHROPIC_VERTEX_BASE_URL',
-  'GOOGLE_APPLICATION_CREDENTIALS',
   // Foundry
   'CLAUDE_CODE_USE_FOUNDRY',
   'ANTHROPIC_FOUNDRY_API_KEY',
@@ -656,8 +653,6 @@ export const BLANKED_ENV = [
   'AZURE_CLIENT_ID',
   'AZURE_TENANT_ID',
   'AZURE_CLIENT_SECRET',
-  'AZURE_CLIENT_CERTIFICATE_PATH',
-  'AZURE_FEDERATED_TOKEN_FILE',
 ] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
