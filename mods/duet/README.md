@@ -18,7 +18,7 @@ and measures every run so you route by evidence rather than by assumption.
   duet-d3 … finished on Codex"). Each role has a default and `codexRunMode` overrides it. A run that
   can edit always waits, so Codex and Claude never edit at the same time.
 - **Custom agents:** a routed `.claude/agents/<name>.md` (or `~/.claude/agents/`) sends its body to
-  Codex as role instructions. If its `tools:` (minus `disallowedTools`) grant no edit tool, Codex runs `read-only` regardless of the setting. An agent duet can't find a definition for (a built-in like Explore or Plan, a plugin's agent) also runs `read-only`; only `general-purpose` edits without one.
+  Codex as role instructions. If its `tools:` (minus `disallowedTools`) grant no edit tool, Codex runs `read-only` regardless of the setting. Both lists may be one line or a YAML block of `- Name` lines; `Write(src/**)` counts as all of `Write`. A form duet doesn't read (a `>` or `|` block, a `[` list that wraps, a value continued on the next line) also runs `read-only`. An agent duet can't find a definition for (a built-in like Explore or Plan, a plugin's agent) also runs `read-only`; only `general-purpose` edits without one.
 - **Independent review:** `/duet review` sends Codex the exact diff, never the implementer's summary.
   The review runs on Codex's own review instructions, and its first line lands in the pane. Duet never applies fixes or chains another round.
 - **Measurements:** every Codex run and every main-loop Claude subagent is logged; `/duet stats`

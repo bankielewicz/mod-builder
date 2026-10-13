@@ -348,3 +348,56 @@ describe('second review round', () => {
   })
 })
 
+
+describe('third review round: tool lists in any YAML form', () => {
+  const agent = (frontmatter: string) => parseAgentFile(`---\nname: a\n${frontmatter}\n---\nx`)
+  const sandboxOf = (frontmatter: string) => effectiveSandbox('workspace-write', agent(frontmatter), 'a')
+
+  test('a block disallowedTools list takes edits away, indented or at the key indent', () => {
+    expect(agent('disallowedTools:\n  - Write\n  - Edit\n  - NotebookEdit\n  - MultiEdit')?.disallowed).toEqual(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
+    expect(sandboxOf('disallowedTools:\n  - Write\n  - Edit\n  - NotebookEdit\n  - MultiEdit')).toBe('read-only')
+    expect(sandboxOf('disallowedTools:\n- Write\n- Edit\n- NotebookEdit\n- MultiEdit')).toBe('read-only')
+    expect(sandboxOf('disallowedTools:\n  - Write\n\n  # edits too\n  - Edit\n  - NotebookEdit\n  - MultiEdit\nmodel: sonnet')).toBe('read-only')
+    expect(sandboxOf('disallowedTools:\n  - Write')).toBe('workspace-write')
+  })
+
+  test('a block tools list that grants an edit tool keeps workspace-write; one without stays read-only', () => {
+    expect(agent('tools:\n  - Read\n  - Edit')?.tools).toEqual(['Read', 'Edit'])
+    expect(sandboxOf('tools:\n  - Read\n  - Edit')).toBe('workspace-write')
+    expect(sandboxOf('tools:\n  - Read\n  - Grep')).toBe('read-only')
+    expect(sandboxOf('tools:\n  - Read\n  - Edit\ndisallowedTools:\n  - Edit')).toBe('read-only')
+  })
+
+  test('comments and permission specifiers name the whole tool', () => {
+    expect(sandboxOf('disallowedTools: Write, Edit, NotebookEdit, MultiEdit # read only')).toBe('read-only')
+    expect(sandboxOf('disallowedTools:\n  - Write # no writes\n  - Edit\n  - NotebookEdit\n  - MultiEdit')).toBe('read-only')
+    expect(agent('disallowedTools: Write(src/**), Edit(src/**), NotebookEdit, MultiEdit')?.disallowed).toEqual(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
+    expect(sandboxOf('disallowedTools: Write(src/**), Edit(src/**), NotebookEdit, MultiEdit')).toBe('read-only')
+    expect(agent('tools: Bash(git add:*, git commit:*), "Edit"')?.tools).toEqual(['Bash', 'Edit'])
+    expect(agent('tools: C#Tool')?.tools).toEqual(['C#Tool'])
+  })
+
+  test('a list value duet cannot read runs read-only', () => {
+    for (const frontmatter of [
+      'disallowedTools: >\n  Write, Edit, NotebookEdit, MultiEdit',
+      'disallowedTools: |\n  Write',
+      'disallowedTools: [Write, Edit,\n  NotebookEdit, MultiEdit]',
+      'disallowedTools: Write, Edit,\n  NotebookEdit, MultiEdit',
+      'disallowedTools:\n  Write, Edit, NotebookEdit, MultiEdit',
+      'disallowedTools: &deny [Write]',
+      'tools: {Edit: true}',
+      'tools:\n  - Edit\n  nested: value',
+    ]) {
+      expect(agent(frontmatter)?.isToolsUnread).toBe(true)
+      expect(sandboxOf(frontmatter)).toBe('read-only')
+    }
+  })
+
+  test('other fields keep their old reading; only tools and disallowedTools collect lists', () => {
+    const def = agent('description: |\n  Reviews code.\n  - never edits\ntools: Read, Edit')
+    expect(def?.isToolsUnread).toBeUndefined()
+    expect(def?.description).toBe('|')
+    expect(sandboxOf('description: Fixes issue #12\ntools: Read, Edit')).toBe('workspace-write')
+    expect(agent('tools: [Read, Edit]')?.tools).toEqual(['Read', 'Edit'])
+  })
+})

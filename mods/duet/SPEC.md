@@ -379,3 +379,16 @@ pane's keys; `/reload-plugins` picks up edits.
 - **Tests:** review argv ends with the target; unresolved agents are read-only; `disallowedTools`; snapshot comparison; limit text; fallback failure; blanked names.
 - **Done means:** all tests pass, validate is clean.
 
+
+## Change 0.2.3 (2026-10-12)
+
+> Fixes from the third Codex review of PR #1 (security finding on `parseAgentFile`).
+
+- **What changes:**
+  - `tools` and `disallowedTools` are read as a YAML block list (`- Write` lines, indented or at the key's own indent) as well as one line. Before, a block list read as empty, so a block `disallowedTools` naming all four edit tools still ran Codex under `workspace-write`.
+  - A trailing ` # comment` is dropped from each value, and a permission specifier names its whole tool (`Write(src/**)` is `Write`; a comma inside the parentheses doesn't split).
+  - A `tools` or `disallowedTools` value duet doesn't read (a `>` or `|` block, a `{` mapping, an `&` anchor, a `[` list that wraps, a value continued on the next line) makes the agent `read-only`.
+  - User-level agents are looked up under `USERPROFILE` when `HOME` is unset, as `dataDir` already did; with neither, only the project's `.claude/agents` is read.
+- **What gets touched:** `hooks/duet-logic.ts`, `hooks/register.tsx`, tests, README.
+- **Tests:** block lists at both indents, a block `tools` that grants `Edit`, comments, specifiers, eight unread forms, other fields unchanged, the `USERPROFILE` lookup. Five of the six new tests fail on 0.2.2.
+- **Done means:** all tests pass, validate is clean.

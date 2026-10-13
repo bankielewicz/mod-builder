@@ -132,9 +132,13 @@ async function admit($: EngineInterface, make: (id: string) => Task): Promise<Ta
 
 // ── Files ────────────────────────────────────────────────────────────────
 
+/** The user's home folder: HOME, else USERPROFILE (Windows); '' when neither is set. */
+async function homeDir($: EngineInterface): Promise<string> {
+  return (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+}
+
 async function dataDir($: EngineInterface): Promise<string> {
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? '.'
-  return `${home}/.claude/duet-data`
+  return `${(await homeDir($)) || '.'}/.claude/duet-data`
 }
 
 /** This session's own folder, for per-task files: ids restart at d1 in every session. */
@@ -167,8 +171,8 @@ function logRun($: EngineInterface, task: Task): Promise<void> {
 /** The custom agent's definition: project `.claude/agents` first, then the user's. */
 async function agentDef($: EngineInterface, cwd: string, type: string): Promise<AgentDef | null> {
   if (!/^[\w.:-]+$/.test(type)) return null
-  const home = (await $.env.get('HOME')) ?? ''
-  for (const path of [`${cwd}/.claude/agents/${type}.md`, `${home}/.claude/agents/${type}.md`]) {
+  const home = await homeDir($)
+  for (const path of [`${cwd}/.claude/agents/${type}.md`, ...(home ? [`${home}/.claude/agents/${type}.md`] : [])]) {
     const text = await readText($, path)
     if (text) return parseAgentFile(text)
   }

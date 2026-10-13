@@ -17,7 +17,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string> } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -27,7 +27,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('command.register', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: '/w' }))
   on('session.id', () => ({ value: 's1' }))
-  on('env.get', ($: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : undefined }))
+  on('env.get', ($: any, e: any) => ({ value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   on('fs.read', ($: any, e: any) => {
     const text = seen.files[e.path]
     if (text === undefined) return { deny: 'ENOENT: no such file' }
@@ -153,6 +153,15 @@ describe('routing', () => {
     const argv = seen.argv[0]!
     expect(argv[argv.indexOf('-s') + 1]).toBe('workspace-write')
     expect(seen.stdin[0]).toContain('Write tests.')
+  })
+
+  test('with no HOME, a user-level agent is found under USERPROFILE', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow' } }, async ($, on) => {
+    const seen = engine(on, { env: { USERPROFILE: '/users/u' }, agents: { '/users/u/.claude/agents/test-writer.md': '---\nname: test-writer\ntools: Read, Write, Edit\n---\nWrite tests.' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'test-writer' }) as never)
+    const argv = seen.argv[0]!
+    expect(argv[argv.indexOf('-s') + 1]).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('## Role instructions (test-writer)')
   })
 })
 

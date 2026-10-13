@@ -367,35 +367,92 @@ export function modelsText(models: CodexModel[], current: string): string {
 export type AgentDef = {
   name: string
   description: string
-  /** The `tools` line as a list; null when there is no `tools` line (every tool). */
+  /** The `tools` value as a list; null when there is no `tools` key (every tool). */
   tools: string[] | null
-  /** The `disallowedTools` line as a list. */
+  /** The `disallowedTools` value as a list. */
   disallowed?: string[]
+  /** `tools` or `disallowedTools` is in a form duet doesn't read (a block scalar, an unclosed `[`, a continued line): read-only. */
+  isToolsUnread?: boolean
   body: string
 }
 
-/** A frontmatter list (`a, b`, `[a, b]`, quoted or not) as names; `[]` or an empty value is an empty list. */
+const LIST_KEYS = ['tools', 'disallowedTools']
+
+/** A frontmatter value without its ` # comment`. */
+const uncommented = (value: string): string => value.replace(/(^|\s)#.*$/, '').trim()
+
+/** A list value duet reads as written: no block scalar, mapping, anchor, alias or tag, and a `[` closes on its line. */
+const isReadable = (value: string): boolean => !/^([>|{&!]|\*\S)/.test(value) && (!value.startsWith('[') || value.endsWith(']'))
+
+/**
+ * A frontmatter list (`a, b`, `[a, b]`, quoted or not) as tool names; `[]` or an
+ * empty value is an empty list. A permission specifier names its whole tool:
+ * `Write(src/**)` is `Write`, and a comma inside the parentheses doesn't split.
+ */
 function listOf(raw: string): string[] {
-  return raw
-    .replace(/^\[|\]$/g, '')
-    .split(',')
-    .map(s => s.trim().replace(/^["']|["']$/g, ''))
-    .filter(Boolean)
+  const parts: string[] = []
+  let part = ''
+  let depth = 0
+  for (const ch of raw.replace(/^\[|\]$/g, '')) {
+    if (ch === ',' && depth === 0) {
+      parts.push(part)
+      part = ''
+      continue
+    }
+    if (ch === '(') depth++
+    else if (ch === ')') depth = Math.max(0, depth - 1)
+    part += ch
+  }
+  parts.push(part)
+  return parts.map(s => s.trim().replace(/^["']|["']$/g, '').replace(/\s*\(.*$/, '').trim()).filter(Boolean)
 }
 
-/** Frontmatter (`name`, `description`, `tools`, `disallowedTools`) and body of an agent file; null when it has none. */
+/**
+ * Frontmatter (`name`, `description`, `tools`, `disallowedTools`) and body of an
+ * agent file; null when it has none. `tools` and `disallowedTools` may be one line
+ * (`a, b` or `[a, b]`) or a YAML block list of `- a` lines; any other form is
+ * marked unread, so the agent runs read-only rather than on a guess.
+ */
 export function parseAgentFile(text: string): AgentDef | null {
   const m = text.replace(/^\uFEFF/, '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
   if (!m) return null
   const fields: Record<string, string> = {}
+  const blocks: Record<string, string[]> = {}
+  let isToolsUnread = false
+  let key = ''
   for (const line of (m[1] ?? '').split(/\r?\n/)) {
-    const kv = line.match(/^([A-Za-z_-]+):\s*(.*)$/)
-    if (kv) fields[kv[1]!] = (kv[2] ?? '').trim()
+    const kv = line.match(/^["']?([A-Za-z_-]+)["']?\s*:\s*(.*)$/)
+    if (kv) {
+      key = kv[1]!
+      fields[key] = (kv[2] ?? '').trim()
+      delete blocks[key]
+      continue
+    }
+    const rest = uncommented(line)
+    if (!LIST_KEYS.includes(key) || rest === '') continue
+    // A `- item` line, indented or not, under an empty value is a block list; any other line continues the value.
+    const item = rest.match(/^-(?:\s+(.*))?$/)
+    if (item && uncommented(fields[key] ?? '') === '') (blocks[key] ??= []).push(item[1] ?? '')
+    else isToolsUnread = true
   }
-  // An absent `tools` line means every tool; a present but empty one (`tools: []`) means none.
-  const tools = fields.tools === undefined ? null : listOf(fields.tools)
-  const disallowed = fields.disallowedTools === undefined ? [] : listOf(fields.disallowedTools)
-  return { name: fields.name ?? '', description: fields.description ?? '', tools, disallowed, body: (m[2] ?? '').trim() }
+  const listField = (name: string): string[] | null => {
+    const value = fields[name]
+    if (value === undefined) return null
+    const values = [uncommented(value), ...(blocks[name] ?? [])]
+    if (!values.every(isReadable)) isToolsUnread = true
+    return values.flatMap(listOf)
+  }
+  // An absent `tools` key means every tool; a present but empty one (`tools: []`) means none.
+  const tools = listField('tools')
+  const disallowed = listField('disallowedTools') ?? []
+  return {
+    name: fields.name ?? '',
+    description: fields.description ?? '',
+    tools,
+    disallowed,
+    ...(isToolsUnread ? { isToolsUnread } : {}),
+    body: (m[2] ?? '').trim(),
+  }
 }
 
 /** A filesystem-safe folder name for a session id. */
@@ -408,10 +465,12 @@ export function sessionFolderOf(sessionId: string): string {
  * every tool) minus `disallowedTools` must keep an edit tool. No definition
  * found: only Claude's `general-purpose` agent edits; anything unresolved
  * (a built-in like Explore or Plan, a plugin's agent, a file duet can't find)
- * is read-only, so a lookup miss never raises the sandbox.
+ * is read-only, so a lookup miss never raises the sandbox. So is a definition
+ * whose `tools` or `disallowedTools` duet couldn't read.
  */
 export function canEdit(def: AgentDef | null, type: string = DEFAULT_TYPE): boolean {
   if (!def) return type === DEFAULT_TYPE
+  if (def.isToolsUnread) return false
   const allowed = def.tools === null || def.tools.includes('*') ? EDIT_TOOLS : EDIT_TOOLS.filter(t => def.tools!.includes(t))
   return allowed.some(t => !(def.disallowed ?? []).includes(t))
 }
