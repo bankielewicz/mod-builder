@@ -658,6 +658,8 @@ export const BLANKED_ENV = [
   'AZURE_CLIENT_ID',
   'AZURE_TENANT_ID',
   'AZURE_CLIENT_SECRET',
+  'AZURE_CLIENT_CERTIFICATE_PASSWORD',
+  'AZURE_PASSWORD',
 ] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
