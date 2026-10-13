@@ -1079,7 +1079,9 @@ export const register: Register = (on, options) => {
     const detail: ReturnType<typeof blank>[] = []
     if (current && layout !== 'compact') {
       detail.push(blank('d-gap-0'), rule('d-rule'), blank('d-gap-1'))
-      const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), current.path].filter(Boolean).join(' · ')
+      // Read the working directory now, not at the last scan, so a /cd shows at once and matches what F writes.
+      const shown = current.isDemo ? current.path : `${Lab.displayPathOf(`${modsDirOf($)}/${current.name}`, await cwdOf($))}/`
+      const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), shown].filter(Boolean).join(' · ')
       detail.push(
         <Box key="d-head" justifyContent="space-between">
           <Text>

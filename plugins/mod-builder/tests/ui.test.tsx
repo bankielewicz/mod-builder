@@ -353,6 +353,17 @@ describe('modsDir that is not mods/ under the working directory', () => {
     expect(seen.logs.filter(line => line.includes('session.cwd')).length).toBe(1)
   })
 
+  test('the detail header follows a /cd at the next render, without waiting for a scan', { options: { modsDir: OTHER } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch', OTHER))
+    await start($)
+    await clock.advance(10)
+    await command($, 'git-branch')
+    await clock.advance(10)
+    seen.cwd = '/m/other'
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · git-branch\// })).toBeDefined()
+  })
+
   test('the detail header follows a /cd at the next scan', { options: { modsDir: OTHER } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch', OTHER))
     await start($)
