@@ -827,6 +827,7 @@ export function displayPathOf(path: string, cwd: string): string {
   const target = normalizePath(path)
   const root = normalizePath(cwd)
   if (target === root) return '.'
+  // `normalizePath` keeps a trailing `/` only for the root itself: cwd `/` gives prefix `/`, not `//`.
   const prefix = `${root.replace(/\/$/, '')}/`
   return target.startsWith(prefix) ? target.slice(prefix.length) : target
 }
