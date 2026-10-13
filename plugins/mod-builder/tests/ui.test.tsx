@@ -21,14 +21,14 @@ const PRESENTATION = { isFullscreen: false, columns: 120 } as const
 type Disk = Record<string, string>
 type Output = { exitCode: number; stdout: string; throws?: boolean }
 
-/** A mod folder on the in-memory disk: every file of a mod that has reached Register. */
-const modFiles = (name: string): Disk => ({
-  [`${MODS}/${name}/SPEC.md`]: `# ${name}\n| archetype | REQUIRED | band | x |\nDone.\n`,
-  [`${MODS}/${name}/.claude-plugin/plugin.json`]: `{ "name": "${name}", "version": "0.1.0", "description": "The ${name} mod." }`,
-  [`${MODS}/${name}/hooks/hooks.json`]: '{ "modules": ["./register.tsx"] }',
-  [`${MODS}/${name}/hooks/register.tsx`]: '',
-  [`${MODS}/${name}/hooks/${name}-logic.ts`]: '',
-  [`${MODS}/${name}/tests/${name}-logic.test.ts`]: '',
+/** A mod folder on the in-memory disk, under `folder`: every file of a mod that has reached Register. */
+const modFiles = (name: string, folder = MODS): Disk => ({
+  [`${folder}/${name}/SPEC.md`]: `# ${name}\n| archetype | REQUIRED | band | x |\nDone.\n`,
+  [`${folder}/${name}/.claude-plugin/plugin.json`]: `{ "name": "${name}", "version": "0.1.0", "description": "The ${name} mod." }`,
+  [`${folder}/${name}/hooks/hooks.json`]: '{ "modules": ["./register.tsx"] }',
+  [`${folder}/${name}/hooks/register.tsx`]: '',
+  [`${folder}/${name}/hooks/${name}-logic.ts`]: '',
+  [`${folder}/${name}/tests/${name}-logic.test.ts`]: '',
 })
 
 /**
@@ -50,6 +50,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     writes: [] as { path: string; text: string }[],
     sets: [] as { key: string; value: unknown }[],
     sessionId: 's1-session',
+    cwd: '/m',
     failReads: [] as string[],
     denySet: '',
   }
@@ -83,6 +84,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
+  on('session.cwd', () => ({ value: seen.cwd }) as never)
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
@@ -278,6 +280,77 @@ describe('pane', () => {
     expect(validate).toBeDefined()
     expect(validate?.props.hotkey).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /4\/8|5\/8/ })).toBeDefined()
+  })
+})
+
+describe('modsDir that is not mods/ under the working directory', () => {
+  const ELSEWHERE = '/elsewhere/mods'
+  const OTHER = '/m/other'
+
+  /** `inbox-zero` under `modsDir` with its Test failing, and a pane open on it. */
+  async function failingTest($: Engine, on: On, modsDir: string) {
+    const w = world(on, modFiles('inbox-zero', modsDir), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 1, stdout: testFail } })
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(1000)
+    await ui.press({ key: 'test' })
+    await w.clock.advance(1000)
+    await ui.unmount()
+    return { ...w, pane: await mountPane($) }
+  }
+
+  test('Fix with Claude names the mod folder in full when it is outside the working directory', { options: { modsDir: ELSEWHERE } }, async ($, on) => {
+    const { seen, pane } = await failingTest($, on, ELSEWHERE)
+    await pane.press({ key: 'fix' })
+    expect(seen.filled[0]).toStartWith(`Fix the failing test in ${ELSEWHERE}/inbox-zero. First failure, from Mod Lab:`)
+  })
+
+  test('Fix with Claude names the mod folder relative to the working directory when it is inside', { options: { modsDir: OTHER } }, async ($, on) => {
+    const { seen, pane } = await failingTest($, on, OTHER)
+    await pane.press({ key: 'fix' })
+    expect(seen.filled[0]).toStartWith('Fix the failing test in other/inbox-zero. First failure, from Mod Lab:')
+  })
+
+  test('Fix with Claude reads the working directory when pressed, so it follows a /cd', { options: { modsDir: OTHER } }, async ($, on) => {
+    const { seen, pane } = await failingTest($, on, OTHER)
+    seen.cwd = '/m/other'
+    await pane.press({ key: 'fix' })
+    expect(seen.filled[0]).toStartWith('Fix the failing test in inbox-zero. First failure, from Mod Lab:')
+    await pane.unmount()
+    seen.cwd = '/work'
+    const again = await mountPane($)
+    await again.press({ key: 'fix' })
+    expect(seen.filled[1]).toStartWith(`Fix the failing test in ${OTHER}/inbox-zero. First failure, from Mod Lab:`)
+  })
+
+  test('the detail header shows the full path of a mod folder outside the working directory', { options: { modsDir: ELSEWHERE } }, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch', ELSEWHERE))
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · \/elsewhere\/mods\/git-branch\// })).toBeDefined()
+  })
+
+  test('the detail header shows the path relative to the working directory when the folder is inside it', { options: { modsDir: OTHER } }, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch', OTHER))
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · other\/git-branch\// })).toBeDefined()
+  })
+
+  test('the detail header follows a /cd at the next scan', { options: { modsDir: OTHER } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch', OTHER))
+    await start($)
+    await clock.advance(10)
+    seen.cwd = '/m/other'
+    await command($, 'git-branch')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · git-branch\// })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /v0\.1\.0 · other\/git-branch\// })).toBeUndefined()
   })
 })
 
