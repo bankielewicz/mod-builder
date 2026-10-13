@@ -65,7 +65,12 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - Runs were checked with Claude Code's `auto` permission mode. In other modes a phase agent's Edit or
   Bash may wait on a permission prompt nobody sees; the pane then shows `agent working` until you
   `/issue-forge stop`. There's no agent timeout yet.
-- G6 checks that a behaviour test file (`behaviourTestGlobs`) is in the red commit, not what it tests. The run's branch is cut from `origin/<base>`, so
+- G6 checks that a behaviour test file (`behaviourTestGlobs`) is in the red commit, not what it tests.
+- Command lookup uses `sh -c 'command -v …'`, so `sh` must be on PATH (Git Bash on Windows).
+- The profile that runs is the one on `origin/<base>`, read after the switch; the checkout you start
+  from only names the base.
+- Profile commands must leave the tree as they found it: a gate that sees files changed after staging
+  (a formatter, a snapshot update) blocks rather than commit bytes it didn't test. The run's branch is cut from `origin/<base>`, so
 the profile and anything its commands use must already be there.
 
 ## Install
@@ -114,6 +119,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Processes | `$.process.run` and `$.process.spawn`, in the repository root: `git` (rev-parse, status, check-ignore, fetch, for-each-ref, ls-remote, switch -c, merge-base, rev-list, merge --ff-only, add -A, diff, commit, stash push/list/apply, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file; writes `~/.claude/issue-forge-data/<run>/pr.md`; the run in `$.store`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
+| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the repository root, under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
 | Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run), `prompt.submit` (drops the run's own agents' hand-back messages) |
 

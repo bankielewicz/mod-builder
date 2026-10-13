@@ -45,7 +45,7 @@ export function isSafeBranch(name: string): boolean {
 }
 
 /** The glob syntax the design promises (§4.1): `*`, `**`, `?`. Braces, brackets and `!` are refused, not matched literally. */
-const isGlobs = (v: unknown): v is string[] => isStrings(v) && v.every(g => !/[{}[\]!]/.test(g))
+const isGlobs = (v: unknown): v is string[] => isStrings(v) && v.every(g => g.trim() !== '' && !/[{}[\]!]/.test(g))
 const isArgv = (v: unknown): v is string[] => isStrings(v) && v.length > 0 && v[0] !== ''
 
 /** `~` or `~/x` from `home`; anything else unchanged. */
@@ -81,7 +81,7 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
   need('coverageCommand', isArgv, 'a non-empty array of strings (argv)')
   need('lcovPath', v => typeof v === 'string' && v !== '', 'a non-empty string')
   const nonEmptyGlobs = (v: unknown) => isGlobs(v) && v.length > 0
-  const GLOBS = 'globs using only * ** ? (no braces, brackets or !)'
+  const GLOBS = 'non-empty globs using only * ** ? (no braces, brackets or !)'
   need('sourceGlobs', nonEmptyGlobs, `a non-empty array of ${GLOBS}`)
   need('testGlobs', nonEmptyGlobs, `a non-empty array of ${GLOBS}`)
   may('baseBranch', v => typeof v === 'string' && isSafeBranch(v), 'a branch name (letters, digits, . _ - /; not starting with - or +)')
@@ -137,7 +137,7 @@ export type OutsideChecks = {
 
 export function outsideChecks(p: Profile, root: string): OutsideChecks {
   const abs = isAbsolutePath(p.lcovPath) ? normalizePath(p.lcovPath) : normalizePath(`${root}/${p.lcovPath}`)
-  const argv0s = [...new Set([p.testCommand[0] as string, p.coverageCommand[0] as string])]
+  const argv0s = [...new Set([p.testCommand[0] as string, p.coverageCommand[0] as string, ...p.checks.map(c => c[0] as string)])]
   return {
     lcovInside: relativeTo(root, abs),
     commands: argv0s.map(argv0 => ({ argv0, kind: /[\\/]/.test(argv0) ? 'path' : 'name' })),
@@ -201,6 +201,11 @@ export function kindOf(p: Profile, path: string): PathKind {
   return matchesAny(path, p.unmeasuredGlobs) ? 'unmeasured' : 'measured'
 }
 
+/** Where the coverage command writes LCOV: a relative `lcovPath` is relative to the repository root, as the command runs there. */
+export function lcovFileOf(p: Profile, root: string): string {
+  return isAbsolutePath(p.lcovPath) ? p.lcovPath : `${root.replace(/\/+$/, '')}/${p.lcovPath}`
+}
+
 /** `/x` or a Windows drive path (`C:\x`, `C:/x`). */
 export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
@@ -226,7 +231,25 @@ export function relativeTo(root: string, abs: string): string | null {
   const r = normalizePath(root)
   const a = normalizePath(abs)
   if (a === r) return ''
-  return a.startsWith(`${r}/`) ? a.slice(r.length + 1) : null
+  const prefix = r.endsWith('/') ? r : `${r}/`
+  return a.startsWith(prefix) ? a.slice(prefix.length) : null
+}
+
+/**
+ * From `git status --porcelain -z`: paths whose working-tree bytes differ from the index (Y column) or
+ * that are untracked. After `git add -A` there should be none; any left were written by a command since.
+ */
+export function unstagedOf(porcelainZ: string): string[] {
+  const out: string[] = []
+  const entries = porcelainZ.split('\0')
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i] as string
+    if (e.length < 4) continue
+    const [x, y, path] = [e.charAt(0), e.charAt(1), e.slice(3)]
+    if (x === 'R' || x === 'C') i++
+    if (y !== ' ') out.push(path)
+  }
+  return out
 }
 
 /** NUL-separated `git … -z` output as paths. */
@@ -286,7 +309,7 @@ function unquote(path: string): string {
  * `c … c+d−1`; `+c` alone is one line; `d = 0` adds none. A deleted file has none.
  */
 export function parseDiff(text: string): Record<string, number[]> {
-  const changed: Record<string, number[]> = {}
+  const changed: Record<string, number[]> = Object.create(null)
   let current: string | null = null
   for (const line of text.split('\n')) {
     if (line.startsWith('diff --git ')) current = null
@@ -325,7 +348,7 @@ export type LcovFile = {
  * dropped). `BRDA` taken `-` counts as 0. Two records for one file are merged.
  */
 export function parseLcov(text: string, root: string): Record<string, LcovFile> {
-  const files: Record<string, LcovFile> = {}
+  const files: Record<string, LcovFile> = Object.create(null)
   let cur: LcovFile | null = null
   let isDuplicate = false
   const finish = () => {
@@ -606,7 +629,7 @@ export type RunEvent =
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
-  | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string }
+  | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
   | { type: 'block'; reason: string; next: string }
   | { type: 'resume' }
   | { type: 'stop' }
@@ -710,7 +733,9 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.gate.passed) {
         if (run.behaviourFor) {
           const { behaviourFor: _, ...rest } = gated
-          return { ...rest, redCommit: ev.commit ?? run.redCommit, isBehaviourDone: true, step: 'gateG' }
+          const done: Run = { ...rest, redCommit: ev.commit ?? run.redCommit, isBehaviourDone: true, step: 'gateG' }
+          // The behaviour test is committed; if green's work couldn't be restored, block where resume picks up: gate G.
+          return ev.blockAfter ? blockedAt(done, 'gateG', ev.blockAfter.reason, ev.blockAfter.next) : done
         }
         return { ...gated, redCommit: ev.commit, redTestTail: ev.testTail, step: 'green', times: { ...end(gated, 'red', now), green: { startedAt: now } } }
       }

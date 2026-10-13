@@ -44,6 +44,16 @@ type World = {
   testHold: Promise<void> | null
   /** Successive answers to `rev-parse --abbrev-ref HEAD` (the last repeats); absent, `head`. */
   heads?: string[]
+  /** When set, git push stays running until this settles. */
+  pushHold?: Promise<void>
+  fetchFails?: boolean
+  /** `merge-base --is-ancestor HEAD origin/<base>`: true when the branch has no commits of its own. */
+  isAncestor?: boolean
+  /** `git status --porcelain -z` after staging. */
+  porcelainZ?: string
+  /** The profile on origin/<base>, read after the switch; absent, the same profile. */
+  baseProfile?: Record<string, unknown>
+  switched?: boolean
   argv: string[][]
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
@@ -116,7 +126,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const profilePath = `${ROOT}/.issue-forge.json`
   on('fs.exists', ($: any, e: any) => ({ value: (e.path === profilePath && world.hasProfile) || e.path in world.files }))
   on('fs.read', ($: any, e: any) => {
-    if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(PROFILE) }
+    if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : PROFILE) }
     if (e.path === LCOV_PATH) return { value: LCOV }
     return { deny: 'ENOENT' }
   })
@@ -129,7 +139,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     const s = a.join(' ')
     const testResult = () => (world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit))
     if (cmd === 't') return world.testHold ? world.testHold.then(testResult) : testResult()
-    if (cmd === 'c') return ok('coverage written')
+    if (cmd === 'c' || cmd === 't2') return ok('ran')
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
@@ -142,7 +152,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (s === 'rev-parse HEAD') return ok(`c${world.commits.length}\n`)
     if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
     if (s === 'status --porcelain') return ok(world.isDirty ? ' M src/a.ts\n' : '')
-    if (a[0] === 'switch') return (world.head = a[3] ?? ''), ok()
+    if (a[0] === 'switch') return (world.head = a[3] ?? ''), (world.switched = true), ok()
+    if (a[0] === 'fetch') return world.fetchFails ? fail('fatal: unable to access origin', 128) : ok()
+    if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return world.isAncestor === false ? fail('', 1) : ok()
+    if (a[0] === 'status' && a.includes('-z')) return ok(world.porcelainZ ?? '')
+    if (a[0] === 'push') return world.pushHold ? world.pushHold.then(() => ok()) : ok()
     if (a[0] === 'merge-base') return ok('base0\n')
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
@@ -503,6 +517,70 @@ describe('a run, stage by stage', () => {
     expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
     const ui = await pane($)
     expect(await ui.find({ type: 'Text', text: /https:\/\/github\.com\/o\/r\/pull\/20/ })).toBeDefined()
+  })
+})
+
+describe('review round 3 (PR #24)', () => {
+  test('stop while git push is running: no pull request is opened afterwards', async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, pushHold: new Promise<void>(resolve => (release = resolve)) }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.argv.some(a => a[1] === 'push'), 'the push')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    release()
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect(w.argv.some(a => a[0] === 'gh' && a[1] === 'pr')).toBe(false)
+  })
+
+  test('baseline: a failed fetch blocks; a branch with commits of its own is not fast-forwarded', async ($, on) => {
+    const blocked = storedRun('blocked', { blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { head: BRANCH, fetchFails: true }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at baseline: git fetch origin main failed: fatal: unable to access origin')
+    expect(w.argv.some(a => a[1] === 'merge' && a[2] === '--ff-only')).toBe(false)
+    w.fetchFails = false
+    w.isAncestor = false
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.some(a => a[1] === 'merge' && a[2] === '--ff-only')).toBe(false)
+    expect(w.argv).toContainEqual(['git', 'merge-base', 'HEAD', 'origin/main'])
+  })
+
+  test('gate G blocks when a command rewrote files after staging, and commits nothing', async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], porcelainZ: 'MM src/a.ts\0?? src/a.snap\0' }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain("blocked at gateG: a command changed files after staging, so the tested bytes aren't the ones that would be committed: src/a.ts, src/a.snap")
+    expect(w.commits.length).toBe(0)
+  })
+
+  test("the commands that run are the base's profile, read after the switch, not the starting checkout's", async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['t2'] } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    const switchAt = w.argv.findIndex(a => a[1] === 'switch')
+    expect(w.argv.slice(switchAt).some(a => a[0] === 't2')).toBe(true)
+    expect(w.argv.slice(switchAt).some(a => a[0] === 't')).toBe(false)
+  })
+
+  test("a lost stash after the behaviour commit blocks at gate G, and resume goes on there", async ($, on) => {
+    const stash = { sha: 'abc1234def', message: 'issue-forge #16 green before behaviour test (run 16-1, attempt 1)' }
+    const w = engine(on, { head: BRANCH, testsExit: 1, sinceRed: ['tests/b.ui.test.ts'], staged: ['tests/a.test.ts', 'tests/b.ui.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { behaviourFor: ['src/register.tsx'], greenStash: stash, used: { red: 1, green: 1, refactor: 0 } }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.commits[0]).toStartWith('test(#16): red: behaviour test for src/register.tsx')
+    expect((await run($, 'status')).text).toContain('blocked at gateG: stash abc1234 "issue-forge #16 green before behaviour test (run 16-1, attempt 1)" is gone')
+    w.testsExit = 0
+    w.sinceRed = ['src/register.tsx']
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')), 'gate G')
   })
 })
 

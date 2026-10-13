@@ -406,3 +406,25 @@ After the round: validate is clean; 82 tests pass (56 logic, 26 UI and behaviour
 **Live recheck of round 1 (findings 3 and 8):** worktree `scratch/wt-c7b`, a second run on #16 with bd19cbe loaded. It reached ready in 13 min, each phase on its first attempt: red `8c78ea9`, green `aa948e9`, refactor `9920e4a`. Changed lines 100.00%, changed branches 100.00%, total 97.11% / 91.56%. `gatedHead` = `9920e4a`. The three agents' ids and names are in `issue-forge:agents:<root>`. Nothing pushed. Round 2 changes the spawn path only by an extra in-memory stop check.
 
 After round 2: validate is clean; 90 tests pass (61 logic, 29 UI and behaviour); `tsc` is clean; own logic coverage is 100.00% lines and 99.32% branches; the logic suite counts 61 under both the kit and `claude plugin test`.
+
+## Review: PR #24, round 3 (2026-10-13)
+
+Codex reviewed bd19cbe and cf8344a: 16 findings after round 1. `/code-review` judged them against cf8344a, together with one finding of its own. Each fix below has a test; on cf8344a's code the 5 new UI tests fail and the logic file can't load.
+
+| Level | Finding (Codex id) | Fix |
+|---|---|---|
+| 1 | Stop wasn't checked inside the base question, switch, push or `gh pr create`: a PR opened after Stop (4261944062, reproduced) | `stillDriving` after the base question, before `git switch`, before `git push` and before `gh pr create` |
+| 1 | A baseline blocked after its fast-forward lost the new merge base; the next resume skipped the catch-up and kept the stale one (4261944013, reproduced) | Baseline fetches (checked, 4261944030), catches up when `merge-base --is-ancestor HEAD origin/<base>` (no commits of its own), and always recomputes the merge base |
+| 2 | Commands that rewrite files ran on bytes other than the committed index (4262173410) | Gate G/F blocks when `git status --porcelain -z` shows working-tree changes after staging (`unstagedOf`) |
+| 2 | The profile came from the starting checkout, which anyone may have pushed (4261967827, security) | Preflight reads it again after `git switch -c … origin/<base>`, and the run keeps that copy |
+| 2 | A lost or conflicting stash blocked at gate R, a dead end after a manual restore (4261944052) | Gate R records the behaviour commit, then blocks at gate G (`blockAfter`), and resume continues there |
+| 2 | A relative `lcovPath` was read against the session's cwd (4261944043) | `lcovFileOf` resolves it against the root |
+| 2 | Empty glob entries validated (4261943984) | Refused in every glob list |
+| 3 | A gate R replay after a reload lost `redCommit` (4261944019) | Nothing new to commit → HEAD is the red commit |
+| 3 | `checks` commands weren't looked up at preflight (code review) | `outsideChecks` includes them |
+| 3 | `__proto__` / `constructor` path keys (4262173420); repository root `/` (4262173429) | Prototype-free maps; `relativeTo` handles `/` |
+| doc | Agents are unsandboxed (4262133355, security); `sh` is needed for command lookup (4262173400) | README: an Agents row in "What it reaches" and the limits list. The agent API has no sandbox field |
+| left | Duplicate `SF` records append `BRDA` (4261943972: fails closed, common reporters don't emit them); the 500-ref cap (4261944005: needs about 80 runs and an agent alive that long) | Not changed |
+| FP | Windows absolute `argv0` (4261943997) | Already fixed in cf8344a |
+
+After round 3: validate is clean; 99 tests pass (65 logic, 34 UI and behaviour); `tsc` is clean; own logic coverage is 100.00% lines and 99.33% branches; the logic suite counts 65 under both the kit and `claude plugin test`.

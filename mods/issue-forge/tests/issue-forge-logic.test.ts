@@ -32,6 +32,7 @@ import {
   isWorking,
   kindOf,
   layoutOf,
+  lcovFileOf,
   matchesAny,
   newRun,
   nextDemoState,
@@ -59,6 +60,7 @@ import {
   tailLines,
   totals,
   truncate,
+  unstagedOf,
   viewOf,
 } from '../hooks/issue-forge-logic'
 import type { CommandResult, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
@@ -182,9 +184,36 @@ describe('profile (§4)', () => {
 
   test('globs: braces, brackets and ! are refused, not matched literally', () => {
     for (const glob of ['src/**/*.{ts,tsx}', 'src/[ab].ts', '!src/x.ts']) {
-      expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, testGlobs: [glob] }), HOME).errors[0]).toStartWith('testGlobs must be a non-empty array of globs using only * ** ?')
+      expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, testGlobs: [glob] }), HOME).errors[0]).toStartWith('testGlobs must be a non-empty array of non-empty globs using only * ** ?')
     }
-    expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, excludeGlobs: ['gen/{a,b}/**'] }), HOME).errors[0]).toStartWith('excludeGlobs must be an array of globs')
+    expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, excludeGlobs: ['gen/{a,b}/**'] }), HOME).errors[0]).toStartWith('excludeGlobs must be an array of non-empty globs')
+  })
+
+  test('round 3 (PR #24): empty glob entries refused; checks commands looked up; relative lcovPath is the root\'s', () => {
+    for (const key of ['testGlobs', 'behaviourTestGlobs', 'excludeGlobs']) {
+      expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, unmeasuredGlobs: ['src/x.ts'], behaviourTestGlobs: ['tests/ui.test.ts'], [key]: [''] }), HOME).errors[0]).toStartWith(`${key} must be`)
+    }
+    expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, sourceGlobs: ['  '] }), HOME).errors[0]).toStartWith('sourceGlobs must be')
+    expect(outsideChecks(profile({ checks: [['eslint', '.'], ['./scripts/check.sh']] }), ROOT).commands.map(c => c.argv0)).toEqual(['npm', 'eslint', './scripts/check.sh'])
+    expect(lcovFileOf(profile({ lcovPath: 'coverage/lcov.info' }), '/repo/')).toBe('/repo/coverage/lcov.info')
+    expect(lcovFileOf(profile({ lcovPath: '/tmp/x.lcov' }), '/repo')).toBe('/tmp/x.lcov')
+    expect(lcovFileOf(profile({ lcovPath: 'C:\\cov\\x.lcov' }), '/repo')).toBe('C:\\cov\\x.lcov')
+  })
+
+  test('a repository rooted at / and paths named like Object.prototype keys', () => {
+    expect(relativeTo('/', '/src/a.ts')).toBe('src/a.ts')
+    expect(relativeTo('/', '/')).toBe('')
+    const changed = parseDiff('diff --git a/__proto__ b/__proto__\n+++ b/__proto__\n@@ -0,0 +1,2 @@\n+x\n+y\ndiff --git a/constructor b/constructor\n+++ b/constructor\n@@ -0,0 +1 @@\n+z\n')
+    expect(changed['__proto__']).toEqual([1, 2])
+    expect(changed['constructor']).toEqual([1])
+    expect(parseLcov('SF:constructor\nDA:1,1\nLF:1\nLH:1\nend_of_record\n', ROOT)['constructor']?.lines[1]).toBe(1)
+  })
+
+  test('unstagedOf: what a command wrote after git add -A (working-tree column or untracked)', () => {
+    expect(unstagedOf('')).toEqual([])
+    expect(unstagedOf('M  src/a.ts\0A  tests/b.test.ts\0')).toEqual([])
+    expect(unstagedOf('MM src/a.ts\0 M src/c.ts\0?? snap/new.snap\0M  ok.ts\0')).toEqual(['src/a.ts', 'src/c.ts', 'snap/new.snap'])
+    expect(unstagedOf('RM new name.ts\0old name.ts\0R  x.ts\0y.ts\0')).toEqual(['new name.ts'])
   })
 
   test('an issue line "Base branch: x" overrides the base; the first one wins', () => {
@@ -495,6 +524,14 @@ describe('state (§7.4)', () => {
     expect(advance(run({ step: 'gateF', used: { red: 1, green: 1, refactor: 1 } }), { type: 'resume' }, 1).used.refactor).toBe(0)
     const pre = run({ step: 'baseline' })
     expect(advance(pre, { type: 'resume' }, 1)).toBe(pre)
+  })
+
+  test("a behaviour pass whose stash couldn't be restored records its commit, then blocks at gate G", () => {
+    const r = run({ step: 'gateR', redCommit: 'r1', behaviourFor: ['src/register.tsx'], used: { red: 1, green: 1, refactor: 0 } })
+    const b = advance(r, { type: 'gated', gate: pass('R'), commit: 'r2', blockAfter: { reason: 'stash abc is gone', next: 'restore by hand' } }, 4)
+    expect(b).toMatchObject({ step: 'blocked', redCommit: 'r2', isBehaviourDone: true, blocked: { at: 'gateG', reason: 'stash abc is gone', next: 'restore by hand' } })
+    expect(b.behaviourFor).toBeUndefined()
+    expect(advance(b, { type: 'resume' }, 5).step).toBe('gateG')
   })
 
   test('G6 alone sends the run back to red once, then gate G runs on the restored work', () => {

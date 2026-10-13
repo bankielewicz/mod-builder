@@ -30,6 +30,7 @@ import {
   isOwnHandback,
   isWorking,
   layoutOf,
+  lcovFileOf,
   newRun,
   nextDemoState,
   outsideChecks,
@@ -48,6 +49,7 @@ import {
   tailLines,
   totals,
   truncate,
+  unstagedOf,
   viewOf,
 } from './issue-forge-logic'
 import type { CommandResult, DemoState, Gate, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
@@ -305,6 +307,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   const asked = baseOf(profile, issue.body)
   const base = asked === profile.baseBranch ? asked : await chooseBase($, run.issue, asked, profile.baseBranch)
   if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profile.baseBranch}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
+  stillDriving(run)
   await setActivity($, `git fetch origin ${base}`)
   const fetched = await git($, root, ['fetch', 'origin', base])
   if (fetched.exitCode !== 0) return block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
@@ -314,31 +317,42 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     .map(line => line.split('refs/heads/')[1] ?? '')
     .filter(Boolean)
   const branch = branchName(run.issue, issue.title, [...local, ...remote])
+  stillDriving(run)
   await setActivity($, `git switch -c ${branch}`)
   const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
   if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
   const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${base}`])).trim()
-  return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base, branch, mergeBase, profile }
+  // The profile whose commands run is the base's, not the checkout the run started from (which anyone may have pushed).
+  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
+  const trusted = await loadProfile($, root)
+  if (!trusted.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
+  return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base, branch, mergeBase, profile: trusted.profile }
 }
 
-/** Step 3. A branch with no commits of its own first catches up with the base (so "fix main, then resume" works). */
+/**
+ * Step 3. A branch with no commits of its own first catches up with the base (so "fix main, then resume"
+ * works), and the merge base is computed afresh every time, so a blocked baseline never leaves a stale one.
+ */
 async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
   const root = run.root
-  let mergeBase = run.mergeBase
-  if ((await gitOut($, root, ['rev-list', '--count', `${run.mergeBase}..HEAD`])).trim() === '0') {
+  await setActivity($, `git fetch origin ${run.base}`)
+  const fetched = await git($, root, ['fetch', 'origin', run.base])
+  if (fetched.exitCode !== 0) return block(`git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+  const hasNoOwnCommits = (await git($, root, ['merge-base', '--is-ancestor', 'HEAD', `origin/${run.base}`])).exitCode === 0
+  if (hasNoOwnCommits) {
+    stillDriving(run)
     await setActivity($, `catching up with origin/${run.base}`)
-    await git($, root, ['fetch', 'origin', run.base])
     const ff = await git($, root, ['merge', '--ff-only', '-q', `origin/${run.base}`])
     if (ff.exitCode !== 0) return block(`could not fast-forward to origin/${run.base}: ${firstLine(ff.stderr)}`, 'check the branch')
-    mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${run.base}`])).trim()
   }
+  const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${run.base}`])).trim()
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
   if (tests.exit !== 0) return block(tests.isTimedOut ? 'tests time out before any change' : 'tests fail before any change', `fix ${run.base}`)
   await setActivity($, 'running coverage')
   const since = await $.clock.now()
   const cov = await runLong($, p.coverageCommand, root, p.commandTimeoutMinutes)
-  const text = cov.exit === 0 ? await readLcov($, p.lcovPath, since) : null
+  const text = cov.exit === 0 ? await readLcov($, lcovFileOf(p, root), since) : null
   const lcov = text === null ? null : parseLcov(text, root)
   if (!lcov || !hasSourceRecord(p, lcov)) return block('coverage produced no data', `check coverageCommand and lcovPath in ${PROFILE_FILE}`)
   return { type: 'baselined', baseline: totals(p, lcov), mergeBase }
@@ -418,13 +432,15 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   const gate = gateR(p, { staged, tests })
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
-  const commit = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []))
+  // Nothing new to commit means a replay after a reload: the gated tests are HEAD already.
+  const commit = (await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []))) ?? (await headOf($, root))
   if (isBehaviour && run.greenStash) {
     const stash = run.greenStash
     stillDriving(run)
-    if (!hasStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), stash.sha)) return block(`stash ${stash.sha.slice(0, 7)} is gone`, "restore green's work by hand")
+    const restore = (reason: string) => ({ type: 'gated' as const, gate, commit, testTail: tests.tail, blockAfter: { reason, next: `restore green's work by hand (git stash apply ${stash.sha.slice(0, 7)})` } })
+    if (!hasStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), stash.sha)) return restore(`stash ${stash.sha.slice(0, 7)} "${stash.message}" is gone`)
     const applied = await git($, root, stashApplyArgv(stash).slice(1))
-    if (applied.exitCode !== 0) return block(`could not restore green's work; it is in stash ${stash.sha.slice(0, 7)} "${stash.message}"`, 'apply it by hand')
+    if (applied.exitCode !== 0) return restore(`could not restore green's work; it is in stash ${stash.sha.slice(0, 7)} "${stash.message}"`)
   }
   return { type: 'gated', gate, commit, testTail: tests.tail }
 }
@@ -446,7 +462,7 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   await setActivity($, 'running coverage')
   const since = await $.clock.now()
   const coverage = await runLong($, p.coverageCommand, root, p.commandTimeoutMinutes)
-  const lcov = coverage.exit === 0 ? await readLcov($, p.lcovPath, since) : null
+  const lcov = coverage.exit === 0 ? await readLcov($, lcovFileOf(p, root), since) : null
   // Fixed prefixes and no external diff: diff.mnemonicPrefix or diff.noprefix would hide every changed line.
   const diff = await gitOut($, root, ['diff', '-U0', '--cached', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', run.mergeBase])
   const checks: { argv: string[]; result: CommandResult }[] = []
@@ -454,6 +470,9 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
     await setActivity($, `checks ${i + 1}/${p.checks.length}`)
     checks.push({ argv, result: await runLong($, argv, root, p.commandTimeoutMinutes) })
   }
+  // A command that rewrote files (a formatter, a snapshot update) means the tests ran on bytes that aren't staged.
+  const rewritten = unstagedOf(await gitOut($, root, ['status', '--porcelain', '-z']))
+  if (rewritten.length > 0) return block(`a command changed files after staging, so the tested bytes aren't the ones that would be committed: ${rewritten.slice(0, 5).join(', ')}${rewritten.length > 5 ? ` and ${rewritten.length - 5} more` : ''}`, 'make the profile commands leave the tree as they found it (or commit what they write)')
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
   if (gate.passed) {
     const commit = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run))
@@ -482,9 +501,11 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
   await $.fs.write(body, prBody(run))
+  stillDriving(run)
   await setActivity($, `git push origin ${run.branch}`)
   const pushed = await git($, run.root, ['push', 'origin', run.gatedHead ? `${run.gatedHead}:refs/heads/${run.branch}` : run.branch])
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
+  stillDriving(run)
   await setActivity($, 'gh pr create')
   const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
