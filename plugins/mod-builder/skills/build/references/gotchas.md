@@ -68,6 +68,36 @@ Re-check [field] items against the d.ts after a Claude Code update.
   replaced on update. Use `~/.claude/<name>-data/`.
 - **[field]** A floating promise fails tests at teardown. Write `void p.catch(() => undefined)`.
 
+## Subagents a mod spawns
+
+- **[probe]** A mod's `$.agent.spawn` reaches other plugins as a `tool.call` of `Agent` (with
+  `next.origin` naming the spawning plugin), then as `agent.spawn`. So duet routes it like a model's
+  Agent call: with `codexAgents: "*"` a mod's unnamed agent goes to Codex. Passing a `name` keeps it
+  on Claude, because duet leaves named calls alone.
+- **[probe]** A spawn started from a `command.run` handler in `void (async () => …)()` outlives the
+  handler. Its `turn.complete` (with the `agentId` and its `answer`) arrived about 10 s later. The
+  subagent's own tool calls are `tool.call`s carrying that `agentId`. Its Write and Bash ran without
+  a prompt under `defaultMode: "auto"`; other permission modes weren't checked.
+- **[probe]** Plain `claude -p "/cmd"` exits as soon as the command answers, so a detached spawn
+  never even resolves. To keep a headless session alive, use `--input-format stream-json` with
+  stdin held open, or test in an interactive session.
+- **[probe]** When a subagent finishes, its report is handed back to the main loop as a
+  `prompt.submit` with origin `peer`, which starts a main-model turn. The text starts
+  `<agent-message from="<name>">` for a named agent and `<agent-message from="<agentId>">` for an
+  unnamed one. A `prompt.submit` hook that returns `{ drop: reason }` for its own agents keeps the
+  main model idle, and the `turn.complete` still arrives. The reason is shown to the person.
+- **[probe]** When another plugin answers the `Agent` call in-line with a completed result (as
+  duet does for a Codex run that edits), `$.agent.spawn` resolves `{ model, agentId }` from that
+  result, for example `{ model: "codex", agentId: "duet-…" }`. There is no local loop behind it, so
+  no `turn.complete` and no answer text. Treat the phase as over once the spawn resolves. A result
+  that doesn't fit the Agent tool's output shape turns into `{ deny }`.
+- **[probe]** `$.ui.ask` from a detached promise (no hook running) shows its question in an
+  interactive session, as `Plugin <name>: <question>`. Under `-p`, stream-json included, it rejects:
+  `no tool named "AskUserQuestion" in this session`.
+- **[probe]** Calling `return()` on a `$.process.spawn` stream while its child is silent ends the
+  `for await` loop at once and kills the child: a `sleep 37` was gone 10 ms later. That is
+  enough to enforce a timeout; no `timeout` wrapper is needed.
+
 ## Plugins and skills
 
 - **[probe]** A skill inside a plugin is namespaced `<plugin>:<skill>`, so `plugins/x/skills/build`

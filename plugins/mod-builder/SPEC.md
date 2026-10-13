@@ -294,3 +294,11 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Unchanged:** the Logic and Register stages still look only at files directly in `hooks/` and `tests/`; a nested `hooks/lib/x-logic.ts` doesn't count as the logic module.
 - **On upgrade:** results stored by 0.2.0 carry the old signature format, so every mod's Validate and Test read stale once and `autoRerun` re-runs them at the end of the next turn.
 - **Tests:** 53 (logic and UI). The two new ones fail on 0.2.0.
+
+## Change 0.2.2 (2026-10-13)
+
+> For issue-forge (`docs/specs/issue-forge.md`, checkpoints C0 and C1).
+
+- **New:** `skills/build/scripts/coverage/` (`kit.mjs`, `hooks.mjs`, `register.mjs`) lets Node 24's test runner run a mod's logic tests with coverage. It stands in for `claude-code/testing`, and `register.mjs` maps that import to the kit. Logic tests only; UI tests need the real kit. Checked: mod-builder 28/28, duet 38/38, git-branch 4/4, turn-counter 2/2, the same counts as `claude plugin test`.
+- **New:** `references/gotchas.md` gets a "Subagents a mod spawns" section, six `[probe]` entries: other plugins see a mod's spawn as a `tool.call` of `Agent`; a detached spawn outlives the command; plain `-p` exits first; how to drop the hand-back prompt; in-line answers have no `turn.complete`; `$.ui.ask` from a detached promise; `return()` kills a spawned child.
+- **Unchanged:** Mod Lab's code and tests.
