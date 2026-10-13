@@ -32,6 +32,8 @@ type World = {
   redPaths: string[]
   hasChanges: boolean
   answer: string | null
+  /** When set, the publish question stays open until this settles with the label chosen. */
+  hold: Promise<string> | null
   argv: string[][]
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
@@ -60,6 +62,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     redPaths: [],
     hasChanges: true,
     answer: 'Not now',
+    hold: null,
     argv: [],
     commits: [],
     spawned: [],
@@ -88,6 +91,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     const q = e.questions[0].question
     world.asked.push(q)
+    if (world.hold) return world.hold.then(label => ({ result: { questions: e.questions, answers: { [q]: label } } }))
     if (world.answer === null) return { deny: 'nobody to ask' }
     return { result: { questions: e.questions, answers: { [q]: world.answer } } }
   })
@@ -390,6 +394,23 @@ describe('a run, stage by stage', () => {
     expect(w.spawned[0]!.subagentType).toBe('general-purpose')
     expect(w.spawned[0]!.name).toBeUndefined()
     expect(w.spawned[0]!.prompt).toContain('Write tests from the issue only.')
+  })
+
+  test('publish while the question is still open: one push, one PR, and the late answer changes nothing', async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    expect((await run($, 'publish')).text).toContain(`pushing ${BRANCH}`)
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    release('Publish')
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'pr').length).toBe(1)
+    expect(w.argv.filter(a => a[0] === 'git' && a[1] === 'push').length).toBe(1)
+    expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
   })
 
   test('publish pushes the branch without -u and opens a PR whose body closes the issue', async ($, on) => {

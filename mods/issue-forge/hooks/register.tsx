@@ -79,7 +79,6 @@ let stopCommand: (() => void) | null = null
 let liveAgent: string | null = null
 /** The active run's agent ids and names, kept in memory for the tool.call guard and the hand-back drop. */
 let runRefs: string[] = []
-let tick: { cancel: () => void } | null = null
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
 
 function readOptions(raw: unknown): Options {
@@ -443,19 +442,26 @@ async function doStep($: EngineInterface, run: Run): Promise<RunEvent | null> {
   }
 }
 
-/** Drives the run step by step until it leaves the working steps, then asks about publishing once. */
+/**
+ * Drives the run step by step until it leaves the working steps, then asks about publishing once.
+ * A drive that another took over (publish while its question was open) ends without touching it.
+ */
 async function drive($: EngineInterface, root: string, runId: string, mayAsk: boolean): Promise<void> {
   const me = { runId, isStopped: false }
   driving = me
-  tick = $.clock.every(1000, () => void tickOnce($).catch(() => undefined))
+  const ticker = $.clock.every(1000, () => void tickOnce($).catch(() => undefined))
+  const isMine = () => driving === me && !me.isStopped
   try {
     for (;;) {
       const run = await loadRun($, root)
-      if (!run || run.id !== runId || me.isStopped) return
+      if (!run || run.id !== runId || !isMine()) return
       if (run.step === 'ready' && mayAsk) {
         mayAsk = false
         if (!(await confirmPublish($, run))) return
-        await saveRun($, advance(run, { type: 'publish' }, await $.clock.now()))
+        // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
+        const now = await loadRun($, root)
+        if (!now || now.id !== runId || now.step !== 'ready' || !isMine()) return
+        await saveRun($, advance(now, { type: 'publish' }, await $.clock.now()))
         continue
       }
       if (!isWorking(run.step)) return
@@ -465,17 +471,18 @@ async function drive($: EngineInterface, root: string, runId: string, mayAsk: bo
       } catch (err) {
         ev = block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
       }
-      if (!ev || me.isStopped) return
+      if (!ev || !isMine()) return
       const latest = (await loadRun($, root)) ?? run
       if (latest.id !== runId || latest.step === 'stopped') return
       await saveRun($, advance(latest, ev, await $.clock.now()))
     }
   } finally {
-    if (driving === me) driving = null
-    tick?.cancel()
-    tick = null
-    await setActivity($, null).catch(() => undefined)
-    await announce($, root).catch(() => undefined)
+    ticker.cancel()
+    if (driving === me) {
+      driving = null
+      await setActivity($, null).catch(() => undefined)
+      await announce($, root).catch(() => undefined)
+    }
   }
 }
 
@@ -551,6 +558,8 @@ async function publishRun($: EngineInterface): Promise<string> {
   const root = await rootOf($)
   const run = root ? await loadRun($, root) : null
   if (!root || !run || run.step !== 'ready') return run ? `#${run.issue} isn't ready to publish (${run.step}).` : 'no run to publish here.'
+  // A drive waiting on the publish question is taken over: when that question is answered, it finds the run moved on.
+  if (driving?.runId === run.id) driving = null
   await saveRun($, advance(run, { type: 'publish' }, await $.clock.now()))
   startDrive($, root, run.id, false)
   return `publishing #${run.issue}: pushing ${run.branch} and opening a pull request against ${run.base}.`
