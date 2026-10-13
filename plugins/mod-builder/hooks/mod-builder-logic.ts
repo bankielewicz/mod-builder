@@ -643,7 +643,9 @@ export function fixPromptOf(name: string, stage: Stage, errors: readonly string[
       : `the ${stage} problem${failedCount === 1 ? '' : 's'}`
   const [first, ...rest] = errors
   const quoted = [`    ✕ ${(first ?? '').trim()}`, ...rest.slice(0, 2).map(line => `      ${line.trim()}`)].join('\n')
-  return `Fix ${what} in ${path}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
+  // `in .. First failure` would read as the parent folder.
+  const where = path === '.' ? 'the current folder' : path
+  return `Fix ${what} in ${where}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
 }
 
 /** The done box's one line: `ready to share  ·  8/8 stages · 12 tests · validate clean · 1 gate`. */

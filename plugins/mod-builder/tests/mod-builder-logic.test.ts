@@ -326,6 +326,10 @@ describe('mod-builder-logic', () => {
     expect(fixPromptOf('foo', 'Validate', ['x'], 2, 'other/foo')).toStartWith('Fix the Validate problems in other/foo. First failure, from Mod Lab:')
   })
 
+  test('fix prompt says "the current folder" when the mod folder is the working directory, not "in .."', () => {
+    expect(fixPromptOf('foo', 'Test', ['x'], 1, '.')).toStartWith('Fix the failing test in the current folder. First failure, from Mod Lab:')
+  })
+
   test('view: the detail header shows the display path it is given, with a trailing slash', () => {
     expect(viewOf(FULL, GREEN, [], null, true, null, null, '/work/mods/git-branch').path).toBe('/work/mods/git-branch/')
     expect(viewOf(FULL, {}, [], null, false, null, null, 'other/git-branch').path).toBe('other/git-branch/')
