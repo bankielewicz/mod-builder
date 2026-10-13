@@ -294,3 +294,61 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Unchanged:** the Logic and Register stages still look only at files directly in `hooks/` and `tests/`; a nested `hooks/lib/x-logic.ts` doesn't count as the logic module.
 - **On upgrade:** results stored by 0.2.0 carry the old signature format, so every mod's Validate and Test read stale once and `autoRerun` re-runs them at the end of the next turn.
 - **Tests:** 53 (logic and UI). The two new ones fail on 0.2.0.
+
+## Change 0.2.2 (2026-10-13): logging and `/mod-builder config`
+
+> Asked for: "add logging to the mod-builder plugin … `/mod-builder config` … the one config option is logging: [off], [on/normal], [verbose], [debug] … try catch blocks to capture data for said logs." Proposed below; nothing is built until approved.
+
+- **New option** `logging` in `userConfig`: `"type": "string"`, `"options": ["off", "normal", "verbose", "debug"]`, default **`normal`**. It shows in `/config` too.
+- **New command** `/mod-builder config` (probe 2026-10-13: a plugin can register a command equal to its own name, and `/mod-builder:build` and `/mod-builder:edit` still resolve):
+  - `/mod-builder config`, or `/mod-builder config list`: every mod-builder option with its current value, plus the path of this session's log file.
+  - `/mod-builder config <option> <value>`, for example `/mod-builder config logging verbose`: changes the option through its `/config` row (`$.config.list` / `$.config.set`, as duet does). It answers with the new value, or the reason it couldn't. Changing a plugin's options reloads the plugin (types), so the change applies on reload, and the log line about it is written to the file before the set. The row is matched by its exact key `mod-builder.<option>` and an owner of `mod-builder` or `mod-builder@<source>`: seen live, the owner names the install (`mod-builder@inline` under `--plugin-dir`) while `$.plugin.name` is `mod-builder`. Interactive `/config` lists the plugin's rows; under `claude -p`, `$.config.list()` returned none (code review, PR #21), so there the command says to use `/config` or `/plugin` instead.
+- **Where logs go:**
+  - a file, `~/.claude/mod-builder-data/logs/<YYYY-MM-DD>-<first 8 of the session id>.log`, one file per session, so sessions never race;
+  - the same line mirrored to Claude Code's debug log with `$.ui.log(line, { to: 'debug' })`, visible under `claude --debug`.
+- **How the file is written:** `$.fs.write` writes whole files only, so lines collect in a module-level buffer, capped at 2000 lines (oldest dropped, with a `… N earlier lines dropped` marker), and the whole file is rewritten on each flush. The buffer flushes on every `normal`-level line, at the end of each main-loop turn, and two seconds after the first line not yet written (`$.clock.after`). After a reload, the module's first write reads the session's existing file and continues it, so a reload loses only lines not yet written. A log file that exists but can't be read is never overwritten: that write is skipped and the next flush tries again. A session whose id can't be read writes `<date>-x<time>.log`, a name of its own. A flush with nothing new writes nothing, and a failed write leaves one line in the debug log. At `session.end` (including `/clear` and resume, after which the process goes on under a new session id with no `session.start`), the buffer is written and reset, so later lines go to the new session's file.
+- **Line format:** `2026-10-13T14:02:11.123Z NORMAL  <site>  <message>  {context as JSON}`, one line per event. Context is trimmed to 2000 characters. Environment values are never logged; process argv (paths and flags) is.
+- **What each level adds** (each level includes the ones above it):
+
+  | Level | Logged |
+  |---|---|
+  | off | nothing; no file is created |
+  | normal | every unexpected caught error (table below), with site, message and context; session start (plugin version, `modsDir`); each Validate, Test or Type-check result (mod, ok/failed, duration); each option change |
+  | verbose | + each `lab_report` (mod, stage, status); each scan (`modsDir`, folders found, mods judged, duration); each process started (argv, exit code, duration); each command (`/modlab …`, `/mod-builder …`) |
+  | debug | + expected misses (a missing folder or file); each mod's lights after a scan; the last 20 lines of each process's output; `$.store` keys written |
+
+- **Try/catch coverage:** `hooks/register.tsx` at 688d8db has 32 places that catch an error and carry on, most silently. Each keeps its fallback behaviour and now logs:
+
+  | Line at 688d8db | Where | Level |
+  |---|---|---|
+  | 75 | `list()`: folder missing | debug (expected) |
+  | 77 | `readText()`: file missing | debug (expected) |
+  | 326 | `run()`: `fs.exists` for the types folder | debug (expected) |
+  | 227, 265 | `announceGreen()`, `tick()`: `ui.notify` | normal |
+  | 250 | `startClock()`: `tick` | normal |
+  | 317 | `execute()`: streaming Test failed, falling back to a one-shot run | verbose (expected in tests) |
+  | 344 | `run()`: a check could not run | normal |
+  | 374 | `runInBackground()` | normal |
+  | 457, 465, 466 | `session.start`: command or tool registration, first scan | normal |
+  | 478, 482, 496, 508, 510 | `/modlab` handler: detached work and its outer catch | normal |
+  | 534, 539, 542 | `lab_report` handler: open pane, rescan, the guard's catch | normal |
+  | 545 | `turn.complete`: `rerunStale` | normal |
+  | 552 | `ui.close` guard | normal |
+  | 560, 563 | `ui.render`: narrow warning | normal |
+  | 695, 696, 697, 698, 700, 720, 910 | pane buttons (demo, new mod, next, prev, README, back, fix) | normal |
+  | 1055 | band render | normal |
+
+  A caught error repeated at the same site is logged once, until that site logs a different message (a render that fails on every frame would otherwise write about four lines a second).
+  The logging calls (`logEvent`, `logCaught`) are top-level functions in `register.tsx`, because `$` may only be passed to top-level functions. Level filtering, line formatting, context trimming and the buffer cap are pure functions in `mod-builder-logic.ts`, with tests. A logging failure is itself swallowed: logging never breaks Mod Lab.
+- **Not covered:** there is no Python in mod-builder. `scripts/scaffold.mjs` and `scripts/check-archetypes.sh` run as terminal commands the build skill reads directly; `userConfig` doesn't reach them, so they keep printing to the terminal. Making them log too would need an environment variable such as `MOD_BUILDER_LOG`; that's left for later.
+- **What gets touched:** `hooks/register.tsx`, `hooks/mod-builder-logic.ts`, `.claude-plugin/plugin.json` (option, version), `.claude-plugin/marketplace.json` (version), `tests/` (new tests; `world()` gains `fs.write`, `ui.log`, `session.id`, `config.list` and `config.set` stubs), README ("What it reaches" regenerated; config table), `docs/mod-lab.md` (config table), `skills/build/references/gotchas.md` (the command-name probe). Writes `~/.claude/mod-builder-data/logs/`.
+- **Tests:** `off` writes nothing and creates no file; `normal` logs a caught error with its site and skips expected misses; `verbose` adds a scan line naming `modsDir`; `debug` adds expected misses; the buffer cap drops the oldest lines with a marker; `/mod-builder config` lists options and the log path; `/mod-builder config logging verbose` calls `$.config.set` with the right key; a bad value answers with the allowed values.
+- **Version:** 0.2.2 if this merges before the issue-forge PR (which also plans 0.2.2); whichever merges second takes the next patch.
+- **Live check after the build:** a session started in a git worktree, with `logging: verbose`, logs the `modsDir` its scan used. That settles whether Mod Lab watches the worktree's `mods/` or the main checkout's (pending issue).
+- **Done means:** all tests pass; validate is clean (it will now list `$.fs.write`, `$.ui.log` and `$.config.*`); the archetype check passes; the live check is recorded.
+- **Results (2026-10-13):**
+  - `claude plugin test plugins/mod-builder`: 66 pass, 0 fail (13 new, including a reload test: the session file is continued, not replaced). With `register.tsx` at 688d8db, 3 of the 4 new UI tests fail; the fourth (`off` writes nothing) is a guard.
+  - `claude plugin validate`: clean, 3 gating hooks with `.catch`. Archetype check: all pass. `tsc`: clean.
+  - The `/config` row key is `<plugin>.<field>` (bundled `claude-code.d.ts`, around line 2049), so `setOption` matches `mod-builder.logging`. A live set wasn't run, because it writes `~/.claude/settings.json`.
+  - Live, `claude -p --plugin-dir plugins/mod-builder "/mod-builder config"` from the worktree listed the four options and wrote `~/.claude/mod-builder-data/logs/2026-10-13-<session>.log`, holding `NORMAL  session.start  Mod Lab started  {"version":"0.2.2","modsDir":"<worktree>/mods","logging":"normal"}`.
+  - Worktree check: loaded with `--plugin-dir` from a worktree, the default `modsDir` is that worktree's `mods/`, so it follows the plugin's own folder (`$.plugin.root`). The installed copy loads from the main checkout, so a session in a worktree watches the main checkout's `mods/`. The direct check, a worktree session with the installed plugin at `logging: verbose`, can run once this merges.

@@ -1091,3 +1091,176 @@ export function liveReports(
   }
   return live
 }
+
+// ── Logging ───────────────────────────────────────────────────────────────
+
+export const LOG_LEVELS = ['off', 'normal', 'verbose', 'debug'] as const
+export type LogLevel = (typeof LOG_LEVELS)[number]
+/** The level a line is written at: never `off`. */
+export type LineLevel = Exclude<LogLevel, 'off'>
+/** Lines a session keeps; older ones are dropped with a marker. */
+export const LOG_CAP = 2000
+/** Characters of a line's context kept. */
+export const LOG_CONTEXT_MAX = 2000
+/** Lines below `normal` are written this long after the last one. */
+export const LOG_FLUSH_MS = 2000
+
+/** The `logging` option as a level; anything else is `normal`, the default. */
+export function logLevelOf(raw: unknown): LogLevel {
+  const word = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  return (LOG_LEVELS as readonly string[]).includes(word) ? (word as LogLevel) : 'normal'
+}
+
+/** Whether a line at `level` is written when the option is `configured`. */
+export function shouldLog(configured: LogLevel, level: LineLevel): boolean {
+  return LOG_LEVELS.indexOf(configured) >= LOG_LEVELS.indexOf(level)
+}
+
+const oneLine = (text: string): string => text.replace(/\r?\n/g, ' ⏎ ')
+const cut = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+
+/** JSON of a log line's context; a value JSON can't hold (a cycle) falls back to its text. */
+function contextText(context: unknown): string {
+  try {
+    return JSON.stringify(context) ?? String(context)
+  } catch {
+    return String(context)
+  }
+}
+
+/** A caught error as one short line: its name and message. */
+export function errorText(error: unknown): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  return cut(oneLine(text), 500)
+}
+
+/** One log line: time, level, site, message, and the context as JSON, cut to LOG_CONTEXT_MAX. */
+export function logLineOf(atMs: number, level: LineLevel, site: string, message: string, context?: unknown): string {
+  const time = new Date(atMs).toISOString()
+  const tail = context === undefined ? '' : `  ${cut(oneLine(contextText(context)), LOG_CONTEXT_MAX)}`
+  return `${time} ${level.toUpperCase().padEnd(7)} ${site}  ${oneLine(message)}${tail}`
+}
+
+/**
+ * Whether a caught error is worth a line: not when the same site last logged the same message.
+ * A render that fails on every frame (about four a second) would otherwise flood the log.
+ * Returns the updated record of each site's last message.
+ */
+export function isNewCaught(last: Readonly<Record<string, string>>, site: string, message: string): { isNew: boolean; last: Record<string, string> } {
+  if (last[site] === message) return { isNew: false, last: { ...last } }
+  return { isNew: true, last: { ...last, [site]: message } }
+}
+
+/** A session's lines so far, and how many older ones the cap dropped. */
+export type LogBuffer = { lines: readonly string[]; dropped: number }
+export const EMPTY_LOG: LogBuffer = { lines: [], dropped: 0 }
+
+/** The buffer with `line` added, keeping the newest `cap` lines. */
+export function pushLine(buffer: LogBuffer, line: string, cap: number = LOG_CAP): LogBuffer {
+  const lines = [...buffer.lines, line]
+  const over = Math.max(0, lines.length - cap)
+  return { lines: lines.slice(over), dropped: buffer.dropped + over }
+}
+
+/** The log file's whole text: a marker for dropped lines, then the lines. */
+export function logText(buffer: LogBuffer): string {
+  const marker = buffer.dropped ? [`… ${buffer.dropped} earlier line${buffer.dropped === 1 ? '' : 's'} dropped`] : []
+  return `${[...marker, ...buffer.lines].join('\n')}\n`
+}
+
+/**
+ * The session's log file as written before (by this module before a reload),
+ * with `buffer` after it: earlier lines first, the marker's count carried over,
+ * the newest `cap` kept. Lets a reloaded module continue the file, not replace it.
+ */
+export function continueLog(earlier: string, buffer: LogBuffer, cap: number = LOG_CAP): LogBuffer {
+  const lines = earlier.split('\n').filter(line => line !== '')
+  const marker = lines[0]?.match(/^… (\d+) earlier lines? dropped$/)
+  const kept = marker ? lines.slice(1) : lines
+  const all = [...kept, ...buffer.lines]
+  const over = Math.max(0, all.length - cap)
+  return { lines: all.slice(over), dropped: (marker ? Number(marker[1]) : 0) + buffer.dropped + over }
+}
+
+/** `<home>/.claude/mod-builder-data/logs/<YYYY-MM-DD>-<first 8 of the session id>.log`. */
+export function logFileOf(home: string, atMs: number, sessionId: string): string {
+  const day = new Date(atMs).toISOString().slice(0, 10)
+  const id = (sessionId.replace(/[^\w-]/g, '') || 'unknown').slice(0, 8)
+  return `${normalizePath(home)}/.claude/mod-builder-data/logs/${day}-${id}.log`
+}
+
+/** The last `count` non-blank lines of a process's output, for debug lines. */
+export function outputTail(output: string, count = 20): string[] {
+  return output.split(/\r?\n/).filter(line => line.trim()).slice(-count)
+}
+
+// ── /mod-builder config ───────────────────────────────────────────────────
+
+export type OptionName = 'logging' | 'autoRerun' | 'autoOpen' | 'modsDir'
+type OptionField = { name: OptionName; kind: 'choice' | 'boolean' | 'folder'; choices?: readonly string[]; values: string }
+export const OPTION_FIELDS: readonly OptionField[] = [
+  { name: 'logging', kind: 'choice', choices: LOG_LEVELS, values: 'off · normal · verbose · debug' },
+  { name: 'autoRerun', kind: 'boolean', values: 'on · off' },
+  { name: 'autoOpen', kind: 'boolean', values: 'on · off' },
+  { name: 'modsDir', kind: 'folder', values: 'a folder path, or default' },
+]
+export const CONFIG_USAGE = 'Usage: /mod-builder config [list] · /mod-builder config <option> <value>'
+
+export type ConfigCommand =
+  | { kind: 'list' }
+  | { kind: 'set'; name: OptionName; value: string | boolean }
+  | { kind: 'error'; text: string }
+
+/** `/mod-builder config …` words → what to do. */
+export function parseConfigCommand(words: readonly string[]): ConfigCommand {
+  const [first, ...rest] = words.filter(Boolean)
+  if (first === undefined || first.toLowerCase() === 'list') return { kind: 'list' }
+  const field = OPTION_FIELDS.find(f => f.name.toLowerCase() === first.toLowerCase())
+  if (!field) return { kind: 'error', text: `No option "${first}". Options: ${OPTION_FIELDS.map(f => f.name).join(', ')}. ${CONFIG_USAGE}` }
+  const raw = rest.join(' ').trim()
+  if (!raw) return { kind: 'error', text: `${field.name} needs a value: ${field.values}.` }
+  if (field.kind === 'choice') {
+    const word = raw.toLowerCase()
+    return field.choices?.includes(word)
+      ? { kind: 'set', name: field.name, value: word }
+      : { kind: 'error', text: `${field.name} must be one of ${field.values}.` }
+  }
+  if (field.kind === 'boolean') {
+    const word = raw.toLowerCase()
+    if (['on', 'true', 'yes'].includes(word)) return { kind: 'set', name: field.name, value: true }
+    if (['off', 'false', 'no'].includes(word)) return { kind: 'set', name: field.name, value: false }
+    return { kind: 'error', text: `${field.name} must be on or off.` }
+  }
+  return { kind: 'set', name: field.name, value: raw.toLowerCase() === 'default' ? '' : raw }
+}
+
+/** Whether a `/config` row's owner is this plugin: `mod-builder`, or `mod-builder@<source>`. */
+export function isOwnRow(owner: string | undefined, plugin: string): boolean {
+  return owner === plugin || (owner?.startsWith(`${plugin}@`) ?? false)
+}
+
+/** The listing's values once `name` is set to `value`; `defaultDir` is the folder an empty `modsDir` means. */
+export function valuesAfterSet(name: OptionName, value: string | boolean, defaultDir: string): Partial<OptionValues> {
+  if (name === 'logging') return { logging: logLevelOf(value) }
+  if (name === 'autoRerun') return { autoRerun: value === true }
+  if (name === 'autoOpen') return { autoOpen: value === true }
+  const dir = String(value)
+  return { modsDir: dir, modsDirShown: shortPath(dir || defaultDir) }
+}
+
+/** Current values as `/mod-builder config` lists them. */
+export type OptionValues = { logging: LogLevel; autoRerun: boolean; autoOpen: boolean; modsDir: string; modsDirShown: string }
+
+/** The `/mod-builder config` listing: each option, its value and what it takes, then the log file. */
+export function configListText(values: OptionValues, logFile: string): string {
+  const shown: Record<OptionName, string> = {
+    logging: values.logging,
+    autoRerun: values.autoRerun ? 'on' : 'off',
+    autoOpen: values.autoOpen ? 'on' : 'off',
+    modsDir: values.modsDir ? values.modsDirShown : `default (${values.modsDirShown})`,
+  }
+  const rows = OPTION_FIELDS.map(f => `  ${f.name.padEnd(10)} ${shown[f.name].padEnd(28)} ${f.values}`)
+  const log =
+    values.logging === 'off' ? 'Log file: none (logging is off)' : logFile ? `Log file: ${logFile}` : 'Log file: not written yet this session'
+  return ['mod-builder options (change one: /mod-builder config <option> <value>)', ...rows, log].join('\n')
+}
