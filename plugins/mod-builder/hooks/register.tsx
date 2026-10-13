@@ -69,6 +69,8 @@ let logFile = ''
 let logChain: Promise<void> = Promise.resolve()
 let flushTimer: Timer | null = null
 let lastCaught: Record<string, string> = {}
+let writtenSig = ''
+let hasReportedWriteFailure = false
 
 // Every function that takes `$` is declared here, at the top of the file: the
 // engine follows `$` only into functions it can see at this level.
@@ -86,8 +88,11 @@ function logEvent($: Engine, level: Lab.LineLevel, site: string, message: string
     const line = Lab.logLineOf(Date.now(), level, site, message, context)
     logBuffer = Lab.pushLine(logBuffer, line)
     $.ui.log(line, { to: 'debug' })
-    if (level === 'normal') void flushLog($)
-    else scheduleFlush($)
+    if (level === 'normal') {
+      flushTimer?.cancel()
+      flushTimer = null
+      void flushLog($)
+    } else scheduleFlush($)
   } catch {
     // A line that can't be recorded is dropped; Mod Lab carries on.
   }
@@ -116,9 +121,19 @@ function scheduleFlush($: Engine): void {
   }
 }
 
-/** Writes the buffer to this session's log file; writes run one at a time. */
+/** Writes the buffer to this session's log file; writes run one at a time. A failed write is noted once in the debug log. */
 function flushLog($: Engine): Promise<void> {
-  logChain = logChain.then(() => writeLog($)).catch(() => undefined)
+  logChain = logChain
+    .then(() => writeLog($))
+    .catch((error: unknown) => {
+      if (hasReportedWriteFailure) return
+      hasReportedWriteFailure = true
+      try {
+        $.ui.log(`mod-builder: could not write its log ${logFile}: ${Lab.errorText(error)}`, { to: 'debug' })
+      } catch {
+        // Nothing more can be done.
+      }
+    })
   return logChain
 }
 
@@ -127,14 +142,22 @@ async function writeLog($: Engine): Promise<void> {
   if (!logFile) {
     const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
     if (!home) return
-    const sessionId = await $.session.id().catch(() => 'unknown')
+    // A session whose id can't be read gets its own name, never a file other sessions share.
+    const sessionId = await $.session.id().catch(() => `x${Date.now().toString(36)}`)
     const file = Lab.logFileOf(home, Date.now(), sessionId)
     // After a reload this module starts empty: continue the session's file rather than replace it.
-    const earlier = await readText($, file)
-    if (earlier) logBuffer = Lab.continueLog(earlier, logBuffer)
+    // A file that exists but can't be read is left alone; the next flush tries again.
+    if (await $.fs.exists(file)) {
+      const earlier = String(await $.fs.read(file))
+      logBuffer = Lab.continueLog(earlier, logBuffer)
+    }
     logFile = file
   }
-  await $.fs.write(logFile, Lab.logText(logBuffer))
+  const text = Lab.logText(logBuffer)
+  const sig = `${logBuffer.dropped}:${logBuffer.lines.length}:${logBuffer.lines.at(-1) ?? ''}`
+  if (sig === writtenSig) return
+  await $.fs.write(logFile, text)
+  writtenSig = sig
 }
 
 const modsDirOf = ($: Engine): string => Lab.normalizePath(configuredDir || `${$.plugin.root}/../../mods`)
@@ -722,6 +745,7 @@ export const register: Register = (on, options) => {
     flushTimer = null
     logBuffer = Lab.EMPTY_LOG
     logFile = ''
+    writtenSig = ''
     return next(e)
   })
 

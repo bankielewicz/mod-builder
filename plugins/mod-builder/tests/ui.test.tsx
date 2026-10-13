@@ -50,6 +50,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     writes: [] as { path: string; text: string }[],
     sets: [] as { key: string; value: unknown }[],
     sessionId: 's1-session',
+    failReads: [] as string[],
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -74,13 +75,14 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   })
   on('fs.read', ($, e) => {
     const path = (e as { path: string }).path
+    if (seen.failReads.includes(path)) return { deny: 'EIO: read failed' }
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
   })
   on('fs.exists', ($, e) => ({ value: (e as { path: string }).path in disk }) as never)
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
-  on('session.id', () => ({ value: seen.sessionId }) as never)
+  on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
@@ -627,6 +629,31 @@ describe('logging (Change 0.2.2)', () => {
     const caught = lastLog(seen).split('\n').filter(line => /NORMAL  run  \w+Error: /.test(line))
     expect(caught).toHaveLength(1)
     expect(lastLog(seen).split('\n').filter(line => line.includes('git-branch Validate failed'))).toHaveLength(2)
+  })
+
+  test('a log that exists but cannot be read is never overwritten', OPTIONS, async ($, on) => {
+    const day = new Date().toISOString().slice(0, 10)
+    const path = `/home/u/.claude/mod-builder-data/logs/${day}-s1-sessi.log`
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), [path]: 'earlier lines\n' })
+    seen.failReads.push(path)
+    await start($)
+    await clock.advance(3000)
+    expect(seen.writes.filter(w => w.path === path)).toEqual([])
+  })
+
+  test('without a session id the log gets its own name; nothing changed means nothing rewritten', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    seen.sessionId = ''
+    await start($)
+    await clock.advance(3000)
+    const logs = seen.writes.filter(w => w.path.includes('mod-builder-data'))
+    expect(logs.length).toBeGreaterThan(0)
+    expect(logs[0]!.path).toMatch(/\/logs\/\d{4}-\d{2}-\d{2}-x[a-z0-9]{1,7}\.log$/)
+    const before = seen.writes.length
+    await $.turn.complete({ answer: 'nothing new' } as never)
+    await clock.advance(3000)
+    expect(seen.writes.filter(w => w.path.includes('mod-builder-data')).length).toBe(logs.length)
+    expect(seen.writes.length).toBeGreaterThanOrEqual(before)
   })
 
   test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
