@@ -707,6 +707,17 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // A session ending: write its lines, then start a fresh buffer and file. After `/clear` or a
+  // resume the process goes on under a new session id, and no session.start fires (types).
+  on('session.end', async ($, e, next) => {
+    await flushLog($)
+    flushTimer?.cancel()
+    flushTimer = null
+    logBuffer = Lab.EMPTY_LOG
+    logFile = ''
+    return next(e)
+  })
+
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE) await update($, readme, () => null)
     return next(e)

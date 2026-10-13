@@ -49,6 +49,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     logs: [] as string[],
     writes: [] as { path: string; text: string }[],
     sets: [] as { key: string; value: unknown }[],
+    sessionId: 's1-session',
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -79,7 +80,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
-  on('session.id', () => ({ value: 's1-session' }) as never)
+  on('session.id', () => ({ value: seen.sessionId }) as never)
+  on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
   on('config.set', ($, e) => (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
@@ -595,6 +597,22 @@ describe('logging (Change 0.2.2)', () => {
     expect((await run('config autoOpen on')).text).toBe(
       "Could not change autoOpen: this session's /config has no mod-builder rows (seen under claude -p). Change it in /config, or /plugin → mod-builder → options.",
     )
+  })
+
+  test('after /clear the next lines go to the new session file', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(3000)
+    await $.session.end({ reason: 'clear', sessionId: 's1-session', resume: { sessionId: 's1-session' } } as never)
+    seen.sessionId = 's2-session'
+    await $.command.run({ command: 'mod-builder', args: 'config logging debug', origin: COMPOSER, presentation: PRESENTATION })
+    await clock.advance(3000)
+    const second = seen.writes.filter(w => w.path.includes('-s2-sessi.log')).at(-1)?.text ?? ''
+    const first = seen.writes.filter(w => w.path.includes('-s1-sessi.log')).at(-1)?.text ?? ''
+    expect(second).toContain('NORMAL  config  logging set')
+    expect(second).not.toContain('Mod Lab started')
+    expect(first).toContain('Mod Lab started')
+    expect(first).not.toContain('logging set')
   })
 
   test('off: nothing is logged and no file is written', { options: { modsDir: MODS, logging: 'off' } }, async ($, on) => {
