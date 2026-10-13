@@ -353,6 +353,17 @@ describe('modsDir that is not mods/ under the working directory', () => {
     expect(seen.logs.filter(line => line.includes('session.cwd')).length).toBe(1)
   })
 
+  test('a long header path is cut from the start, so the mod folder stays in view', { options: { modsDir: ELSEWHERE } }, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch', ELSEWHERE))
+    await start($)
+    await clock.advance(10)
+    await command($, 'git-branch')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    const header = await ui.find({ type: 'Text', text: /^v0\.1\.0 · \/elsewhere\/mods\/git-branch\/$/ })
+    expect(header?.props.wrap).toBe('truncate-start')
+  })
+
   test('the detail header follows a /cd at the next render, without waiting for a scan', { options: { modsDir: OTHER } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch', OTHER))
     await start($)

@@ -1089,7 +1089,14 @@ export const register: Register = (on, options) => {
             {current.isDemo && <Text>{'  '}</Text>}
             {current.isDemo && demoChip('d-chip')}
           </Text>
-          {layout === 'full' ? dim(where) : <Text> </Text>}
+          {layout === 'full' ? (
+            // A path outside the working directory is absolute and can be long: cut its start, keep the mod folder.
+            <Text color={COLOR.dim} wrap="truncate-start">
+              {where}
+            </Text>
+          ) : (
+            <Text> </Text>
+          )}
         </Box>,
       )
       if (layout === 'full' && current.description) {
