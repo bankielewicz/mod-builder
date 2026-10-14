@@ -865,12 +865,13 @@ describe('review of PR #41', () => {
     expect(w.asked[0]).toContain('timed out')
   })
 
-  test("git worktree add gets the profile's command timeout, not git's 60 s", async ($, on) => {
+  test("git worktree add runs like the profile's commands, not on git's 60 s", async ($, on) => {
     const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' } })
     await start($)
     await run($, '16')
     await until(w, () => w.spawned.length === 1, 'red')
-    expect(w.calls.find(c => c.argv[1] === 'worktree')?.timeoutMs).toBe(15 * 60_000)
+    // Under the kit spawn can't start, so it falls back to process.run at the host's 10-minute cap.
+    expect(w.calls.find(c => c.argv[1] === 'worktree')?.timeoutMs).toBe(600_000)
   })
 
   test('publish checks the merge again, so the PR body says what was true when it was pushed', async ($, on) => {
