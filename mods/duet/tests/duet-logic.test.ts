@@ -853,6 +853,18 @@ describe('issue 4: pickAgent resolves a custom agent by Claude\'s rules', () => 
     expect(pick([file(0, '/w/.claude/agents/reader.md', 'Just notes, no frontmatter.')], 'reader')).toBeNull()
   })
 
+  test('a name or description whose value starts on the next indented line is read, as Claude reads it (PR #43 review)', () => {
+    // Probed on 2.1.299 and 2.1.300: Claude loads these; duet read each value as empty and skipped the file.
+    const nextLine = definition('name:\n  general-purpose\ndescription:\n  Reads things\ntools: Read', 'Only reads.')
+    const def = pick([file(0, '/w/.claude/agents/gp.md', nextLine)], 'general-purpose')
+    expect(def?.body).toBe('Only reads.')
+    expect(sandboxOf(def, 'general-purpose')).toBe('read-only')
+    const continued = definition('name: reader\ndescription: starts here\n  and goes on\ntools: Read', 'Continued.')
+    expect(pick([file(0, '/w/.claude/agents/r.md', continued)], 'reader')?.body).toBe('Continued.')
+    const folded = definition('name: reader\ndescription: >\n  folded text\ntools: Read', 'Folded.')
+    expect(pick([file(0, '/w/.claude/agents/r.md', folded)], 'reader')?.body).toBe('Folded.')
+  })
+
   test('a file with a name but no description is skipped, and a farther root\'s definition is used instead', () => {
     const noDescription = definition('name: reader\ntools: Write', 'No description.')
     expect(pick([file(0, '/w/.claude/agents/reader.md', noDescription)], 'reader')).toBeNull()
