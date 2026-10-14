@@ -180,18 +180,15 @@ type AgentEntry = { path: string; size: number; mtimeMs: number }
 
 /**
  * The `.claude/agents` folders Claude scans, nearest first: the session folder up to the repository root,
- * then the user's. Without a repository the search goes up to the filesystem root; a repository root that
- * isn't above the session folder (another spelling of the path) leaves just the session folder.
+ * then the user's. As Claude does, the repository root is the nearest folder holding a `.git` entry, whether
+ * or not git can read it; without one the search goes up to the filesystem root.
  */
 async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
-  const top = await git($, ['-C', cwd, 'rev-parse', '--show-toplevel'])
   const start = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
-  let stop: string | null = null
-  if (top !== '') stop = start === top || isInside(top, start) ? top : start
   const folders: string[] = []
   for (let dir = start; ; dir = parentOf(dir)) {
     folders.push(`${dir}/.claude/agents`)
-    if (dir === stop || parentOf(dir) === dir) break
+    if (parentOf(dir) === dir || (await $.fs.exists(`${dir}/.git`).catch(() => false))) break
   }
   const home = await homeDir($)
   const user = `${home.replace(/\/+$/, '')}/.claude/agents`
