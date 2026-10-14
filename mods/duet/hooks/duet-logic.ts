@@ -498,7 +498,7 @@ export function parseAgentFile(text: string): AgentDef | null {
     if (!LIST_KEYS.includes(key)) {
       // An indented line goes on with a plain value, as YAML folds it: text below an empty `description:`, or a value
       // that wraps. A `>` or `|` block keeps its indicator as its value.
-      if (/^\s/.test(line) && !/^[>|]/.test(fields[key] ?? '')) fields[key] = `${fields[key]} ${rest}`.trim()
+      if (/^\s/.test(line) && !/^[>|]/.test(fields[key]!)) fields[key] = `${fields[key]} ${rest}`.trim()
       continue
     }
     // A `- item` line, indented or not, under an empty value is a block list; any other line continues the value.
