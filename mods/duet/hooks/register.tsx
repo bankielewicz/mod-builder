@@ -465,13 +465,21 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
     return
   }
   Object.assign(task, { id: admitted.id })
-  await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($, cwd) : [], nonce: crypto.randomUUID() }), undefined)
-  const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
+  let done: Task
+  let text = ''
+  try {
+    await ensureTicker($)
+    const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($, cwd) : [], nonce: crypto.randomUUID() }), undefined)
+    done = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
+    text = run.text
+  } catch (err) {
+    // Whatever fails after admission, the row must not stay running and hold a slot.
+    done = { ...task, endedAt: Date.now(), status: 'error', detail: `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }
+  }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
-  if (!failure) await $.fs.write(`${await sessionDir($)}/review-${task.id}.md`, run.text)
-  $.ui.toast((failure ? `${task.id} review failed: ${failure}` : `${task.id} review: ${done.detail}`).slice(0, 80))
+  if (done.status === 'done') await $.fs.write(`${await sessionDir($)}/review-${task.id}.md`, text)
+  $.ui.toast((done.status === 'error' ? `${task.id} review failed: ${done.detail}` : `${task.id} review: ${done.detail}`).slice(0, 80))
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────
