@@ -34,8 +34,9 @@ export const WORKSPACES: readonly Workspace[] = ['ask', 'worktree', 'here']
 /** The command timeout before a run has its profile (a preflight blocked before it was read). */
 export const DEFAULT_COMMAND_MINUTES = DEFAULTS.commandTimeoutMinutes
 
-/** A relative path with no `..` segment that names a folder inside the repository. */
-const isInsideDir = (v: unknown): v is string => typeof v === 'string' && !isAbsolutePath(v) && !/^[\\/]/.test(v) && normalizePath(v) !== '' && !normalizePath(v).split('/').includes('..')
+/** A relative path with no `..` segment that names a folder inside the repository (`D:tmp` is on drive D). */
+const isInsideDir = (v: unknown): v is string =>
+  typeof v === 'string' && !isAbsolutePath(v) && !/^[\\/]/.test(v) && !/^[A-Za-z]:/.test(v) && normalizePath(v) !== '' && !normalizePath(v).split('/').includes('..')
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
 
