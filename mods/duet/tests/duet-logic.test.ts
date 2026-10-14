@@ -744,6 +744,11 @@ describe('PR #39 review round 2: only a failed command with a bwrap line is a sa
     expect(fold(cmd("grep: x\n  see 'bwrap: execvp /x/codex: No such file or directory'\n", 1)).failure).toBe('')
     expect(fold(cmd('some noise\nbwrap: execvp /x/codex: No such file or directory\n', 1)).failure).toContain('/x/codex')
   })
+
+  test('a failed command with no output at all is not a sandbox failure', () => {
+    const run = foldAll([{ type: 'item.completed', item: { type: 'command_execution', command: 'false', exit_code: 1, status: 'failed' } }, { type: 'item.completed', item: { type: 'agent_message', text: 'answer' } }].map(l => JSON.stringify(l)).join('\n'))
+    expect(run.failure).toBe('')
+  })
 })
 
 describe('PR #39 review round 2: the profile table and its name', () => {
