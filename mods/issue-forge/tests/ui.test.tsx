@@ -1109,3 +1109,14 @@ describe('review of PR #41, round 4', () => {
     expect(w.asked).toEqual([])
   })
 })
+
+describe('review of PR #41, code-review pass', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+
+  test('a worktree gone at a later step is given back with a command that works: git keeps a folder deleted by hand registered, so the add needs the remove first', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
+    await start($)
+    await run($, 'resume')
+    expect((await run($, 'status')).text).toContain(`next: git worktree remove ${WT}; git worktree add ${WT} ${BRANCH}, then /issue-forge resume`)
+  })
+})
