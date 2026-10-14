@@ -2,6 +2,7 @@ import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { testFail } from './fixtures/test-fail'
+import { testNone } from './fixtures/test-none'
 import { testPass } from './fixtures/test-pass'
 import { validateClean } from './fixtures/validate-clean'
 import { validateMissing } from './fixtures/validate-missing'
@@ -19,7 +20,7 @@ const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 120 } as const
 
 type Disk = Record<string, string>
-type Output = { exitCode: number; stdout: string; throws?: boolean }
+type Output = { exitCode: number; stdout: string; stderr?: string; throws?: boolean }
 
 /** A mod folder on the in-memory disk, under `folder`: every file of a mod that has reached Register. */
 const modFiles = (name: string, folder = MODS): Disk => ({
@@ -98,7 +99,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     if (hold) await hold
     const out = (e.argv.includes('validate') ? outputs.validate : outputs.test) ?? { exitCode: 0, stdout: '' }
     if (out.throws) throw new Error('could not start')
-    return { value: { ...out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { ...out, stderr: out.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('ui.toast', ($, e) => (seen.toasts.push((e as { text: string }).text), { value: undefined }) as never)
   on('ui.status', ($, e) => (seen.status.push((e as { text?: string }).text), { value: undefined }) as never)
@@ -280,6 +281,43 @@ describe('pane', () => {
     expect(validate).toBeDefined()
     expect(validate?.props.hotkey).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /4\/8|5\/8/ })).toBeDefined()
+  })
+})
+
+describe('test run that never starts', () => {
+  /** `git-branch` validated, then Test exits 1 with `testNone` on stderr and nothing on stdout; a pane open on it. */
+  async function testNeverStarts($: Engine, on: On) {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 1, stdout: '', stderr: testNone } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    await ui.unmount()
+    return { seen, after: await mountPane($) }
+  }
+
+  test('a Test that exits 1 before running (no test files) shows the error and Fix', OPTIONS, async ($, on) => {
+    const { after } = await testNeverStarts($, on)
+    expect(await after.find({ type: 'Text', text: /no \*\.test\.ts/ })).toBeDefined()
+    expect(await after.find({ key: 'fix' })).toBeDefined()
+  })
+
+  test('its toast says the tests did not run, not "1 test failing"', OPTIONS, async ($, on) => {
+    const { seen } = await testNeverStarts($, on)
+    expect(seen.toasts.some(text => text.startsWith('✕ git-branch: ') && text.includes('tests did not run'))).toBe(true)
+    expect(seen.toasts.some(text => text.includes('1 test failing'))).toBe(false)
+  })
+
+  test('Fix with Claude fills a prompt that says the tests did not run and quotes the error', OPTIONS, async ($, on) => {
+    const { seen, after } = await testNeverStarts($, on)
+    expect(await after.find({ key: 'fix' })).toBeDefined()
+    await after.press({ key: 'fix' })
+    expect(seen.filled[0]).toContain('tests did not run')
+    expect(seen.filled[0]).toContain('no *.test.ts or *.test.tsx under /m/mods/git-branch')
+    expect(seen.filled[0]).not.toContain('0 failing tests')
   })
 })
 

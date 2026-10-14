@@ -80,6 +80,7 @@ import {
 } from '../hooks/mod-builder-logic'
 import * as Logic from '../hooks/mod-builder-logic'
 import { testFail } from './fixtures/test-fail'
+import { testNone } from './fixtures/test-none'
 import { testPass } from './fixtures/test-pass'
 import { validateClean } from './fixtures/validate-clean'
 import { validateMissing } from './fixtures/validate-missing'
@@ -232,6 +233,26 @@ describe('mod-builder-logic', () => {
     expect(countStreamed('(pass) a\n(pa')).toEqual({ passed: 1, failed: 0 })
   })
 
+  test('test: a run that exits before the runner starts keeps the output\'s last non-blank lines as its errors', () => {
+    expect(parseTest(testNone, 1)).toMatchObject({ ok: false, passed: 0, failed: 0, failures: ['claude plugin test: no *.test.ts or *.test.tsx under /m/mods/git-branch'] })
+    const corrupt = '\nclaude plugin test: Plugin x has a corrupt manifest file at /m/x/.claude-plugin/plugin.json.\nJSON parse error: Unexpected token } in JSON at position 12\n'
+    expect(parseTest(corrupt, 1).failures).toEqual(['claude plugin test: Plugin x has a corrupt manifest file at /m/x/.claude-plugin/plugin.json.', 'JSON parse error: Unexpected token } in JSON at position 12'])
+    expect(parseTest('one\n\ntwo\nthree\n\nfour\n', 1).failures).toEqual(['two', 'three', 'four'])
+  })
+
+  test('test: a run that did not start says so instead of "1 test failing"', () => {
+    const none = parseTest(testNone, 1)
+    expect(summaryOfRun('Test', false, { test: none })).toBe('tests did not run')
+    expect(summaryOfRun('Test', false, { test: parseTest(testFail, 1) })).toBe('1 test failing')
+  })
+
+  test('test: the result of a run that did not start has the error lines and the "did not run" toast', () => {
+    const none = resultOf('Test', 1, testNone, 7, 100)
+    expect(none).toMatchObject({ kind: 'Test', ok: false, summary: 'tests did not run', tests: { passed: 0, failed: 0 } })
+    expect(none.errors).toEqual(['claude plugin test: no *.test.ts or *.test.tsx under /m/mods/git-branch'])
+    expect(toastOfRun('git-branch', none)).toBe('✕ git-branch: tests did not run. Press F in Mod Lab to fix')
+  })
+
   test('tsc: error lines', () => {
     const out = "/work/x/hooks/register.tsx(12,7): error TS2322: Type 'string' is not assignable to type 'number'.\nFound 1 error."
     expect(parseTsc(out)).toEqual(["register.tsx(12,7): error TS2322: Type 'string' is not assignable to type 'number'."])
@@ -319,6 +340,13 @@ describe('mod-builder-logic', () => {
     expect(fixPromptOf('x', 'Validate', ['oops'], 1, 'mods/x')).toStartWith('Fix the Validate problem in mods/x.')
     const withGates: Results = { ...GREEN, Validate: { ...GREEN.Validate!, validate: { ok: true, hooks: [], calls: [], gates: [{ hook: 'tool.call', hasCatch: true }], errors: [], warnings: [] } } }
     expect(doneLineOf(withGates)).toBe('8/8 stages · 12 tests · validate clean · 1 gate')
+  })
+
+  test('fix prompt for a Test that did not run says so and quotes the error lines', () => {
+    const text = fixPromptOf('git-branch', 'Test', ['claude plugin test: no *.test.ts or *.test.tsx under /m/mods/git-branch'], 0, 'mods/git-branch')
+    expect(text).toStartWith('Fix the Test run in mods/git-branch (the tests did not run)')
+    expect(text).toContain('claude plugin test: no *.test.ts or *.test.tsx under /m/mods/git-branch')
+    expect(text).not.toContain('0 failing tests')
   })
 
   test('fix prompt names the path it is given, not mods/<name>', () => {
