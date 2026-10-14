@@ -1137,4 +1137,11 @@ describe('review of PR #41, round 6', () => {
     const share = { liveAgent: 'live', known: new Set(['live']), workRoot: '//srv/share/repo/wt', root: '//srv/share/repo' }
     expect(guardAction({ tool: 'Edit', file_path: 'src/a.ts', agentId: 'live' }, share)).toEqual({ kind: 'rewrite', patch: { file_path: '//srv/share/repo/wt/src/a.ts' } })
   })
+
+  test("worktreeDir refuses .git in any case, and with the trailing dots or spaces Windows drops (Codex 4274944512)", () => {
+    const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
+    for (const dir of ['.GIT', '.Git/wt', 'scratch/.gIt/x', '.git.', '.git ', 'scratch/.GIT. /x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
+    expect(refused('scratch/.GITHUB')).toBe('')
+    expect(refused('.gits')).toBe('')
+  })
 })
