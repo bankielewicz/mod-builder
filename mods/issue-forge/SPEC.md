@@ -532,8 +532,8 @@ the amended version.
     tests/ui.test.tsx}`; `.issue-forge.json` (`"workspace": "worktree"`);
     `.claude-plugin/marketplace.json` (both versions); `docs/specs/issue-forge.md` §4.1 (the two
     fields); `plugins/mod-builder/skills/build/references/gotchas.md` (P4,
-    and a correction to the hand-back entry), and so mod-builder's patch version 0.2.4 → 0.2.5 in its
-    `plugin.json` and the marketplace entry.
+    and a correction to the hand-back entry), and so mod-builder's patch version 0.2.4 → 0.2.6 in its
+    `plugin.json`, the marketplace entry and its SPEC (0.2.5 went to #11's fix, PR #47; round 6).
   - At run time: new git calls `show origin/<base>:.issue-forge.json`, `rev-parse --git-dir
     --git-common-dir`, `rev-parse --abbrev-ref HEAD`, `worktree add --no-track -b`,
     `merge-tree --write-tree`, and `check-ignore` on `worktreeDir`. A worktree run creates
