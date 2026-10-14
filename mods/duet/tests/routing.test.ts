@@ -358,6 +358,18 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(seen.argv[1]).not.toContain('-s')
   })
 
+  test('a malformed codexWritePaths leaves every routed agent read-only instead of widening (PR #39 review)', { options: { ...scoped, codexWritePaths: 'red-test-writer:tests' } }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    expect(seen.argv.length).toBe(2)
+    for (const argv of seen.argv) {
+      expect(filesystem(argv)).toContain(pair('/w', 'read'))
+      expect(filesystem(argv)).not.toContain('="write"')
+    }
+  })
+
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
     await start($)

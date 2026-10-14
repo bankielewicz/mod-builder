@@ -587,6 +587,32 @@ describe('PR #39 review: the permission profile has its own name', () => {
   })
 })
 
+describe('PR #39 review: a malformed codexWritePaths fails closed', () => {
+  test('a part that is not agent=folder;folder makes the whole option an error naming that part', () => {
+    for (const bad of ['red-test-writer:tests', 'red-test-writer tests', 'red-test-writer=', '=tests', 'red test=tests', 'ok=src, red-test-writer:tests']) {
+      const w = readOptions({ codexWritePaths: bad }).writePaths as unknown as { error?: unknown }
+      expect(typeof w.error).toBe('string')
+    }
+    const w = readOptions({ codexWritePaths: 'ok=src, red-test-writer:tests' }).writePaths as unknown as { error: string }
+    expect(w.error).toContain('red-test-writer:tests')
+    expect(readOptions({ codexWritePaths: 'red-test-writer=tests, ' }).writePaths).toEqual({ 'red-test-writer': ['tests'] })
+  })
+
+  test('an empty folder list narrows to nothing: workspace-write leaves the project read-only, with no folder writable', () => {
+    const argv = codexArgv({ sandbox: 'workspace-write', model: '', cwd: '/w/proj', fsScope: 'project', writePaths: [] } as never)
+    const fs = argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+    expect(fs).toContain('"/w/proj"="read"')
+    expect(fs).not.toContain('="write"')
+  })
+
+  test('/duet config paths rejects a malformed value and keeps a good one', () => {
+    const f = findConfigField('paths')!
+    expect('error' in coerceConfigValue(f, 'red-test-writer:tests')).toBe(true)
+    expect(coerceConfigValue(f, 'red-test-writer=tests;test')).toEqual({ value: 'red-test-writer=tests;test' })
+    expect(coerceConfigValue(f, '""')).toEqual({ value: '' })
+  })
+})
+
 describe('issue 3 part B: the scope help matches what was checked', () => {
   test('the /duet config help for scope says it was checked through codex exec on Codex 0.162.1, not that it is unchecked', () => {
     const help = findConfigField('scope')!.help
