@@ -908,4 +908,18 @@ describe('review of PR #41, round 2', () => {
     expect(w.argv).toContainEqual(['git', 'check-ignore', '-q', '--', '-scratch/'])
     expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, `${ROOT}/-scratch/${BRANCH}`, 'origin/main'])
   })
+
+  for (const [label, localProfile] of [
+    ['a path command missing there', { ...PROFILE, testCommand: ['./t.sh'] }],
+    ['a profile that no longer validates', { ...PROFILE, testCommand: 'not an argv' }],
+  ] as const) {
+    test(`the starting checkout's profile only names the base (${label}); a worktree run checks origin/main's copy (Codex P2)`, async ($, on) => {
+      const w = engine(on, { isDirty: true, head: 'old-feature', localProfile, baseProfile: { ...PROFILE, workspace: 'worktree' } })
+      await start($)
+      await run($, '16')
+      await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:red', cwd: `${ROOT}/scratch/issue-forge/${BRANCH}` })
+    })
+  }
 })

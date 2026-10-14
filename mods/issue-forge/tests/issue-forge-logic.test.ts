@@ -12,6 +12,7 @@ import {
   branchLine,
   branchName,
   canRetry,
+  checkoutBaseOf,
   checkoutState,
   cleanupCommand,
   cleanupLine,
@@ -973,5 +974,17 @@ describe('review of PR #41', () => {
     expect(cleanupLine(run({ step: 'stopped', workRoot: WT }))).toBe(`when you no longer need it: git worktree remove ${WT}`)
     expect(cleanupLine(run())).toBeNull()
     expect(statusText(run({ step: 'stopped', branch: 'b', base: 'main', workRoot: WT }), false, 0)).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
+  })
+})
+
+describe('review of PR #41, round 2', () => {
+  test("the starting checkout's profile only names the base: anything it can't say safely reads as main", () => {
+    expect(checkoutBaseOf(JSON.stringify({ baseBranch: 'develop', testCommand: 'stale' }))).toBe('develop')
+    expect(checkoutBaseOf(JSON.stringify({ baseBranch: '+evil:main' }))).toBe('main')
+    expect(checkoutBaseOf(JSON.stringify({ testCommand: ['t'] }))).toBe('main')
+    expect(checkoutBaseOf('not json')).toBe('main')
+    expect(checkoutBaseOf('[]')).toBe('main')
+    expect(checkoutBaseOf('null')).toBe('main')
+    expect(checkoutBaseOf(null)).toBe('main')
   })
 })

@@ -167,6 +167,10 @@ export function profileProblems(p: Profile, facts: { isLcovIgnored: boolean | nu
  * §2: the issue's first `Base branch: x` line, else the profile's. The name reaches git, and anyone who
  * can file an issue writes it, so a name `isSafeBranch` refuses is ignored (the profile's base stands).
  */
+export function checkoutBaseOf(_text: string | null): string {
+  return ''
+}
+
 export function baseOf(p: Profile, issueBody: string): string {
   for (const line of issueBody.split(/\r?\n/)) {
     const m = line.match(/^Base branch: (\S+)$/)
