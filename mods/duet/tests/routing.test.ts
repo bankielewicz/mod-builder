@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; gitDirs?: string } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -35,11 +35,13 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     return { value: text }
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
-  // Every path is a folder at its own spelling unless `real` says where it lands (null: not there).
+  // Every path is a folder at its own spelling unless `real` says where it lands (null: not there); a codex binary or
+  // codex.js is a file. `kinds` overrides the kind by the path asked for.
   on('fs.stat', ($: any, e: any) => {
     const real = o.real && e.path in o.real ? o.real[e.path] : e.path
     if (real === null) return { deny: 'ENOENT: no such file' }
-    return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) } }
+    const kind = o.kinds?.[e.path] ?? (/\/codex(\.js)?$/.test(real) ? 'file' : 'dir')
+    return { value: { kind, size: 0, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) } }
   })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
