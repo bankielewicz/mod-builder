@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isInside, isRouted, codexRunning, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isRouted, codexRunning, parentOf, pathDirs, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -639,6 +639,29 @@ describe('PR #39 review: git\'s own folders are readable in a linked worktree', 
     const review = fsOf(reviewArgv({ kind: 'uncommitted' }, '', { cwd: '/w/wt', fsScope: 'project', reads } as never))
     expect(review).toContain('"/repo/.git"="read"')
     expect(codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/wt', fsScope: 'anything', reads } as never).join(' ')).not.toContain('/repo/.git')
+  })
+})
+
+describe('PR #39 review: Codex\'s real install folder', () => {
+  test('pathDirs keeps PATH\'s absolute folders in order; parentOf gives the folder holding a path', () => {
+    expect(pathDirs('/usr/local/bin:/home/u/.local/bin::relative/bin:/opt/codex/bin/')).toEqual(['/usr/local/bin', '/home/u/.local/bin', '/opt/codex/bin'])
+    expect(pathDirs('')).toEqual([])
+    expect(parentOf('/home/u/.codex/packages/standalone/releases/0.162.1/bin/codex')).toBe('/home/u/.codex/packages/standalone/releases/0.162.1/bin')
+    expect(parentOf('/usr/lib/node_modules/@openai/codex/bin/codex.js')).toBe('/usr/lib/node_modules/@openai/codex/bin')
+  })
+
+  test('a command that fails because the sandbox cannot run Codex itself makes the run fail, naming the binary, instead of done', () => {
+    const lines = [
+      { type: 'thread.started', thread_id: 't1' },
+      { type: 'item.completed', item: { id: 'i1', type: 'command_execution', command: '/bin/bash -lc ls', aggregated_output: 'bwrap: execvp /opt/codex/bin/codex: No such file or directory\n', exit_code: 1, status: 'failed' } },
+      { type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: 'I could not list the files.' } },
+      { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } },
+    ].map(l => JSON.stringify(l)).join('\n')
+    const run = foldAll(lines)
+    expect(run.failure).toContain('/opt/codex/bin/codex')
+    expect(run.failure).toContain('install folder')
+    const ok = foldAll([{ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'bwrap is a word here', exit_code: 0 } }, { type: 'item.completed', item: { type: 'agent_message', text: 'fine' } }].map(l => JSON.stringify(l)).join('\n'))
+    expect(ok.failure).toBe('')
   })
 })
 

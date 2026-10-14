@@ -622,6 +622,18 @@ export function isInside(root: string, path: string): boolean {
   return path.length > base.length + 1 && (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`))
 }
 
+/** PATH's absolute folders, in order (`:`-separated). Not yet written: the red test pins it. */
+export function pathDirs(path: string): string[] {
+  void path
+  return []
+}
+
+/** The folder holding `path`. Not yet written: the red test pins it. */
+export function parentOf(path: string): string {
+  void path
+  return ''
+}
+
 /** A TOML basic string: JSON's escapes for `\`, `"` and control characters are TOML's. */
 function tomlString(s: string): string {
   return JSON.stringify(s)

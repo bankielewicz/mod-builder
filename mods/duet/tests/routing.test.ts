@@ -405,6 +405,17 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(filesystem(seen.argv[0]!)).toContain(pair('/w', 'write'))
   })
 
+  test('the Codex on PATH and CODEX_HOME\'s packages are readable, so Codex can run itself in the sandbox (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const env = { HOME: '/home/u', PATH: '/usr/bin:/opt/nvm/bin', CODEX_HOME: '/data/codex' }
+    const seen = engine(on, { agents, env, real: { '/usr/bin/codex': null, '/opt/nvm/bin/codex': '/opt/nvm/lib/node_modules/@openai/codex/bin/codex.js' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/opt/nvm/lib/node_modules/@openai/codex/bin', 'read'))
+    expect(fs).toContain(pair('/data/codex/packages', 'read'))
+    expect(fs).not.toContain('/usr/bin')
+  })
+
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
     await start($)
