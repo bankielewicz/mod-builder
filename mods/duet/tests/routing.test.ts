@@ -430,6 +430,26 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(fs).not.toContain('/usr/bin')
   })
 
+  test('the PATH lookup skips a codex that is not a file, as the shell would (PR #39 review round 2, Codex 4266372737)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const env = { HOME: '/home/u', PATH: '/a/bin:/opt/codex/bin' }
+    const seen = engine(on, { agents, env, kinds: { '/a/bin/codex': 'dir' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/opt/codex/bin', 'read'))
+    expect(fs).not.toContain('/a/bin')
+  })
+
+  test('a codex in the home folder itself never makes the home folder readable (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const env = { HOME: '/home/u', PATH: '/home/u:/opt/codex/bin' }
+    const seen = engine(on, { agents, env })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).not.toContain(pair('/home/u', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+  })
+
   test('each run and each review gets its own random profile name, so no loaded Codex config can name it and merge in (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
     const seen = engine(on, { agents })
     await start($)

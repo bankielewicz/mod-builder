@@ -765,3 +765,17 @@ describe('PR #39 review round 2: the profile table and its name', () => {
     expect(review.some(a => a.startsWith('permissions.duet-mod-fs-scope-xyz.filesystem='))).toBe(true)
   })
 })
+
+describe('PR #39 review round 2: a read grant never covers the home folder or the project', () => {
+  const tableOf = (argv: string[]) => argv.find(a => /^permissions\.[\w-]+\.filesystem=/.test(a)) ?? ''
+
+  test('a read that is the home folder, or holds it or the project, is dropped; narrower ones stay', () => {
+    const fs = tableOf(codexArgv({ sandbox: 'read-only', model: '', cwd: '/home/u/proj', fsScope: 'project', home: '/home/u', reads: ['/home/u', '/home/u/', '/home', '/', '/home/u/bin', '/opt/codex/bin'] } as never))
+    for (const gone of ['"/home/u"=', '"/home/u/"=', '"/home"=', '"/"=']) expect(fs).not.toContain(gone)
+    expect(fs).toContain('"/home/u/bin"="read"')
+    expect(fs).toContain('"/opt/codex/bin"="read"')
+    const homeless = tableOf(codexArgv({ sandbox: 'read-only', model: '', cwd: '/srv/proj', fsScope: 'project', reads: ['/srv', '/srv/other'] } as never))
+    expect(homeless).not.toContain('"/srv"=')
+    expect(homeless).toContain('"/srv/other"="read"')
+  })
+})
