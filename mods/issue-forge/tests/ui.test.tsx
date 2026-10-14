@@ -829,7 +829,7 @@ describe('review of PR #41', () => {
     await start($)
     await run($, '16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
-    expect(w.toasts).toContain("#16 blocked: redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder")
+    expect((await run($, 'status')).text).toContain("blocked at preflight: redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder")
     expect(w.argv.some(a => a[1] === 'worktree' || a[1] === 'switch')).toBe(false)
   })
 
