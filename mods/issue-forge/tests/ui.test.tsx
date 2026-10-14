@@ -65,6 +65,10 @@ type World = {
   worktreeIgnored?: boolean
   /** `git merge-tree` at ready; absent, a clean merge. */
   mergeTree?: { exitCode: number; stdout: string; stderr?: string }
+  /** When set, the next `git merge-base HEAD …` waits for it (once). */
+  mergeBaseHold?: Promise<void>
+  /** `git worktree add` fails (git still leaves the new branch behind). */
+  worktreeAddFails?: boolean
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -152,7 +156,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const profilePath = `${ROOT}/.issue-forge.json`
   const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
   const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
-  on('fs.exists', ($: any, e: any) => ({ value: ((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files }))
+  on('fs.exists', ($: any, e: any) => ({ value: ((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path) }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
     if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.wtProfiles[worktreeOf(e.path) ?? ''] ?? world.baseProfile ?? PROFILE) }
@@ -182,7 +186,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
     if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
-    if (a[0] === 'worktree' && a[1] === 'add') return world.worktrees.push(a[5] ?? ''), (world.wtProfiles[a[5] ?? ''] = world.baseProfile ?? PROFILE), ok()
+    if (a[0] === 'worktree' && a[1] === 'add') {
+      if (world.worktreeAddFails) return fail(`fatal: could not create work tree dir '${a[5]}': Permission denied`, 128)
+      const path = a.includes('-b') ? a[5] ?? '' : a[2] ?? ''
+      return world.worktrees.push(path), (world.wtProfiles[path] = world.baseProfile ?? PROFILE), ok()
+    }
     if (a[0] === 'merge' && a.includes('--ff-only') && inWorktree) return (world.wtProfiles[e.init?.cwd] = world.baseProfile ?? PROFILE), ok()
     // As git does: a path starting with '-' and not after '--' is read as options.
     if (a[0] === 'check-ignore' && (a[a.length - 1] ?? '').startsWith('-') && a[a.length - 2] !== '--') return fail("error: unknown switch `s'", 129)
@@ -203,7 +211,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return world.isAncestor === false ? fail('', 1) : ok()
     if (a[0] === 'status' && a.includes('-z')) return ok(world.porcelainZ ?? '')
     if (a[0] === 'push') return world.pushHold ? world.pushHold.then(() => ok()) : ok()
-    if (a[0] === 'merge-base') return ok('base0\n')
+    if (a[0] === 'merge-base') {
+      const hold = world.mergeBaseHold
+      world.mergeBaseHold = undefined
+      return hold ? hold.then(() => ok('base0\n')) : ok('base0\n')
+    }
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
@@ -945,4 +957,53 @@ describe('review of PR #41, round 2', () => {
       expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:red', cwd: `${ROOT}/scratch/issue-forge/${BRANCH}` })
     })
   }
+})
+
+describe('review of PR #41, round 3', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+
+  test('a Stop right after worktree add keeps the branch and worktree on the stopped run (Codex P2)', async ($, on) => {
+    let release = () => {}
+    const w = engine(on, { baseProfile: WORKTREE, mergeBaseHold: new Promise<void>(r => (release = r)) })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'merge-base' && a[2] === 'HEAD'), 'the merge base')
+    expect((await run($, 'stop')).text).toContain(`Its branch ${BRANCH} and commits are kept`)
+    release()
+    await w.clock.settle()
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain(`${BRANCH} → main`)
+    expect(status).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
+  })
+
+  test('a failed worktree add keeps the branch git left, and resume makes the worktree for it instead of a -2 branch', async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddFails: true })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`${BRANCH} → main`)
+    w.worktreeAddFails = false
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.filter(t => t.includes('blocked')).length > 1, 'red or another block')
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv.filter(a => a[1] === 'worktree')[1]).toEqual(['git', 'worktree', 'add', WT, BRANCH])
+    expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
+  })
+
+  test('resume after the kept worktree was removed by hand makes it again at preflight, and says so at a later step', async ($, on) => {
+    const atPreflight = storedRun('blocked', { blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] })
+    const w = engine(on, { baseProfile: WORKTREE }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', WT, BRANCH]])
+  })
+
+  test("resume of a later step whose worktree is gone names the folder instead of failing on it", async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
+    await start($)
+    expect((await run($, 'resume')).text).toBe(`still blocked: the run's worktree ${WT} is gone.`)
+  })
 })
