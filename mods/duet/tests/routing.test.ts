@@ -830,6 +830,35 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     return (r.result?.content ?? []).map((c: { text?: string }) => c.text ?? '').join('\n')
   }
 
+  test('a folder past the 8-folder limit that holds no .md file, subfolder or link does not cut the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, { cwd: IN, agents: { [`${nine}/notes.txt`]: 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(text).not.toMatch(/cut short/i)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.reads).not.toContain(`${nine}/notes.txt`)
+  })
+
+  test('a folder met after the 500th file that holds no .md file, subfolder or link does not cut the search short (PR #48 review)', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/zz/notes.txt': 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    for (let i = 0; i < 500; i++) seen.files[`/w/pkg/.claude/agents/f${String(i).padStart(3, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(text).not.toMatch(/cut short/i)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+  })
+
+  test('a folder past the limit that holds only a subfolder still cuts the search short: what lies below it was not looked at (PR #48 review)', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/10/notes.txt': 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(text).toMatch(/cut short at 8 folders deep/)
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
   test('a search cut short runs the agent read-only, since a definition past the limit may forbid edits, and the note says so (PR #48 review)', { options }, async ($, on) => {
     // Claude reads this read-only general-purpose definition 9 folders down; duet stops at 8, and its fallback, the built-in, edits.
     const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/gp.md': agent('general-purpose', READS, 'Nine deep.') } })
