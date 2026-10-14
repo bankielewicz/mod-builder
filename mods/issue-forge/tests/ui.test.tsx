@@ -69,6 +69,8 @@ type World = {
   mergeBaseHold?: Promise<void>
   /** `git worktree add` fails (git still leaves the new branch behind). */
   worktreeAddFails?: boolean
+  /** When set, the next `git worktree add` waits for it (once). */
+  worktreeAddHold?: Promise<void>
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -190,7 +192,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       // As git 2.53 does: the progress line, then the reason, both on stderr.
       if (world.worktreeAddFails) return fail(`Preparing worktree (new branch '${a[4]}')\nfatal: could not create work tree dir '${a[5]}': Permission denied`, 128)
       const path = a.includes('-b') ? a[5] ?? '' : a[2] ?? ''
-      return world.worktrees.push(path), (world.wtProfiles[path] = world.baseProfile ?? PROFILE), ok()
+      const add = () => (world.worktrees.push(path), (world.wtProfiles[path] = world.baseProfile ?? PROFILE), ok())
+      const hold = world.worktreeAddHold
+      world.worktreeAddHold = undefined
+      return hold ? hold.then(add) : add()
     }
     if (a[0] === 'merge' && a.includes('--ff-only') && inWorktree) return (world.wtProfiles[e.init?.cwd] = world.baseProfile ?? PROFILE), ok()
     // As git does: a path starting with '-' and not after '--' is read as options.
@@ -1027,5 +1032,19 @@ describe('review of PR #41, round 4', () => {
     await run($, '16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
     expect((await run($, 'status')).text).toContain(`blocked at preflight: git worktree add failed: fatal: could not create work tree dir '${WT}': Permission denied`)
+  })
+
+  test('a Stop while git worktree add runs keeps the branch it made on the stopped run', async ($, on) => {
+    let release = () => {}
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddHold: new Promise<void>(r => (release = r)) })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'worktree' && a[2] === 'add'), 'the worktree add')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    release()
+    await w.clock.settle()
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain(`${BRANCH} → main`)
+    expect(status).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
   })
 })
