@@ -739,12 +739,15 @@ async function drive($: EngineInterface, root: string, runId: string, mayAsk: bo
       if (!run || run.id !== runId || !isMine()) return
       if (run.step === 'ready' && mayAsk) {
         mayAsk = false
-        const merge = await mergeCheck($, run)
-        // A Publish or Stop pressed during the check moved the run on: its result is dropped, never written over them.
-        const fresh = await loadRun($, root)
-        if (!fresh || fresh.id !== runId || fresh.step !== 'ready' || !isMine()) return
-        const checked = await saveRun($, advance(fresh, { type: 'merged', merge }, await $.clock.now()))
-        if (!(await confirmPublish($, checked))) return
+        // The merge is checked ahead only for a question; publish checks it again for the PR body.
+        if (options.confirmPublish) {
+          const merge = await mergeCheck($, run)
+          // A Publish or Stop pressed during the check moved the run on: its result is dropped, never written over them.
+          const fresh = await loadRun($, root)
+          if (!fresh || fresh.id !== runId || fresh.step !== 'ready' || !isMine()) return
+          const checked = await saveRun($, advance(fresh, { type: 'merged', merge }, await $.clock.now()))
+          if (!(await confirmPublish($, checked))) return
+        }
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, root)
         if (!now || now.id !== runId || now.step !== 'ready' || !isMine()) return
