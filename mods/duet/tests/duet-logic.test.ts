@@ -745,3 +745,14 @@ describe('PR #39 review round 2: only a failed command with a bwrap line is a sa
     expect(fold(cmd('some noise\nbwrap: execvp /x/codex: No such file or directory\n', 1)).failure).toContain('/x/codex')
   })
 })
+
+describe('PR #39 review round 2: the profile table and its name', () => {
+  const tableOf = (argv: string[]) => argv.find(a => /^permissions\.[\w-]+\.filesystem=/.test(a)) ?? ''
+
+  test('with CODEX_HOME=$HOME/.codex, ~/.codex/packages is in the table once: TOML refuses a repeated key, and Codex would not start', () => {
+    const fs = tableOf(codexArgv({ sandbox: 'read-only', model: '', cwd: '/w', fsScope: 'project', home: '/home/u', reads: ['/home/u/.codex/packages', '/home/u/.codex//packages/', '/opt/codex/bin'] } as never))
+    expect(fs.split('"/home/u/.codex/packages"').length - 1).toBe(1)
+    expect(fs).not.toContain('//packages')
+    expect(fs).toContain('"/opt/codex/bin"="read"')
+  })
+})
