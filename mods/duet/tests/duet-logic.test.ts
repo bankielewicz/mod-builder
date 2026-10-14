@@ -455,7 +455,7 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
   const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
   const count = (text: string, what: string) => text.split(what).length - 1
 
-  test('project scope adds exactly two -c overrides, a duet profile as the default and its filesystem table; the rest of the argv is unchanged', () => {
+  test('project scope adds a duet profile as the default and its filesystem table, and sets the sandbox with -c sandbox_mode, never -s (codex exec 0.162.1 drops the profile under -s)', () => {
     const argv = project()
     expect(argv).toContain('default_permissions="duet"')
     const fs = filesystem(argv)
@@ -464,7 +464,11 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
     const at = [argv.indexOf('default_permissions="duet"'), argv.indexOf(fs)]
     for (const i of at) expect(argv[i - 1]).toBe('-c')
     const rest = argv.filter((_, i) => !at.some(a => i === a || i === a - 1))
-    expect(rest).toEqual(['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-C', '/w/proj', '-'])
+    expect(rest).toEqual(['codex', 'exec', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"', '-C', '/w/proj', '-'])
+    expect(argv).not.toContain('-s')
+    const writable = project({ sandbox: 'workspace-write' })
+    expect(writable[writable.indexOf('sandbox_mode="workspace-write"') - 1]).toBe('-c')
+    expect(writable).not.toContain('-s')
     expect(project({ model: 'gpt-x' }).slice(-3)).toEqual(['-m', 'gpt-x', '-'])
   })
 

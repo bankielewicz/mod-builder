@@ -332,7 +332,8 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     await start($)
     await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
     const argv = seen.argv[0]!
-    expect(argv[argv.indexOf('-s') + 1]).toBe('workspace-write')
+    expect(argv[argv.indexOf('sandbox_mode="workspace-write"') - 1]).toBe('-c')
+    expect(argv).not.toContain('-s')
     expect(argv).toContain('default_permissions="duet"')
     const fs = filesystem(argv)
     expect(fs).toContain(pair('/w', 'read'))
@@ -353,7 +354,8 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(editing).toContain(pair('/home/u/.codex/packages', 'read'))
     expect(reading).toContain(pair('/w', 'read'))
     expect(reading).not.toContain('="write"')
-    expect(seen.argv[1]![seen.argv[1]!.indexOf('-s') + 1]).toBe('read-only')
+    expect(seen.argv[1]![seen.argv[1]!.indexOf('sandbox_mode="read-only"') - 1]).toBe('-c')
+    expect(seen.argv[1]).not.toContain('-s')
   })
 
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
