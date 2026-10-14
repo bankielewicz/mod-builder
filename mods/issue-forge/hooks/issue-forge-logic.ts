@@ -818,7 +818,7 @@ export function worktreePath(root: string, dir: string, branch: string): string 
 export function parseMergeTree(r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
   if (r.exitCode === 0) return { isClean: true, files: [] }
   if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split('\n').slice(1).filter(line => line.trim() !== ''))] }
-  return { isClean: false, files: [], error: r.stderr.trim().split('\n')[0] ?? '' }
+  return { isClean: false, files: [], error: r.stderr.trim().replace(/\n[\s\S]*$/, '') }
 }
 
 /** Where git, the profile's commands and the agents work; runs stored before 0.2.0 have only `root`. */
