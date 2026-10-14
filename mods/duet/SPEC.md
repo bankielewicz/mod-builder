@@ -501,13 +501,13 @@ pane's keys; `/reload-plugins` picks up edits.
   - whether `/duet review` holds the profile when the model does try an outside read;
   - `workspace-write` with the whole project writable through `codex exec`, including whether the empty folders then appear at the project root.
 - **What changes:**
-  - `codexFsScope` (`anything` default, `project`). `anything` is the argv as before. `project` replaces `-s <mode>` with `-c sandbox_mode="<mode>"` in `codexArgv` (`reviewArgv` already used it), and adds two `-c` overrides to both: `default_permissions="duet"` and `permissions.duet.filesystem={…}`, built by `profileArgs`.
+  - `codexFsScope` (`anything` default, `project`). `anything` is the argv as before. `project` replaces `-s <mode>` with `-c sandbox_mode="<mode>"` in `codexArgv` (`reviewArgv` already used it), and adds two `-c` overrides to both: `default_permissions="duet-mod-fs-scope"` (named `duet` until the review fixes below) and `permissions.duet.filesystem={…}`, built by `profileArgs`.
   - The table holds `":minimal"` read; the project read, or write under `workspace-write` when the agent has no `writePaths`; and `<home>/.codex/packages` read. `/tmp` is never in it. A review gets the table read-only. With `HOME` and `USERPROFILE` both unset, the install folder is left out; Codex then may not be able to re-run itself (unverified).
   - `codexWritePaths` (`agent=folder;folder`, comma-separated, agent names as `codexRunMode` reads them, roles by any of their names). Under `project` and `workspace-write`, a named agent gets the project as `read` and each of its folders as `write`. It only narrows:
     - an absolute path, one that climbs out of the project, and the project itself are dropped;
     - an entry whose folders are all dropped leaves the project read-only;
     - read-only runs ignore it;
-    - an entry with no folder (`red=`) is ignored, so the agent keeps the whole project.
+    - an entry with no folder (`red=`) was ignored, so the agent kept the whole project. Since the review fixes it is an error.
 
     Folders are joined to the session folder with `/`; Windows paths are untested.
   - Paths are TOML basic strings, escaped by `JSON.stringify` (`\`, `"` and control characters), and tested with a path holding a quote and a backslash.
@@ -529,3 +529,27 @@ pane's keys; `/reload-plugins` picks up edits.
   - Routed calls and a review, through `process.run`, with the profile and a named agent's folders.
   - Three red tests first pinned `-s` beside the profile. They were fixed in their own commit, citing the first `codex exec` run.
 - **Done means:** all tests pass, validate is clean, and the `codex exec` runs above are recorded.
+
+### Review fixes (2026-10-14)
+
+> PR #39's review: Codex left four comments, and `/code-review` added three findings. Each fix has a red test, its own commit, and a `codex sandbox` check (0.162.1, Linux, no model call). These checks weren't re-run through `codex exec`: they all use the `-c` form that the exec runs above confirmed.
+
+- **Profile name** (Codex P1): Codex merges a same-named `[permissions.duet]` from any loaded config into the `-c` override. `/code-review` reproduced a read that widened this way. The profile is now `duet-mod-fs-scope` (`PROFILE`); a config defining that name would still merge.
+- **A malformed `codexWritePaths` fails closed** (`/code-review`): `parseWritePaths` used to drop a part such as `red:tests` or `red=`, and the agent then wrote the whole project.
+  - Such a value is now an error. `/duet config` refuses it, and if set another way, every agent's project is read-only (`writePathsOf`).
+  - Any folder list, even an empty one, narrows: only an agent the option doesn't name writes the whole project.
+- **Symlinked write folders** (`/code-review`): `folderUnder` checked containment by spelling only, so a write folder that is a symlink out of the project made its target writable (reproduced). When a run is admitted, `safeWritePaths` resolves the project and each folder with `$.fs.stat({ resolve: true })` and keeps only folders strictly inside (`isInside`). A symlink out, a symlink to the project, and a folder not there yet are dropped. Codex follows a symlinked write entry: one spelled through an inside link is writable.
+- **Git in a linked worktree** (Codex P2): git failed with `fatal: not a git repository: …/.git/worktrees/<name>`.
+  - Under project scope, `git rev-parse --path-format=absolute --git-dir --git-common-dir` gives `reads`, which `profileArgs` adds read-only when they lie outside the project.
+  - With the table `codexArgv` builds for `scratch/wt-issue3`, `git status` and `git log` work, and the main checkout's files stay hidden.
+  - This exposes `.git/config`, with its remote URLs.
+  - Not handled: a session started in a subfolder of a repository.
+- **Codex's install folder** (Codex P1): with no install grant the sandbox can't run Codex (`bwrap: execvp …/bin/codex: No such file or directory`), and the run still read as done. These are now readable:
+  - the folder the first `codex` on `PATH` really lands in;
+  - `$CODEX_HOME/packages`;
+  - `~/.codex/packages`, as before.
+
+  A table whose only install entry is the PATH-derived `bin` folder runs commands. An entry for a missing folder is harmless. `foldEvent` turns a `bwrap: execvp <path>: No such file or directory` command output into a run failure naming the binary.
+  - Not checked: npm/nvm and brew installs, where `codex` may be a JavaScript shim beside the native binary, and Windows' `;` PATH.
+- **macOS `/tmp`** (Codex P1, from Codex's source, not run): on macOS a `:minimal` entry makes Seatbelt grant `/private/tmp` and `/private/var/tmp`. The help, `plugin.json` and README now say `/tmp` is hidden on Linux only. Explicit `none` entries are left for a macOS machine: on Linux, `/tmp="none"` also hid a project under `/tmp`.
+- **Left for a follow-up issue:** the macOS deny entries; showing the scope in routes and the footer, and noticing when a Codex upgrade drops the profile; tests for a missing HOME, a write path keyed by a role alias, and the `folderUnder` project-itself branch.

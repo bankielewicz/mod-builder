@@ -60,7 +60,7 @@
     "codexFsScope": {
       "type": "string",
       "title": "Codex filesystem scope",
-      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: a duet permission profile limits Codex to the session folder (writable only under workspace-write), plus read-only system paths and Codex's own install and memories folders, and hides /tmp and every other file. On Codex 0.162.1 (Linux), codex exec runs confirmed the hidden files and /tmp; the write limits are partly checked in codex sandbox only (SPEC, Change 0.2.6). Re-check after upgrading Codex.",
+      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: a duet permission profile limits Codex to the session folder (writable only under workspace-write), plus read-only system paths and Codex's own install and memories folders, plus git's own folders in a linked worktree, and hides every other file and, on Linux, /tmp (on macOS /tmp stays reachable). On Codex 0.162.1 (Linux), codex exec runs confirmed the hidden files and /tmp; the write limits are partly checked in codex sandbox only (SPEC, Change 0.2.6). Re-check after upgrading Codex.",
       "options": [
         "anything",
         "project"
@@ -70,7 +70,7 @@
     "codexWritePaths": {
       "type": "string",
       "title": "Folders an agent may write",
-      "description": "With codexFsScope project and workspace-write: agent=folder;folder entries, comma-separated, e.g. red-test-writer=tests;test. A named agent writes only those project folders and reads the rest; others write the whole project. A path outside the project is ignored.",
+      "description": "With codexFsScope project and workspace-write: agent=folder;folder entries, comma-separated, e.g. red-test-writer=tests;test. A named agent writes only those project folders and reads the rest; others write the whole project. A folder outside the project, also through a symlink, is ignored; a malformed value leaves every agent read-only.",
       "default": ""
     }
   }
