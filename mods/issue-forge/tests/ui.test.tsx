@@ -842,14 +842,14 @@ describe('review of PR #41', () => {
   })
 
   test('a block after the worktree was made records it, and resume reuses it instead of making another (Codex P2)', async ($, on) => {
-    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['./t.sh'], workspace: 'worktree' }, files: { [`${ROOT}/./t.sh`]: '' } })
+    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['./t.sh'], workspace: 'worktree' } })
     await start($)
     await run($, '16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
     const status = (await run($, 'status')).text ?? ''
     expect(status).toContain('blocked at preflight: origin/main has no valid .issue-forge.json: command not found: ./t.sh')
     expect(status).toContain(`worktree: ${WT}`)
-    w.files[`${WT}/./t.sh`] = ''
+    w.files[`${WT}/t.sh`] = ''
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1, 'red')
     expect(w.argv.filter(a => a[1] === 'worktree')).toHaveLength(1)
