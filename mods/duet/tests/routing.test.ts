@@ -855,6 +855,19 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     expect(cut).toMatch(/\b500\b/)
   })
 
+  test('the 500-file note counts a whole agents folder, subfolders included, and claims nothing about how far Claude reads', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    // 300 files in each of two subfolders: neither holds 500, the agents folder does.
+    for (let i = 0; i < 600; i++) seen.files[`/w/pkg/.claude/agents/${i < 300 ? 'a' : 'b'}/f${String(i).padStart(3, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    seen.files['/w/pkg/.claude/agents/c/editor.md'] = agent('editor', READS, 'Past the limit.')
+    const cut = await resultText($, 'editor')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(cut).toMatch(/\b500 \.md files\b/)
+    expect(cut).not.toMatch(/per folder/)
+    expect(cut).not.toMatch(/deeper/)
+  })
+
   test('a folder\'s files are read together, not one after the other, and the pick still follows the files\' name order', { options }, async ($, on) => {
     const agents: Record<string, string> = {}
     for (let i = 0; i < 5; i++) agents[`/w/.claude/agents/par-${i}.md`] = agent('editor', EDITS, `Body ${i}.`)
