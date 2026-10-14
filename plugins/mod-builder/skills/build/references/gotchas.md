@@ -117,7 +117,8 @@ Re-check [field] items against the d.ts after a Claude Code update.
   plugin and exists only in this process; a pane-based teammate cannot run it. Spawn it with the
   Agent tool instead, or use in-process teammates." }`. With `--settings
   '{"teammateMode":"in-process"}'` it starts. An unnamed spawn isn't affected, and with agent teams
-  off a named one isn't either. In cmux (no `TMUX` variable) the default runs teammates in-process.
+  off a named one isn't either. Outside tmux, named spawns ran as in-process teammates (issue #27's run #2).
+  A cmux session sets `CMUX_*` variables and no `TMUX`.
 - **[probe]** A variable in `settings.json`'s `env` block overrides the same variable set in the
   shell: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0 claude …` still made teammates while
   `~/.claude/settings.json` set it to `1`. `--settings '{"env":{"…":"0"}}'` turned it off.
