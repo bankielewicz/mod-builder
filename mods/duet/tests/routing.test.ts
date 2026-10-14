@@ -315,3 +315,59 @@ describe('review admission', () => {
     for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 })
+
+describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
+  const WRITER = (name: string) => `---\nname: ${name}\ntools: Read, Write, Edit\n---\nWrite files.`
+  const agents = {
+    '/w/.claude/agents/red-test-writer.md': WRITER('red-test-writer'),
+    '/w/.claude/agents/impl-writer.md': WRITER('impl-writer'),
+    '/w/.claude/agents/code-explorer.md': EXPLORER,
+  }
+  const scoped = { codexAgents: 'red-test-writer, impl-writer, code-explorer', codexSandbox: 'workspace-write', codexFsScope: 'project', codexWritePaths: 'red-test-writer=tests;test', codexConsent: 'allow', codexRunMode: 'wait' }
+  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet.filesystem=')) ?? ''
+  const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
+
+  test('an agent named in codexWritePaths may write only those folders; the rest of the project and the Codex install folder are read', { options: scoped }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    const argv = seen.argv[0]!
+    expect(argv[argv.indexOf('-s') + 1]).toBe('workspace-write')
+    expect(argv).toContain('default_permissions="duet"')
+    const fs = filesystem(argv)
+    expect(fs).toContain(pair('/w', 'read'))
+    expect(fs).toContain(pair('/w/tests', 'write'))
+    expect(fs).toContain(pair('/w/test', 'write'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(fs).not.toContain(pair('/w', 'write'))
+    expect(fs).not.toContain('/tmp')
+  })
+
+  test('an editing agent not named gets the whole project writable; an agent that cannot edit gets it read-only', { options: scoped }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.tool.call(call({ subagent_type: 'code-explorer' }) as never)
+    const [editing, reading] = seen.argv.map(filesystem)
+    expect(editing).toContain(pair('/w', 'write'))
+    expect(editing).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(reading).toContain(pair('/w', 'read'))
+    expect(reading).not.toContain('="write"')
+    expect(seen.argv[1]![seen.argv[1]!.indexOf('-s') + 1]).toBe('read-only')
+  })
+
+  test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    const argv = seen.argv[0]!
+    expect(argv.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+    expect(argv).toContain('default_permissions="duet"')
+    const fs = filesystem(argv)
+    expect(fs).toContain(pair('/w', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(fs).not.toContain('="write"')
+    expect(argv).toContain('sandbox_mode="read-only"')
+  })
+})

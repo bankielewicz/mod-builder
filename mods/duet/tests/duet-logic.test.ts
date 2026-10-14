@@ -444,3 +444,129 @@ describe('fourth review round: what the consent says Codex can reach', () => {
     expect(ww).not.toContain('writes nothing')
   })
 })
+
+describe('issue 3 part B: codexFsScope limits what Codex can read and write', () => {
+  const HOME = '/home/u'
+  const fsScope = 'project' as never
+  const project = (o: Record<string, unknown> = {}) => codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/proj', home: HOME, fsScope, ...o } as never)
+  /** The `-c permissions.duet.filesystem=…` value, or '' when the argv has none. */
+  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet.filesystem=')) ?? ''
+  /** One `"path"="access"` entry of the table, the path as a TOML basic string (JSON's escapes for \ and " are TOML's). */
+  const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
+  const count = (text: string, what: string) => text.split(what).length - 1
+
+  test('project scope adds exactly two -c overrides, a duet profile as the default and its filesystem table; the rest of the argv is unchanged', () => {
+    const argv = project()
+    expect(argv).toContain('default_permissions="duet"')
+    const fs = filesystem(argv)
+    expect(fs.startsWith('permissions.duet.filesystem={')).toBe(true)
+    expect(fs.endsWith('}')).toBe(true)
+    const at = [argv.indexOf('default_permissions="duet"'), argv.indexOf(fs)]
+    for (const i of at) expect(argv[i - 1]).toBe('-c')
+    const rest = argv.filter((_, i) => !at.some(a => i === a || i === a - 1))
+    expect(rest).toEqual(['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-c', 'approval_policy="never"', '-C', '/w/proj', '-'])
+    expect(project({ model: 'gpt-x' }).slice(-3)).toEqual(['-m', 'gpt-x', '-'])
+  })
+
+  test('anything scope, or none, adds nothing: today\'s argv, whatever else is passed; project scope is the one that differs', () => {
+    const today = ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-c', 'approval_policy="never"', '-C', '/w/proj', '-']
+    for (const extra of [{ fsScope: 'anything' }, { fsScope: 'anything', writePaths: ['tests'] }, { fsScope: undefined }]) {
+      expect(project({ sandbox: 'workspace-write', ...extra })).toEqual(today)
+    }
+    expect(codexArgv({ sandbox: 'workspace-write', model: '', cwd: '/w/proj', home: HOME } as never)).toEqual(today)
+    expect(project({ sandbox: 'workspace-write' })).not.toEqual(today)
+  })
+
+  test('under read-only the profile lets Codex read the built-in minimal set, the project and the Codex install folder, and nothing else', () => {
+    const fs = filesystem(project())
+    expect(fs).toContain('":minimal"="read"')
+    expect(fs).toContain(pair('/w/proj', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(count(fs, '="read"')).toBe(3)
+    expect(fs).not.toContain('="write"')
+    expect(fs).not.toContain('/tmp')
+  })
+
+  test('under workspace-write the whole project is writable, still without /tmp', () => {
+    const fs = filesystem(project({ sandbox: 'workspace-write' }))
+    expect(fs).toContain(pair('/w/proj', 'write'))
+    expect(fs).not.toContain(pair('/w/proj', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(fs).not.toContain('/tmp')
+  })
+
+  test('writePaths narrows workspace-write to those folders: the project is read, each folder is write', () => {
+    const fs = filesystem(project({ sandbox: 'workspace-write', writePaths: ['tests', 'test/unit'] }))
+    expect(fs).toContain(pair('/w/proj', 'read'))
+    expect(fs).not.toContain(pair('/w/proj', 'write'))
+    expect(fs).toContain(pair('/w/proj/tests', 'write'))
+    expect(fs).toContain(pair('/w/proj/test/unit', 'write'))
+    expect(count(fs, '="write"')).toBe(2)
+  })
+
+  test('writePaths never widens: under read-only nothing is writable', () => {
+    const fs = filesystem(project({ sandbox: 'read-only', writePaths: ['tests'] }))
+    expect(fs).toContain(pair('/w/proj', 'read'))
+    expect(fs).not.toContain('="write"')
+  })
+
+  test('a writePaths entry that leaves the project is dropped; the ones inside stay', () => {
+    const fs = filesystem(project({ sandbox: 'workspace-write', writePaths: ['../sib', '/etc', 'src/../..', '..', '../proj-evil', 'tests', '/home/u/.ssh'] }))
+    expect(fs).toContain(pair('/w/proj/tests', 'write'))
+    expect(count(fs, '="write"')).toBe(1)
+    for (const gone of ['/w/sib', '/etc', '/w/proj-evil', '/home/u/.ssh']) expect(fs).not.toContain(gone)
+    expect(fs).toContain(pair('/w/proj', 'read'))
+  })
+
+  test('writePaths with nothing inside the project leaves the whole project read-only, never writable', () => {
+    const fs = filesystem(project({ sandbox: 'workspace-write', writePaths: ['../sib', '/etc'] }))
+    expect(fs).toContain(pair('/w/proj', 'read'))
+    expect(fs).not.toContain('="write"')
+  })
+
+  test('a project path with a quote and a backslash is escaped as a TOML string', () => {
+    const cwd = 'C:\\Users\\me\\my "proj"'
+    const argv = codexArgv({ sandbox: 'read-only', model: '', cwd, home: HOME, fsScope } as never)
+    const fs = filesystem(argv)
+    expect(fs).toContain(pair(cwd, 'read'))
+    expect(fs).toContain('"C:\\\\Users\\\\me\\\\my \\"proj\\""="read"')
+    expect(argv.slice(argv.indexOf('-C'), argv.indexOf('-C') + 2)).toEqual(['-C', cwd])
+    expect(filesystem(codexArgv({ sandbox: 'workspace-write', model: '', cwd, home: HOME, fsScope } as never))).toContain(pair(cwd, 'write'))
+  })
+
+  test('a review gets the same profile read-only, keeps its flags, and still ends with its target; anything scope or none leaves it as it was', () => {
+    const scope = { fsScope, cwd: '/w/proj', home: HOME } as never
+    const base = reviewArgv({ kind: 'base', ref: 'main' }, '', scope)
+    expect(base).toContain('default_permissions="duet"')
+    const fs = filesystem(base)
+    expect(fs).toContain(pair('/w/proj', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(fs).not.toContain('="write"')
+    expect(base).toContain('sandbox_mode="read-only"')
+    expect(base).toContain('approval_policy="never"')
+    expect(base.slice(-2)).toEqual(['--base', 'main'])
+    expect(reviewArgv({ kind: 'uncommitted' }, 'm', scope).slice(-3)).toEqual(['--uncommitted', '-m', 'm'])
+    const today = reviewArgv({ kind: 'commit', ref: 'abc123' }, '')
+    expect(today.join(' ')).not.toContain('default_permissions')
+    expect(reviewArgv({ kind: 'commit', ref: 'abc123' }, '', { fsScope: 'anything', cwd: '/w/proj', home: HOME } as never)).toEqual(today)
+  })
+})
+
+describe('issue 3 part B: codexFsScope and codexWritePaths are read defensively', () => {
+  const read = (o: Record<string, unknown>) => readOptions(o) as unknown as { fsScope: string; writePaths: Record<string, string[]>; sandbox: string }
+
+  test('the scope is anything unless the manifest says project; the other options read as before', () => {
+    expect(read({}).fsScope).toBe('anything')
+    expect(read({ codexFsScope: 'anything' }).fsScope).toBe('anything')
+    for (const junk of ['Project', 'all', '', 1, null, 'danger-full-access']) expect(read({ codexFsScope: junk }).fsScope).toBe('anything')
+    const o = read({ codexSandbox: 'workspace-write', codexFsScope: 'project', codexWritePaths: 'a=b' })
+    expect([o.fsScope, o.sandbox]).toEqual(['project', 'workspace-write'])
+  })
+
+  test('codexWritePaths reads agent=folder;folder entries, comma-separated, and is empty when unset', () => {
+    expect(read({}).writePaths).toEqual({})
+    expect(read({ codexWritePaths: '' }).writePaths).toEqual({})
+    expect(read({ codexWritePaths: 'red-test-writer=tests;test' }).writePaths).toEqual({ 'red-test-writer': ['tests', 'test'] })
+    expect(read({ codexWritePaths: ' red-test-writer = tests ; test , impl-writer=src ' }).writePaths).toEqual({ 'red-test-writer': ['tests', 'test'], 'impl-writer': ['src'] })
+  })
+})
