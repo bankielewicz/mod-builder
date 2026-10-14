@@ -78,6 +78,7 @@ import {
   viewOf,
   workOf,
   workspacePlan,
+  worktreeAddFailure,
   worktreePath,
 } from '../hooks/issue-forge-logic'
 import type { CommandResult, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
@@ -1072,5 +1073,13 @@ describe('review of PR #41, code-review pass', () => {
     for (const dir of ['.git', '.git/wt', 'scratch/.git/x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
     expect(refused('scratch/.github')).toBe('')
     expect(refused('.gitlab-runs')).toBe('')
+  })
+
+  test("worktreeAddFailure: a timeout, git's own reason, or that it said nothing", () => {
+    expect(worktreeAddFailure({ exit: null, isTimedOut: true, tail: 'Preparing worktree' }, 15)).toBe('git worktree add failed: timed out after 15 min')
+    expect(worktreeAddFailure({ exit: 128, isTimedOut: false, tail: "Preparing worktree (new branch 'b')\nfatal: could not create work tree dir 'x': Permission denied" }, 15)).toBe(
+      "git worktree add failed: fatal: could not create work tree dir 'x': Permission denied",
+    )
+    expect(worktreeAddFailure({ exit: 128, isTimedOut: false, tail: '' }, 15)).toBe('git worktree add failed: no output')
   })
 })

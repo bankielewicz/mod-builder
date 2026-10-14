@@ -530,6 +530,11 @@ export function gitFailure(text: string): string {
   return lines.find(line => /^(fatal|error):/.test(line)) ?? lines[lines.length - 1] ?? ''
 }
 
+/** A failed `git worktree add` in words: its timeout, git's own reason, or that it said nothing. */
+export function worktreeAddFailure(r: CommandResult, minutes: number): string {
+  return `git worktree add failed: ${r.isTimedOut ? `timed out after ${minutes} min` : gitFailure(r.tail) || 'no output'}`
+}
+
 function ended(r: CommandResult, minutes: number): string {
   return r.isTimedOut ? `timed out after ${minutes} min` : `exit ${r.exit ?? 'killed'}`
 }
