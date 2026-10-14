@@ -36,6 +36,7 @@ import {
   isOwnHandback,
   isWorking,
   isWorktreeRun,
+  keptWorktreePlan,
   layoutOf,
   lcovFileOf,
   mergeLine,
@@ -67,8 +68,9 @@ import {
   workspacePlan,
   worktreeAddFailure,
   worktreePath,
+  worktreeStateOf,
 } from './issue-forge-logic'
-import type { CheckoutState, CommandResult, DemoState, Gate, Kept, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
+import type { CheckoutState, CommandResult, DemoState, Gate, Kept, KeptWorktreePlan, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -449,6 +451,18 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
 }
 
 /**
+ * What to do with a run's kept worktree, from git's own list: `fs.exists` can be wrong, and git run in a
+ * folder at that path that isn't the worktree works on the checkout above it (round 6).
+ */
+async function keptWorktree($: EngineInterface, root: string, workRoot: string): Promise<KeptWorktreePlan | Blocked> {
+  const listed = await git($, root, ['worktree', 'list', '--porcelain'])
+  if (listed.exitCode !== 0) return block(`git worktree list failed: ${firstLine(listed.stderr || listed.stdout) || `exit ${listed.exitCode}`}`, 'check git in this checkout')
+  return keptWorktreePlan(worktreeStateOf(listed.stdout, workRoot), await $.fs.exists(workRoot))
+}
+
+const strayFolder = (workRoot: string): Blocked => block(`${workRoot} is there but isn't the run's git worktree`, `move ${workRoot} aside`)
+
+/**
  * Steps 1 and 2. A preflight that blocked after making its branch recorded it with the block, so a
  * resume reuses that branch and folder instead of making another (Codex, PR #41).
  */
@@ -460,7 +474,10 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   if (run.branch) {
     made = { branch: run.branch, workRoot: workOf(run), base: run.base }
     // A kept worktree that is gone (removed by hand, or never filled) is made again for the kept branch.
-    if (isWorktreeRun(run) && !(await $.fs.exists(made.workRoot))) {
+    const kept = isWorktreeRun(run) ? await keptWorktree($, run.root, made.workRoot) : 'reuse'
+    if (typeof kept !== 'string') return { ...kept, keep: made }
+    if (kept === 'block') return { ...strayFolder(made.workRoot), keep: made }
+    if (kept === 'add') {
       stillDriving(run)
       // git refuses to add a folder deleted by hand while it is still registered: only this path's entry is cleared (no
       // prune of others'). A folder git never registered just fails the remove.
@@ -863,17 +880,22 @@ async function resumeRun($: EngineInterface): Promise<string> {
   if (back.branch) {
     const issue = await issueCheck($, back)
     const work = workOf(back)
-    // A worktree that is gone is made again by preflight; at a later step it holds the run's work, so the person decides.
-    const isGone = isWorktreeRun(back) && !(await $.fs.exists(work))
-    const head = isGone ? null : (await gitOut($, work, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    // A worktree that is gone, or a folder in its place, is preflight's to handle; at a later step it holds the
+    // run's work, so the person decides. git runs in the folder only once git has it as the worktree.
+    const kept = isWorktreeRun(back) ? await keptWorktree($, back.root, work) : 'reuse'
+    const head = kept === 'reuse' ? (await gitOut($, work, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() : null
     const why =
       'type' in issue
         ? issue
-        : isGone
-          ? back.step === 'preflight'
-            ? null
-            : block(`the run's worktree ${work} is gone`, readdWorktreeCommand(work, back.branch))
-          : head !== back.branch
+        : typeof kept !== 'string'
+          ? kept
+          : kept !== 'reuse'
+            ? back.step === 'preflight'
+              ? null
+              : kept === 'block'
+                ? strayFolder(work)
+                : block(`the run's worktree ${work} is gone`, readdWorktreeCommand(work, back.branch))
+            : head !== back.branch
             ? block(`HEAD is on ${head}, not ${back.branch}`, `git switch ${back.branch}`)
             : null
     if (why) {

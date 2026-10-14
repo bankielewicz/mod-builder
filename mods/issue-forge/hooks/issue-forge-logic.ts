@@ -849,14 +849,29 @@ export function workspacePlan(mode: Workspace, s: CheckoutState, base: string): 
 
 export type WorktreeState = 'present' | 'missing' | 'unregistered'
 
-export function worktreeStateOf(_porcelain: string, _path: string): WorktreeState {
+/**
+ * What `git worktree list --porcelain` says of `path`: registered with its `.git` there (`present`),
+ * registered but `prunable` (its folder or its `.git` is gone: `missing`), or not one of git's.
+ */
+export function worktreeStateOf(porcelain: string, path: string): WorktreeState {
+  const wanted = normalizePath(path)
+  for (const record of porcelain.split(/\r?\n\r?\n/)) {
+    const lines = record.split(/\r?\n/)
+    const head = lines.find(line => line.startsWith('worktree '))
+    if (head !== undefined && normalizePath(head.slice('worktree '.length)) === wanted) return lines.some(line => line.startsWith('prunable')) ? 'missing' : 'present'
+  }
   return 'unregistered'
 }
 
 export type KeptWorktreePlan = 'reuse' | 'add' | 'block'
 
-export function keptWorktreePlan(_state: WorktreeState, _isThere: boolean): KeptWorktreePlan {
-  return 'reuse'
+/**
+ * A kept worktree git has is reused, whatever `fs.exists` says (round 6); one whose folder is gone is made
+ * again. A folder at its path that isn't it is refused: git run there would work on the checkout above.
+ */
+export function keptWorktreePlan(state: WorktreeState, isThere: boolean): KeptWorktreePlan {
+  if (state === 'present') return 'reuse'
+  return isThere ? 'block' : 'add'
 }
 
 export function worktreePath(root: string, dir: string, branch: string): string {
