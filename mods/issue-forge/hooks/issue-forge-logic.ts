@@ -835,7 +835,7 @@ export function worktreePath(root: string, dir: string, branch: string): string 
  */
 export function parseMergeTree(r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
   if (r.exitCode === 0) return { isClean: true, files: [] }
-  if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split(/\0|\n/).slice(1).filter(name => name.trim() !== ''))] }
+  if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split('\0').slice(1).filter(name => name !== ''))] }
   return { isClean: false, files: [], error: r.stderr.trim().replace(/\n[\s\S]*$/, '') || `exit ${r.exitCode}` }
 }
 
