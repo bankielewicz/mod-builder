@@ -36,7 +36,16 @@ export type Profile = {
   commandTimeoutMinutes: number
   notes: string
   commitTrailers: string[]
+  /** Where a run works: `here` (this checkout, never when busy), `worktree` (always a new one), `ask` (when busy). */
+  workspace: Workspace
+  /** Where new worktrees go, relative to the repository root (gitignored). */
+  worktreeDir: string
 }
+
+export type Workspace = 'ask' | 'worktree' | 'here'
+
+/** `git merge-tree` of the gated commit against the freshly fetched base, at ready. */
+export type MergeCheck = { isClean: boolean; files: string[]; error?: string }
 
 /** A percentage rounded to two decimals, or null for "n/a". */
 export type Pct = number | null
@@ -74,7 +83,10 @@ export type PhaseTime = { startedAt: number; endedAt?: number }
 
 export type Run = {
   id: string
+  /** The session's checkout: it keys the store. */
   root: string
+  /** Where git, the profile's commands and the agents work: a new worktree, or `root`. Absent in runs stored before 0.2.0. */
+  workRoot?: string
   issue: number
   title: string
   body: string
@@ -111,6 +123,7 @@ export type Run = {
   prUrl?: string
   /** HEAD when the run reached ready (after gate F): publish pushes exactly this commit, and refuses if HEAD moved. */
   gatedHead?: string
+  merge?: MergeCheck
   blocked?: { at: Step; reason: string; next: string }
 }
 

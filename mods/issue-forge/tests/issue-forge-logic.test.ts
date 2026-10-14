@@ -9,8 +9,13 @@ import {
   agentPrompt,
   badgeOf,
   baseOf,
+  branchLine,
   branchName,
   canRetry,
+  checkoutBaseOf,
+  checkoutState,
+  cleanupCommand,
+  cleanupLine,
   commitMessage,
   coverageLine,
   demoRun,
@@ -23,24 +28,30 @@ import {
   findStash,
   gateG,
   gateR,
+  gitFailure,
   globToRegExp,
+  guardAction,
   hasSourceRecord,
   hasStash,
   isActive,
   isSafeBranch,
   isOwnHandback,
   isWorking,
+  keptWorktreePlan,
   kindOf,
   layoutOf,
   lcovFileOf,
   matchesAny,
+  mergeLine,
   newRun,
   nextDemoState,
   normalizePath,
   outsideChecks,
+  outsideWorkRoot,
   parseCommand,
   parseDiff,
   parseLcov,
+  parseMergeTree,
   parseProfile,
   pct,
   pctText,
@@ -50,18 +61,27 @@ import {
   prBody,
   profileProblems,
   profileStatusText,
+  publishQuestion,
   ranges,
+  readdWorktreeCommand,
   relativeTo,
+  routedRedBlock,
   slugOf,
   splitZ,
   stashApplyArgv,
   stashMessage,
   statusText,
+  steerBash,
   tailLines,
   totals,
   truncate,
   unstagedOf,
   viewOf,
+  workOf,
+  workspacePlan,
+  worktreeAddFailure,
+  worktreePath,
+  worktreeStateOf,
 } from '../hooks/issue-forge-logic'
 import type { CommandResult, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
 import { DIFF_REAL, LCOV_REAL, STASH_LIST_REAL } from './fixtures/real'
@@ -785,5 +805,343 @@ describe('edges', () => {
     expect(statusText(run({ title: '', step: 'preflight' }), true, now)).toStartWith('#16\npreflight')
     expect(statusText(run({ step: 'done' }), false, now)).toContain('done: ')
     expect(parseCommand('demo')).toEqual({ kind: 'demo', state: null })
+  })
+})
+
+describe('workspace: where a run works (Change 0.2.0)', () => {
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+  const facts = (over: Partial<Parameters<typeof checkoutState>[0]> = {}) => ({ porcelain: '', head: 'main', base: 'main', ...over })
+
+  test('profile: workspace and worktreeDir default, take their values, and refuse anything else naming the field', () => {
+    expect(profile().workspace).toBe('ask')
+    expect(profile().worktreeDir).toBe('scratch/issue-forge')
+    for (const mode of ['ask', 'worktree', 'here']) expect(profile({ workspace: mode }).workspace).toBe(mode)
+    expect(profile({ worktreeDir: 'tmp/runs/' }).worktreeDir).toBe('tmp/runs')
+    const refused = (extra: Record<string, unknown>) => parseProfile(JSON.stringify({ ...MIN_PROFILE, ...extra }), HOME).errors.join('; ')
+    expect(refused({ workspace: 'elsewhere' })).toContain('workspace must be one of "ask", "worktree", "here"')
+    expect(refused({ workspace: true })).toContain('workspace must be')
+    for (const dir of ['/abs', 'C:\\runs', 'scratch/../..', '..', '', '.']) expect(refused({ worktreeDir: dir })).toContain('worktreeDir must be a relative path inside the repository')
+  })
+
+  test('checkoutState: changes, another branch or a detached HEAD make a checkout busy', () => {
+    expect(checkoutState(facts())).toEqual({ isBusy: false, why: '' })
+    expect(checkoutState(facts({ porcelain: ' M src/a.ts\n?? new.ts\n' }))).toMatchObject({ isBusy: true, why: '2 changed files' })
+    expect(checkoutState(facts({ porcelain: ' M src/a.ts\n' })).why).toBe('1 changed file')
+    expect(checkoutState(facts({ head: 'issue-3-duet' }))).toMatchObject({ isBusy: true, why: 'on issue-3-duet' })
+    expect(checkoutState(facts({ head: 'HEAD' }))).toMatchObject({ isBusy: true, why: 'detached HEAD' })
+    expect(checkoutState(facts({ porcelain: ' M a\n', head: 'x' })).why).toBe('1 changed file, on x')
+  })
+
+  test('workspacePlan: here blocks a busy checkout, ask asks only when busy, worktree always makes one', () => {
+    const idle = checkoutState(facts())
+    const busy = checkoutState(facts({ head: 'issue-3-duet' }))
+    expect(workspacePlan('here', idle, 'main')).toEqual({ kind: 'here' })
+    expect(workspacePlan('here', busy, 'main')).toEqual({
+      kind: 'block',
+      reason: 'the checkout is busy (on issue-3-duet)',
+      next: "set \"workspace\" to \"worktree\" or \"ask\" in .issue-forge.json on main (the run reads origin/main's copy), or clean the checkout",
+    })
+    expect(workspacePlan('ask', idle, 'main')).toEqual({ kind: 'here' })
+    expect(workspacePlan('ask', busy, 'main')).toEqual({ kind: 'ask' })
+    expect(workspacePlan('worktree', idle, 'main')).toEqual({ kind: 'worktree' })
+    expect(workspacePlan('worktree', busy, 'main')).toEqual({ kind: 'worktree' })
+  })
+
+  test("worktreePath puts the run's branch under worktreeDir in the repository root", () => {
+    expect(worktreePath('/repo', 'scratch/issue-forge', 'issue-16-fix-it')).toBe(WT)
+    expect(worktreePath('/repo/', 'scratch/issue-forge/', 'issue-16-fix-it')).toBe(WT)
+  })
+
+  test('parseMergeTree: exit 0 is clean, exit 1 lists the conflicted files, anything else is unavailable', () => {
+    expect(parseMergeTree({ exitCode: 0, stdout: '4b825dc642cb6eb9a060e54bf8d69288fbee4904\n', stderr: '' })).toEqual({ isClean: true, files: [] })
+    expect(parseMergeTree({ exitCode: 1, stdout: 'abc123\0mods/issue-forge/.claude-plugin/plugin.json\0.claude-plugin/marketplace.json\0mods/issue-forge/.claude-plugin/plugin.json\0', stderr: '' })).toEqual({
+      isClean: false,
+      files: ['mods/issue-forge/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json'],
+    })
+    expect(parseMergeTree({ exitCode: 129, stdout: '', stderr: "error: unknown option `write-tree'\nusage: …" })).toEqual({ isClean: false, files: [], error: "error: unknown option `write-tree'" })
+  })
+
+  test('outsideWorkRoot: absolute or relative, a .. escape is outside', () => {
+    expect(outsideWorkRoot(`${WT}/src/a.ts`, WT)).toBe(false)
+    expect(outsideWorkRoot('src/a.ts', WT)).toBe(false)
+    expect(outsideWorkRoot('/repo/src/a.ts', WT)).toBe(true)
+    expect(outsideWorkRoot(`${WT}/../../../src/a.ts`, WT)).toBe(true)
+    expect(outsideWorkRoot('../x.ts', WT)).toBe(true)
+    expect(outsideWorkRoot(WT, WT)).toBe(false)
+  })
+
+  test("steerBash runs the command from the run's folder, and stops if it can't get there", () => {
+    expect(steerBash('pwd > where.txt', WT)).toBe(`cd -- '${WT}' || exit 1\npwd > where.txt`)
+    expect(steerBash('ls', "/r/it's")).toBe(`cd -- '/r/it'\\''s' || exit 1\nls`)
+  })
+
+  test('guardAction: retired agents denied; the live agent steered into a worktree and kept from editing outside it', () => {
+    const known = new Set(['old-red', 'issue-forge-16-red-1', 'live'])
+    const worktree = { liveAgent: 'live', known, workRoot: WT, root: '/repo' }
+    const here = { liveAgent: 'live', known, workRoot: '/repo', root: '/repo' }
+    expect(guardAction({ tool: 'Bash', command: 'ls' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Bash', command: 'ls', agentId: 'someone-else' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Bash', command: 'ls', agentId: 'old-red' }, worktree)).toEqual({ kind: 'deny', reason: 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.' })
+    expect(guardAction({ tool: 'Bash', command: 'ls', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { command: `cd -- '${WT}' || exit 1\nls` } })
+    expect(guardAction({ tool: 'Grep', pattern: 'x', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { path: WT } })
+    expect(guardAction({ tool: 'Glob', pattern: '*.ts', path: 'src', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { path: `${WT}/src` } })
+    expect(guardAction({ tool: 'Glob', pattern: '*.ts', path: '/tmp', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Read', file_path: '/repo/README.md', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    const outside = { kind: 'deny', reason: `issue-forge: /repo/src/a.ts is outside this run's folder ${WT}; edit files there.` }
+    expect(guardAction({ tool: 'Edit', file_path: '/repo/src/a.ts', agentId: 'live' }, worktree)).toEqual(outside)
+    expect(guardAction({ tool: 'Write', file_path: '/repo/src/a.ts', agentId: 'live' }, worktree)).toEqual(outside)
+    expect(guardAction({ tool: 'NotebookEdit', notebook_path: '/repo/n.ipynb', agentId: 'live' }, worktree)).toMatchObject({ kind: 'deny' })
+    expect(guardAction({ tool: 'Write', file_path: `${WT}/src/a.ts`, agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    // In a run in the session's own checkout, nothing is steered, but edits outside the repository are still refused.
+    expect(guardAction({ tool: 'Bash', command: 'ls', agentId: 'live' }, here)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Grep', pattern: 'x', agentId: 'live' }, here)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Write', file_path: '/tmp/x', agentId: 'live' }, here)).toMatchObject({ kind: 'deny' })
+    // No live run: only the retired list applies.
+    expect(guardAction({ tool: 'Write', file_path: '/tmp/x', agentId: 'live' }, { liveAgent: null, known: new Set(), workRoot: null, root: null })).toEqual({ kind: 'pass' })
+  })
+
+  test("a run's folder: preflight records it, the prompt names it, a stored run without one works in its root", () => {
+    const r = advance(run(), { type: 'preflighted', title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), workRoot: WT }, 1)
+    expect(r.workRoot).toBe(WT)
+    expect(workOf(r)).toBe(WT)
+    expect(workOf(run())).toBe(ROOT)
+    expect(phasePrompt('red', r)).toContain(`Repository root: ${WT}. Work only inside it, and run every command from it.`)
+    expect(phasePrompt('red', run())).toContain(`Repository root: ${ROOT}. Work only inside it`)
+  })
+
+  test('view: the branch line, status and cleanup name the worktree; the merge check shows at ready and in the PR', () => {
+    const wt = run({ step: 'ready', branch: 'issue-16-fix-it', base: 'main', workRoot: WT })
+    expect(branchLine(wt)).toBe('issue-16-fix-it → main · worktree')
+    expect(branchLine(run({ branch: 'issue-16-fix-it', base: 'main' }))).toBe('issue-16-fix-it → main')
+    expect(cleanupCommand(wt)).toBe(`git worktree remove ${WT}`)
+    expect(cleanupCommand(run({ workRoot: '/my repo/scratch/x' }))).toBe("git worktree remove '/my repo/scratch/x'")
+    expect(cleanupCommand(run())).toBeNull()
+    expect(statusText(wt, false, 0)).toContain(`worktree: ${WT} (once the PR merges: git worktree remove ${WT})`)
+    expect(statusText(run({ step: 'ready', branch: 'b', base: 'main' }), false, 0)).not.toContain('worktree:')
+    expect(mergeLine(wt)).toBeNull()
+    expect(publishQuestion(wt)).toBe('Push issue-16-fix-it and open a pull request against main?')
+    const clean = { ...wt, merge: { isClean: true, files: [] } }
+    expect(mergeLine(clean)).toBe('merges cleanly with origin/main')
+    expect(publishQuestion(clean)).toBe('Push issue-16-fix-it and open a pull request against main?')
+    const conflicts = { ...wt, merge: { isClean: false, files: ['a.json', 'b.ts'] } }
+    expect(mergeLine(conflicts)).toBe('conflicts with origin/main: a.json, b.ts')
+    expect(publishQuestion(conflicts)).toBe('Push issue-16-fix-it and open a pull request against main? It conflicts with origin/main in: a.json, b.ts.')
+    expect(prBody(conflicts)).toContain('## Merge check\n\nAt publish time this conflicted with origin/main in: a.json, b.ts.')
+    expect(prBody(clean)).toContain('## Merge check\n\nAt publish time this merged cleanly with origin/main.')
+    expect(prBody(wt)).not.toContain('## Merge check')
+    const unavailable = { ...wt, merge: { isClean: false, files: [], error: 'error: unknown option' } }
+    expect(mergeLine(unavailable)).toBe('merge check unavailable: error: unknown option')
+    expect(publishQuestion(unavailable)).toBe('Push issue-16-fix-it and open a pull request against main? (merge check unavailable: error: unknown option)')
+  })
+
+  test('edges: a live agent with no run folder passes; a merge check that could not run is said so in the PR body', () => {
+    expect(guardAction({ tool: 'Write', file_path: '/anywhere', agentId: 'live' }, { liveAgent: 'live', known: new Set(['live']), workRoot: null, root: null })).toEqual({ kind: 'pass' })
+    const r = run({ branch: 'b', base: 'main', merge: { isClean: false, files: [], error: 'git fetch origin main failed: offline' } })
+    expect(prBody(r)).toContain("## Merge check\n\nAt publish time the merge check couldn't run: git fetch origin main failed: offline")
+    expect(parseMergeTree({ exitCode: 128, stdout: '', stderr: '' })).toEqual({ isClean: false, files: [], error: 'exit 128' })
+  })
+})
+
+describe('review of PR #41', () => {
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+
+  test("a merge check result lands only on a run that is still ready; publish carries its own", () => {
+    const merge = { isClean: false, files: ['a.json'] }
+    expect(advance(run({ step: 'ready' }), { type: 'merged', merge }, 1).merge).toEqual(merge)
+    for (const step of ['publishing', 'done', 'stopped', 'blocked', 'gateF'] as const) expect(advance(run({ step }), { type: 'merged', merge }, 1).merge).toBeUndefined()
+    const done = advance(run({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1', merge }, 2)
+    expect(done).toMatchObject({ step: 'done', prUrl: 'https://x/pull/1', merge })
+  })
+
+  test('a preflight block after the branch was made keeps the branch, its folder and the base, so resume reuses them', () => {
+    const r = advance(run({ step: 'preflight' }), { type: 'block', reason: 'r', next: 'n', keep: { branch: 'issue-16-fix-it', workRoot: WT, base: 'main' } }, 1)
+    expect(r).toMatchObject({ step: 'blocked', branch: 'issue-16-fix-it', workRoot: WT, base: 'main', blocked: { at: 'preflight', reason: 'r', next: 'n' } })
+    expect(advance(run({ step: 'preflight' }), { type: 'block', reason: 'r', next: 'n' }, 1).branch).toBe('')
+  })
+
+  test("a red type another plugin routes can't run in a worktree; the mod's own can", () => {
+    expect(routedRedBlock('issue-forge:red', true)).toBeNull()
+    expect(routedRedBlock('general-purpose', false)).toBeNull()
+    expect(routedRedBlock('general-purpose', true)).toEqual({
+      reason: "redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder",
+      next: 'set redAgentType to issue-forge:red (a red on Codex needs "workspace": "here" and a clean checkout on the base)',
+    })
+  })
+
+  test('merge-tree -z output: the names after the tree id are NUL-separated', () => {
+    expect(parseMergeTree({ exitCode: 1, stdout: 'abc\0a.json\0dir/café.ts\0a.json\0', stderr: '' })).toEqual({ isClean: false, files: ['a.json', 'dir/café.ts'] })
+    expect(parseMergeTree({ exitCode: 0, stdout: 'abc\0', stderr: '' })).toEqual({ isClean: true, files: [] })
+  })
+
+  test('cleanup advice: once the PR merges, or for a stopped run when it is no longer needed', () => {
+    expect(cleanupLine(run({ step: 'ready', workRoot: WT }))).toBe(`once the PR merges: git worktree remove ${WT}`)
+    expect(cleanupLine(run({ step: 'stopped', workRoot: WT }))).toBe(`when you no longer need it: git worktree remove ${WT}`)
+    expect(cleanupLine(run())).toBeNull()
+    expect(statusText(run({ step: 'stopped', branch: 'b', base: 'main', workRoot: WT }), false, 0)).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
+  })
+})
+
+describe('review of PR #41, round 2', () => {
+  test("the starting checkout's profile only names the base: anything it can't say safely reads as main", () => {
+    expect(checkoutBaseOf(JSON.stringify({ baseBranch: 'develop', testCommand: 'stale' }))).toBe('develop')
+    expect(checkoutBaseOf(JSON.stringify({ baseBranch: '+evil:main' }))).toBe('main')
+    expect(checkoutBaseOf(JSON.stringify({ testCommand: ['t'] }))).toBe('main')
+    expect(checkoutBaseOf('not json')).toBe('main')
+    expect(checkoutBaseOf('[]')).toBe('main')
+    expect(checkoutBaseOf('null')).toBe('main')
+    expect(checkoutBaseOf(null)).toBe('main')
+  })
+})
+
+describe('review of PR #41, round 3', () => {
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+  const known = new Set(['live'])
+  const worktree = { liveAgent: 'live', known, workRoot: WT, root: '/repo' }
+  const here = { liveAgent: 'live', known, workRoot: '/repo', root: '/repo' }
+  const write = (file_path: string, tool = 'Write') => ({ tool, file_path, agentId: 'live' })
+
+  test("the edit guard: in a worktree run a relative target is moved into the worktree; one that resolves outside it is refused (Codex P2)", () => {
+    expect(guardAction(write('src/a.ts'), worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/src/a.ts` } })
+    expect(guardAction(write('./src/../b.ts', 'Edit'), worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/b.ts` } })
+    expect(guardAction({ tool: 'NotebookEdit', notebook_path: 'n.ipynb', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { notebook_path: `${WT}/n.ipynb` } })
+    expect(guardAction(write('../../x.ts'), worktree)).toMatchObject({ kind: 'deny' })
+  })
+
+  test('the edit guard refuses targets it cannot place: Windows-rooted, UNC, drive-relative and ~ paths, in any run (Codex P2)', () => {
+    for (const path of ['\\outside\\f.ts', '/\\?\\x', '\\\\srv\\share\\f.ts', '~/x.ts', '~', 'D:foo.ts']) {
+      expect(guardAction(write(path), worktree)).toMatchObject({ kind: 'deny', reason: `issue-forge: ${path} is outside this run's folder ${WT}; edit files there.` })
+      expect(guardAction(write(path), here)).toMatchObject({ kind: 'deny' })
+    }
+    // In the session's own checkout a relative target already lands in the run's folder: left alone.
+    expect(guardAction(write('src/a.ts'), here)).toEqual({ kind: 'pass' })
+  })
+
+  test('merge-tree -z: a conflicted name holding a newline or only spaces stays whole (Codex P3)', () => {
+    expect(parseMergeTree({ exitCode: 1, stdout: 'oid\0nl\nname\0 \0ok.ts\0', stderr: '' })).toEqual({ isClean: false, files: ['nl\nname', ' ', 'ok.ts'] })
+  })
+
+  test("Read: in a worktree run a relative path reads the worktree's copy; absolute and odd paths aren't confined", () => {
+    expect(guardAction({ tool: 'Read', file_path: 'src/a.ts', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/src/a.ts` } })
+    expect(guardAction({ tool: 'Read', file_path: '/etc/hosts', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Read', file_path: '~/notes.md', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Read', file_path: 'src/a.ts', agentId: 'live' }, here)).toEqual({ kind: 'pass' })
+  })
+})
+
+describe('review of PR #41, round 4', () => {
+  test("worktreeDir refuses a drive-relative Windows path: D:tmp names a folder on drive D, not inside the repository (Codex P2)", () => {
+    const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
+    for (const dir of ['D:tmp', 'd:', 'C:runs/x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
+    expect(refused('scratch/D:x')).toBe('')
+  })
+
+  test("gitFailure: git's first fatal: or error: line, else its last line", () => {
+    expect(gitFailure("\nPreparing worktree (new branch 'b')\nfatal: could not create work tree dir 'x': Permission denied\n")).toBe("fatal: could not create work tree dir 'x': Permission denied")
+    expect(gitFailure('Preparing worktree\n  error: unable to write\nfatal: later')).toBe('error: unable to write')
+    expect(gitFailure('one\ntwo\n\n')).toBe('two')
+    expect(gitFailure('  \n')).toBe('')
+  })
+
+  test('status at ready says what the merge check found, as the pane does', () => {
+    const ready = (merge?: Run['merge']) => statusText(run({ step: 'ready', branch: 'b', base: 'main', ...(merge ? { merge } : {}) }), false, 0).split('\n')
+    expect(ready({ isClean: false, files: ['x.json', 'y.ts'] })).toContain('conflicts with origin/main: x.json, y.ts')
+    expect(ready({ isClean: true, files: [] })).toContain('merges cleanly with origin/main')
+    expect(ready({ isClean: false, files: [], error: 'git fetch origin main failed: offline' })).toContain('merge check unavailable: git fetch origin main failed: offline')
+    expect(ready()).toHaveLength(2)
+  })
+
+  test('a made event writes the branch, folder and base onto the run at any step, a stopped one included', () => {
+    const keep = { branch: 'issue-16-x', workRoot: '/repo/wt', base: 'main' }
+    for (const step of ['preflight', 'stopped', 'blocked'] as const) expect(advance(run({ step }), { type: 'made', keep }, 1)).toMatchObject({ step, ...keep })
+  })
+})
+
+describe('review of PR #41, code-review pass', () => {
+  test("readdWorktreeCommand clears git's entry for a folder deleted by hand before adding it again, quoting what a shell would split", () => {
+    expect(readdWorktreeCommand('/repo/scratch/issue-forge/issue-16-x', 'issue-16-x')).toBe('git worktree remove /repo/scratch/issue-forge/issue-16-x; git worktree add /repo/scratch/issue-forge/issue-16-x issue-16-x')
+    expect(readdWorktreeCommand('/my repo/wt', 'issue-16-x')).toBe("git worktree remove '/my repo/wt'; git worktree add '/my repo/wt' issue-16-x")
+  })
+
+  test('Grep and Glob leave a path they cannot place alone, as Read does, instead of making a folder named ~ under the run', () => {
+    const worktree = { liveAgent: 'live', known: new Set(['live']), workRoot: '/repo/scratch/issue-forge/issue-16-x', root: '/repo' }
+    for (const path of ['~/notes', '~', '\\outside', '\\\\srv\\share', 'D:src']) {
+      for (const tool of ['Grep', 'Glob']) expect(guardAction({ tool, pattern: 'x', path, agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    }
+    expect(guardAction({ tool: 'Grep', pattern: 'x', path: 'src', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { path: '/repo/scratch/issue-forge/issue-16-x/src' } })
+  })
+
+  test("worktreeDir refuses the repository's own .git, at any depth", () => {
+    const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
+    for (const dir of ['.git', '.git/wt', 'scratch/.git/x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
+    expect(refused('scratch/.github')).toBe('')
+    expect(refused('.gitlab-runs')).toBe('')
+  })
+
+  test("worktreeAddFailure: a timeout, git's own reason, or that it said nothing", () => {
+    expect(worktreeAddFailure({ exit: null, isTimedOut: true, tail: 'Preparing worktree' }, 15)).toBe('git worktree add failed: timed out after 15 min')
+    expect(worktreeAddFailure({ exit: 128, isTimedOut: false, tail: "Preparing worktree (new branch 'b')\nfatal: could not create work tree dir 'x': Permission denied" }, 15)).toBe(
+      "git worktree add failed: fatal: could not create work tree dir 'x': Permission denied",
+    )
+    expect(worktreeAddFailure({ exit: 128, isTimedOut: false, tail: '' }, 15)).toBe('git worktree add failed: no output')
+  })
+})
+
+describe('review of PR #41, round 6', () => {
+  // As git 2.53 prints it: the main checkout, a worktree whose folder (or its .git) is gone, a healthy one.
+  const LIST = [
+    'worktree /repo',
+    'HEAD e418c0d62ae04d68bf9439e1ed1a547c1524f349',
+    'branch refs/heads/main',
+    '',
+    'worktree /repo/scratch/issue-forge/issue-16-gone',
+    'HEAD e418c0d62ae04d68bf9439e1ed1a547c1524f349',
+    'branch refs/heads/issue-16-gone',
+    'prunable gitdir file points to non-existent location',
+    '',
+    'worktree /repo/scratch/issue-forge/issue-16 x',
+    'HEAD e418c0d62ae04d68bf9439e1ed1a547c1524f349',
+    'branch refs/heads/issue-16-x',
+    '',
+  ].join('\n')
+
+  test("worktreeStateOf reads git's own list: registered and there, registered but prunable, or not git's at all", () => {
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16 x')).toBe('present')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16 x/')).toBe('present')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16-gone')).toBe('missing')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16-other')).toBe('unregistered')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge')).toBe('unregistered')
+    expect(worktreeStateOf(LIST.replace(/\n/g, '\r\n'), '/repo/scratch/issue-forge/issue-16-gone')).toBe('missing')
+    expect(worktreeStateOf('', '/repo/wt')).toBe('unregistered')
+  })
+
+  test('keptWorktreePlan: reuse what git has (whatever fs.exists says), make again what is gone, refuse a folder that is not the worktree', () => {
+    expect(keptWorktreePlan('present', true)).toBe('reuse')
+    expect(keptWorktreePlan('present', false)).toBe('reuse')
+    expect(keptWorktreePlan('missing', false)).toBe('add')
+    expect(keptWorktreePlan('unregistered', false)).toBe('add')
+    // git inside a folder with no .git of its own works on the checkout above it.
+    expect(keptWorktreePlan('missing', true)).toBe('block')
+    expect(keptWorktreePlan('unregistered', true)).toBe('block')
+  })
+
+  test("normalizePath keeps a UNC root's two leading slashes, so a worktree on a share stays on it (Codex 4274944503)", () => {
+    expect(normalizePath('//srv/share/repo')).toBe('//srv/share/repo')
+    expect(normalizePath('//srv/share/repo/../x/')).toBe('//srv/share/x')
+    // Only exactly two: three or more is a POSIX root, and a single backslash stays as it was.
+    expect(normalizePath('///x')).toBe('/x')
+    expect(normalizePath('/x//y')).toBe('/x/y')
+    expect(worktreePath('//srv/share/repo', 'scratch/issue-forge', 'issue-16-x')).toBe('//srv/share/repo/scratch/issue-forge/issue-16-x')
+    // A current-drive path is not inside the share.
+    expect(relativeTo('//srv/share/repo', '/srv/share/repo/x')).toBe(null)
+    expect(outsideWorkRoot('/srv/share/repo/wt/a.ts', '//srv/share/repo/wt')).toBe(true)
+    const share = { liveAgent: 'live', known: new Set(['live']), workRoot: '//srv/share/repo/wt', root: '//srv/share/repo' }
+    expect(guardAction({ tool: 'Edit', file_path: 'src/a.ts', agentId: 'live' }, share)).toEqual({ kind: 'rewrite', patch: { file_path: '//srv/share/repo/wt/src/a.ts' } })
+  })
+
+  test("worktreeDir refuses .git in any case, and with the trailing dots or spaces Windows drops (Codex 4274944512)", () => {
+    const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
+    for (const dir of ['.GIT', '.Git/wt', 'scratch/.gIt/x', '.git.', '.git ', 'scratch/.GIT. /x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
+    expect(refused('scratch/.GITHUB')).toBe('')
+    expect(refused('.gits')).toBe('')
   })
 })

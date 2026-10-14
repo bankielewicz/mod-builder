@@ -428,3 +428,346 @@ Codex reviewed bd19cbe and cf8344a: 16 findings after round 1. `/code-review` ju
 | FP | Windows absolute `argv0` (4261943997) | Already fixed in cf8344a |
 
 After round 3: validate is clean; 99 tests pass (65 logic, 34 UI and behaviour); `tsc` is clean; own logic coverage is 100.00% lines and 99.33% branches; the logic suite counts 65 under both the kit and `claude plugin test`.
+
+## Change 0.2.0 (2026-10-13)
+
+> when running issue-forge 27, its preflight requires options. what are some best practices for
+> options? i can think of 4 such cases: 1-does this issue affect other pending work which would result
+> in pr merge issues, 2-am i in local main or another worktree?, 3-add a config option to issue-forge
+> config where the issue-forge configuration gui allows configuring of working in local repo or new
+> worktree., 4-if preflight detects its present in a worktree, should i fork from origin/main into my
+> own worktree?
+>
+> it is to be pushed to repo so the setting is project wide
+
+Why: run #27 blocked at preflight (`the working tree has changes`). The main folder was on
+`issue-3-…` with #3's unchecked refactor still uncommitted, and the run's only way forward was to move
+that folder onto a new branch. This repository's rule is that the main folder is never switched,
+because the installed plugins load from whatever branch it is on.
+
+Decisions (2026-10-13): the setting is committed with the repository, so it applies project wide; a
+busy checkout asks by default; run worktrees go in a gitignored folder inside the repository; case 1
+is a merge check at ready. The first draft put the setting in `/config`. The person then asked for it
+in the repository, and probe P4 (below) changed how agents are kept in the worktree. This section is
+the amended version.
+
+- **What changes:**
+  - **Two profile fields** in `.issue-forge.json` (committed, so every clone and session gets them):
+    - `workspace`: `"ask"`, `"worktree"` or `"here"`; default `"ask"`. Any other value is a profile
+      error naming the field.
+    - `worktreeDir`: a path relative to the repository root, default `"scratch/issue-forge"`. An
+      absolute path, a `..` segment or an empty string is a profile error.
+    - **This repository's profile sets `"workspace": "worktree"`**, so a run here never switches the
+      main folder, even a clean one on `main` (which `ask` would treat as not busy).
+    - **Which copy decides:** the workspace fields are read from the base's profile,
+      `git show origin/<base>:.issue-forge.json` right after `git fetch origin <base>`, before anything
+      is switched or created. That's the same trusted copy round 3 made the run use. The checkout you
+      start from only names the base, as before.
+  - **Where a run works (preflight).** Pure `checkoutState` reads `git rev-parse --git-dir
+    --git-common-dir` (main checkout or linked worktree), `git status --porcelain` and
+    `git rev-parse --abbrev-ref HEAD`. A checkout is *busy* when it has changes or HEAD isn't
+    `<base>` (a detached HEAD is busy). Pure `workspacePlan(mode, state)`:
+    - `here`: not busy → `git switch -c` in this checkout, as today. Busy → blocked:
+      `the checkout is busy (<changed files | on <branch>>)` / `next: set "workspace" to "worktree" or
+      "ask" in .issue-forge.json, or clean the checkout`. **A tightening:** today a clean checkout on
+      another branch is switched; from now on it blocks.
+    - `ask`: not busy → here. Busy → `$.ui.ask` `<checkout> is busy (<why>). Run #<N> in a new worktree
+      under <worktreeDir>?` with `New worktree` / `Stop`. No answer possible counts as Stop (blocked),
+      like the base-branch question.
+    - `worktree`: always a new worktree, busy or not: `git worktree add --no-track -b <branch>
+      <root>/<worktreeDir>/<branch> origin/<base>` in place of `git switch -c`. The session's
+      checkout is never switched, staged or committed.
+    - The clean-tree check moves after this choice and applies only to `here`. A new worktree carries
+      none of the checkout's changes. `git check-ignore -q <worktreeDir>/` must pass, or preflight
+      blocks (`<worktreeDir> isn't gitignored` / `next: add <worktreeDir>/ to .gitignore`). A worktree
+      path that already exists blocks too.
+  - **The run's folder.** `Run` gains `workRoot`: the folder where git and the profile's commands
+    run, and where the agents are steered. `root` stays the session's checkout, which keys the store
+    as today (`issue-forge:run:<root>`). **Decided here:** keys are unchanged, so no stored run is
+    orphaned and runs from different checkouts can still run side by side. A run is driven from the
+    checkout that started it. A stored run without `workRoot` uses `root`.
+  - **Agents are steered into that folder (P4: `cwd` is ignored).** `$.agent.spawn` still passes
+    `cwd: workRoot`, but on 2.1.296 both a named and an unnamed agent ran in the session's folder
+    anyway. So the existing `tool.call` guard does it, for the live agent of a run whose `workRoot`
+    differs from `root` (pure functions, one test each):
+    - **Bash:** the command becomes `cd -- '<workRoot>' || exit 1` + newline + the command
+      (`'` escaped). P4 showed this moves both kinds of agent.
+    - **Grep and Glob:** a missing `path` becomes `workRoot`; a relative one is resolved against it.
+    - **Edit, Write and NotebookEdit,** in every mode: a path outside `workRoot` is denied:
+      `issue-forge: <path> is outside this run's folder <workRoot>; edit files there.`
+    - `phasePrompt` names the folder: `Repository root: <workRoot>. Work only inside it.`
+  - **Conflicts (case 1), at ready.** Before asking to publish: `git fetch origin <base>`, then
+    `git merge-tree --write-tree --name-only --no-messages <gatedHead> origin/<base>` (git ≥ 2.38;
+    2.43 here). Pure `parseMergeTree(stdout, exitCode)`: exit 0 is clean; exit 1 means conflicts, with
+    the file names. The ready summary and the question name them: `Push <branch> and open a pull
+    request against <base>? It conflicts with origin/<base> in: <files>.` It doesn't block; the person
+    decides. Any other exit shows `merge check unavailable: <first line>`. The PR body lists the
+    conflicts. Before red there's no diff, so this can't be known at preflight.
+  - **Leaving a worktree.** `/issue-forge status`, done and stopped name the worktree and
+    `git worktree remove <path>` (to run from a plain shell after the PR merges). The mod never removes
+    a worktree or a branch.
+  - **Pane:** the branch line reads `<branch> → <base> · worktree` in a worktree (≥ 60 columns only);
+    status has the full path. Ready's summary adds the merge line (`merges cleanly with origin/main` or
+    `conflicts with origin/main: <files>`).
+- **Probe P4 (passed 2026-10-13, Claude Code 2.1.296).** Throwaway mods `scratch/issue-forge-probe-cwd`
+  and `-cwd2` ran in interactive sessions in tmux, under `auto` mode. Each spawned a `haiku` agent with
+  `cwd: <session>/wt`, and the agent ran `pwd > where-<tag>.txt`:
+  - Unnamed and named (`teammateMode: "in-process"`), both files landed in the session's folder,
+    holding its path. `cwd` was ignored.
+  - With the guard's rewrite `cd -- '<wt>' || exit 1⏎<command>`, both files landed in `wt/`, holding
+    its path.
+  - In tmux with the default teammate mode, the named spawn was refused: `Agent type 'ifcwd:worker'
+    was registered at run time by a plugin and exists only in this process; a pane-based teammate
+    cannot run it.` With `--settings '{"teammateMode":"in-process"}'` it started, with
+    `teammateId: "ifcwd-named@session-8b7e59a9"`.
+  - #27's evidence, recorded for that issue: the named agent's hand-back arrived as `session.receive`
+    with origin `{ kind: 'peer', teammate: 'ifcwd-named', isVerified: true }`, no `agentId`, and text
+    `{"type":"idle_notification",…,"result":"PROBE DONE"}`. No `prompt.submit` fired for it, and it
+    started a main-model turn. `{ consumed }` stopped that turn, and no re-delivery came in 78 s.
+    The unnamed agent's hand-back was a `prompt.submit` with origin `peer` and text
+    `<agent-message from="<agentId>">`, and `{ drop }` stopped it.
+- **What gets touched:**
+  - Files: `mods/issue-forge/{SPEC.md, README.md, .claude-plugin/plugin.json (version),
+    hooks/issue-forge-logic.ts, hooks/register.tsx, types/index.d.ts, tests/issue-forge-logic.test.ts,
+    tests/ui.test.tsx}`; `.issue-forge.json` (`"workspace": "worktree"`);
+    `.claude-plugin/marketplace.json` (both versions); `docs/specs/issue-forge.md` §4.1 (the two
+    fields); `plugins/mod-builder/skills/build/references/gotchas.md` (P4,
+    and a correction to the hand-back entry), and so mod-builder's patch version 0.2.4 → 0.2.6 in its
+    `plugin.json`, the marketplace entry and its SPEC (0.2.5 went to #11's fix, PR #47; round 6).
+  - At run time: new git calls `show origin/<base>:.issue-forge.json`, `rev-parse --git-dir
+    --git-common-dir`, `rev-parse --abbrev-ref HEAD`, `worktree add --no-track -b`,
+    `merge-tree --write-tree`, and `check-ignore` on `worktreeDir`. A worktree run creates
+    `<root>/<worktreeDir>/<branch>/` (a full checkout, gitignored) and an entry in `.git/worktrees/`.
+    Both are left in place. The guard now rewrites the live agent's Bash, Grep and Glob input in a
+    worktree run.
+  - Costs: P4 spawned four small `haiku` agents, and two woken main-model turns read files. A run
+    spawns the same agents as before.
+  - Versions: issue-forge 0.1.0 → 0.2.0 (a minor bump: new profile fields; `here` is tightened). #25,
+    #27 and #28 also bump issue-forge, so the number is checked against `main` at PR time.
+  - Not in this change: #27's hand-back fix (the probe settles its cause; the issue stays its own);
+    a `setupCommand` for a fresh worktree's untracked dependencies (`node_modules`), which the README's
+    Limits names; parallel runs from one checkout.
+- **Tests:**
+  - Logic: the profile's `workspace` (default, each value, a wrong one) and `worktreeDir` (default;
+    absolute, `..`, empty refused); `checkoutState` (changes → busy; another branch → busy; detached
+    → busy; clean on base → not busy; a linked worktree is detected); `workspacePlan` for each of the
+    three modes, busy and not busy; the worktree path; `parseMergeTree` (clean, conflicts with names,
+    unavailable); the Bash rewrite (quoting a `'` in the path); Grep/Glob `path` (missing, relative,
+    absolute left alone); `outsideWorkRoot` (inside allowed; outside, a `..` escape, and a relative
+    path resolved against `workRoot` denied; `notebook_path`); `phasePrompt` names `workRoot`.
+  - UI and behaviour: the workspace is read from `git show origin/main:.issue-forge.json`, not the
+    checkout's file. `here` with changes still blocks naming the check, and `here` on another branch
+    blocks as busy. `ask` with changes, answered `New worktree`, runs `git worktree add … origin/main`,
+    no `git switch`, and nothing staged or committed in `root`. `ask` under a rejecting `$.ui.ask`
+    blocks with no git write. `worktree` with an un-ignored `worktreeDir` blocks. Gate R stages and
+    commits in `workRoot`. The guard leaves the main loop's and other agents' calls alone and still
+    refuses retired agents in a worktree run. The live agent's rewrites and denies are logic tests of
+    `guardAction` (the kit can't give a spawn an `agentId`; see "Built"). Ready with merge-tree exit 1 names the files in the question. A stored run without
+    `workRoot` resumes in `root`.
+- **Done means:**
+  - Once this is on `main`, `/issue-forge 27` from the main folder runs #27 in
+    `scratch/issue-forge/issue-27-…`, busy or not. The main folder's HEAD and `git status` are the same
+    before and after. The red, green and refactor commits land on the worktree's branch, and the run
+    stops at ready, naming any conflict with `origin/main`.
+  - The live check before merge: `origin/main`'s profile has no `workspace` yet, so it reads `ask`.
+    It loads this worktree's copy with an absolute `--plugin-dir` (with `teammateMode: "in-process"`
+    in tmux) from the main folder, which is busy (on `issue-3-…`), and answers `New worktree`. That
+    copy keeps its own store (`issue-forge@inline`), so it starts #27 fresh.
+  - P4 is recorded in `gotchas.md`. Validate is clean, every test passes, `tsc` is clean, the changed
+    logic is ≥ 95% covered, and total coverage doesn't drop.
+  - README: the two profile fields, `here`'s tightening, the worktree cleanup command, the tmux
+    teammate-mode and `setupCommand` limits, and a "What it reaches" table regenerated from
+    `claude plugin validate`. `plugin.json` and the marketplace entry agree.
+- **Built (2026-10-13).** Red `db2e1ea` (16 failing by assertion, 101 passing), green `5713e95`,
+  type fix `35631ae`, refactor `f56d8a2`, docs `3cf8381`, coverage `2306a51`. Changes along the way:
+  - **Test fixes, each in its own commit.** `b29cf9e`: the 0.1.0 dirty-tree test now pins `here` and
+    expects the busy wording. `72221eb`: the harness's LCOV fixture now names files under the folder
+    the coverage command ran in, as a real reporter does.
+  - **The live steer has no UI test.** The kit never gives a spawn an `agentId` (gotchas.md), so no
+    UI test reaches the live agent's Bash rewrite. `guardAction`'s logic tests cover each rule, the UI
+    tests cover the guard's pass-through and refusal wiring in a worktree run, and P4 and the live
+    run below cover the rest.
+  - **Per-run LCOV.** This repository's profile now writes LCOV to the relative
+    `coverage/issue-forge.lcov`, which resolves in the run's own (gitignored) folder. Parallel worktree
+    runs no longer share `~/.claude/issue-forge-data/coverage.lcov`.
+  - **More of `here`'s tightening.** A clean checkout on a branch other than the base (for example
+    when the issue names another `Base branch:`) is busy too, so `here` blocks it and `ask` asks.
+- **QA:**
+  - `claude plugin validate .`, `mods/issue-forge` and `plugins/mod-builder` all pass.
+  - `claude plugin test`: issue-forge 118 pass (76 logic, 42 UI and behaviour); mod-builder 89 pass.
+  - The archetype check passes, and `tsc` (typescript 5.6) is clean.
+  - Coverage of `hooks/issue-forge-logic.ts` under the kit: 100.00% lines, 99.41% branches (`main`:
+    100.00% / 99.33%). No changed line has an untaken branch.
+- **Live check (passed 2026-10-13).** A tmux session in the main folder ran this worktree's copy
+  (`--plugin-dir`, with `issue-forge@claudemod` disabled and `teammateMode: "in-process"`). The driver
+  ran on `haiku` and was told to stay passive.
+  - `/issue-forge status` answered from the inline copy, which has its own store.
+  - `/issue-forge 27` asked `/mnt/c/Projects/ClaudeMod is busy (on issue-3-duet-codex-can-read-any-file-the-user-ca). Run #27 in a new worktree under scratch/issue-forge?`.
+    `New worktree` added `scratch/issue-forge/issue-27-issue-forge-phase-agents-hand-backs-reac` from
+    `origin/main` (5bc018c).
+  - Each phase passed on its first attempt: red `6f1b268` (6m13s), green `51b057c` (1m57s; changed
+    lines and branches 100.00%, total 97.21% / 91.79%), refactor `c77b886` (3m48s).
+  - At ready, the pane showed `merges cleanly with origin/main` and the question
+    `Push issue-27-… and open a pull request against main?`. It was dismissed (no). There's no
+    `issue-27*` branch on origin and no PR.
+  - The main folder was the same before and after: HEAD `95af650` on `issue-3-…`, and
+    `git status --porcelain --untracked-files=all` empty.
+  - Every agent file edit was inside the worktree, and the guard refused nothing. The agents' own
+    Bash commands `cd`'d into the worktree as the prompt says, or used absolute paths, so this run
+    doesn't single out the Bash rewrite (P4 does).
+  - As #27 predicts, each phase's hand-back reached the driver as a `<teammate-message>`, and the
+    driver answered `ok` with no tools.
+
+## Review: PR #41 (2026-10-14)
+
+Codex left three inline findings on db7fdde, and its security review found none. `/code-review` agreed
+all three were real and found twelve more. Each was checked against the code. The fixed ones have a
+test (red `d858f05`; on the earlier code 8 UI tests and 5 logic tests fail), and green is `c20dcf8`.
+Six tests were corrected in their own commits, each giving its reason: `e2cb3d7`, `02d80a0`,
+`7bbdb6a`, and the toast-length, normalized-path and host-cap fixes.
+
+| Sev | Finding | Fix |
+|---|---|---|
+| P1 (Codex) | The merge-check result was saved over the stored run before checking the drive still owned it. A Publish pressed during the check was overwritten back to `ready`. | The result goes through `advance({ type: 'merged' })`, onto a freshly loaded run, only while it is still `ready` and driven. |
+| P2 (Codex) | A routed `redAgentType` (duet's Codex) runs in the session's folder, so in a worktree run it could edit the main checkout. | `routedRedBlock`: refused at preflight before anything is made, and again before a spawn. |
+| P2 (Codex) | A preflight block after `worktree add` or `switch -c` left the branch and folder unrecorded, so resume made `issue-N-…-2` and a second worktree. | The block event carries `keep: { branch, workRoot, base }`. A resumed preflight reuses them. |
+| 2 | A tool call in the gap between the spawn resolving and `liveAgent`/`liveWork` being set passed unsteered. | Both are set right after the spawn resolves, before any await. No kit test can reach this (gotchas.md: no `agentId` under the kit). |
+| 2 | A *thrown* git call in the merge check skipped the publish question with no word. | `mergeCheck` catches and records `merge check unavailable: <why>`. |
+| 3 | `worktree add` ran on git's 60 s cap. | It runs through `runLong` on the profile's timeout. `$.process.run` refuses more than 600000 ms, so that's the kit fallback's cap. |
+| 3 | The PR body said "At publish time" for a result computed at ready. | `publish()` checks again, and the result rides on the `published` event. |
+| 3 | `isLinkedWorktree` was never read, and its `rev-parse --path-format` call raised preflight's git floor to 2.31. | Removed. A run started in a linked worktree nests its worktree under that checkout on purpose, so the agents' writes stay under the session's folder. |
+| 3 | Under `ask`, "New worktree" was asked before the `worktreeDir` gitignore check. | The routed-red and gitignore checks come first. |
+| 3 | An empty stderr gave `merge check unavailable: `; names were read without `-z`. | `exit <code>`, and `-z` names (format checked live on git 2.43). |
+| doc | The edit guard was described as keeping agents inside the folder; it is a prefix check on Edit and Write. | README Limits says it catches mistakes and isn't a sandbox; a `here` run's agents can't Write outside the repository. |
+| doc | The design doc's §3 still described a clean-tree precondition and `switch -c` only. A stopped run said "once the PR merges". | §3 updated; `cleanupLine` words a stopped run's advice. |
+| tidy | Two comments on the guard; the same quoting written twice; the fetch-then-block sequence written three times. | One comment, `singleQuoted`, `fetchBase`. |
+| left | The register-level steering has no kit test, and the live run didn't single out the Bash rewrite. | Covered by `guardAction`'s logic tests and P4. P4's log also shows a named teammate's `tool.call` carrying the `agentId` its spawn returned. |
+| left | mod-builder 0.2.4 → 0.2.5 for `gotchas.md` only. | The owner decides. |
+
+## Review: PR #41, Codex round 2 (2026-10-14)
+
+Codex reviewed 01fd259 and left three P2 findings. All three were real, and each was fixed test-first
+and pushed on its own:
+
+| Finding | Fix | Red → green |
+|---|---|---|
+| A `worktreeDir` (or `lcovPath`) starting with `-` was read by `git check-ignore` as options. | `--` before the path in both calls. | `e54353b` → `11c8960` |
+| A stale, broken or missing profile in the starting checkout blocked preflight before the worktree was chosen. | `checkoutBaseOf`: that copy only names the base (a safe `baseBranch`, else `main`); the full checks run on the run folder's copy from `origin/<base>`. `/issue-forge status` still checks the checkout's file in full. | `50dbddc` → `0663fea` (test correction `4ce48ee`: under the kit every spawn is followed by a "no agent id" block) |
+| Resume after a fix pushed to the base re-checked the kept worktree's old profile, and so blocked again. | `catchUp` (shared with the baseline step) fast-forwards a kept branch with no commits of its own before it is checked again. | `e6dda8b` → `f6e11df` |
+
+After round 2: 136 tests pass (82 logic, 54 UI and behaviour), validate is clean, `tsc` is clean, and
+`hooks/issue-forge-logic.ts` has 100.00% lines and 99.43% branches, with no untaken branch on a changed line.
+
+## Review: PR #41, round 3 (2026-10-14)
+
+Codex reviewed 5008b79 and left three findings: two P2 and one P3. `/code-review` agreed and added
+eight more. Each was checked against the code, fixed test-first where a kit test can reach it, and
+committed and pushed on its own.
+
+| Sev | Finding | Fix (commits) |
+|---|---|---|
+| P2 (Codex, wider) | In a worktree run the edit guard passed relative, `\`-rooted, UNC, `~` and drive-relative targets unchanged. The tools resolve a relative path in the session's folder (P4). | A relative Edit, Write, NotebookEdit or Read target is made absolute under the worktree. A target the guard can't place is refused in every run. `a989042` → `c5a24da` |
+| P2 (Codex) | A Stop pressed during the awaits after `worktree add` left the branch and worktree unrecorded. | `recordMade` writes them onto the stored run as soon as they exist, even over a stop. `721eff2` → `72aaa6b` |
+| 2 | A failed `worktree add -b` leaves its branch behind (git 2.43), so resume cut `-2`. | The branch is kept, and resume adds the worktree for it. `721eff2` → `72aaa6b` |
+| 2 | Resume after the kept worktree was removed by hand threw in the HEAD check. | At preflight it is made again (`git worktree add <path> <branch>`); at a later step resume names the missing folder. `721eff2` → `72aaa6b` |
+| P3 (Codex) | `merge-tree -z` names were also split on `\n`, and names of only spaces were dropped. | Split on NUL only. The old newline-separated fixture was corrected in its own commit (`bf4c31d`). `15ca9c6` → `c1121f3` |
+| 3 | With `confirmPublish` off, the merge was checked twice. | It is checked ahead only for a question. `dc719d2` → `595c667` |
+| 3 | After the merge write, a stop could still bring up the publish question. | Ownership is checked again before asking. `$.store` has no compare-and-set, so this narrows the window; no kit test reaches it. `04cb03f` |
+| 3 | The busy-checkout hint said to edit `.issue-forge.json`, but the run reads `origin/<base>`'s copy. | The hint names the base. `94a7830` → `27c9075` |
+| 3 | The routed-red advice offered `here`, which blocks a busy checkout. | The advice says what `here` needs. `c036f96` → `6e536c8` |
+| tidy | `baseOf`'s doc comment sat above `checkoutBaseOf`; the worktree test and the kept-branch type were written twice. | Moved back; `isWorktreeRun` and `Kept` exported and shared. `ce4d1b6` |
+
+After round 3: 145 tests pass, validate and `tsc` are clean.
+
+## Review: PR #41, round 4 (2026-10-14)
+
+Codex reviewed d6c5d25 and left two P2 findings: one real, one a false positive. `/code-review`
+added nine more (the two README ones share a row). Each real one was fixed test-first and pushed on
+its own.
+
+| Sev | Finding | Fix (commits) |
+|---|---|---|
+| P2 (Codex) | `worktreeDir: "D:tmp"` passed the profile check, though it names a folder on drive D. | `isInsideDir` refuses `^[A-Za-z]:`, as the edit guard does. `0b5429d` → `eb3245e` |
+| P2 (Codex) | "Check `worktreeDir` against `origin/<base>`'s ignore rules." | Not a bug. The folder is made inside the session's checkout, so that checkout's rules decide whether it shows. Probe (git 2.53): base ignores `scratch/`, the session's stale branch doesn't; after `worktree add` there, `git status` shows `?? scratch/` and `git add -A` warns "adding embedded git repository". Replied and resolved. |
+| 2 | A Stop while `git worktree add` ran lost the branch it made: `runLong` throws `Stopped` before `recordMade`. | `makeBranch` catches `Stopped` around the add and records a branch that exists (`hasBranch`), then stops. `c41132f` → `182a45f` |
+| 2 | A kept worktree deleted by hand couldn't be added again: git still has it registered ("is a missing but already registered worktree"). | Before the re-add, `git worktree remove <path>`. Probed on git 2.53: on a missing folder it exits 0 and clears only that entry. `prune` would also clear other sessions' missing worktrees, and `add -f` also lets a branch be checked out twice. A locked entry stays and the add names git's refusal. `5bd7944` → `9860e32` |
+| 2 | Lost updates: the merge result's write could land over a Publish (a done run back at ready), and a Stop's write over `recordMade` (the branch dropped). | `updateRun` chains every run write in the module and applies each to the run as stored then. `recordMade` is a `made` event; stop, publish and the merge result go through it, and `saveRun` too. This closes round 3's narrowed window within the module (the store itself has no compare-and-set). `a7d611e` → `5e5f7e3` |
+| 3 | A failed add was named by git's "Preparing worktree (…)" line, not its `fatal:` line. | `gitFailure` picks the first `fatal:` or `error:` line, else the last. `110d6e8` → `26c3f5b`, edges `34f51ca` |
+| 3 | `/issue-forge status` at ready left out the merge check the pane shows. | It adds `mergeLine`. `99f7d5e` → `6bd0103` |
+| 3 | `advance` handled `merged` at publishing, which can't happen: drive writes it only at ready, and publish carries its own. | The case is gone; the test that pinned it was corrected in its own commit. `107828e` → `6cb3f20` |
+| tidy | The three questions each wrapped `$.ui.ask` in the same try/catch; the merge result was worded in three branching copies. | `askOr` and `mergeSaid`. `70572cc` |
+| docs | README: the Agents row said "in the repository root"; Limits didn't say the guard reads paths as text. | Agents work in the run's folder; a symlink inside the worktree can lead an edit outside it; `worktree remove` is listed. `b54f824` |
+
+Not fixed, by design: the double fetch on resume and publish (fresh data on purpose); refusing a
+non-mod `redAgentType` in a worktree (that option means routing to Codex, which runs in the
+session's folder); the early `liveAgent` window before a spawn returns its id (the kit gives no
+`agentId`, so no test reaches it).
+
+After round 4: 153 tests pass; validate and `tsc` are clean; `issue-forge-logic.ts` has 100.00% of
+lines and 99.44% of branches covered, with no untaken branch on a changed line.
+
+## Review: PR #41, `/code-review` pass at xhigh effort (2026-10-14)
+
+Read at 23c7c42. Each fixed one was checked against the code (git behaviour probed on git 2.53) and
+fixed test-first: the red test failed by assertion before the change, and each red and green is its own
+commit (red → green below).
+
+| Sev | Finding | Fix |
+|---|---|---|
+| 2 | Resume at a later step, with the run's worktree folder deleted by hand, told the person to run `git worktree add <path> <branch>`. Git keeps such a folder registered and refuses ("is a missing but already registered worktree"), the very case round 4 fixed at preflight with a `worktree remove` first. | `readdWorktreeCommand`: `git worktree remove <path>; git worktree add <path> <branch>`, quoted for a shell. `a84092c` → `aae8545` |
+| 3 | The Grep and Glob rewrite made a path it can't place (`~/x`, `\x`, UNC, `D:x`) into `<worktree>/~/x`, a folder that doesn't exist. Read leaves such a path alone. | The rewrite skips an unplaceable path, as Read's does. `f947b55` → `2656175` |
+| 3 | `whereToWork` ran `git status` and a HEAD read in the session's checkout even for `workspace: "worktree"`, which ignores both. Status is the slow call on a big tree or a Windows mount, and this repository's profile is `worktree`. | `checkoutOf` runs only for `ask` and `here`. `d679dcf` → `8be81a5` |
+| 3 | `worktreeDir: ".git"` (or a `.git` segment) passed the profile check and only failed later as "isn't gitignored". | `isInsideDir` refuses a `.git` segment, and normalises once. `265dbf3` → `fa89223` |
+| tidy | `git worktree add failed: <timeout \| git's reason \| no output>` was written twice (new worktree, re-added one). | `worktreeAddFailure`. `3f93a70` |
+| doc | README: "The mod never removes a worktree", but preflight runs `git worktree remove` to clear the entry of a kept worktree whose folder is gone. | README says it never deletes a worktree's files, and what the one remove does. |
+
+Not fixed:
+
+- A `git worktree add` that is SIGKILLed mid-checkout leaves a registered, **locked**, part-filled
+  folder whose index shows every file staged as deleted (probed). `.issue-forge.json` is already in it,
+  so a resumed preflight that finds the folder skips the re-add and loads the profile. The engine ends
+  a spawn with SIGTERM (d.ts), and git removes its half-made folder on SIGTERM (probed), so this needs a
+  kill the mod doesn't send. A cheap guard would block a kept worktree whose `git status --porcelain`
+  isn't empty at preflight.
+- The publish write after the question (`saveRun` of a run loaded before an `await`) is the one run write
+  not moved onto `updateRun`. A Stop is dropped by `saveRun`, and a Publish pressed in that gap writes the
+  same `publishing` state, so no reachable loss was found.
+- A merge check can say `conflicts with origin/<base>: ` with no names if git exits 1 and lists none; not
+  seen from git, so no wording for it yet.
+- Case: a Windows path whose drive letter differs in case (`c:\` for `C:/`) is refused by the edit guard.
+- The result of the merge check shown at ready keeps its wording after "Not now", with no time. Publish
+  checks again for the PR body.
+- Over-broad by design, already recorded above: any non-mod `redAgentType` is refused in a worktree run.
+
+## Review: PR #41, round 6: Codex's four open threads and `/code-review` (2026-10-14)
+
+Read at ff943e2. The four Codex threads with no reply, and two `/code-review` findings, were each checked
+against the code; git's behaviour was probed on git 2.53. Each fix is test-first (red → green below).
+
+| Sev | Finding | Fix |
+|---|---|---|
+| 1 | Resume trusted `fs.exists` about a kept worktree. A folder at its path that isn't the worktree (a plain folder, or one whose `.git` is gone) passed as the worktree, and git run there works on the main checkout (`/code-review` round 5, register.tsx:457 and the HEAD check in resumeRun). If `fs.exists` said a real worktree was missing, preflight ran `git worktree remove` on it (register.tsx:467). | Resume and preflight read `git worktree list --porcelain`: `worktreeStateOf` (present, missing as `prunable`, unregistered) and `keptWorktreePlan` (reuse, add, block). A worktree git has is reused, `git worktree remove` runs only with nothing at the path, a folder that isn't the worktree blocks, and no git command runs inside it. Probed: git lists a folder whose `.git` is gone as `prunable`, like a deleted one, and refuses `worktree remove` on it while the folder is there. `8a4a01f` → `b50872c` |
+| 2 | `normalizePath('//srv/share/repo')` gave `/srv/share/repo`, so a worktree for a repository on a UNC share was made on the current drive, and the guard read a current-drive path as inside the share (Codex 4274944503). | Exactly two leading slashes are kept; three or more still collapse. `964949a` → `9be6860` |
+| 2 | README: the tmux tip led to in-process teammates, whose hand-backs arrive as `session.receive`, which the mod doesn't consume, so each phase's end wakes the main model. "What it reaches" said `prompt.submit` drops all hand-backs (Codex 4273047098). | The code fix is #27 (open). The README now says the tip applies with agent teams on, what an in-process teammate does to the main model, and that `prompt.submit` drops only subagents' hand-backs. `732b347` |
+| 3 | `worktreeDir: ".GIT"` passed on a case-insensitive filesystem (probed on /mnt/c: with `.GIT/` ignored, `git worktree add .GIT/wt` lands in `.git/`) (Codex 4274944512). | A segment that is `.git` lowercased, with Windows' trailing dots and spaces dropped, is refused. `0d4de1d` → `3fe8f34` |
+| 3 | mod-builder was bumped to 0.2.5 with no `## Change` section (Codex 4274944520). 0.2.5 then went to #11's fix (PR #47). | `origin/main` merged in (`fe37c4a`); this PR's gotchas probes are mod-builder 0.2.6, in `plugin.json`, the marketplace entry and its SPEC. `e16030d` |
+| doc | README Processes listed `rev-list`, which the mod never runs, and not `git worktree list`. | Fixed in `732b347`, with the git 2.31 note below. |
+
+Test changes: four existing resume tests pinned every `git worktree` call. Resume and preflight now each
+read the list first, so `e67f4fa` adds those two read-only calls to the exact sequences. Two of them had
+counted the calls (length 1, meaning "no second add"); they now list them, which is stricter.
+
+Known limits, not fixed:
+
+- `git worktree list --porcelain` marks a deleted folder `prunable` from git 2.31. An older git lists it
+  as there, so the resume fails instead of adding it again (README Limits).
+- `GIT~1`, a Windows 8.3 short name for `.git`, passes the profile check. It needs short names on and an
+  ignore entry naming it.
+- A `locked` worktree (a `git worktree add` killed mid-checkout) is still reused (`/code-review` pass above).
+- Still open from `/code-review` round 5: `parseMergeTree` reads a bad ref's exit 1 as a conflict with no
+  files, and a kept-branch `here` resume doesn't check the tree is clean.
+- From this round's `/code-review`: a missing or invalid profile in the starting checkout makes the base
+  `main` silently (register.tsx:404); the conflict list goes unbounded and unescaped into the PR body;
+  `chooseWorktree`'s "Stop" only blocks; a `here` run judges relative edits against the root, not the
+  session's folder; `block.keep` repeats `recordMade`; `liveAgent` and `liveWork` change in pairs by hand.
+

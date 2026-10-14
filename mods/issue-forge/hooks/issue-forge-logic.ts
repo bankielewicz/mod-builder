@@ -4,9 +4,9 @@
  * Section numbers like §4 refer to docs/specs/issue-forge.md.
  */
 
-import type { Activity, AgentRef, Baseline, Check, Coverage, Gate, Pct, Phase, Profile, Run, StashRef, Step } from '../types'
+import type { Activity, AgentRef, Baseline, Check, Coverage, Gate, MergeCheck, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
 
-export type { Activity, AgentRef, Baseline, Check, Coverage, Gate, Pct, Phase, Profile, Run, StashRef, Step }
+export type { Activity, AgentRef, Baseline, Check, Coverage, Gate, MergeCheck, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
 
 export const NAME = 'issue-forge'
 export const PROFILE_FILE = '.issue-forge.json'
@@ -26,7 +26,24 @@ const DEFAULTS = {
   commandTimeoutMinutes: 15,
   notes: '',
   commitTrailers: [] as string[],
+  workspace: 'ask' as Workspace,
+  worktreeDir: 'scratch/issue-forge',
 }
+
+export const WORKSPACES: readonly Workspace[] = ['ask', 'worktree', 'here']
+/** The command timeout before a run has its profile (a preflight blocked before it was read). */
+export const DEFAULT_COMMAND_MINUTES = DEFAULTS.commandTimeoutMinutes
+
+/** `.git` as a case-insensitive filesystem and Windows read it: any case, trailing dots and spaces dropped. */
+const isGitDir = (segment: string): boolean => segment.toLowerCase().replace(/[. ]+$/, '') === '.git'
+
+/** A relative path with no `..` segment that names a folder inside the repository's working tree (`D:tmp` is on drive D; `.git` is git's own). */
+function isInsideDir(v: unknown): v is string {
+  if (typeof v !== 'string' || isAbsolutePath(v) || /^[\\/]/.test(v) || /^[A-Za-z]:/.test(v)) return false
+  const parts = normalizePath(v).split('/')
+  return parts[0] !== '' && !parts.includes('..') && !parts.some(isGitDir)
+}
+
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
 
@@ -92,6 +109,8 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
   may('regressionTolerance', v => typeof v === 'number' && v >= 0, 'a number ≥ 0')
   may('commandTimeoutMinutes', v => typeof v === 'number' && v > 0, 'a number > 0')
   may('notes', v => typeof v === 'string', 'a string')
+  may('workspace', v => WORKSPACES.includes(v as Workspace), 'one of "ask", "worktree", "here"')
+  may('worktreeDir', isInsideDir, 'a relative path inside the repository (no .. segment)')
   const isCount = (v: unknown) => v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 1)
   may(
     'attempts',
@@ -123,6 +142,8 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
     commandTimeoutMinutes: (o.commandTimeoutMinutes as number | undefined) ?? DEFAULTS.commandTimeoutMinutes,
     notes: (o.notes as string | undefined) ?? DEFAULTS.notes,
     commitTrailers: (o.commitTrailers as string[] | undefined) ?? DEFAULTS.commitTrailers,
+    workspace: (o.workspace as Workspace | undefined) ?? DEFAULTS.workspace,
+    worktreeDir: normalizePath((o.worktreeDir as string | undefined) ?? DEFAULTS.worktreeDir),
   }
   return { profile, errors: [] }
 }
@@ -153,10 +174,24 @@ export function profileProblems(p: Profile, facts: { isLcovIgnored: boolean | nu
 }
 
 /**
+ * The base the starting checkout's profile names. That copy only picks the base: the run checks
+ * origin/<base>'s, so a stale, broken or missing one here reads as the default, and an unsafe name too.
+ */
+export function checkoutBaseOf(text: string | null): string {
+  try {
+    const o = text === null ? null : (JSON.parse(text) as unknown)
+    const named = o !== null && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>).baseBranch : undefined
+    return typeof named === 'string' && isSafeBranch(named) ? named : DEFAULTS.baseBranch
+  } catch {
+    return DEFAULTS.baseBranch
+  }
+}
+
+/**
  * §2: the issue's first `Base branch: x` line, else the profile's. The name reaches git, and anyone who
  * can file an issue writes it, so a name `isSafeBranch` refuses is ignored (the profile's base stands).
  */
-export function baseOf(p: Profile, issueBody: string): string {
+export function baseOf(p: Pick<Profile, 'baseBranch'>, issueBody: string): string {
   for (const line of issueBody.split(/\r?\n/)) {
     const m = line.match(/^Base branch: (\S+)$/)
     if (m?.[1]) return isSafeBranch(m[1]) ? m[1] : p.baseBranch
@@ -211,7 +246,7 @@ export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
 }
 
-/** `/`-separated, `.` and `..` resolved, no trailing `/`. */
+/** `/`-separated, `.` and `..` resolved, no trailing `/`; a UNC root's two leading slashes are kept. */
 export function normalizePath(path: string): string {
   const isAbsolute = isAbsolutePath(path)
   const parts: string[] = []
@@ -223,7 +258,8 @@ export function normalizePath(path: string): string {
     } else parts.push(part)
   }
   const joined = parts.join('/')
-  return path.startsWith('/') ? `/${joined}` : joined
+  const lead = /^\/\/(?!\/)/.test(path) ? '//' : path.startsWith('/') ? '/' : ''
+  return `${lead}${joined}`
 }
 
 /** `abs` relative to `root`, or null when it is outside. */
@@ -493,6 +529,17 @@ export function tailLines(text: string, n = 200): string {
   return lines.slice(Math.max(0, lines.length - n)).join('\n')
 }
 
+/** Why a git command failed: its first `fatal:` or `error:` line (git prints progress before it), else its last line. */
+export function gitFailure(text: string): string {
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
+  return lines.find(line => /^(fatal|error):/.test(line)) ?? lines[lines.length - 1] ?? ''
+}
+
+/** A failed `git worktree add` in words: its timeout, git's own reason, or that it said nothing. */
+export function worktreeAddFailure(r: CommandResult, minutes: number): string {
+  return `git worktree add failed: ${r.isTimedOut ? `timed out after ${minutes} min` : gitFailure(r.tail) || 'no output'}`
+}
+
 function ended(r: CommandResult, minutes: number): string {
   return r.isTimedOut ? `timed out after ${minutes} min` : `exit ${r.exit ?? 'killed'}`
 }
@@ -624,17 +671,22 @@ export function failuresOf(g: Gate): string[] {
 
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
+/** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
+export type Kept = { branch: string; workRoot: string; base: string }
+
 export type RunEvent =
-  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile }
+  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string }
+  | { type: 'block'; reason: string; next: string; keep?: Kept }
+  | { type: 'merged'; merge: MergeCheck }
+  | { type: 'made'; keep: Kept }
   | { type: 'resume' }
   | { type: 'stop' }
   | { type: 'publish' }
-  | { type: 'published'; url: string }
+  | { type: 'published'; url: string; merge?: MergeCheck }
 
 export const WORKING: readonly Step[] = ['preflight', 'baseline', 'red', 'gateR', 'green', 'gateG', 'refactor', 'gateF', 'publishing']
 
@@ -697,7 +749,10 @@ function blockedAt(run: Run, at: Step, reason: string, next: string): Run {
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
-  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt(run, run.step, ev.reason, ev.next) : run
+  // The branch and folder preflight made land at any step, a stopped one too, so a Stop never loses them.
+  if (ev.type === 'made') return { ...run, ...ev.keep }
+  // A preflight that made the branch before it blocked keeps it, so resume reuses it.
+  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next) : run
   if (ev.type === 'resume') {
     if (isWorking(run.step)) {
       const phase = phaseOf(run.step)
@@ -713,7 +768,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   switch (run.step) {
     case 'preflight':
       if (ev.type !== 'preflighted') return run
-      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, step: 'baseline' }
+      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), step: 'baseline' }
     case 'baseline':
       if (ev.type !== 'baselined') return run
       return { ...run, baseline: ev.baseline, mergeBase: ev.mergeBase ?? run.mergeBase, step: 'red', times: start(run, 'red', now) }
@@ -764,12 +819,196 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       return blockedAt(gated, 'gateG', `gate G failed after ${run.used.green} attempts: ${firstFailure(ev.gate)}`, 'fix it by hand on the branch')
     }
     case 'ready':
+      if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'publish' ? { ...run, step: 'publishing', times: start(run, 'publish', now) } : run
     case 'publishing':
-      return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, times: end(run, 'publish', now) } : run
+      return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) } : run
     default:
       return run
   }
+}
+
+// ── Workspace (Change 0.2.0) ─────────────────────────────────────────────
+
+export type CheckoutFacts = { porcelain: string; head: string; base: string }
+export type CheckoutState = { isBusy: boolean; why: string }
+export type WorkspacePlan = { kind: 'here' } | { kind: 'worktree' } | { kind: 'ask' } | { kind: 'block'; reason: string; next: string }
+
+/** Whether the session's checkout may be branched in place. Busy: it has changes, or HEAD isn't the base (another branch, or detached). */
+export function checkoutState(f: CheckoutFacts): CheckoutState {
+  const changed = f.porcelain.split('\n').filter(line => line.trim() !== '').length
+  const reasons = [
+    changed > 0 ? `${changed} changed file${changed === 1 ? '' : 's'}` : '',
+    f.head === f.base ? '' : f.head === 'HEAD' ? 'detached HEAD' : `on ${f.head}`,
+  ].filter(Boolean)
+  return { isBusy: reasons.length > 0, why: reasons.join(', ') }
+}
+
+/** `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. */
+export function workspacePlan(mode: Workspace, s: CheckoutState, base: string): WorkspacePlan {
+  if (mode === 'worktree') return { kind: 'worktree' }
+  if (!s.isBusy) return { kind: 'here' }
+  if (mode === 'ask') return { kind: 'ask' }
+  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads origin/${base}'s copy), or clean the checkout` }
+}
+
+export type WorktreeState = 'present' | 'missing' | 'unregistered'
+
+/**
+ * What `git worktree list --porcelain` says of `path`: registered with its `.git` there (`present`),
+ * registered but `prunable` (its folder or its `.git` is gone: `missing`), or not one of git's.
+ */
+export function worktreeStateOf(porcelain: string, path: string): WorktreeState {
+  const wanted = normalizePath(path)
+  for (const record of porcelain.split(/\r?\n\r?\n/)) {
+    const lines = record.split(/\r?\n/)
+    const head = lines.find(line => line.startsWith('worktree '))
+    if (head !== undefined && normalizePath(head.slice('worktree '.length)) === wanted) return lines.some(line => line.startsWith('prunable')) ? 'missing' : 'present'
+  }
+  return 'unregistered'
+}
+
+export type KeptWorktreePlan = 'reuse' | 'add' | 'block'
+
+/**
+ * A kept worktree git has is reused, whatever `fs.exists` says (round 6); one whose folder is gone is made
+ * again. A folder at its path that isn't it is refused: git run there would work on the checkout above.
+ */
+export function keptWorktreePlan(state: WorktreeState, isThere: boolean): KeptWorktreePlan {
+  if (state === 'present') return 'reuse'
+  return isThere ? 'block' : 'add'
+}
+
+export function worktreePath(root: string, dir: string, branch: string): string {
+  return normalizePath(`${root}/${dir}/${branch}`)
+}
+
+/**
+ * `git merge-tree --write-tree --name-only -z`: exit 0 clean, 1 conflicts (the names follow the tree id,
+ * NUL-separated), else it couldn't run (stderr's first line, or the exit code).
+ */
+export function parseMergeTree(r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
+  if (r.exitCode === 0) return { isClean: true, files: [] }
+  if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split('\0').slice(1).filter(name => name !== ''))] }
+  return { isClean: false, files: [], error: r.stderr.trim().replace(/\n[\s\S]*$/, '') || `exit ${r.exitCode}` }
+}
+
+/** Where git, the profile's commands and the agents work; runs stored before 0.2.0 have only `root`. */
+export function workOf(run: Run): string {
+  return run.workRoot ?? run.root
+}
+
+/** A run working in a worktree of its own, not in the session's checkout. */
+export const isWorktreeRun = (run: Run): boolean => !!run.workRoot && run.workRoot !== run.root
+
+export function outsideWorkRoot(path: string, workRoot: string): boolean {
+  return relativeTo(workRoot, isAbsolutePath(path) ? path : `${workRoot}/${path}`) === null
+}
+
+/** A word in single quotes, its own `'` closed, escaped and reopened. */
+const singleQuoted = (word: string): string => `'${word.replace(/'/g, `'\\''`)}'`
+
+/** A word git or a shell reads as itself: quoted when it holds anything but safe characters. */
+export function shellQuote(word: string): string {
+  return /^[A-Za-z0-9_./:@%+=-]+$/.test(word) ? word : singleQuoted(word)
+}
+
+/** P4: an agent's `cwd` is ignored, so each Bash command first moves to the run's folder, and stops if it can't. */
+export function steerBash(command: string, dir: string): string {
+  return `cd -- ${singleQuoted(dir)} || exit 1\n${command}`
+}
+
+export type GuardContext = { liveAgent: string | null; known: ReadonlySet<string>; workRoot: string | null; root: string | null }
+export type GuardAction = { kind: 'pass' } | { kind: 'deny'; reason: string } | { kind: 'rewrite'; patch: Record<string, string> }
+
+/** A path that names no folder the guard can place: rooted on the current drive (`\\x`), UNC, `~`, or drive-relative (`D:x`). */
+const isUnplaceable = (path: string): boolean => !isAbsolutePath(path) && (/^[\\/]/.test(path) || /^~([\\/]|$)/.test(path) || /^[A-Za-z]:/.test(path))
+
+const RETIRED = 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.'
+const EDIT_PATHS: Record<string, string> = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' }
+
+/**
+ * The tool.call guard (SPEC 9; Change 0.2.0). A run's agent that isn't live is refused. The live one may
+ * not edit outside the run's folder, and in a worktree run its Bash, Grep and Glob are moved into it.
+ */
+export function guardAction(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext): GuardAction {
+  const id = e.agentId
+  if (!id) return { kind: 'pass' }
+  if (id !== ctx.liveAgent) return ctx.known.has(id) ? { kind: 'deny', reason: RETIRED } : { kind: 'pass' }
+  const work = ctx.workRoot
+  if (!work) return { kind: 'pass' }
+  const key = EDIT_PATHS[e.tool]
+  const target = key ? e[key] : undefined
+  if (key && typeof target === 'string') {
+    if (isUnplaceable(target) || outsideWorkRoot(target, work)) return { kind: 'deny', reason: `issue-forge: ${target} is outside this run's folder ${work}; edit files there.` }
+    // The agent's tools resolve a relative path in the session's folder (P4): in a worktree run it is made absolute here.
+    return !isAbsolutePath(target) && work !== ctx.root ? { kind: 'rewrite', patch: { [key]: normalizePath(`${work}/${target}`) } } : { kind: 'pass' }
+  }
+  if (work === ctx.root) return { kind: 'pass' }
+  if (e.tool === 'Read' && typeof e.file_path === 'string' && !isAbsolutePath(e.file_path) && !isUnplaceable(e.file_path)) {
+    return { kind: 'rewrite', patch: { file_path: normalizePath(`${work}/${e.file_path}`) } }
+  }
+  if (e.tool === 'Bash' && typeof e.command === 'string') return { kind: 'rewrite', patch: { command: steerBash(e.command, work) } }
+  if (e.tool === 'Grep' || e.tool === 'Glob') {
+    const path = e.path
+    if (path === undefined || path === '') return { kind: 'rewrite', patch: { path: work } }
+    if (typeof path === 'string' && !isAbsolutePath(path) && !isUnplaceable(path)) return { kind: 'rewrite', patch: { path: normalizePath(`${work}/${path}`) } }
+  }
+  return { kind: 'pass' }
+}
+
+export function branchLine(run: Run): string {
+  return `${run.branch} → ${run.base}${isWorktreeRun(run) ? ' · worktree' : ''}`
+}
+
+/** How to remove a run's worktree once its PR merges; null when the run worked in the checkout. */
+export function cleanupCommand(run: Run): string | null {
+  return isWorktreeRun(run) && run.workRoot ? `git worktree remove ${shellQuote(run.workRoot)}` : null
+}
+
+/** The cleanup advice for a worktree run: after its PR merges, or, stopped, once it isn't needed. */
+export function cleanupLine(run: Run): string | null {
+  const command = cleanupCommand(run)
+  if (!command) return null
+  return `${run.step === 'stopped' ? 'when you no longer need it' : 'once the PR merges'}: ${command}`
+}
+
+/**
+ * What to run by hand to give a kept branch its worktree back. A folder deleted by hand stays registered with
+ * git, which refuses to add it again until its entry is cleared; the remove may find nothing to clear, and the add still runs.
+ */
+export function readdWorktreeCommand(workRoot: string, branch: string): string {
+  const path = shellQuote(workRoot)
+  return `git worktree remove ${path}; git worktree add ${path} ${shellQuote(branch)}`
+}
+
+/**
+ * A red type that isn't the mod's own is spawned unnamed so duet may route it to Codex, which runs in the
+ * session's folder whatever the spawn says: in a worktree run it would edit the wrong checkout.
+ */
+export function routedRedBlock(redAgentType: string, isWorktree: boolean): { reason: string; next: string } | null {
+  if (!isWorktree || redAgentType.startsWith(`${NAME}:`)) return null
+  return {
+    reason: `redAgentType ${redAgentType} can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder`,
+    next: `set redAgentType to ${NAME}:red (a red on Codex needs "workspace": "here" and a clean checkout on the base)`,
+  }
+}
+
+type MergeWords = { error: (why: string) => string; clean: string; conflict: (files: string) => string }
+
+/** A merge check in one place's words: why it couldn't run, a clean merge, or the conflicting files. */
+function mergeSaid(m: MergeCheck, say: MergeWords): string {
+  return m.error !== undefined ? say.error(m.error) : m.isClean ? say.clean : say.conflict(m.files.join(', '))
+}
+
+export function mergeLine(run: Run): string | null {
+  const base = `origin/${run.base}`
+  return run.merge ? mergeSaid(run.merge, { error: why => `merge check unavailable: ${why}`, clean: `merges cleanly with ${base}`, conflict: files => `conflicts with ${base}: ${files}` }) : null
+}
+
+export function publishQuestion(run: Run): string {
+  const ask = `Push ${run.branch} and open a pull request against ${run.base}?`
+  return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with origin/${run.base} in: ${files}.` }) : ask
 }
 
 // ── Prompts and messages (§6) ─────────────────────────────────────────────
@@ -828,7 +1067,7 @@ export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): st
     RULES[phase],
     TRUST,
     '',
-    `Repository root: ${run.root}`,
+    `Repository root: ${workOf(run)}. Work only inside it, and run every command from it.`,
     `Branch: ${run.branch} (base ${run.base})`,
     ...(p ? profileLines(p) : []),
     '',
@@ -939,6 +1178,18 @@ export function prBody(run: Run): string {
     `Changed lines ${pctText(cov?.diffLines ?? null)} · changed branches ${pctText(cov?.diffBranches ?? null)} (threshold ${run.profile?.threshold ?? 95}%).`,
     `Total lines ${pctText(cov?.totalLines ?? null)} (baseline ${pctText(run.baseline?.lines ?? null)}) · total branches ${pctText(cov?.totalBranches ?? null)} (baseline ${pctText(run.baseline?.branches ?? null)}).`,
     '',
+    ...(run.merge
+      ? [
+          '## Merge check',
+          '',
+          mergeSaid(run.merge, {
+            error: why => `At publish time the merge check couldn't run: ${why}`,
+            clean: `At publish time this merged cleanly with origin/${run.base}.`,
+            conflict: files => `At publish time this conflicted with origin/${run.base} in: ${files}.`,
+          }),
+          '',
+        ]
+      : []),
     '## Tests the red phase wrote',
     '',
     run.redAnswer?.trim() || "Not available: the red agent's answer didn't come back (for example, it ran on Codex).",
@@ -1095,9 +1346,14 @@ export function statusText(run: Run | null, isDriving: boolean, now: number): st
   if (view === 'blocked' && run.blocked) lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then /issue-forge resume`)
   else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
   else if (view === 'stopped') lines.push('stopped; the branch and its commits are kept')
-  else if (view === 'ready') lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
-  else if (view === 'done') lines.push(`done: ${run.prUrl ?? ''}`)
+  else if (view === 'ready') {
+    lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
+    const merge = mergeLine(run)
+    if (merge) lines.push(merge)
+  } else if (view === 'done') lines.push(`done: ${run.prUrl ?? ''}`)
   else lines.push(`${run.step} · ${badgeOf(run, now)}`)
+  const cleanup = cleanupLine(run)
+  if (cleanup) lines.push(`worktree: ${run.workRoot} (${cleanup})`)
   if (run.baseline) lines.push(`baseline: total lines ${pctText(run.baseline.lines)} · branches ${pctText(run.baseline.branches)}`)
   const cov = coverageLine(run)
   if (cov) lines.push(`coverage: ${cov}`)

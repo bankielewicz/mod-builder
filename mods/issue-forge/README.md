@@ -27,7 +27,7 @@ is pushed until you say yes.
 ```
 
 - `/issue-forge <N>`: starts a run on issue N (one run per repository at a time)
-- `/issue-forge status`: where the run is; with no run, whether `.issue-forge.json` validates
+- `/issue-forge status`: where the run is (and its worktree); with no run, whether `.issue-forge.json` validates
 - `/issue-forge resume`: restarts a blocked or interrupted step
 - `/issue-forge publish`: pushes the run's branch and opens the pull request
 - `/issue-forge stop`: ends the run; its branch and commits are kept
@@ -55,13 +55,60 @@ coverage command must write LCOV:
 Every field, with Python and pilot examples, is in [the design](../../docs/specs/issue-forge.md#4-the-repository-profile).
 This repository's own profile is `.issue-forge.json` at its root.
 
-A run needs an interactive session (`claude -p` exits before the agents finish), a clean working
-tree, `gh` signed in, and `<base>` on `origin`. If an issue names another base (a line
+### Where a run works
+
+Two profile fields decide whether a run branches the checkout you start it from or gets a git
+worktree of its own. They are committed with the profile, so they hold for everyone, and they are read
+from `origin/<base>`'s copy before anything is switched or created:
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `workspace` | `"ask"` | `"here"`: branch the checkout you start from; if it's *busy* (uncommitted changes, or not on the base), block. `"ask"`: the same when it isn't busy; when it is, ask whether to use a new worktree (no answer blocks). `"worktree"`: always add a new worktree from `origin/<base>` and never touch your checkout |
+| `worktreeDir` | `"scratch/issue-forge"` | where new worktrees go, relative to the repository root. It must be gitignored |
+
+A worktree run lives in `<worktreeDir>/<branch>/`. `/issue-forge status` names it, with the
+`git worktree remove <path>` to run once the pull request merges. The mod never deletes a worktree's
+files or a branch. On resume it asks `git worktree list` about a kept worktree: one git has is reused,
+and one with nothing at its path is added again, after a `git worktree remove` that only clears git's
+entry for a folder deleted by hand. A folder at that path that git doesn't have as the worktree blocks
+the run, and nothing runs inside it, since git there would work on the checkout above. A relative `lcovPath` resolves against the run's folder, so runs in separate worktrees each
+write their own coverage file. Before it asks to publish, the run checks the result with
+`git merge-tree` against a freshly fetched `origin/<base>`, and the question names any files that
+would conflict.
+
+This repository sets `"workspace": "worktree"`: the installed plugins load from the main folder's
+branch, so a run must never switch it.
+
+A run needs an interactive session (`claude -p` exits before the agents finish), a checkout that
+isn't busy or a worktree run (above), `gh` signed in, and `<base>` on `origin`. If an issue names another base (a line
 `Base branch: <name>`), the run asks before using it, because the tests would run from that branch.
 A name git could read as an option or a forced refspec (starting with `-` or `+`, or holding `:`)
 is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refused.
 
 **Limits worth knowing:**
+- With agent teams on (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), Claude Code runs the mod's named
+  agents as teammates. Inside tmux they default to pane teammates, which can't run them: the red phase
+  blocks with `a pane-based teammate cannot run it`, and `--settings '{"teammateMode":"in-process"}'`
+  lets it start. An in-process teammate hands back through `session.receive`, which the mod doesn't
+  consume yet, so the end of each phase starts a turn of the main model (#27). With agent teams off,
+  neither applies.
+- A new worktree has only what is committed: no `node_modules` or other untracked setup. Profile
+  commands that need them fail in a worktree run (there's no setup command yet).
+- Agents ignore the folder they're spawned in, so in a worktree run the mod moves the live agent's
+  Bash, Grep and Glob into the worktree, makes its relative Edit, Write and Read paths absolute there,
+  and refuses an edit outside it. A path it can't place (`\x`, `\\server\share`, `~`, `D:x`) is refused
+  in every run. That catches honest mistakes; it isn't a sandbox. The check reads paths as text, so a
+  symlink inside the worktree can still lead an edit outside it. A Bash command that `cd`s elsewhere
+  or names an absolute path still reaches it, and a `here` run's agents can't Write outside the
+  repository either (`/tmp` included).
+- A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: duet's Codex runs in
+  the session's folder whatever the spawn says, so a worktree run with one blocks before it starts.
+- A run started in a linked worktree puts its new worktree under that checkout's `worktreeDir`, so
+  the agents' writes stay under the session's folder.
+- The merge check at ready needs git 2.38 or later (`merge-tree --write-tree`); with an older git it
+  reads `merge check unavailable` and the run goes on.
+- Resuming a kept worktree whose folder was deleted needs git 2.31 or later, which marks it `prunable`
+  in `git worktree list`. An older git lists it as there, so the resume fails instead of adding it again.
 - Runs were checked with Claude Code's `auto` permission mode. In other modes a phase agent's Edit or
   Bash may wait on a permission prompt nobody sees; the pane then shows `agent working` until you
   `/issue-forge stop`. There's no agent timeout yet.
@@ -116,12 +163,12 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the repository root: `git` (rev-parse, status, check-ignore, fetch, for-each-ref, ls-remote, switch -c, merge-base, rev-list, merge --ff-only, add -A, diff, commit, stash push/list/apply, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
-| Files | reads `.issue-forge.json` and the LCOV file; writes `~/.claude/issue-forge-data/<run>/pr.md`; the run in `$.store`; env reads `HOME`, `USERPROFILE` |
+| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
+| Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; the run in `$.store`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
-| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the repository root, under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
+| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
-| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run), `prompt.submit` (drops the run's own agents' hand-back messages) |
+| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit and Write outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents; a teammate's arrives as `session.receive` and isn't dropped yet, #27) |
 
 The agents read the issue body, which anyone who can file an issue writes. Run it only on
 repositories and issues you trust. The agents are told to treat the issue as requirements, never

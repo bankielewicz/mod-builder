@@ -68,17 +68,22 @@ without a coverage tool (the gate can't be measured, so the run refuses to start
 
 Every step names its commands and its pass condition. A failed condition stops the run in the
 state named, with the reason shown, unless the step says to retry. `<…>` values come from the
-profile (§4). Every command is an argument vector run in the repository root, with no shell
-unless the profile's own command uses one.
+profile (§4). Every command is an argument vector run in the run's folder (the repository root, or
+the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own command uses one.
 
 **Step 1: preconditions.** All must hold; otherwise the run stops in `blocked` with the first failure:
 1. `gh auth status` exits 0, and `gh issue view <N> --json number,title,body,state,url` shows `state: OPEN`.
-2. `git status --porcelain` is empty (a clean working tree).
-3. The profile exists and validates (§4.2).
-4. `git fetch origin <base>` succeeds.
+2. The profile exists and validates (§4.2).
+3. `git fetch origin <base>` succeeds.
+4. Where the run works (`workspace`, read from `git show origin/<base>:.issue-forge.json`): a
+   checkout is *busy* when `git status --porcelain` isn't empty or HEAD isn't `<base>`. `here`
+   blocks a busy checkout; `ask` offers a new worktree for one (no answer blocks); `worktree` always
+   makes one. A worktree needs `worktreeDir` ignored by git, and a red type the mod spawns itself.
 5. No other run for this repository is active (§7.4).
 
-**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> origin/<base>`. `<slug>` is the
+**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> origin/<base>` in the checkout, or
+`git worktree add --no-track -b issue-<N>-<slug> <worktreeDir>/<branch> origin/<base>`. A preflight
+that blocks after this keeps the branch and folder, and resuming it reuses them. `<slug>` is the
 issue title in lowercase, each run of non-alphanumeric characters replaced with one `-`, leading
 and trailing `-` removed, cut to 40 characters (then a trailing `-` removed again). If that branch
 name exists locally or on `origin`, append `-2`, `-3`, … until it doesn't.
@@ -147,7 +152,7 @@ stash; run when step 1 fails.
 | `baseBranch` | string | `"main"` | pull request target unless the issue names one (§2) |
 | `testCommand` | string[] | required | argv; exit 0 = all tests pass |
 | `coverageCommand` | string[] | required | argv; runs the tests with coverage and writes LCOV to `lcovPath` |
-| `lcovPath` | string | required | where `coverageCommand` writes LCOV; must be outside the repository or ignored by git (§4.2) |
+| `lcovPath` | string | required | where `coverageCommand` writes LCOV; must be outside the repository or ignored by git (§4.2). A relative path is the run's folder's, so runs in separate worktrees never share one |
 | `sourceGlobs` | string[] | required | code under the coverage gate |
 | `testGlobs` | string[] | required | test files and fixtures; the red phase writes only these |
 | `excludeGlobs` | string[] | `[]` | never source (generated code, vendored files) |
@@ -160,6 +165,8 @@ stash; run when step 1 fails.
 | `commandTimeoutMinutes` | number | `15` | per command; past it the command is killed and the gate fails |
 | `notes` | string | `""` | repository conventions given to all three agents (release steps, style) |
 | `commitTrailers` | string[] | `[]` | lines appended, after a blank line, to every commit message the mod writes (for example `Co-Authored-By: …`) |
+| `workspace` | `"ask"` \| `"worktree"` \| `"here"` | `"ask"` | where a run works (SPEC change 0.2.0): `here` branches the checkout you start from and blocks when it's busy (changes, or not on the base); `ask` does the same when it isn't busy and offers a new worktree when it is; `worktree` always adds one from `origin/<base>`. Read from `origin/<base>`'s copy |
+| `worktreeDir` | string | `"scratch/issue-forge"` | where new worktrees go, relative to the repository root, with no `..`; must be ignored by git |
 
 Globs use `*` (within a path segment) and `**` (any depth), matched against repository-relative
 `/`-separated paths.

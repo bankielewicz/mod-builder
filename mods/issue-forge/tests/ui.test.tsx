@@ -20,6 +20,9 @@ const ISSUE = { number: 16, title: 'Fix the thing', body: 'Make it work.', state
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+x\n+y\n'
 const LCOV = 'SF:/w/src/a.ts\nDA:1,1\nDA:2,3\nLF:2\nLH:2\nBRF:0\nBRH:0\nend_of_record\n'
 
+/** The first store.set of a value `when` picks lands only once `until` settles; `isHeld` says it is waiting. */
+type StoreHold = { when: (value: any) => boolean; until: Promise<void>; isHeld?: boolean }
+
 type World = {
   isRepo: boolean
   isDirty: boolean
@@ -51,9 +54,44 @@ type World = {
   isAncestor?: boolean
   /** `git status --porcelain -z` after staging. */
   porcelainZ?: string
+  /** The profile in the checkout the session started in; absent, PROFILE. */
+  localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
   baseProfile?: Record<string, unknown>
   switched?: boolean
+  /** Linked worktrees that exist (`git worktree add` adds one); HEAD there is `wtHead`. */
+  worktrees: string[]
+  wtHead: string
+  /** Each worktree's own copy of the profile: taken at worktree add, renewed by a fast-forward there. */
+  wtProfiles: Record<string, Record<string, unknown>>
+  /** `git check-ignore -q <worktreeDir>/`: false when the folder isn't ignored. */
+  worktreeIgnored?: boolean
+  /** `git merge-tree` at ready; absent, a clean merge. */
+  mergeTree?: { exitCode: number; stdout: string; stderr?: string }
+  /** When set, the next `git merge-base HEAD …` waits for it (once). */
+  mergeBaseHold?: Promise<void>
+  /** `git worktree add` fails (git still leaves the new branch behind). */
+  worktreeAddFails?: boolean
+  /** When set, the next `git worktree add` waits for it (once). */
+  worktreeAddHold?: Promise<void>
+  /** Worktrees git still has registered though their folder is gone: add refuses one until `git worktree remove` clears it. */
+  staleWorktrees?: string[]
+  /** Paths `fs.exists` can't see though they are there (an unmounted drive, a denied path). */
+  fsBlind?: string[]
+  /** `git worktree list` fails. */
+  worktreeListFails?: boolean
+  /** When set, a store stub that can hold one write stands in for mock.store. */
+  storeHold?: StoreHold
+  /** When set, the next `git merge-tree` waits for it (once). */
+  mergeHold?: Promise<void>
+  /** `git merge-tree` throws, as a timed-out process.run does. */
+  mergeThrows?: boolean
+  /** Where the coverage command last ran: a real reporter names files under that folder. */
+  lcovRoot?: string
+  /** Every process.run with the folder it ran in. */
+  calls: { argv: string[]; cwd?: string; timeoutMs?: number }[]
+  /** The command each Bash call reached beneath the mod with. */
+  bash: string[]
   argv: string[][]
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
@@ -86,6 +124,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     issueBody: ISSUE.body,
     spawnHold: null,
     testHold: null,
+    worktrees: [],
+    wtHead: BRANCH,
+    wtProfiles: {},
+    calls: [],
+    bash: [],
     argv: [],
     commits: [],
     spawned: [],
@@ -98,7 +141,16 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     ...w,
   }
   world.clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on, store)
+  const hold = world.storeHold
+  if (hold) {
+    on('store.get', ($: any, e: any) => ({ value: store[e.key] }))
+    on('store.set', ($: any, e: any) => {
+      const land = () => ((store[e.key] = e.value), { value: undefined })
+      if (hold.isHeld || !hold.when(e.value)) return land()
+      hold.isHeld = true
+      return hold.until.then(land)
+    })
+  } else mock.store(on, store)
   mock.env(on, { HOME: '/home/u' })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
@@ -110,7 +162,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('ui.toast', ($: any, e: any) => (world.toasts.push(e.text ?? String(e)), { value: undefined }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
-  on('tool.call', { tool: 'Bash' }, ($: any, e: any) => (world.beneath.push(e.agentId ?? 'main'), { result: 'ran' }))
+  on('tool.call', { tool: 'Bash' }, ($: any, e: any) => (world.beneath.push(e.agentId ?? 'main'), world.bash.push(e.command), { result: 'ran' }))
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     const q = e.questions[0].question
     world.asked.push(q)
@@ -124,10 +176,15 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     return world.spawnHold ? world.spawnHold.then(() => answer) : answer
   })
   const profilePath = `${ROOT}/.issue-forge.json`
-  on('fs.exists', ($: any, e: any) => ({ value: (e.path === profilePath && world.hasProfile) || e.path in world.files }))
+  const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
+  const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
+  on('fs.exists', ($: any, e: any) => ({
+    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path)),
+  }))
   on('fs.read', ($: any, e: any) => {
-    if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : PROFILE) }
-    if (e.path === LCOV_PATH) return { value: LCOV }
+    if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
+    if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.wtProfiles[worktreeOf(e.path) ?? ''] ?? world.baseProfile ?? PROFILE) }
+    if (e.path === LCOV_PATH) return { value: LCOV.replace(`SF:${ROOT}/`, `SF:${world.lcovRoot ?? ROOT}/`) }
     return { deny: 'ENOENT' }
   })
   on('fs.stat', ($: any, e: any) => (e.path === LCOV_PATH ? { value: { kind: 'file', size: LCOV.length, mtimeMs: world.clock.now(), isLink: false } } : { deny: 'ENOENT' }))
@@ -135,10 +192,13 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     world.argv.push(argv)
+    world.calls.push({ argv, cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs })
+    const inWorktree = world.worktrees.includes(e.init?.cwd)
     const [cmd, ...a] = argv
     const s = a.join(' ')
     const testResult = () => (world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit))
-    if (cmd === 't') return world.testHold ? world.testHold.then(testResult) : testResult()
+    if (cmd === 't' || cmd === './t.sh') return world.testHold ? world.testHold.then(testResult) : testResult()
+    if (cmd === 'c') world.lcovRoot = e.init?.cwd ?? ROOT
     if (cmd === 'c' || cmd === 't2') return ok('ran')
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
@@ -148,6 +208,40 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
+    if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
+    if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
+    if (a[0] === 'worktree' && a[1] === 'add') {
+      // As git 2.53 does: the progress line, then the reason, both on stderr.
+      if (world.worktreeAddFails) return fail(`Preparing worktree (new branch '${a[4]}')\nfatal: could not create work tree dir '${a[5]}': Permission denied`, 128)
+      const path = a.includes('-b') ? a[5] ?? '' : a[2] ?? ''
+      if (world.staleWorktrees?.includes(path)) return fail(`Preparing worktree (checking out '${a[3]}')\nfatal: '${path}' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear`, 128)
+      const add = () => (world.worktrees.push(path), (world.wtProfiles[path] = world.baseProfile ?? PROFILE), ok())
+      const hold = world.worktreeAddHold
+      world.worktreeAddHold = undefined
+      return hold ? hold.then(add) : add()
+    }
+    if (s === 'worktree list --porcelain') {
+      if (world.worktreeListFails) return fail('fatal: unable to read the worktree list', 128)
+      // As git 2.53 prints it: the main checkout first; a registered folder that is gone is `prunable`.
+      const entry = (path: string) => `worktree ${path}\nHEAD c0\nbranch refs/heads/x\n${world.staleWorktrees?.includes(path) ? 'prunable gitdir file points to non-existent location\n' : ''}`
+      return ok([ROOT, ...world.worktrees, ...(world.staleWorktrees ?? [])].map(entry).join('\n'))
+    }
+    if (a[0] === 'worktree' && a[1] === 'remove') {
+      const path = a[a.length - 1] ?? ''
+      if (!world.staleWorktrees?.includes(path)) return fail(`fatal: '${path}' is not a working tree`, 128)
+      return (world.staleWorktrees = world.staleWorktrees.filter(p => p !== path)), ok()
+    }
+    if (a[0] === 'merge' && a.includes('--ff-only') && inWorktree) return (world.wtProfiles[e.init?.cwd] = world.baseProfile ?? PROFILE), ok()
+    // As git does: a path starting with '-' and not after '--' is read as options.
+    if (a[0] === 'check-ignore' && (a[a.length - 1] ?? '').startsWith('-') && a[a.length - 2] !== '--') return fail("error: unknown switch `s'", 129)
+    if (a[0] === 'check-ignore' && world.worktreeIgnored === false) return fail('', 1)
+    if (a[0] === 'merge-tree') {
+      if (world.mergeThrows) return { deny: 'process timed out after 60000 ms' }
+      const result = world.mergeTree ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.mergeTree } } : ok('tree0\0')
+      const hold = world.mergeHold
+      world.mergeHold = undefined
+      return hold ? hold.then(() => result) : result
+    }
     if (s === 'rev-parse --abbrev-ref HEAD') return ok(`${world.heads && world.heads.length > 0 ? (world.heads.length > 1 ? world.heads.shift() : world.heads[0]) : world.head}\n`)
     if (s === 'rev-parse HEAD') return ok(`c${world.commits.length}\n`)
     if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
@@ -157,7 +251,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return world.isAncestor === false ? fail('', 1) : ok()
     if (a[0] === 'status' && a.includes('-z')) return ok(world.porcelainZ ?? '')
     if (a[0] === 'push') return world.pushHold ? world.pushHold.then(() => ok()) : ok()
-    if (a[0] === 'merge-base') return ok('base0\n')
+    if (a[0] === 'merge-base') {
+      const hold = world.mergeBaseHold
+      world.mergeBaseHold = undefined
+      return hold ? hold.then(() => ok('base0\n')) : ok('base0\n')
+    }
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
@@ -300,16 +398,16 @@ describe('starting a run', () => {
     expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
   })
 
-  test('a dirty tree blocks at preflight, creates no branch, and a second start answers with the active run', async ($, on) => {
-    const w = engine(on, { isDirty: true })
+  test('a dirty tree blocks at preflight (workspace here), creates no branch, and a second start answers with the active run', async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' } })
     await start($)
     expect((await run($, '#16')).text).toContain('starting #16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
-    expect(w.toasts).toContain('#16 blocked: the working tree has changes')
-    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'switch')).toBe(false)
+    expect(w.toasts).toContain('#16 blocked: the checkout is busy (1 changed file)')
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'switch' || a[1] === 'worktree'))).toBe(false)
     const ui = await pane($)
-    expect(await ui.find({ type: 'Text', text: /✕ blocked at preflight: the working tree has changes/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /next: commit or stash them, then \/issue-forge resume/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /✕ blocked at preflight: the checkout is busy \(1 changed file\)/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /next: set "workspace" to "worktree" or "ask"/ })).toBeDefined()
     await ui.unmount()
     const again = (await run($, '17')).text ?? ''
     expect(again).toContain('a run is already active here.')
@@ -657,5 +755,444 @@ describe('reloads, resume and stop', () => {
     expect((await run($, 'stop')).text).toContain('its agents are refused further tool calls')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-green' } as never)) as any).deny).toContain('issue-forge:')
+  })
+})
+
+describe('workspace: where a run works (Change 0.2.0)', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WRITES = ['add', 'commit', 'switch', 'stash', 'merge', 'reset', 'checkout']
+  const writesIn = (w: World, cwd: string) => w.calls.filter(c => c.cwd === cwd && c.argv[0] === 'git' && WRITES.includes(c.argv[1] ?? ''))
+
+  test("here: a busy checkout blocks naming why, and origin/main's profile decides, not the checkout's", async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain('#16 blocked: the checkout is busy (1 changed file)')
+    expect(w.argv).toContainEqual(['git', 'show', 'origin/main:.issue-forge.json'])
+    expect(w.asked.length).toBe(0)
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+    expect((await run($, 'status')).text).toContain("next: set \"workspace\" to \"worktree\" or \"ask\" in .issue-forge.json on main (the run reads origin/main's copy), or clean the checkout")
+    await run($, 'stop')
+    w.isDirty = false
+    w.head = 'feature'
+    w.toasts.length = 0
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the second block')
+    expect(w.toasts).toContain('#16 blocked: the checkout is busy (on feature)')
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+  })
+
+  test('ask: a busy checkout is offered a new worktree; yes forks origin/main there and never writes to the checkout', async ($, on) => {
+    const w = engine(on, { isDirty: true, head: 'issue-3-duet', answer: 'New worktree' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.asked[0]).toBe(`${ROOT} is busy (1 changed file, on issue-3-duet). Run #16 in a new worktree under scratch/issue-forge?`)
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'])
+    expect(w.argv.some(a => a[1] === 'switch')).toBe(false)
+    expect(writesIn(w, ROOT)).toEqual([])
+    expect(w.calls.find(c => c.argv[0] === 't')?.cwd).toBe(WT)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:red', cwd: WT })
+    expect(w.spawned[0]!.prompt).toContain(`Repository root: ${WT}. Work only inside it`)
+    expect((await run($, 'status')).text).toContain(`worktree: ${WT} (once the PR merges: git worktree remove ${WT})`)
+  })
+
+  test('ask with nobody to answer blocks before any branch or worktree is made', async ($, on) => {
+    const w = engine(on, { isDirty: true, answer: null })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain(`#16 blocked: ${ROOT} is busy (1 changed file) and no new worktree was chosen`)
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+  })
+
+  test('worktree: an un-ignored worktreeDir blocks first; then even a clean checkout on main gets a worktree, never a switch', async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, worktreeIgnored: false })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain("#16 blocked: scratch/issue-forge isn't gitignored")
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+    await run($, 'stop')
+    w.worktreeIgnored = true
+    await run($, '17')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', 'issue-17-fix-the-thing', `${ROOT}/scratch/issue-forge/issue-17-fix-the-thing`, 'origin/main'])
+    expect(w.argv.some(a => a[1] === 'switch')).toBe(false)
+    expect(writesIn(w, ROOT)).toEqual([])
+  })
+
+  test("a worktree run's gate stages and commits in the worktree, and resume checks HEAD there", async ($, on) => {
+    const w = engine(on, { head: 'issue-3-duet', worktrees: [WT], testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { workRoot: WT, redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateR.')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(w.commits.length).toBe(1)
+    expect(writesIn(w, WT).map(c => c.argv[1])).toEqual(['add', 'commit'])
+    expect(writesIn(w, ROOT)).toEqual([])
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', cwd: WT })
+  })
+
+  test('a run stored before 0.2.0 (no workRoot) still works in its root', async ($, on) => {
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(writesIn(w, ROOT).map(c => c.argv[1])).toEqual(['add', 'commit'])
+  })
+
+  test('ready: the merge check against a fresh origin/main names conflicting files in the question and the pane', async ($, on) => {
+    const w = engine(on, { head: BRANCH, mergeTree: { exitCode: 1, stdout: 'tree0\0.claude-plugin/marketplace.json\0' } }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    expect(w.asked[0]).toBe(`Push ${BRANCH} and open a pull request against main? It conflicts with origin/main in: .claude-plugin/marketplace.json.`)
+    const mergeAt = w.argv.findIndex(a => a[1] === 'merge-tree')
+    expect(w.argv[mergeAt]).toEqual(['git', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'c0', 'origin/main'])
+    expect(w.argv.slice(0, mergeAt).some(a => a[1] === 'fetch' && a[3] === 'main')).toBe(true)
+    await w.clock.settle()
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /conflicts with origin\/main: \.claude-plugin\/marketplace\.json/ })).toBeDefined()
+    expect(w.argv.some(a => a[1] === 'push')).toBe(false)
+  })
+
+  test("the guard in a worktree run leaves the main loop's and other agents' calls as they were; retired agents stay refused", async ($, on) => {
+    const w = engine(on, { worktrees: [WT] }, { [`issue-forge:run:${ROOT}`]: storedRun('green', { workRoot: WT }) })
+    await start($)
+    expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as never)) as any).toMatchObject({ result: 'ran' })
+    expect((await $.tool.call({ tool: 'Bash', command: 'git status', agentId: 'someone-else' } as never)) as any).toMatchObject({ result: 'ran' })
+    expect(w.bash).toEqual(['ls', 'git status'])
+    expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-red' } as never)) as any).deny).toContain('issue-forge:')
+  })
+})
+
+describe('review of PR #41', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+
+  test('a Publish pressed while the merge check runs is kept: one push, one PR, and the run ends done (Codex P1)', async ($, on) => {
+    let release = () => {}
+    const w = engine(on, { head: BRANCH, mergeHold: new Promise<void>(r => (release = r)) }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.argv.some(a => a[1] === 'merge-tree'), 'the merge check')
+    expect((await run($, 'publish')).text).toContain('publishing #16')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    release()
+    await w.clock.settle()
+    expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
+    expect(w.argv.filter(a => a[1] === 'push')).toHaveLength(1)
+    expect(w.asked).toEqual([])
+  })
+
+  test("a red type another plugin routes is refused in a worktree run, before any worktree is made and before a spawn (Codex P2)", { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain("blocked at preflight: redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder")
+    expect(w.argv.some(a => a[1] === 'worktree' || a[1] === 'switch')).toBe(false)
+  })
+
+  test('a stored worktree run at red with a routed red type blocks instead of spawning (Codex P2)', { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
+    const w = engine(on, { worktrees: [WT] }, { [`issue-forge:run:${ROOT}`]: storedRun('red', { workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.spawned).toHaveLength(0)
+  })
+
+  test('a block after the worktree was made records it, and resume reuses it instead of making another (Codex P2)', async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['./t.sh'], workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at preflight: origin/main has no valid .issue-forge.json: command not found: ./t.sh')
+    expect(status).toContain(`worktree: ${WT}`)
+    w.files[`${WT}/t.sh`] = ''
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain']])
+    expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
+    expect(w.spawned[0]).toMatchObject({ cwd: WT })
+  })
+
+  test('a merge check that throws still asks, naming why it could not run', async ($, on) => {
+    const w = engine(on, { head: BRANCH, mergeThrows: true }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    expect(w.asked[0]).toContain(`Push ${BRANCH} and open a pull request against main? (merge check unavailable: `)
+    expect(w.asked[0]).toContain('timed out')
+  })
+
+  test("git worktree add runs like the profile's commands, not on git's 60 s", async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    // Under the kit spawn can't start, so it falls back to process.run at the host's 10-minute cap.
+    expect(w.calls.find(c => c.argv[1] === 'worktree')?.timeoutMs).toBe(600_000)
+  })
+
+  test('publish checks the merge again, so the PR body says what was true when it was pushed', async ($, on) => {
+    const w = engine(on, { head: BRANCH, mergeTree: { exitCode: 1, stdout: 'tree0\0x.json\0' } }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0', merge: { isClean: true, files: [] } }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    const body = Object.entries(w.files).find(([path]) => path.endsWith('/pr.md'))?.[1] ?? ''
+    expect(body).toContain('At publish time this conflicted with origin/main in: x.json.')
+  })
+
+  test('under ask, an un-ignored worktreeDir blocks before the question is asked', async ($, on) => {
+    const w = engine(on, { isDirty: true, worktreeIgnored: false, answer: 'New worktree' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain("#16 blocked: scratch/issue-forge isn't gitignored")
+    expect(w.asked).toEqual([])
+  })
+})
+
+describe('review of PR #41, round 2', () => {
+  test("a worktreeDir or lcovPath starting with '-' reaches git check-ignore as a path, not as options (Codex P2)", async ($, on) => {
+    const w = engine(on, { localProfile: { ...PROFILE, lcovPath: '-cov/l.lcov' }, baseProfile: { ...PROFILE, workspace: 'worktree', worktreeDir: '-scratch' } })
+    await start($)
+    expect((await run($, 'status')).text).toContain('.issue-forge.json validates')
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'check-ignore', '-q', '--', '-scratch/'])
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, `${ROOT}/-scratch/${BRANCH}`, 'origin/main'])
+  })
+
+  test('resume after the profile is fixed on origin/main: the kept branch catches up before its profile is checked again (Codex P2)', async ($, on) => {
+    const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['./t.sh'], workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('command not found: ./t.sh')
+    // The fix lands on origin/main; the worktree still has the old copy until it catches up.
+    w.baseProfile = { ...PROFILE, workspace: 'worktree' }
+    w.toasts.length = 0
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+    expect(w.calls.some(c => c.argv[1] === 'merge' && c.argv.includes('--ff-only') && c.cwd === WT)).toBe(true)
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain']])
+  })
+
+  for (const [label, localProfile] of [
+    ['a path command missing there', { ...PROFILE, testCommand: ['./t.sh'] }],
+    ['a profile that no longer validates', { ...PROFILE, testCommand: 'not an argv' }],
+  ] as const) {
+    test(`the starting checkout's profile only names the base (${label}); a worktree run checks origin/main's copy (Codex P2)`, async ($, on) => {
+      const w = engine(on, { isDirty: true, head: 'old-feature', localProfile, baseProfile: { ...PROFILE, workspace: 'worktree' } })
+      await start($)
+      await run($, '16')
+      await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+      // Under the kit a spawn gets no agentId, so the run blocks right after it; what matters is that red was spawned.
+      expect(w.spawned).toHaveLength(1)
+      expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:red', cwd: `${ROOT}/scratch/issue-forge/${BRANCH}` })
+    })
+  }
+})
+
+describe('review of PR #41, round 3', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+
+  test('a Stop right after worktree add keeps the branch and worktree on the stopped run (Codex P2)', async ($, on) => {
+    let release = () => {}
+    const w = engine(on, { baseProfile: WORKTREE, mergeBaseHold: new Promise<void>(r => (release = r)) })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'merge-base' && a[2] === 'HEAD'), 'the merge base')
+    expect((await run($, 'stop')).text).toContain(`Its branch ${BRANCH} and commits are kept`)
+    release()
+    await w.clock.settle()
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain(`${BRANCH} → main`)
+    expect(status).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
+  })
+
+  test('a failed worktree add keeps the branch git left, and resume makes the worktree for it instead of a -2 branch', async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddFails: true })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`${BRANCH} → main`)
+    w.worktreeAddFails = false
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.filter(t => t.includes('blocked')).length > 1, 'red or another block')
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv.filter(a => a[1] === 'worktree').slice(1)).toEqual([['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
+    expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
+  })
+
+  test('resume after the kept worktree was removed by hand makes it again at preflight, and says so at a later step', async ($, on) => {
+    const atPreflight = storedRun('blocked', { blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] })
+    // A folder removed by hand stays registered with git until something clears it.
+    const w = engine(on, { baseProfile: WORKTREE, staleWorktrees: [WT] }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
+  })
+
+  test('with confirmPublish off nobody is asked, so the merge is checked once, at publish', { options: { confirmPublish: false } }, async ($, on) => {
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    expect(w.argv.filter(a => a[1] === 'merge-tree')).toHaveLength(1)
+  })
+
+  test("resume of a later step whose worktree is gone names the folder instead of failing on it", async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
+    await start($)
+    expect((await run($, 'resume')).text).toBe(`still blocked: the run's worktree ${WT} is gone.`)
+  })
+})
+
+describe('review of PR #41, round 4', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+
+  test("a failed worktree add is named by git's fatal: line, not the progress line before it", async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddFails: true })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`blocked at preflight: git worktree add failed: fatal: could not create work tree dir '${WT}': Permission denied`)
+  })
+
+  test('a Stop while git worktree add runs keeps the branch it made on the stopped run', async ($, on) => {
+    let release = () => {}
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddHold: new Promise<void>(r => (release = r)) })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'worktree' && a[2] === 'add'), 'the worktree add')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    release()
+    await w.clock.settle()
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain(`${BRANCH} → main`)
+    expect(status).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
+  })
+
+  test('a Stop whose write lands after the new branch was recorded keeps both the stop and the branch', async ($, on) => {
+    let releaseAdd = () => {}
+    let releaseStop = () => {}
+    const storeHold: StoreHold = { when: v => v?.step === 'stopped', until: new Promise<void>(r => (releaseStop = r)) }
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddHold: new Promise<void>(r => (releaseAdd = r)), storeHold })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'worktree' && a[2] === 'add'), 'the worktree add')
+    const stopping = run($, 'stop')
+    await until(w, () => storeHold.isHeld === true, "the stop's write")
+    releaseAdd()
+    for (let i = 0; i < 40; i++) await w.clock.advance(5)
+    releaseStop()
+    expect((await stopping).text).toContain('stopped #16')
+    await w.clock.settle()
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('stopped; the branch and its commits are kept')
+    expect(status).toContain(`${BRANCH} → main`)
+  })
+
+  test('a Publish pressed while the merge result is being written still publishes, once', async ($, on) => {
+    let release = () => {}
+    const storeHold: StoreHold = { when: v => v?.step === 'ready' && v?.merge !== undefined, until: new Promise<void>(r => (release = r)) }
+    const w = engine(on, { head: BRANCH, storeHold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => storeHold.isHeld === true, 'the merge write')
+    const publishing = run($, 'publish')
+    for (let i = 0; i < 60; i++) await w.clock.advance(5)
+    release()
+    expect((await publishing).text).toContain('publishing #16')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    await w.clock.settle()
+    expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
+    expect(w.argv.filter(a => a[1] === 'push')).toHaveLength(1)
+    expect(w.asked).toEqual([])
+  })
+})
+
+describe('review of PR #41, code-review pass', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+
+  test('a worktree gone at a later step is given back with a command that works: git keeps a folder deleted by hand registered, so the add needs the remove first', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
+    await start($)
+    await run($, 'resume')
+    expect((await run($, 'status')).text).toContain(`next: git worktree remove ${WT}; git worktree add ${WT} ${BRANCH}, then /issue-forge resume`)
+  })
+
+  test("worktree: the session's checkout is not looked at (no status, no HEAD read), since a worktree is made whatever it holds", async ($, on) => {
+    const w = engine(on, { isDirty: true, head: 'issue-3-duet', baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'])
+    const looked = w.calls.filter(c => c.cwd === ROOT && c.argv[0] === 'git' && (c.argv[1] === 'status' || (c.argv[1] === 'rev-parse' && c.argv[2] === '--abbrev-ref')))
+    expect(looked).toEqual([])
+  })
+})
+
+describe('review of PR #41, round 6', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+  const atPreflight = () => ({
+    [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] }),
+  })
+  const atGateG = () => ({ [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
+  const changesWorktrees = (w: { argv: string[][] }) => w.argv.filter(a => a[1] === 'worktree' && a[2] !== 'list')
+
+  test("resume at preflight refuses a plain folder at the run's worktree path: git run there would work on the main checkout", async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, files: { [WT]: '' } }, atPreflight())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(0)
+    expect((await run($, 'status')).text).toContain(`blocked at preflight: ${WT} is there but isn't the run's git worktree`)
+    expect(w.calls.filter(c => c.cwd === WT)).toEqual([])
+    expect(changesWorktrees(w)).toEqual([])
+  })
+
+  test('resume at preflight refuses a registered worktree whose .git is gone though its folder is there, and runs no git worktree remove on it', async ($, on) => {
+    // git lists it prunable, as for a deleted folder, but the folder (and whatever is in it) is still there.
+    const w = engine(on, { baseProfile: WORKTREE, files: { [WT]: '' }, staleWorktrees: [WT] }, atPreflight())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain(`blocked at preflight: ${WT} is there but isn't the run's git worktree`)
+    expect(w.calls.filter(c => c.cwd === WT)).toEqual([])
+    expect(changesWorktrees(w)).toEqual([])
+  })
+
+  test("resume reuses a worktree git has, even when fs.exists can't see it, instead of removing it and adding it again", async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, worktrees: [WT], fsBlind: [WT] }, atPreflight())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+    expect(changesWorktrees(w)).toEqual([])
+  })
+
+  test("resume at a later step refuses a plain folder at the worktree path without running git in it", async ($, on) => {
+    const w = engine(on, { files: { [WT]: '' } }, atGateG())
+    await start($)
+    expect((await run($, 'resume')).text).toBe(`still blocked: ${WT} is there but isn't the run's git worktree.`)
+    expect(w.calls.filter(c => c.cwd === WT)).toEqual([])
+  })
+
+  test('resume says when git cannot list its worktrees, instead of guessing from the folder', async ($, on) => {
+    engine(on, { worktreeListFails: true }, atGateG())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('still blocked: git worktree list failed: fatal: unable to read the worktree list.')
   })
 })
