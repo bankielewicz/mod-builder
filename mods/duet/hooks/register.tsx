@@ -9,7 +9,7 @@ import {
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
-import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
 /**
  * Duet: delegates chosen subagent types and its own `duet:` roles to Codex,
@@ -250,6 +250,14 @@ async function scopeReads($: EngineInterface, cwd: string): Promise<string[]> {
   return [...(await gitDirs($, cwd)), ...(await codexInstallDirs($))]
 }
 
+type Scope = { fsScope: FsScope; home: string; reads: string[] }
+
+/** A run's scope, fixed when it is admitted: the option, the home folder, and under project scope what Codex may read outside it. */
+async function scopeOf($: EngineInterface, cwd: string): Promise<Scope> {
+  const fsScope = options.fsScope
+  return { fsScope, home: await homeDir($), reads: fsScope === 'project' ? await scopeReads($, cwd) : [] }
+}
+
 async function baseCommit($: EngineInterface): Promise<string> {
   return (await git($, ['rev-parse', '--short', 'HEAD'])) || 'none'
 }
@@ -345,12 +353,12 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = { id: string; type: string; cwd: string; home: string; writePaths: string[] | undefined; dropped: string[]; reads: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
 async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt)
+  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
   const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
@@ -409,10 +417,10 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     await patchTask($, id, { envelope: handoff.envelope })
     await ensureTicker($)
     const named = writePathsOf(options.writePaths, type)
-    const writePaths = options.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
+    const scope = await scopeOf($, cwd)
+    const writePaths = scope.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
     const dropped = named && writePaths ? named.filter(folder => !writePaths.includes(folder)) : []
-    const reads = options.fsScope === 'project' ? await scopeReads($, cwd) : []
-    const job: Job = { id, type, cwd, home: await homeDir($), writePaths, dropped, reads, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
+    const job: Job = { ...scope, id, type, cwd, writePaths, dropped, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
@@ -469,7 +477,7 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
   let text = ''
   try {
     await ensureTicker($)
-    const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($, cwd) : [], nonce: crypto.randomUUID() }), undefined)
+    const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, ...(await scopeOf($, cwd)), nonce: crypto.randomUUID() }), undefined)
     done = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
     text = run.text
   } catch (err) {

@@ -654,10 +654,10 @@ function profileName(nonce = ''): string {
   return suffix ? `duet-mod-fs-scope-${suffix}` : 'duet-mod-fs-scope'
 }
 
-/** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
 /** An absolute path: `/…`, `\…` or a drive letter. */
 const ABSOLUTE = /^([/\\]|[A-Za-z]:)/
 
+/** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
 export function folderUnder(cwd: string, folder: string): string | null {
   if (ABSOLUTE.test(folder)) return null
   const parts: string[] = []
