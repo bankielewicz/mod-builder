@@ -1119,4 +1119,14 @@ describe('review of PR #41, code-review pass', () => {
     await run($, 'resume')
     expect((await run($, 'status')).text).toContain(`next: git worktree remove ${WT}; git worktree add ${WT} ${BRANCH}, then /issue-forge resume`)
   })
+
+  test("worktree: the session's checkout is not looked at (no status, no HEAD read), since a worktree is made whatever it holds", async ($, on) => {
+    const w = engine(on, { isDirty: true, head: 'issue-3-duet', baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'])
+    const looked = w.calls.filter(c => c.cwd === ROOT && c.argv[0] === 'git' && (c.argv[1] === 'status' || (c.argv[1] === 'rev-parse' && c.argv[2] === '--abbrev-ref')))
+    expect(looked).toEqual([])
+  })
 })
