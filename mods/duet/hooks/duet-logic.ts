@@ -605,6 +605,9 @@ function tomlString(s: string): string {
   return JSON.stringify(s)
 }
 
+/** The permission profile's name: not plain `duet`, since Codex merges a same-named profile from any loaded config into it. */
+const PROFILE = 'duet-mod-fs-scope'
+
 /** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
 function folderUnder(cwd: string, folder: string): string | null {
   if (/^([/\\]|[A-Za-z]:)/.test(folder)) return null
@@ -635,7 +638,7 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
   for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) entries.push([folder, 'write'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
   const table = entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
-  return ['-c', 'default_permissions="duet"', '-c', `permissions.duet.filesystem={${table}}`]
+  return ['-c', `default_permissions="${PROFILE}"`, '-c', `permissions.${PROFILE}.filesystem={${table}}`]
 }
 
 /**
