@@ -638,11 +638,17 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
   return ['-c', 'default_permissions="duet"', '-c', `permissions.duet.filesystem={${table}}`]
 }
 
-/** `codex exec` for a routed subagent; the prompt goes on stdin (`-`). */
+/**
+ * `codex exec` for a routed subagent; the prompt goes on stdin (`-`). Under project scope the
+ * sandbox is set with `-c sandbox_mode`, never `-s`: Codex 0.162.1 ignores the permission profile
+ * under `-s` (SPEC, Change 0.2.6).
+ */
 export function codexArgv(o: { sandbox: Sandbox; model: string; cwd: string } & FsProfile): string[] {
   const sandbox: Sandbox = o.sandbox === 'workspace-write' ? 'workspace-write' : 'read-only'
-  const profile = o.fsScope === 'project' ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths }) : []
-  return ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', sandbox, ...NEVER_ASK, ...profile, '-C', o.cwd, ...(o.model ? ['-m', o.model] : []), '-']
+  const isScoped = o.fsScope === 'project'
+  const mode = isScoped ? ['-c', `sandbox_mode="${sandbox}"`] : ['-s', sandbox]
+  const profile = isScoped ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths }) : []
+  return ['codex', 'exec', '--json', '--skip-git-repo-check', ...mode, ...NEVER_ASK, ...profile, '-C', o.cwd, ...(o.model ? ['-m', o.model] : []), '-']
 }
 
 export type ReviewTarget = { kind: 'uncommitted' } | { kind: 'base'; ref: string } | { kind: 'commit'; ref: string }
