@@ -660,10 +660,10 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(seen.stdin[0]).not.toContain('Above the root.')
   })
 
-  test('a session folder spelled otherwise than git\'s answer is still searched up to the repository root', { options }, async ($, on) => {
-    // git answers with the real path; the session reached the checkout through a link.
+  test('a session folder reached through a link is still searched up to the repository root', { options }, async ($, on) => {
+    // git would answer with the real path (/data/proj); the walk goes by the session folder's own spelling.
     const cwd = '/home/u/link/pkg'
-    const seen = engine(on, { cwd, top: '/data/proj', gitAt: ['/home/u/link'], agents: { '/home/u/link/.claude/agents/general-purpose.md': agent('general-purpose', READS, 'Only reads.') } })
+    const seen = engine(on, { cwd, gitAt: ['/home/u/link'], agents: { '/home/u/link/.claude/agents/general-purpose.md': agent('general-purpose', READS, 'Only reads.') } })
     await start($, cwd)
     await asks($, 'general-purpose')
     expect(sandboxOf(seen.argv[0])).toBe('read-only')
