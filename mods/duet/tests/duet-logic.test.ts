@@ -936,3 +936,13 @@ describe('issue 4: pickAgent resolves a custom agent by Claude\'s rules', () => 
     expect(pick([agent('writer', EDITS), agent('readers', EDITS)], 'reader')).toBeNull()
   })
 })
+
+describe('issue 44: a search cut short runs read-only (PR #48 review)', () => {
+  test('a cut-short search lowers workspace-write to read-only, for a miss under general-purpose and for an editing definition alike; an uncut one is unchanged', () => {
+    const editor = parseAgentFile('---\nname: e\ndescription: d\ntools: Read, Edit\n---\nx')
+    expect(effectiveSandbox('workspace-write', null, 'general-purpose', true)).toBe('read-only')
+    expect(effectiveSandbox('workspace-write', editor, 'e', true)).toBe('read-only')
+    expect(effectiveSandbox('workspace-write', null, 'general-purpose', false)).toBe('workspace-write')
+    expect(effectiveSandbox('workspace-write', editor, 'e')).toBe('workspace-write')
+  })
+})

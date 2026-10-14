@@ -740,7 +740,8 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     await asks($, 'reader')
     await asks($, 'editor')
     expect(seen.stdin[0]).toContain('Eight deep.')
-    expect(sandboxOf(seen.argv[1])).toBe('workspace-write')
+    // The 9th folder cut the search short, and the read-only editor there may be Claude's pick: read-only (PR #48 review).
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
     expect(seen.stdin[1]).toContain('User level.')
     expect(seen.reads).not.toContain(`${eight}/9/editor.md`)
   })
@@ -769,7 +770,8 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     const seen = engine(on, { cwd: IN, agents })
     await start($, IN)
     await asks($, 'editor')
-    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    // The 500-file limit cut the search short, and the read-only editor past it may be Claude's pick: read-only (PR #48 review).
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
     expect(seen.stdin[0]).toContain('User level.')
     expect(seen.stdin[0]).not.toContain('Past the limit.')
   })
@@ -826,6 +828,16 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     const r: any = await $.tool.call(call({ subagent_type: type }) as never)
     return (r.result?.content ?? []).map((c: { text?: string }) => c.text ?? '').join('\n')
   }
+
+  test('a search cut short runs the agent read-only, since a definition past the limit may forbid edits, and the note says so (PR #48 review)', { options }, async ($, on) => {
+    // Claude reads this read-only general-purpose definition 9 folders down; duet stops at 8, and its fallback, the built-in, edits.
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/gp.md': agent('general-purpose', READS, 'Nine deep.') } })
+    await start($, IN)
+    const text = await resultText($, 'general-purpose')
+    expect(seen.stdin[0]).not.toContain('Nine deep.')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(text.split('\n').find(line => line.startsWith('duet: the search'))).toMatch(/read-only/)
+  })
 
   test('a search that the 8-folder limit cut short says so in the run\'s result, naming the limit; one that reached no limit does not', { options }, async ($, on) => {
     const eight = '/w/pkg/.claude/agents/d1/d2/d3/d4/d5/d6/d7/d8'
