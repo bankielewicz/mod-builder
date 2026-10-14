@@ -91,7 +91,8 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - Agents ignore the folder they're spawned in, so in a worktree run the mod moves the live agent's
   Bash, Grep and Glob into the worktree, makes its relative Edit, Write and Read paths absolute there,
   and refuses an edit outside it. A path it can't place (`\x`, `\\server\share`, `~`, `D:x`) is refused
-  in every run. That catches honest mistakes; it isn't a sandbox. A Bash command that `cd`s elsewhere
+  in every run. That catches honest mistakes; it isn't a sandbox. The check reads paths as text, so a
+  symlink inside the worktree can still lead an edit outside it. A Bash command that `cd`s elsewhere
   or names an absolute path still reaches it, and a `here` run's agents can't Write outside the
   repository either (`/tmp` included).
 - A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: duet's Codex runs in
@@ -154,10 +155,10 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, merge-base, rev-list, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
+| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree remove (only to clear a kept worktree's entry whose folder is gone), merge-base, rev-list, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; the run in `$.store`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
-| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the repository root, under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
+| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
 | Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit and Write outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the run's own agents' hand-back messages) |
 
