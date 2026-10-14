@@ -683,6 +683,16 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(seen.stdin[1]).toContain('A linked file.')
   })
 
+  test('a linked folder that leads back to a folder already searched is not searched again', { options }, async ($, on) => {
+    const loop = '/w/pkg/.claude/agents/loop'
+    const seen = engine(on, { cwd: IN, links: [loop], real: { [loop]: '/w/pkg/.claude/agents' }, agents: { '/w/pkg/.claude/agents/editor.md': agent('editor', READS, 'Once.'), [`${loop}/x.md`]: '' } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Once.')
+    expect(seen.listed).not.toContain(loop)
+  })
+
   test('a definition nested more than 8 folders down is not read, so the user-level one is used', { options }, async ($, on) => {
     const tooDeep = '/w/pkg/.claude/agents/a/b/c/d/e/f/g/h/i/j/k/l/editor.md'
     const seen = engine(on, { cwd: IN, agents: { [tooDeep]: agent('editor', READS, 'Too deep.'), '/home/u/.claude/agents/mine/ed.md': agent('editor', EDITS, 'User level.') } })
