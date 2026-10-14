@@ -440,6 +440,9 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     // A kept worktree that is gone (removed by hand, or never filled) is made again for the kept branch.
     if (isWorktreeRun(run) && !(await $.fs.exists(made.workRoot))) {
       stillDriving(run)
+      // git refuses to add a folder deleted by hand while it is still registered: only this path's entry is cleared (no
+      // prune of others'). A folder git never registered just fails the remove.
+      await git($, run.root, ['worktree', 'remove', made.workRoot])
       await setActivity($, `git worktree add ${made.workRoot}`)
       const minutes = run.profile?.commandTimeoutMinutes ?? DEFAULT_COMMAND_MINUTES
       const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes)
