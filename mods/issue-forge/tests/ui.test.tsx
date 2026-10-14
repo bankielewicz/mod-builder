@@ -51,6 +51,8 @@ type World = {
   isAncestor?: boolean
   /** `git status --porcelain -z` after staging. */
   porcelainZ?: string
+  /** The profile in the checkout the session started in; absent, PROFILE. */
+  localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
   baseProfile?: Record<string, unknown>
   switched?: boolean
@@ -148,7 +150,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const isWorktreeProfile = (path: string) => world.worktrees.some(wt => path === `${wt}/.issue-forge.json`)
   on('fs.exists', ($: any, e: any) => ({ value: ((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files }))
   on('fs.read', ($: any, e: any) => {
-    if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : PROFILE) }
+    if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
     if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.baseProfile ?? PROFILE) }
     if (e.path === LCOV_PATH) return { value: LCOV.replace(`SF:${ROOT}/`, `SF:${world.lcovRoot ?? ROOT}/`) }
     return { deny: 'ENOENT' }
@@ -177,6 +179,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
     if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
     if (a[0] === 'worktree' && a[1] === 'add') return world.worktrees.push(a[5] ?? ''), ok()
+    // As git does: a path starting with '-' and not after '--' is read as options.
+    if (a[0] === 'check-ignore' && (a[a.length - 1] ?? '').startsWith('-') && a[a.length - 2] !== '--') return fail("error: unknown switch `s'", 129)
     if (a[0] === 'check-ignore' && world.worktreeIgnored === false) return fail('', 1)
     if (a[0] === 'merge-tree') {
       if (world.mergeThrows) return { deny: 'process timed out after 60000 ms' }
@@ -891,5 +895,17 @@ describe('review of PR #41', () => {
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
     expect(w.toasts).toContain("#16 blocked: scratch/issue-forge isn't gitignored")
     expect(w.asked).toEqual([])
+  })
+})
+
+describe('review of PR #41, round 2', () => {
+  test("a worktreeDir or lcovPath starting with '-' reaches git check-ignore as a path, not as options (Codex P2)", async ($, on) => {
+    const w = engine(on, { localProfile: { ...PROFILE, lcovPath: '-cov/l.lcov' }, baseProfile: { ...PROFILE, workspace: 'worktree', worktreeDir: '-scratch' } })
+    await start($)
+    expect((await run($, 'status')).text).toContain('.issue-forge.json validates')
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'check-ignore', '-q', '--', '-scratch/'])
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, `${ROOT}/-scratch/${BRANCH}`, 'origin/main'])
   })
 })
