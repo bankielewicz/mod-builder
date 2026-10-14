@@ -945,18 +945,21 @@ export function routedRedBlock(redAgentType: string, isWorktree: boolean): { rea
   }
 }
 
+type MergeWords = { error: (why: string) => string; clean: string; conflict: (files: string) => string }
+
+/** A merge check in one place's words: why it couldn't run, a clean merge, or the conflicting files. */
+function mergeSaid(m: MergeCheck, say: MergeWords): string {
+  return m.error !== undefined ? say.error(m.error) : m.isClean ? say.clean : say.conflict(m.files.join(', '))
+}
+
 export function mergeLine(run: Run): string | null {
-  const m = run.merge
-  if (!m) return null
-  if (m.error !== undefined) return `merge check unavailable: ${m.error}`
-  return m.isClean ? `merges cleanly with origin/${run.base}` : `conflicts with origin/${run.base}: ${m.files.join(', ')}`
+  const base = `origin/${run.base}`
+  return run.merge ? mergeSaid(run.merge, { error: why => `merge check unavailable: ${why}`, clean: `merges cleanly with ${base}`, conflict: files => `conflicts with ${base}: ${files}` }) : null
 }
 
 export function publishQuestion(run: Run): string {
   const ask = `Push ${run.branch} and open a pull request against ${run.base}?`
-  const m = run.merge
-  if (!m || m.isClean) return ask
-  return m.error !== undefined ? `${ask} (${mergeLine(run)})` : `${ask} It conflicts with origin/${run.base} in: ${m.files.join(', ')}.`
+  return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with origin/${run.base} in: ${files}.` }) : ask
 }
 
 // ── Prompts and messages (§6) ─────────────────────────────────────────────
@@ -1130,11 +1133,11 @@ export function prBody(run: Run): string {
       ? [
           '## Merge check',
           '',
-          run.merge.error !== undefined
-            ? `At publish time the merge check couldn't run: ${run.merge.error}`
-            : run.merge.isClean
-              ? `At publish time this merged cleanly with origin/${run.base}.`
-              : `At publish time this conflicted with origin/${run.base} in: ${run.merge.files.join(', ')}.`,
+          mergeSaid(run.merge, {
+            error: why => `At publish time the merge check couldn't run: ${why}`,
+            clean: `At publish time this merged cleanly with origin/${run.base}.`,
+            conflict: files => `At publish time this conflicted with origin/${run.base} in: ${files}.`,
+          }),
           '',
         ]
       : []),

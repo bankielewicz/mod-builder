@@ -684,22 +684,23 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
  * profile's commands run from it: confirm it first. No answer possible counts as no.
  */
 async function chooseBase($: EngineInterface, issue: number, asked: string, profileBase: string): Promise<string | null> {
-  try {
-    const useAsked = `Use ${asked}`
-    const useProfile = `Use ${profileBase}`
-    const answer = await $.ui.ask(`Issue #${issue} asks to branch from ${asked}, not ${profileBase}, and the tests will run from that branch. Which base?`, [useAsked, useProfile])
-    return answer === useAsked ? asked : answer === useProfile ? profileBase : null
-  } catch {
-    return null
-  }
+  const useAsked = `Use ${asked}`
+  const useProfile = `Use ${profileBase}`
+  const answer = await askOr($, `Issue #${issue} asks to branch from ${asked}, not ${profileBase}, and the tests will run from that branch. Which base?`, [useAsked, useProfile])
+  return answer === useAsked ? asked : answer === useProfile ? profileBase : null
 }
 
 /** A busy checkout under `ask`: a new worktree, or nothing. No answer possible counts as no. */
 async function chooseWorktree($: EngineInterface, issue: number, root: string, why: string, dir: string): Promise<boolean> {
+  return (await askOr($, `${root} is busy (${why}). Run #${issue} in a new worktree under ${dir}?`, ['New worktree', 'Stop'])) === 'New worktree'
+}
+
+/** `$.ui.ask`, or null when nobody can answer (claude -p, a dismissed question). */
+async function askOr($: EngineInterface, question: string, labels: string[]): Promise<string | null> {
   try {
-    return (await $.ui.ask(`${root} is busy (${why}). Run #${issue} in a new worktree under ${dir}?`, ['New worktree', 'Stop'])) === 'New worktree'
+    return await $.ui.ask(question, labels)
   } catch {
-    return false
+    return null
   }
 }
 
@@ -720,13 +721,7 @@ async function mergeCheck($: EngineInterface, run: Run): Promise<MergeCheck> {
 
 /** Asks before anything leaves the machine; no answer possible (claude -p, dismissed) counts as no. */
 async function confirmPublish($: EngineInterface, run: Run): Promise<boolean> {
-  if (!options.confirmPublish) return true
-  try {
-    const answer = await $.ui.ask(publishQuestion(run), ['Publish', 'Not now'])
-    return answer === 'Publish'
-  } catch {
-    return false
-  }
+  return !options.confirmPublish || (await askOr($, publishQuestion(run), ['Publish', 'Not now'])) === 'Publish'
 }
 
 async function doStep($: EngineInterface, run: Run): Promise<RunEvent | null> {
