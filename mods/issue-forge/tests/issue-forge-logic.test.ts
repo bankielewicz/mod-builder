@@ -1058,4 +1058,12 @@ describe('review of PR #41, code-review pass', () => {
     expect(readdWorktreeCommand('/repo/scratch/issue-forge/issue-16-x', 'issue-16-x')).toBe('git worktree remove /repo/scratch/issue-forge/issue-16-x; git worktree add /repo/scratch/issue-forge/issue-16-x issue-16-x')
     expect(readdWorktreeCommand('/my repo/wt', 'issue-16-x')).toBe("git worktree remove '/my repo/wt'; git worktree add '/my repo/wt' issue-16-x")
   })
+
+  test('Grep and Glob leave a path they cannot place alone, as Read does, instead of making a folder named ~ under the run', () => {
+    const worktree = { liveAgent: 'live', known: new Set(['live']), workRoot: '/repo/scratch/issue-forge/issue-16-x', root: '/repo' }
+    for (const path of ['~/notes', '~', '\\outside', '\\\\srv\\share', 'D:src']) {
+      for (const tool of ['Grep', 'Glob']) expect(guardAction({ tool, pattern: 'x', path, agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    }
+    expect(guardAction({ tool: 'Grep', pattern: 'x', path: 'src', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { path: '/repo/scratch/issue-forge/issue-16-x/src' } })
+  })
 })
