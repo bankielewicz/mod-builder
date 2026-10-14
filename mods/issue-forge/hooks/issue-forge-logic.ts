@@ -34,9 +34,12 @@ export const WORKSPACES: readonly Workspace[] = ['ask', 'worktree', 'here']
 /** The command timeout before a run has its profile (a preflight blocked before it was read). */
 export const DEFAULT_COMMAND_MINUTES = DEFAULTS.commandTimeoutMinutes
 
-/** A relative path with no `..` segment that names a folder inside the repository (`D:tmp` is on drive D). */
-const isInsideDir = (v: unknown): v is string =>
-  typeof v === 'string' && !isAbsolutePath(v) && !/^[\\/]/.test(v) && !/^[A-Za-z]:/.test(v) && normalizePath(v) !== '' && !normalizePath(v).split('/').includes('..')
+/** A relative path with no `..` segment that names a folder inside the repository's working tree (`D:tmp` is on drive D; `.git` is git's own). */
+function isInsideDir(v: unknown): v is string {
+  if (typeof v !== 'string' || isAbsolutePath(v) || /^[\\/]/.test(v) || /^[A-Za-z]:/.test(v)) return false
+  const parts = normalizePath(v).split('/')
+  return parts[0] !== '' && !parts.includes('..') && !parts.includes('.git')
+}
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
 
