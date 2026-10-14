@@ -246,8 +246,8 @@ function pruneAgentCache(dir: string, listed: Set<string>): void {
 
 /** What Claude reads when a lookup reached a limit: a definition past it was never read, so the one used may not be Claude's. */
 function cutText(type: string, cut: AgentCut): string {
-  const limits = [...(cut.depth ? [`${AGENT_DEPTH} folders deep`] : []), ...(cut.files ? [`${AGENT_FILES} .md files per folder`] : [])]
-  return limits.length ? `duet: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, and Claude, which reads deeper, may use another.` : ''
+  const limits = [...(cut.depth ? [`${AGENT_DEPTH} folders deep`] : []), ...(cut.files ? [`${AGENT_FILES} .md files in one .claude/agents folder`] : [])]
+  return limits.length ? `duet: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, so Claude may use a different one.` : ''
 }
 
 /**
