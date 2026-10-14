@@ -1,8 +1,9 @@
 {
   "baseBranch": "main",
+  "workspace": "worktree",
   "testCommand": ["bash", "-c", "for d in plugins/* mods/*; do claude plugin test \"$d\" || exit 1; done"],
-  "coverageCommand": ["bash", "-c", "mkdir -p \"$HOME/.claude/issue-forge-data\" && node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test --experimental-test-coverage --test-coverage-include='**/hooks/*-logic.ts' --test-reporter=lcov --test-reporter-destination=\"$HOME/.claude/issue-forge-data/coverage.lcov\" $(ls plugins/*/tests/*-logic.test.ts mods/*/tests/*-logic.test.ts)"],
-  "lcovPath": "~/.claude/issue-forge-data/coverage.lcov",
+  "coverageCommand": ["bash", "-c", "mkdir -p coverage && node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test --experimental-test-coverage --test-coverage-include='**/hooks/*-logic.ts' --test-reporter=lcov --test-reporter-destination=coverage/issue-forge.lcov $(ls plugins/*/tests/*-logic.test.ts mods/*/tests/*-logic.test.ts)"],
+  "lcovPath": "coverage/issue-forge.lcov",
   "sourceGlobs": ["plugins/*/hooks/**", "mods/*/hooks/**"],
   "testGlobs": ["plugins/*/tests/**", "mods/*/tests/**"],
   "excludeGlobs": ["**/hooks.json"],

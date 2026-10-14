@@ -147,7 +147,7 @@ stash; run when step 1 fails.
 | `baseBranch` | string | `"main"` | pull request target unless the issue names one (§2) |
 | `testCommand` | string[] | required | argv; exit 0 = all tests pass |
 | `coverageCommand` | string[] | required | argv; runs the tests with coverage and writes LCOV to `lcovPath` |
-| `lcovPath` | string | required | where `coverageCommand` writes LCOV; must be outside the repository or ignored by git (§4.2) |
+| `lcovPath` | string | required | where `coverageCommand` writes LCOV; must be outside the repository or ignored by git (§4.2). A relative path is the run's folder's, so runs in separate worktrees never share one |
 | `sourceGlobs` | string[] | required | code under the coverage gate |
 | `testGlobs` | string[] | required | test files and fixtures; the red phase writes only these |
 | `excludeGlobs` | string[] | `[]` | never source (generated code, vendored files) |
@@ -160,6 +160,8 @@ stash; run when step 1 fails.
 | `commandTimeoutMinutes` | number | `15` | per command; past it the command is killed and the gate fails |
 | `notes` | string | `""` | repository conventions given to all three agents (release steps, style) |
 | `commitTrailers` | string[] | `[]` | lines appended, after a blank line, to every commit message the mod writes (for example `Co-Authored-By: …`) |
+| `workspace` | `"ask"` \| `"worktree"` \| `"here"` | `"ask"` | where a run works (SPEC change 0.2.0): `here` branches the checkout you start from and blocks when it's busy (changes, or not on the base); `ask` does the same when it isn't busy and offers a new worktree when it is; `worktree` always adds one from `origin/<base>`. Read from `origin/<base>`'s copy |
+| `worktreeDir` | string | `"scratch/issue-forge"` | where new worktrees go, relative to the repository root, with no `..`; must be ignored by git |
 
 Globs use `*` (within a path segment) and `**` (any depth), matched against repository-relative
 `/`-separated paths.
