@@ -746,6 +746,8 @@ async function drive($: EngineInterface, root: string, runId: string, mayAsk: bo
           const fresh = await loadRun($, root)
           if (!fresh || fresh.id !== runId || fresh.step !== 'ready' || !isMine()) return
           const checked = await saveRun($, advance(fresh, { type: 'merged', merge }, await $.clock.now()))
+          // saveRun hands back a stop that landed after the check above: only a run still ready and driven is asked about.
+          if (checked.step !== 'ready' || !isMine()) return
           if (!(await confirmPublish($, checked))) return
         }
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
