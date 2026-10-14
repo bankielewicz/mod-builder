@@ -1023,3 +1023,11 @@ describe('review of PR #41, round 3', () => {
     expect(guardAction({ tool: 'Read', file_path: 'src/a.ts', agentId: 'live' }, here)).toEqual({ kind: 'pass' })
   })
 })
+
+describe('review of PR #41, round 4', () => {
+  test("worktreeDir refuses a drive-relative Windows path: D:tmp names a folder on drive D, not inside the repository (Codex P2)", () => {
+    const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
+    for (const dir of ['D:tmp', 'd:', 'C:runs/x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
+    expect(refused('scratch/D:x')).toBe('')
+  })
+})
