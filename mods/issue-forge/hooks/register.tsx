@@ -316,6 +316,16 @@ async function fetchBase($: EngineInterface, cwd: string, base: string): Promise
   return fetched.exitCode === 0 ? null : block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
 }
 
+/** A branch with no commits of its own fast-forwards to origin/<base>, so a fix pushed there reaches it. */
+async function catchUp($: EngineInterface, run: Run, cwd: string, base: string): Promise<Blocked | null> {
+  const hasNoOwnCommits = (await git($, cwd, ['merge-base', '--is-ancestor', 'HEAD', `origin/${base}`])).exitCode === 0
+  if (!hasNoOwnCommits) return null
+  stillDriving(run)
+  await setActivity($, `catching up with origin/${base}`)
+  const ff = await git($, cwd, ['merge', '--ff-only', '-q', `origin/${base}`])
+  return ff.exitCode === 0 ? null : block(`could not fast-forward to origin/${base}: ${firstLine(ff.stderr)}`, 'check the branch')
+}
+
 type Where = { kind: 'here' } | { kind: 'worktree'; worktreeDir: string; minutes: number }
 
 /**
@@ -398,6 +408,9 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     made = { branch: run.branch, workRoot: workOf(run), base: run.base }
     const unfetched = await fetchBase($, made.workRoot, made.base)
     if (unfetched) return { ...unfetched, keep: made }
+    // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
+    const behind = await catchUp($, run, made.workRoot, made.base)
+    if (behind) return { ...behind, keep: made }
   } else {
     const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body)
     if ('type' in fresh) return fresh
@@ -424,13 +437,8 @@ async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEv
   const root = workOf(run)
   const unfetched = await fetchBase($, root, run.base)
   if (unfetched) return unfetched
-  const hasNoOwnCommits = (await git($, root, ['merge-base', '--is-ancestor', 'HEAD', `origin/${run.base}`])).exitCode === 0
-  if (hasNoOwnCommits) {
-    stillDriving(run)
-    await setActivity($, `catching up with origin/${run.base}`)
-    const ff = await git($, root, ['merge', '--ff-only', '-q', `origin/${run.base}`])
-    if (ff.exitCode !== 0) return block(`could not fast-forward to origin/${run.base}: ${firstLine(ff.stderr)}`, 'check the branch')
-  }
+  const behind = await catchUp($, run, root, run.base)
+  if (behind) return behind
   const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${run.base}`])).trim()
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
