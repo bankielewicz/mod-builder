@@ -59,6 +59,8 @@ type World = {
   /** Linked worktrees that exist (`git worktree add` adds one); HEAD there is `wtHead`. */
   worktrees: string[]
   wtHead: string
+  /** Each worktree's own copy of the profile: taken at worktree add, renewed by a fast-forward there. */
+  wtProfiles: Record<string, Record<string, unknown>>
   /** `git check-ignore -q <worktreeDir>/`: false when the folder isn't ignored. */
   worktreeIgnored?: boolean
   /** `git merge-tree` at ready; absent, a clean merge. */
@@ -107,6 +109,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     testHold: null,
     worktrees: [],
     wtHead: BRANCH,
+    wtProfiles: {},
     calls: [],
     bash: [],
     argv: [],
@@ -147,11 +150,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     return world.spawnHold ? world.spawnHold.then(() => answer) : answer
   })
   const profilePath = `${ROOT}/.issue-forge.json`
-  const isWorktreeProfile = (path: string) => world.worktrees.some(wt => path === `${wt}/.issue-forge.json`)
+  const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
+  const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
   on('fs.exists', ($: any, e: any) => ({ value: ((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
-    if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.baseProfile ?? PROFILE) }
+    if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.wtProfiles[worktreeOf(e.path) ?? ''] ?? world.baseProfile ?? PROFILE) }
     if (e.path === LCOV_PATH) return { value: LCOV.replace(`SF:${ROOT}/`, `SF:${world.lcovRoot ?? ROOT}/`) }
     return { deny: 'ENOENT' }
   })
@@ -178,7 +182,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
     if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
-    if (a[0] === 'worktree' && a[1] === 'add') return world.worktrees.push(a[5] ?? ''), ok()
+    if (a[0] === 'worktree' && a[1] === 'add') return world.worktrees.push(a[5] ?? ''), (world.wtProfiles[a[5] ?? ''] = world.baseProfile ?? PROFILE), ok()
+    if (a[0] === 'merge' && a.includes('--ff-only') && inWorktree) return (world.wtProfiles[e.init?.cwd] = world.baseProfile ?? PROFILE), ok()
     // As git does: a path starting with '-' and not after '--' is read as options.
     if (a[0] === 'check-ignore' && (a[a.length - 1] ?? '').startsWith('-') && a[a.length - 2] !== '--') return fail("error: unknown switch `s'", 129)
     if (a[0] === 'check-ignore' && world.worktreeIgnored === false) return fail('', 1)
@@ -907,6 +912,23 @@ describe('review of PR #41, round 2', () => {
     await until(w, () => w.spawned.length === 1, 'red')
     expect(w.argv).toContainEqual(['git', 'check-ignore', '-q', '--', '-scratch/'])
     expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, `${ROOT}/-scratch/${BRANCH}`, 'origin/main'])
+  })
+
+  test('resume after the profile is fixed on origin/main: the kept branch catches up before its profile is checked again (Codex P2)', async ($, on) => {
+    const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['./t.sh'], workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('command not found: ./t.sh')
+    // The fix lands on origin/main; the worktree still has the old copy until it catches up.
+    w.baseProfile = { ...PROFILE, workspace: 'worktree' }
+    w.toasts.length = 0
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+    expect(w.calls.some(c => c.argv[1] === 'merge' && c.argv.includes('--ff-only') && c.cwd === WT)).toBe(true)
+    expect(w.argv.filter(a => a[1] === 'worktree')).toHaveLength(1)
   })
 
   for (const [label, localProfile] of [
