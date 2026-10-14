@@ -86,7 +86,7 @@ Re-check [field] items against the d.ts after a Claude Code update.
   Symbolic links are followed: a linked file, a linked subfolder and a linked `.claude/agents`. Dot-folders and
   subfolders 9 and 12 deep are read. A file with a `name` but no `description` is left out, and so is one Claude
   can't read; a `name` or `description` on the next indented line, a `description: >` block, and a file with
-  `bad: [` in another field are loaded (the next-line `name` and the `>` block were probed on 2.1.300 only).
+  `bad: [` in another field are loaded (the `.git` stop and the unreadable file were probed on 2.1.299 only; the next-line `name`, the `>` block and a wrapped `description` on 2.1.300 only).
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every
