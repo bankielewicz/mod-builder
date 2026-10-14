@@ -37,6 +37,7 @@ import {
   isSafeBranch,
   isOwnHandback,
   isWorking,
+  keptWorktreePlan,
   kindOf,
   layoutOf,
   lcovFileOf,
@@ -80,6 +81,7 @@ import {
   workspacePlan,
   worktreeAddFailure,
   worktreePath,
+  worktreeStateOf,
 } from '../hooks/issue-forge-logic'
 import type { CommandResult, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
 import { DIFF_REAL, LCOV_REAL, STASH_LIST_REAL } from './fixtures/real'
@@ -1081,5 +1083,44 @@ describe('review of PR #41, code-review pass', () => {
       "git worktree add failed: fatal: could not create work tree dir 'x': Permission denied",
     )
     expect(worktreeAddFailure({ exit: 128, isTimedOut: false, tail: '' }, 15)).toBe('git worktree add failed: no output')
+  })
+})
+
+describe('review of PR #41, round 6', () => {
+  // As git 2.53 prints it: the main checkout, a worktree whose folder (or its .git) is gone, a healthy one.
+  const LIST = [
+    'worktree /repo',
+    'HEAD e418c0d62ae04d68bf9439e1ed1a547c1524f349',
+    'branch refs/heads/main',
+    '',
+    'worktree /repo/scratch/issue-forge/issue-16-gone',
+    'HEAD e418c0d62ae04d68bf9439e1ed1a547c1524f349',
+    'branch refs/heads/issue-16-gone',
+    'prunable gitdir file points to non-existent location',
+    '',
+    'worktree /repo/scratch/issue-forge/issue-16 x',
+    'HEAD e418c0d62ae04d68bf9439e1ed1a547c1524f349',
+    'branch refs/heads/issue-16-x',
+    '',
+  ].join('\n')
+
+  test("worktreeStateOf reads git's own list: registered and there, registered but prunable, or not git's at all", () => {
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16 x')).toBe('present')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16 x/')).toBe('present')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16-gone')).toBe('missing')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge/issue-16-other')).toBe('unregistered')
+    expect(worktreeStateOf(LIST, '/repo/scratch/issue-forge')).toBe('unregistered')
+    expect(worktreeStateOf(LIST.replace(/\n/g, '\r\n'), '/repo/scratch/issue-forge/issue-16-gone')).toBe('missing')
+    expect(worktreeStateOf('', '/repo/wt')).toBe('unregistered')
+  })
+
+  test('keptWorktreePlan: reuse what git has (whatever fs.exists says), make again what is gone, refuse a folder that is not the worktree', () => {
+    expect(keptWorktreePlan('present', true)).toBe('reuse')
+    expect(keptWorktreePlan('present', false)).toBe('reuse')
+    expect(keptWorktreePlan('missing', false)).toBe('add')
+    expect(keptWorktreePlan('unregistered', false)).toBe('add')
+    // git inside a folder with no .git of its own works on the checkout above it.
+    expect(keptWorktreePlan('missing', true)).toBe('block')
+    expect(keptWorktreePlan('unregistered', true)).toBe('block')
   })
 })

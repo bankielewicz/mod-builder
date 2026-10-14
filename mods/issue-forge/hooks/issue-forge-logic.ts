@@ -847,6 +847,18 @@ export function workspacePlan(mode: Workspace, s: CheckoutState, base: string): 
   return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads origin/${base}'s copy), or clean the checkout` }
 }
 
+export type WorktreeState = 'present' | 'missing' | 'unregistered'
+
+export function worktreeStateOf(_porcelain: string, _path: string): WorktreeState {
+  return 'unregistered'
+}
+
+export type KeptWorktreePlan = 'reuse' | 'add' | 'block'
+
+export function keptWorktreePlan(_state: WorktreeState, _isThere: boolean): KeptWorktreePlan {
+  return 'reuse'
+}
+
 export function worktreePath(root: string, dir: string, branch: string): string {
   return normalizePath(`${root}/${dir}/${branch}`)
 }

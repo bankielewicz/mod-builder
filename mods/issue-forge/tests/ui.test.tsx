@@ -76,6 +76,10 @@ type World = {
   worktreeAddHold?: Promise<void>
   /** Worktrees git still has registered though their folder is gone: add refuses one until `git worktree remove` clears it. */
   staleWorktrees?: string[]
+  /** Paths `fs.exists` can't see though they are there (an unmounted drive, a denied path). */
+  fsBlind?: string[]
+  /** `git worktree list` fails. */
+  worktreeListFails?: boolean
   /** When set, a store stub that can hold one write stands in for mock.store. */
   storeHold?: StoreHold
   /** When set, the next `git merge-tree` waits for it (once). */
@@ -174,7 +178,9 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const profilePath = `${ROOT}/.issue-forge.json`
   const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
   const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
-  on('fs.exists', ($: any, e: any) => ({ value: ((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path) }))
+  on('fs.exists', ($: any, e: any) => ({
+    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path)),
+  }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
     if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.wtProfiles[worktreeOf(e.path) ?? ''] ?? world.baseProfile ?? PROFILE) }
@@ -213,6 +219,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       const hold = world.worktreeAddHold
       world.worktreeAddHold = undefined
       return hold ? hold.then(add) : add()
+    }
+    if (s === 'worktree list --porcelain') {
+      if (world.worktreeListFails) return fail('fatal: unable to read the worktree list', 128)
+      // As git 2.53 prints it: the main checkout first; a registered folder that is gone is `prunable`.
+      const entry = (path: string) => `worktree ${path}\nHEAD c0\nbranch refs/heads/x\n${world.staleWorktrees?.includes(path) ? 'prunable gitdir file points to non-existent location\n' : ''}`
+      return ok([ROOT, ...world.worktrees, ...(world.staleWorktrees ?? [])].map(entry).join('\n'))
     }
     if (a[0] === 'worktree' && a[1] === 'remove') {
       const path = a[a.length - 1] ?? ''
@@ -1128,5 +1140,59 @@ describe('review of PR #41, code-review pass', () => {
     expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'])
     const looked = w.calls.filter(c => c.cwd === ROOT && c.argv[0] === 'git' && (c.argv[1] === 'status' || (c.argv[1] === 'rev-parse' && c.argv[2] === '--abbrev-ref')))
     expect(looked).toEqual([])
+  })
+})
+
+describe('review of PR #41, round 6', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+  const atPreflight = () => ({
+    [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] }),
+  })
+  const atGateG = () => ({ [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
+  const changesWorktrees = (w: { argv: string[][] }) => w.argv.filter(a => a[1] === 'worktree' && a[2] !== 'list')
+
+  test("resume at preflight refuses a plain folder at the run's worktree path: git run there would work on the main checkout", async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, files: { [WT]: '' } }, atPreflight())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(0)
+    expect((await run($, 'status')).text).toContain(`blocked at preflight: ${WT} is there but isn't the run's git worktree`)
+    expect(w.calls.filter(c => c.cwd === WT)).toEqual([])
+    expect(changesWorktrees(w)).toEqual([])
+  })
+
+  test('resume at preflight refuses a registered worktree whose .git is gone though its folder is there, and runs no git worktree remove on it', async ($, on) => {
+    // git lists it prunable, as for a deleted folder, but the folder (and whatever is in it) is still there.
+    const w = engine(on, { baseProfile: WORKTREE, files: { [WT]: '' }, staleWorktrees: [WT] }, atPreflight())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain(`blocked at preflight: ${WT} is there but isn't the run's git worktree`)
+    expect(w.calls.filter(c => c.cwd === WT)).toEqual([])
+    expect(changesWorktrees(w)).toEqual([])
+  })
+
+  test("resume reuses a worktree git has, even when fs.exists can't see it, instead of removing it and adding it again", async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, worktrees: [WT], fsBlind: [WT] }, atPreflight())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+    expect(changesWorktrees(w)).toEqual([])
+  })
+
+  test("resume at a later step refuses a plain folder at the worktree path without running git in it", async ($, on) => {
+    const w = engine(on, { files: { [WT]: '' } }, atGateG())
+    await start($)
+    expect((await run($, 'resume')).text).toBe(`still blocked: ${WT} is there but isn't the run's git worktree.`)
+    expect(w.calls.filter(c => c.cwd === WT)).toEqual([])
+  })
+
+  test('resume says when git cannot list its worktrees, instead of guessing from the folder', async ($, on) => {
+    engine(on, { worktreeListFails: true }, atGateG())
+    await start($)
+    expect((await run($, 'resume')).text).toBe('still blocked: git worktree list failed: fatal: unable to read the worktree list.')
   })
 })
