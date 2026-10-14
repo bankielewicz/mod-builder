@@ -449,19 +449,19 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
   const HOME = '/home/u'
   const fsScope = 'project' as never
   const project = (o: Record<string, unknown> = {}) => codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/proj', home: HOME, fsScope, ...o } as never)
-  /** The `-c permissions.duet.filesystem=…` value, or '' when the argv has none. */
-  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet.filesystem=')) ?? ''
+  /** The `-c permissions.duet-mod-fs-scope.filesystem=…` value, or '' when the argv has none. */
+  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
   /** One `"path"="access"` entry of the table, the path as a TOML basic string (JSON's escapes for \ and " are TOML's). */
   const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
   const count = (text: string, what: string) => text.split(what).length - 1
 
   test('project scope adds a duet profile as the default and its filesystem table, and sets the sandbox with -c sandbox_mode, never -s (codex exec 0.162.1 drops the profile under -s)', () => {
     const argv = project()
-    expect(argv).toContain('default_permissions="duet"')
+    expect(argv).toContain('default_permissions="duet-mod-fs-scope"')
     const fs = filesystem(argv)
-    expect(fs.startsWith('permissions.duet.filesystem={')).toBe(true)
+    expect(fs.startsWith('permissions.duet-mod-fs-scope.filesystem={')).toBe(true)
     expect(fs.endsWith('}')).toBe(true)
-    const at = [argv.indexOf('default_permissions="duet"'), argv.indexOf(fs)]
+    const at = [argv.indexOf('default_permissions="duet-mod-fs-scope"'), argv.indexOf(fs)]
     for (const i of at) expect(argv[i - 1]).toBe('-c')
     const rest = argv.filter((_, i) => !at.some(a => i === a || i === a - 1))
     expect(rest).toEqual(['codex', 'exec', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"', '-C', '/w/proj', '-'])
@@ -541,7 +541,7 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
   test('a review gets the same profile read-only, keeps its flags, and still ends with its target; anything scope or none leaves it as it was', () => {
     const scope = { fsScope, cwd: '/w/proj', home: HOME } as never
     const base = reviewArgv({ kind: 'base', ref: 'main' }, '', scope)
-    expect(base).toContain('default_permissions="duet"')
+    expect(base).toContain('default_permissions="duet-mod-fs-scope"')
     const fs = filesystem(base)
     expect(fs).toContain(pair('/w/proj', 'read'))
     expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
@@ -572,6 +572,18 @@ describe('issue 3 part B: codexFsScope and codexWritePaths are read defensively'
     expect(read({ codexWritePaths: '' }).writePaths).toEqual({})
     expect(read({ codexWritePaths: 'red-test-writer=tests;test' }).writePaths).toEqual({ 'red-test-writer': ['tests', 'test'] })
     expect(read({ codexWritePaths: ' red-test-writer = tests ; test , impl-writer=src ' }).writePaths).toEqual({ 'red-test-writer': ['tests', 'test'], 'impl-writer': ['src'] })
+  })
+})
+
+describe('PR #39 review: the permission profile has its own name', () => {
+  test('the profile is not named duet, so a [permissions.duet] in a loaded Codex config cannot merge into it and widen reads', () => {
+    const argv = codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/proj', fsScope: 'project' } as never)
+    expect(argv).toContain('default_permissions="duet-mod-fs-scope"')
+    expect(argv.some(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem={'))).toBe(true)
+    expect(argv).not.toContain('default_permissions="duet"')
+    expect(argv.some(a => a.startsWith('permissions.duet.'))).toBe(false)
+    const review = reviewArgv({ kind: 'uncommitted' }, '', { cwd: '/w/proj', fsScope: 'project' } as never)
+    expect(review).toContain('default_permissions="duet-mod-fs-scope"')
   })
 })
 
