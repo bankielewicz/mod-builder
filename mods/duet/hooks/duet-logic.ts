@@ -494,7 +494,13 @@ export function parseAgentFile(text: string): AgentDef | null {
       continue
     }
     const rest = line.trim()
-    if (!LIST_KEYS.includes(key) || rest === '' || rest.startsWith('#')) continue
+    if (!key || rest === '' || rest.startsWith('#')) continue
+    if (!LIST_KEYS.includes(key)) {
+      // An indented line goes on with a plain value, as YAML folds it: text below an empty `description:`, or a value
+      // that wraps. A `>` or `|` block keeps its indicator as its value.
+      if (/^\s/.test(line) && !/^[>|]/.test(fields[key] ?? '')) fields[key] = `${fields[key]} ${rest}`.trim()
+      continue
+    }
     // A `- item` line, indented or not, under an empty value is a block list; any other line continues the value.
     const item = rest.match(/^-(?:\s+(.*))?$/)
     if (item && uncommented(fields[key] ?? '') === '') (blocks[key] ??= []).push(uncommented(item[1] ?? ''))
