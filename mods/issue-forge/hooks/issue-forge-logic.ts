@@ -34,12 +34,16 @@ export const WORKSPACES: readonly Workspace[] = ['ask', 'worktree', 'here']
 /** The command timeout before a run has its profile (a preflight blocked before it was read). */
 export const DEFAULT_COMMAND_MINUTES = DEFAULTS.commandTimeoutMinutes
 
+/** `.git` as a case-insensitive filesystem and Windows read it: any case, trailing dots and spaces dropped. */
+const isGitDir = (segment: string): boolean => segment.toLowerCase().replace(/[. ]+$/, '') === '.git'
+
 /** A relative path with no `..` segment that names a folder inside the repository's working tree (`D:tmp` is on drive D; `.git` is git's own). */
 function isInsideDir(v: unknown): v is string {
   if (typeof v !== 'string' || isAbsolutePath(v) || /^[\\/]/.test(v) || /^[A-Za-z]:/.test(v)) return false
   const parts = normalizePath(v).split('/')
-  return parts[0] !== '' && !parts.includes('..') && !parts.includes('.git')
+  return parts[0] !== '' && !parts.includes('..') && !parts.some(isGitDir)
 }
+
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
 
