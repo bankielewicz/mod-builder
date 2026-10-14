@@ -685,7 +685,13 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
   for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) if (!isProtectedPath(o.cwd, folder)) entries.push([folder, 'write'])
   for (const path of new Set(o.reads ?? [])) if (ABSOLUTE.test(path) && path !== o.cwd && !isInside(o.cwd, path)) entries.push([path, 'read'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
-  const table = entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
+  // TOML refuses a repeated key (CODEX_HOME=$HOME/.codex repeats ~/.codex/packages), so each path goes in once, as first given.
+  const unique = new Map<string, 'read' | 'write'>()
+  for (const [path, access] of entries) {
+    const key = path.replace(/\/+/g, '/').replace(/(.)\/$/, '$1')
+    if (!unique.has(key)) unique.set(key, access)
+  }
+  const table = [...unique].map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
   return ['-c', `default_permissions="${PROFILE}"`, '-c', `permissions.${PROFILE}.filesystem={${table}}`]
 }
 
