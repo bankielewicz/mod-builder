@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isInside, isRouted, codexRunning, parentOf, pathDirs, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isRouted, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -662,6 +662,40 @@ describe('PR #39 review: Codex\'s real install folder', () => {
     expect(run.failure).toContain('install folder')
     const ok = foldAll([{ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'bwrap is a word here', exit_code: 0 } }, { type: 'item.completed', item: { type: 'agent_message', text: 'fine' } }].map(l => JSON.stringify(l)).join('\n'))
     expect(ok.failure).toBe('')
+  })
+})
+
+describe('PR #39 review: the gaps /code-review listed', () => {
+  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+
+  test('writePathsOf: a malformed option gives no folder, a named type or role alias its folders, an unnamed type undefined', () => {
+    expect(writePathsOf({ error: 'bad' }, 'red-test-writer')).toEqual([])
+    const w = readOptions({ codexWritePaths: 'implementer=src, red-test-writer=tests' }).writePaths
+    expect(writePathsOf(w, 'duet:codex-implementer')).toEqual(['src'])
+    expect(writePathsOf(w, 'codex-implementer')).toEqual(['src'])
+    expect(writePathsOf(w, 'red-test-writer')).toEqual(['tests'])
+    expect(writePathsOf(w, 'impl-writer')).toBe(undefined)
+    expect(writePathsOf(w, '__proto__')).toBe(undefined)
+  })
+
+  test('a write folder that folds back to the project itself is dropped, so it never makes the project writable', () => {
+    const fs = fsOf(codexArgv({ sandbox: 'workspace-write', model: '', cwd: '/w/proj', fsScope: 'project', writePaths: ['.', 'src/..', './'] } as never))
+    expect(fs).toContain('"/w/proj"="read"')
+    expect(fs).not.toContain('="write"')
+  })
+
+  test('with no home folder the profile has no ~/.codex/packages entry, only what reads gives', () => {
+    const fs = fsOf(codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/proj', fsScope: 'project', reads: ['/opt/codex/bin'] } as never))
+    expect(fs).not.toContain('.codex/packages')
+    expect(fs).toContain('"/opt/codex/bin"="read"')
+  })
+
+  test('the first failure stands: a later bwrap line does not replace it', () => {
+    const lines = [
+      { type: 'error', message: 'stream error' },
+      { type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'bwrap: execvp /x/codex: No such file or directory' } },
+    ].map(l => JSON.stringify(l)).join('\n')
+    expect(foldAll(lines).failure).toBe('stream error')
   })
 })
 
