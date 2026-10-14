@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[] } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[] } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -35,6 +35,8 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     seen.reads.push(e.path)
     const text = seen.files[e.path]
     if (text === undefined) return { deny: 'ENOENT: no such file' }
+    // `unreadable` paths are listed but can't be read, as a file without read permission.
+    if (o.unreadable?.includes(e.path)) return { deny: 'EACCES: permission denied' }
     return { value: text }
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
@@ -718,6 +720,34 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
     expect(seen.stdin[0]).toContain('User level.')
     expect(seen.stdin[0]).not.toContain('Too deep.')
+  })
+
+  test('a definition 8 folders down is read and one 9 down is not: duet\'s own cap, since Claude reads deeper (PR #43 review)', { options }, async ($, on) => {
+    const eight = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8'
+    const seen = engine(on, { cwd: IN, agents: { [`${eight}/reader.md`]: agent('reader', READS, 'Eight deep.'), [`${eight}/9/editor.md`]: agent('editor', READS, 'Nine deep.'), '/home/u/.claude/agents/editor.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    await asks($, 'reader')
+    await asks($, 'editor')
+    expect(seen.stdin[0]).toContain('Eight deep.')
+    expect(sandboxOf(seen.argv[1])).toBe('workspace-write')
+    expect(seen.stdin[1]).toContain('User level.')
+    expect(seen.reads).not.toContain(`${eight}/9/editor.md`)
+  })
+
+  test('a file that can no longer be read is skipped, as Claude skips it, and its cached text is not used (PR #43 review)', { options }, async ($, on) => {
+    // Probed on 2.1.299: Claude leaves out an agent file it has no permission to read.
+    const near = '/w/pkg/.claude/agents/editor.md'
+    const unreadable: string[] = []
+    const seen = engine(on, { cwd: IN, unreadable, agents: { [near]: agent('editor', READS, 'Near.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Readable.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    unreadable.push(near)
+    seen.mtimes[near] = 2
+    await asks($, 'editor')
+    expect(seen.argv.map(sandboxOf)).toEqual(['read-only', 'workspace-write'])
+    expect(seen.stdin[0]).toContain('Near.')
+    expect(seen.stdin[1]).toContain('Readable.')
+    expect(seen.stdin[1]).not.toContain('Near.')
   })
 
   test('only the first 500 files of a root are read, so the 601st does not shadow the user-level definition', { options }, async ($, on) => {
