@@ -560,9 +560,9 @@ the amended version.
     blocks as busy. `ask` with changes, answered `New worktree`, runs `git worktree add … origin/main`,
     no `git switch`, and nothing staged or committed in `root`. `ask` under a rejecting `$.ui.ask`
     blocks with no git write. `worktree` with an un-ignored `worktreeDir` blocks. Gate R stages and
-    commits in `workRoot`. The guard rewrites the live agent's Bash and Grep in a worktree run, leaves
-    them alone in a `here` run and for the main loop, denies a Write outside `workRoot`, and passes one
-    inside. Ready with merge-tree exit 1 names the files in the question. A stored run without
+    commits in `workRoot`. The guard leaves the main loop's and other agents' calls alone and still
+    refuses retired agents in a worktree run. The live agent's rewrites and denies are logic tests of
+    `guardAction` (the kit can't give a spawn an `agentId`; see "Built"). Ready with merge-tree exit 1 names the files in the question. A stored run without
     `workRoot` resumes in `root`.
 - **Done means:**
   - Once this is on `main`, `/issue-forge 27` from the main folder runs #27 in

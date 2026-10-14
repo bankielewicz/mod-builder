@@ -91,6 +91,8 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - Agents ignore the folder they're spawned in, so in a worktree run the mod moves the live agent's
   Bash, Grep and Glob into the worktree and refuses its edits outside it. A Bash command that `cd`s
   elsewhere still runs there.
+- Needs git 2.38 or later (`merge-tree --write-tree` at ready; `rev-parse --path-format` at
+  preflight needs 2.31). An older git blocks preflight with `unexpected: git rev-parse failed`.
 - Runs were checked with Claude Code's `auto` permission mode. In other modes a phase agent's Edit or
   Bash may wait on a permission prompt nobody sees; the pane then shows `agent working` until you
   `/issue-forge stop`. There's no agent timeout yet.
