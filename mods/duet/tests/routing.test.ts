@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string> } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null> } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -35,6 +35,12 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     return { value: text }
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
+  // Every path is a folder at its own spelling unless `real` says where it lands (null: not there).
+  on('fs.stat', ($: any, e: any) => {
+    const real = o.real && e.path in o.real ? o.real[e.path] : e.path
+    if (real === null) return { deny: 'ENOENT: no such file' }
+    return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) } }
+  })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('process.run', ($: any, e: any) => {
@@ -368,6 +374,17 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
       expect(filesystem(argv)).toContain(pair('/w', 'read'))
       expect(filesystem(argv)).not.toContain('="write"')
     }
+  })
+
+  test('a codexWritePaths folder whose real path leaves the project, is the project, or is not there is dropped; one landing inside stays (PR #39 review)', { options: { ...scoped, codexWritePaths: 'red-test-writer=tests;test;spec;self' } }, async ($, on) => {
+    const seen = engine(on, { agents, real: { '/w/tests': '/outside/tests', '/w/test': '/w/sub/test', '/w/spec': null, '/w/self': '/w' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/w', 'read'))
+    expect(fs).toContain(pair('/w/test', 'write'))
+    for (const gone of ['/w/tests', '/w/spec', '/w/self', '/outside/tests']) expect(fs).not.toContain(JSON.stringify(gone))
+    expect(fs).not.toContain(pair('/w', 'write'))
   })
 
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {

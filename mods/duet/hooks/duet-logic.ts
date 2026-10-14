@@ -616,6 +616,12 @@ export function buildHandoff(args: {
 
 const NEVER_ASK = ['-c', 'approval_policy="never"'] as const
 
+/** True when `path` lies below `root` (both real, absolute paths). Not yet written: the red test pins it. */
+export function isInside(root: string, path: string): boolean {
+  void root, path
+  return false
+}
+
 /** A TOML basic string: JSON's escapes for `\`, `"` and control characters are TOML's. */
 function tomlString(s: string): string {
   return JSON.stringify(s)

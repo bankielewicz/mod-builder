@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isRouted, codexRunning, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isRouted, codexRunning, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -610,6 +610,18 @@ describe('PR #39 review: a malformed codexWritePaths fails closed', () => {
     expect('error' in coerceConfigValue(f, 'red-test-writer:tests')).toBe(true)
     expect(coerceConfigValue(f, 'red-test-writer=tests;test')).toEqual({ value: 'red-test-writer=tests;test' })
     expect(coerceConfigValue(f, '""')).toEqual({ value: '' })
+  })
+})
+
+describe('PR #39 review: a write folder must land strictly inside the project', () => {
+  test('isInside is true only for a path below the root, never the root itself or a sibling that shares its prefix', () => {
+    expect(isInside('/w', '/w/tests')).toBe(true)
+    expect(isInside('/w', '/w/a/b')).toBe(true)
+    expect(isInside('/w', '/w')).toBe(false)
+    expect(isInside('/w', '/wx/tests')).toBe(false)
+    expect(isInside('/w', '/outside')).toBe(false)
+    expect(isInside('C:\\w', 'C:\\w\\tests')).toBe(true)
+    expect(isInside('C:\\w', 'C:\\wx')).toBe(false)
   })
 })
 
