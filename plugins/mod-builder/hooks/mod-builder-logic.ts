@@ -420,6 +420,10 @@ export function parseTest(stdout: string, exitCode: number): TestReport {
     if (detail && !detail.startsWith('(')) failures.push(`  ${detail}`)
   })
   const failed = count('fail')
+  // Exits before the runner starts (no tests, bad folder, corrupt manifest) print one stderr line and no `(fail)`.
+  if (exitCode !== 0 && !failures.length) {
+    failures.push(...lines.map(line => line.trim()).filter(Boolean).slice(-3))
+  }
   return {
     ok: exitCode === 0 && failed === 0,
     passed: count('pass'),
@@ -452,7 +456,7 @@ export function summaryOfRun(
   }
   if (kind === 'Test' && detail.test) {
     const t = detail.test
-    if (!ok) return `${plural(Math.max(1, t.failed), 'test')} failing`
+    if (!ok) return t.failed === 0 ? 'tests did not run' : `${plural(t.failed, 'test')} failing`
     const time = t.durationMs === null ? '' : ` in ${(t.durationMs / 1000).toFixed(1)}s`
     return `${plural(t.passed, 'test')} passed${time}`
   }
@@ -637,15 +641,19 @@ export function barOf(fraction: number, width = 15): { filled: string; empty: st
  * session should read it (see `displayPathOf`).
  */
 export function fixPromptOf(name: string, stage: Stage, errors: readonly string[], failedCount: number, path: string): string {
-  const what =
-    stage === 'Test'
+  // A Test with no failing test never ran: the errors are the runner's own line, not a test.
+  const didNotRun = stage === 'Test' && failedCount === 0
+  const what = didNotRun
+    ? 'the Test run'
+    : stage === 'Test'
       ? `the ${failedCount === 1 ? 'failing test' : `${failedCount} failing tests`}`
       : `the ${stage} problem${failedCount === 1 ? '' : 's'}`
   const [first, ...rest] = errors
   const quoted = [`    ✕ ${(first ?? '').trim()}`, ...rest.slice(0, 2).map(line => `      ${line.trim()}`)].join('\n')
   // `in .. First failure` would read as the parent folder.
   const where = path === '.' ? 'the current folder' : path
-  return `Fix ${what} in ${where}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
+  const note = didNotRun ? ' (the tests did not run)' : ''
+  return `Fix ${what} in ${where}${note}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
 }
 
 /** The done box's one line: `ready to share  ·  8/8 stages · 12 tests · validate clean · 1 gate`. */
