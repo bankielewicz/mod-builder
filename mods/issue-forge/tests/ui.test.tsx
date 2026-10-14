@@ -846,8 +846,9 @@ describe('review of PR #41', () => {
     await start($)
     await run($, '16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
-    expect(w.toasts).toContain('#16 blocked: origin/main has no valid .issue-forge.json: command not found: ./t.sh')
-    expect((await run($, 'status')).text).toContain(`worktree: ${WT}`)
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at preflight: origin/main has no valid .issue-forge.json: command not found: ./t.sh')
+    expect(status).toContain(`worktree: ${WT}`)
     w.files[`${WT}/./t.sh`] = ''
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1, 'red')
