@@ -941,11 +941,10 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
 describe('review of PR #41', () => {
   const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
 
-  test("a merge check result lands only on a run that is still ready or publishing; publish carries its own", () => {
+  test("a merge check result lands only on a run that is still ready; publish carries its own", () => {
     const merge = { isClean: false, files: ['a.json'] }
     expect(advance(run({ step: 'ready' }), { type: 'merged', merge }, 1).merge).toEqual(merge)
-    expect(advance(run({ step: 'publishing' }), { type: 'merged', merge }, 1).merge).toEqual(merge)
-    for (const step of ['done', 'stopped', 'blocked', 'gateF'] as const) expect(advance(run({ step }), { type: 'merged', merge }, 1).merge).toBeUndefined()
+    for (const step of ['publishing', 'done', 'stopped', 'blocked', 'gateF'] as const) expect(advance(run({ step }), { type: 'merged', merge }, 1).merge).toBeUndefined()
     const done = advance(run({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1', merge }, 2)
     expect(done).toMatchObject({ step: 'done', prUrl: 'https://x/pull/1', merge })
   })
