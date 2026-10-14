@@ -912,7 +912,7 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
   if (e.tool === 'Grep' || e.tool === 'Glob') {
     const path = e.path
     if (path === undefined || path === '') return { kind: 'rewrite', patch: { path: work } }
-    if (typeof path === 'string' && !isAbsolutePath(path)) return { kind: 'rewrite', patch: { path: normalizePath(`${work}/${path}`) } }
+    if (typeof path === 'string' && !isAbsolutePath(path) && !isUnplaceable(path)) return { kind: 'rewrite', patch: { path: normalizePath(`${work}/${path}`) } }
   }
   return { kind: 'pass' }
 }
