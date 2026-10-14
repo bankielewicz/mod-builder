@@ -797,3 +797,11 @@ describe('PR #39 review round 2: a dropped write folder is reported', () => {
     expect(footerOf({ ...base, dropped: [] } as never)).toBe(footerOf(base))
   })
 })
+
+describe('the footer names the model', () => {
+  test('a set model follows codex in the footer; none leaves codex alone', () => {
+    const base = { id: 'x1', model: '', sandbox: 'read-only' as const, base: 'abc1234', candidate: '' }
+    expect(footerOf({ ...base, model: 'gpt-5.5' })).toContain('[duet x1 · codex gpt-5.5 · sandbox read-only')
+    expect(footerOf(base)).toContain('[duet x1 · codex · sandbox read-only')
+  })
+})
