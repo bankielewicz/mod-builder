@@ -1066,4 +1066,11 @@ describe('review of PR #41, code-review pass', () => {
     }
     expect(guardAction({ tool: 'Grep', pattern: 'x', path: 'src', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { path: '/repo/scratch/issue-forge/issue-16-x/src' } })
   })
+
+  test("worktreeDir refuses the repository's own .git, at any depth", () => {
+    const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
+    for (const dir of ['.git', '.git/wt', 'scratch/.git/x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
+    expect(refused('scratch/.github')).toBe('')
+    expect(refused('.gitlab-runs')).toBe('')
+  })
 })
