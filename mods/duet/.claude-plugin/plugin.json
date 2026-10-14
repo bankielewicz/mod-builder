@@ -1,6 +1,6 @@
 {
   "name": "duet",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on, with independent Codex reviews; measures every run",
   "author": {
     "name": "Bryan Ankielewicz"
@@ -56,6 +56,22 @@
       "title": "Wait or background",
       "description": "wait or background for codexAgents types, then overrides by type: advisor=background, Explore=wait. Roles default to advisor wait, reviewer background. A run that can edit always waits.",
       "default": "background"
+    },
+    "codexFsScope": {
+      "type": "string",
+      "title": "Codex filesystem scope",
+      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: a duet permission profile limits Codex to the session folder (writable only under workspace-write), plus read-only system paths and Codex's own install and memories folders, plus git's own folders in a linked worktree, and hides every other file and, on Linux, /tmp (on macOS, Codex's source makes /tmp readable and writable, even under read-only; not run). On Codex 0.162.1 (Linux), codex exec runs confirmed the hidden files and /tmp; the write limits are partly checked in codex sandbox only (SPEC, Change 0.2.6). Re-check after upgrading Codex.",
+      "options": [
+        "anything",
+        "project"
+      ],
+      "default": "anything"
+    },
+    "codexWritePaths": {
+      "type": "string",
+      "title": "Folders an agent may write",
+      "description": "With codexFsScope project and workspace-write: agent=folder;folder entries, comma-separated, e.g. red-test-writer=tests;test. A named agent writes only those project folders and reads the rest; others write the whole project. A folder outside the project or in .git, .codex or .agents (also through a symlink), or not there yet, is ignored and named in the run's result; a malformed value leaves every agent read-only.",
+      "default": ""
     }
   }
 }

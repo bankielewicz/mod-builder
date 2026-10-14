@@ -5,11 +5,11 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
+  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
-import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
 /**
  * Duet: delegates chosen subagent types and its own `duet:` roles to Codex,
@@ -179,6 +179,28 @@ async function agentDef($: EngineInterface, cwd: string, type: string): Promise<
   return null
 }
 
+/** Where a path really lands, or undefined when it leads nowhere. */
+async function realPathOf($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    return (await $.fs.stat(path, { resolve: true })).realPath
+  } catch {
+    return undefined
+  }
+}
+
+/** The write folders that really land inside the project: a symlink out of it, to it, into .git, .codex or .agents, or a folder not there yet is dropped. */
+async function safeWritePaths($: EngineInterface, cwd: string, folders: string[] | undefined): Promise<string[] | undefined> {
+  if (folders === undefined) return undefined
+  const root = await realPathOf($, cwd)
+  const kept: string[] = []
+  for (const folder of folders) {
+    const path = folderUnder(cwd, folder)
+    const real = root && path ? await realPathOf($, path) : undefined
+    if (root && real && isInside(root, real) && !isProtectedPath(root, real)) kept.push(folder)
+  }
+  return kept
+}
+
 // ── Git evidence ─────────────────────────────────────────────────────────
 
 async function git($: EngineInterface, args: string[]): Promise<string> {
@@ -189,6 +211,51 @@ async function git($: EngineInterface, args: string[]): Promise<string> {
   } catch {
     return ''
   }
+}
+
+/**
+ * Git's own folders, absolute: outside the session folder in a linked worktree or a submodule. Without
+ * --path-format (git 2.31 and later only), a relative answer is resolved against the session folder.
+ */
+async function gitDirs($: EngineInterface, cwd: string): Promise<string[]> {
+  return (await git($, ['rev-parse', '--git-dir', '--git-common-dir'])).split('\n').map(l => l.trim()).filter(Boolean).map(path => resolveFrom(cwd, path))
+}
+
+/** Where a path really lands when it leads to a file; undefined for a folder, anything else, or nothing. */
+async function fileRealPathOf($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    const stat = await $.fs.stat(path, { resolve: true })
+    return stat.kind === 'file' ? stat.realPath : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Codex's install folders: where the codex on PATH really lands (Codex runs itself from there in its sandbox), and
+ * $CODEX_HOME/packages. Like the shell, the lookup skips a codex that is not a file; it can't see the executable bit.
+ */
+async function codexInstallDirs($: EngineInterface): Promise<string[]> {
+  const codexHome = (await $.env.get('CODEX_HOME')) || ''
+  const dirs = codexHome ? [`${codexHome}/packages`] : []
+  for (const dir of pathDirs((await $.env.get('PATH')) || '')) {
+    const real = await fileRealPathOf($, `${dir}/codex`)
+    if (real) return [...dirs, parentOf(real)]
+  }
+  return dirs
+}
+
+/** What a project-scope run may read outside the session folder: git's own folders and Codex's install folders. */
+async function scopeReads($: EngineInterface, cwd: string): Promise<string[]> {
+  return [...(await gitDirs($, cwd)), ...(await codexInstallDirs($))]
+}
+
+type Scope = { fsScope: FsScope; home: string; reads: string[] }
+
+/** A run's scope, fixed when it is admitted: the option, the home folder, and under project scope what Codex may read outside it. */
+async function scopeOf($: EngineInterface, cwd: string): Promise<Scope> {
+  const fsScope = options.fsScope
+  return { fsScope, home: await homeDir($), reads: fsScope === 'project' ? await scopeReads($, cwd) : [] }
 }
 
 async function baseCommit($: EngineInterface): Promise<string> {
@@ -286,12 +353,12 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = { id: string; type: string; cwd: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
 async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd }), j.prompt)
+  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
   const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
@@ -299,7 +366,7 @@ async function runJob($: EngineInterface, j: Job): Promise<Finished> {
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
   $.ui.toast((failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
-  return { run, failure, endedAt, footer: footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand }) }
+  return { run, failure, endedAt, footer: footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped }) }
 }
 
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */
@@ -349,7 +416,11 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     const handoff = buildHandoff({ id, description: e.description, prompt: e.prompt, base: baseSha, cwd, sandbox, def, subagentType: type })
     await patchTask($, id, { envelope: handoff.envelope })
     await ensureTicker($)
-    const job: Job = { id, type, cwd, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
+    const named = writePathsOf(options.writePaths, type)
+    const scope = await scopeOf($, cwd)
+    const writePaths = scope.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
+    const dropped = named && writePaths ? named.filter(folder => !writePaths.includes(folder)) : []
+    const job: Job = { ...scope, id, type, cwd, writePaths, dropped, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
@@ -402,13 +473,21 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
     return
   }
   Object.assign(task, { id: admitted.id })
-  await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model), undefined)
-  const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
+  let done: Task
+  let text = ''
+  try {
+    await ensureTicker($)
+    const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, ...(await scopeOf($, cwd)), nonce: crypto.randomUUID() }), undefined)
+    done = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
+    text = run.text
+  } catch (err) {
+    // Whatever fails after admission, the row must not stay running and hold a slot.
+    done = { ...task, endedAt: Date.now(), status: 'error', detail: `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }
+  }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
-  if (!failure) await $.fs.write(`${await sessionDir($)}/review-${task.id}.md`, run.text)
-  $.ui.toast((failure ? `${task.id} review failed: ${failure}` : `${task.id} review: ${done.detail}`).slice(0, 80))
+  if (done.status === 'done') await $.fs.write(`${await sessionDir($)}/review-${task.id}.md`, text)
+  $.ui.toast((done.status === 'error' ? `${task.id} review failed: ${done.detail}` : `${task.id} review: ${done.detail}`).slice(0, 80))
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────

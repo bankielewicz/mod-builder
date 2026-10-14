@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string> } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -28,17 +28,30 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('command.register', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: '/w' }))
   on('session.id', () => ({ value: 's1' }))
-  on('env.get', ($: any, e: any) => ({ value: (o.env ?? { HOME: '/home/u' })[e.name] }))
+  // `denyEnv`, read at call time: that variable's lookup fails, as a broken engine call would.
+  on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   on('fs.read', ($: any, e: any) => {
     const text = seen.files[e.path]
     if (text === undefined) return { deny: 'ENOENT: no such file' }
     return { value: text }
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
+  // Every path is a folder at its own spelling unless `real` says where it lands (null: not there); a codex binary or
+  // codex.js is a file. `kinds` overrides the kind by the path asked for.
+  on('fs.stat', ($: any, e: any) => {
+    const real = o.real && e.path in o.real ? o.real[e.path] : e.path
+    if (real === null) return { deny: 'ENOENT: no such file' }
+    const kind = o.kinds?.[e.path] ?? (/\/codex(\.js)?$/.test(real) ? 'file' : 'dir')
+    return { value: { kind, size: 0, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) } }
+  })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
+    // `--git-dir --git-common-dir`: a plain repository's .git sits in the session folder unless `gitDirs` says otherwise.
+    // `oldGit`: git before 2.31, which has no --path-format.
+    if (argv[0] === 'git' && o.oldGit && argv.some(a => a.startsWith('--path-format'))) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unknown option', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'git' && argv.includes('--git-common-dir')) return { value: { exitCode: 0, stdout: `${o.gitDirs ?? '/w/.git\n/w/.git'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git') return { value: { exitCode: 0, stdout: argv.includes('rev-parse') ? 'abc1234\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     seen.argv.push(argv)
     seen.stdin.push(e.init?.stdin ?? '')
@@ -313,5 +326,195 @@ describe('review admission', () => {
     const env = seen.env[0]!
     for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
     for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
+  })
+
+  test('a review that fails after it was admitted ends as error and frees its slot, so the next review runs (PR #39 review round 2)', { options: { codexConsent: 'allow', maxConcurrent: 1, codexFsScope: 'project' } }, async ($: any, on: any) => {
+    const o: { denyEnv?: string } = {}
+    const seen = engine(on, o)
+    await start($)
+    o.denyEnv = 'HOME'
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv).toEqual([])
+    o.denyEnv = undefined
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(1)
+    expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+  })
+})
+
+describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
+  const WRITER = (name: string) => `---\nname: ${name}\ntools: Read, Write, Edit\n---\nWrite files.`
+  const agents = {
+    '/w/.claude/agents/red-test-writer.md': WRITER('red-test-writer'),
+    '/w/.claude/agents/impl-writer.md': WRITER('impl-writer'),
+    '/w/.claude/agents/code-explorer.md': EXPLORER,
+  }
+  const scoped = { codexAgents: 'red-test-writer, impl-writer, code-explorer', codexSandbox: 'workspace-write', codexFsScope: 'project', codexWritePaths: 'red-test-writer=tests;test', codexConsent: 'allow', codexRunMode: 'wait' }
+  // These find duet's profile whether or not its name carries a per-run nonce; the nonce test checks the name itself.
+  const filesystem = (argv: string[]) => argv.find(a => /^permissions\.duet-mod-fs-scope(-[A-Za-z0-9]+)?\.filesystem=/.test(a)) ?? ''
+  const namesProfile = (argv: string[]) => argv.some(a => /^default_permissions="duet-mod-fs-scope(-[A-Za-z0-9]+)?"$/.test(a))
+  const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
+
+  test('an agent named in codexWritePaths may write only those folders; the rest of the project and the Codex install folder are read', { options: scoped }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    const argv = seen.argv[0]!
+    expect(argv[argv.indexOf('sandbox_mode="workspace-write"') - 1]).toBe('-c')
+    expect(argv).not.toContain('-s')
+    expect(namesProfile(argv)).toBe(true)
+    const fs = filesystem(argv)
+    expect(fs).toContain(pair('/w', 'read'))
+    expect(fs).toContain(pair('/w/tests', 'write'))
+    expect(fs).toContain(pair('/w/test', 'write'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(fs).not.toContain(pair('/w', 'write'))
+    expect(fs).not.toContain('/tmp')
+  })
+
+  test('an editing agent not named gets the whole project writable; an agent that cannot edit gets it read-only', { options: scoped }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.tool.call(call({ subagent_type: 'code-explorer' }) as never)
+    const [editing, reading] = seen.argv.map(filesystem)
+    expect(editing).toContain(pair('/w', 'write'))
+    expect(editing).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(reading).toContain(pair('/w', 'read'))
+    expect(reading).not.toContain('="write"')
+    expect(seen.argv[1]![seen.argv[1]!.indexOf('sandbox_mode="read-only"') - 1]).toBe('-c')
+    expect(seen.argv[1]).not.toContain('-s')
+  })
+
+  test('a malformed codexWritePaths leaves every routed agent read-only instead of widening (PR #39 review)', { options: { ...scoped, codexWritePaths: 'red-test-writer:tests' } }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    expect(seen.argv.length).toBe(2)
+    for (const argv of seen.argv) {
+      expect(filesystem(argv)).toContain(pair('/w', 'read'))
+      expect(filesystem(argv)).not.toContain('="write"')
+    }
+  })
+
+  test('a codexWritePaths folder whose real path leaves the project, is the project, or is not there is dropped; one landing inside stays (PR #39 review)', { options: { ...scoped, codexWritePaths: 'red-test-writer=tests;test;spec;self' } }, async ($, on) => {
+    const seen = engine(on, { agents, real: { '/w/tests': '/outside/tests', '/w/test': '/w/sub/test', '/w/spec': null, '/w/self': '/w' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/w', 'read'))
+    expect(fs).toContain(pair('/w/test', 'write'))
+    for (const gone of ['/w/tests', '/w/spec', '/w/self', '/outside/tests']) expect(fs).not.toContain(JSON.stringify(gone))
+    expect(fs).not.toContain(pair('/w', 'write'))
+  })
+
+  test('a codexWritePaths folder that is, or links into, .git, .codex or .agents is dropped, so Codex keeps them read-only (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: 'red-test-writer=tests;cfg;skills;.git;src' } }, async ($, on) => {
+    const seen = engine(on, { agents, real: { '/w/tests': '/w/.git/hooks', '/w/cfg': '/w/.codex', '/w/skills': '/w/.agents/skills' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/w/src', 'write'))
+    for (const gone of ['/w/tests', '/w/cfg', '/w/skills', '/w/.git']) expect(fs).not.toContain(JSON.stringify(gone))
+    expect(fs).not.toContain(pair('/w', 'write'))
+  })
+
+  test('a codexWritePaths folder that is dropped (here: not there yet, so Codex could not create it) is named in the result Claude reads (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: 'red-test-writer=tests;src' } }, async ($, on) => {
+    const seen = engine(on, { agents, real: { '/w/tests': null } })
+    await start($)
+    const r: any = await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    expect(filesystem(seen.argv[0]!)).toContain(pair('/w/src', 'write'))
+    const text = r.result.content[0].text as string
+    expect(text).toContain('not writable: tests')
+    expect(text).not.toContain('not writable: tests, src')
+  })
+
+  test('in a linked worktree, a routed run and a review can read git\'s own folders, read-only (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n/main/.git' })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(2)
+    for (const argv of seen.argv) {
+      const fs = filesystem(argv)
+      expect(fs).toContain(pair('/main/.git/worktrees/w', 'read'))
+      expect(fs).toContain(pair('/main/.git', 'read'))
+      expect(fs).not.toContain(pair('/main/.git', 'write'))
+    }
+    expect(filesystem(seen.argv[0]!)).toContain(pair('/w', 'write'))
+  })
+
+  test('on git before 2.31, which has no --path-format, git\'s own folders are still readable; a relative answer is taken from the session folder (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n../main/.git', oldGit: true })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/main/.git/worktrees/w', 'read'))
+    expect(fs).toContain(pair('/main/.git', 'read'))
+  })
+
+  test('the Codex on PATH and CODEX_HOME\'s packages are readable, so Codex can run itself in the sandbox (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const env = { HOME: '/home/u', PATH: '/usr/bin:/opt/nvm/bin', CODEX_HOME: '/data/codex' }
+    const seen = engine(on, { agents, env, real: { '/usr/bin/codex': null, '/opt/nvm/bin/codex': '/opt/nvm/lib/node_modules/@openai/codex/bin/codex.js' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/opt/nvm/lib/node_modules/@openai/codex/bin', 'read'))
+    expect(fs).toContain(pair('/data/codex/packages', 'read'))
+    expect(fs).not.toContain('/usr/bin')
+  })
+
+  test('the PATH lookup skips a codex that is not a file, as the shell would (PR #39 review round 2, Codex 4266372737)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const env = { HOME: '/home/u', PATH: '/a/bin:/opt/codex/bin' }
+    const seen = engine(on, { agents, env, kinds: { '/a/bin/codex': 'dir' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/opt/codex/bin', 'read'))
+    expect(fs).not.toContain('/a/bin')
+  })
+
+  test('a codex in the home folder itself never makes the home folder readable (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const env = { HOME: '/home/u', PATH: '/home/u:/opt/codex/bin' }
+    const seen = engine(on, { agents, env })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).not.toContain(pair('/home/u', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+  })
+
+  test('each run and each review gets its own random profile name, so no loaded Codex config can name it and merge in (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(3)
+    const names = seen.argv.map(argv => (argv.find(a => a.startsWith('default_permissions=')) ?? '').slice('default_permissions="'.length, -1))
+    expect(new Set(names).size).toBe(3)
+    seen.argv.forEach((argv, at) => {
+      expect(names[at]).toMatch(/^duet-mod-fs-scope-[A-Za-z0-9]{16,}$/)
+      expect(argv.some(a => a.startsWith(`permissions.${names[at]}.filesystem=`))).toBe(true)
+    })
+  })
+
+  test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    const argv = seen.argv[0]!
+    expect(argv.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+    expect(namesProfile(argv)).toBe(true)
+    const fs = filesystem(argv)
+    expect(fs).toContain(pair('/w', 'read'))
+    expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
+    expect(fs).not.toContain('="write"')
+    expect(argv).toContain('sandbox_mode="read-only"')
   })
 })
