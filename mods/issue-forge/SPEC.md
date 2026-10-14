@@ -578,3 +578,42 @@ the amended version.
   - README: the two profile fields, `here`'s tightening, the worktree cleanup command, the tmux
     teammate-mode and `setupCommand` limits, and a "What it reaches" table regenerated from
     `claude plugin validate`. `plugin.json` and the marketplace entry agree.
+- **Built (2026-10-13).** Red `db2e1ea` (16 failing by assertion, 101 passing), green `5713e95`,
+  type fix `35631ae`, refactor `f56d8a2`, docs `3cf8381`, coverage `2306a51`. Changes along the way:
+  - **Test fixes, each in its own commit.** `b29cf9e`: the 0.1.0 dirty-tree test now pins `here` and
+    expects the busy wording. `72221eb`: the harness's LCOV fixture now names files under the folder
+    the coverage command ran in, as a real reporter does.
+  - **The live steer has no UI test.** The kit never gives a spawn an `agentId` (gotchas.md), so no
+    UI test reaches the live agent's Bash rewrite. `guardAction`'s logic tests cover each rule, the UI
+    tests cover the guard's pass-through and refusal wiring in a worktree run, and P4 and the live
+    run below cover the rest.
+  - **Per-run LCOV.** This repository's profile now writes LCOV to the relative
+    `coverage/issue-forge.lcov`, which resolves in the run's own (gitignored) folder. Parallel worktree
+    runs no longer share `~/.claude/issue-forge-data/coverage.lcov`.
+  - **More of `here`'s tightening.** A clean checkout on a branch other than the base (for example
+    when the issue names another `Base branch:`) is busy too, so `here` blocks it and `ask` asks.
+- **QA:**
+  - `claude plugin validate .`, `mods/issue-forge` and `plugins/mod-builder` all pass.
+  - `claude plugin test`: issue-forge 118 pass (76 logic, 42 UI and behaviour); mod-builder 89 pass.
+  - The archetype check passes, and `tsc` (typescript 5.6) is clean.
+  - Coverage of `hooks/issue-forge-logic.ts` under the kit: 100.00% lines, 99.41% branches (`main`:
+    100.00% / 99.33%). No changed line has an untaken branch.
+- **Live check (passed 2026-10-13).** A tmux session in the main folder ran this worktree's copy
+  (`--plugin-dir`, with `issue-forge@claudemod` disabled and `teammateMode: "in-process"`). The driver
+  ran on `haiku` and was told to stay passive.
+  - `/issue-forge status` answered from the inline copy, which has its own store.
+  - `/issue-forge 27` asked `/mnt/c/Projects/ClaudeMod is busy (on issue-3-duet-codex-can-read-any-file-the-user-ca). Run #27 in a new worktree under scratch/issue-forge?`.
+    `New worktree` added `scratch/issue-forge/issue-27-issue-forge-phase-agents-hand-backs-reac` from
+    `origin/main` (5bc018c).
+  - Each phase passed on its first attempt: red `6f1b268` (6m13s), green `51b057c` (1m57s; changed
+    lines and branches 100.00%, total 97.21% / 91.79%), refactor `c77b886` (3m48s).
+  - At ready, the pane showed `merges cleanly with origin/main` and the question
+    `Push issue-27-… and open a pull request against main?`. It was dismissed (no). There's no
+    `issue-27*` branch on origin and no PR.
+  - The main folder was the same before and after: HEAD `95af650` on `issue-3-…`, and
+    `git status --porcelain --untracked-files=all` empty.
+  - Every agent file edit was inside the worktree, and the guard refused nothing. The agents' own
+    Bash commands `cd`'d into the worktree as the prompt says, or used absolute paths, so this run
+    doesn't single out the Bash rewrite (P4 does).
+  - As #27 predicts, each phase's hand-back reached the driver as a `<teammate-message>`, and the
+    driver answered `ok` with no tools.
