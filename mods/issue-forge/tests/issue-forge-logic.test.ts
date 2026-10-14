@@ -802,7 +802,7 @@ describe('edges', () => {
 
 describe('workspace: where a run works (Change 0.2.0)', () => {
   const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
-  const facts = (over: Partial<Parameters<typeof checkoutState>[0]> = {}) => ({ gitDir: '/repo/.git', commonDir: '/repo/.git', porcelain: '', head: 'main', base: 'main', ...over })
+  const facts = (over: Partial<Parameters<typeof checkoutState>[0]> = {}) => ({ porcelain: '', head: 'main', base: 'main', ...over })
 
   test('profile: workspace and worktreeDir default, take their values, and refuse anything else naming the field', () => {
     expect(profile().workspace).toBe('ask')
@@ -815,15 +815,13 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     for (const dir of ['/abs', 'C:\\runs', 'scratch/../..', '..', '', '.']) expect(refused({ worktreeDir: dir })).toContain('worktreeDir must be a relative path inside the repository')
   })
 
-  test('checkoutState: changes, another branch or a detached HEAD make a checkout busy; a linked worktree is told apart', () => {
-    expect(checkoutState(facts())).toEqual({ isLinkedWorktree: false, isBusy: false, why: '' })
+  test('checkoutState: changes, another branch or a detached HEAD make a checkout busy', () => {
+    expect(checkoutState(facts())).toEqual({ isBusy: false, why: '' })
     expect(checkoutState(facts({ porcelain: ' M src/a.ts\n?? new.ts\n' }))).toMatchObject({ isBusy: true, why: '2 changed files' })
     expect(checkoutState(facts({ porcelain: ' M src/a.ts\n' })).why).toBe('1 changed file')
     expect(checkoutState(facts({ head: 'issue-3-duet' }))).toMatchObject({ isBusy: true, why: 'on issue-3-duet' })
     expect(checkoutState(facts({ head: 'HEAD' }))).toMatchObject({ isBusy: true, why: 'detached HEAD' })
     expect(checkoutState(facts({ porcelain: ' M a\n', head: 'x' })).why).toBe('1 changed file, on x')
-    expect(checkoutState(facts({ gitDir: '/repo/.git/worktrees/wt', commonDir: '/repo/.git' })).isLinkedWorktree).toBe(true)
-    expect(checkoutState(facts({ gitDir: '/repo/.git/', commonDir: '/repo/.git' })).isLinkedWorktree).toBe(false)
   })
 
   test('workspacePlan: here blocks a busy checkout, ask asks only when busy, worktree always makes one', () => {
