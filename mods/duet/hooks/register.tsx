@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, parentOf, pathDirs, DEFAULT_TYPE,
+  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -188,7 +188,7 @@ async function realPathOf($: EngineInterface, path: string): Promise<string | un
   }
 }
 
-/** The write folders that really land inside the project: a symlink out of it, to it, or a folder not there yet is dropped. */
+/** The write folders that really land inside the project: a symlink out of it, to it, into .git, .codex or .agents, or a folder not there yet is dropped. */
 async function safeWritePaths($: EngineInterface, cwd: string, folders: string[] | undefined): Promise<string[] | undefined> {
   if (folders === undefined) return undefined
   const root = await realPathOf($, cwd)
@@ -196,7 +196,7 @@ async function safeWritePaths($: EngineInterface, cwd: string, folders: string[]
   for (const folder of folders) {
     const path = folderUnder(cwd, folder)
     const real = root && path ? await realPathOf($, path) : undefined
-    if (root && real && isInside(root, real)) kept.push(folder)
+    if (root && real && isInside(root, real) && !isProtectedPath(root, real)) kept.push(folder)
   }
   return kept
 }

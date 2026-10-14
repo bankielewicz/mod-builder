@@ -622,9 +622,12 @@ export function isInside(root: string, path: string): boolean {
   return path.length > base.length + 1 && (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`))
 }
 
-/** Red stub (PR #39 review round 2). */
+/** The folders Codex keeps read-only inside a writable project (probed on 0.162.1). */
+const PROTECTED = new Set(['.git', '.codex', '.agents'])
+
+/** True when `path` is, or lies below, a `.git`, `.codex` or `.agents` folder anywhere under `root`: a write folder there would undo Codex's own protection. */
 export function isProtectedPath(root: string, path: string): boolean {
-  return false
+  return isInside(root, path) && path.slice(root.replace(/[/\\]+$/, '').length + 1).split(/[/\\]+/).some(part => PROTECTED.has(part))
 }
 
 /** PATH's absolute folders, in order (`:`-separated; Windows' `;` PATH isn't handled). */
@@ -679,7 +682,7 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
   const isWritable = o.sandbox === 'workspace-write'
   const named = isWritable ? o.writePaths ?? [] : []
   const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWritable && o.writePaths === undefined ? 'write' : 'read']]
-  for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) entries.push([folder, 'write'])
+  for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) if (!isProtectedPath(o.cwd, folder)) entries.push([folder, 'write'])
   for (const path of new Set(o.reads ?? [])) if (ABSOLUTE.test(path) && path !== o.cwd && !isInside(o.cwd, path)) entries.push([path, 'read'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
   const table = entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
