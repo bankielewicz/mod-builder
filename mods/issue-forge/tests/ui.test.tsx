@@ -20,6 +20,9 @@ const ISSUE = { number: 16, title: 'Fix the thing', body: 'Make it work.', state
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+x\n+y\n'
 const LCOV = 'SF:/w/src/a.ts\nDA:1,1\nDA:2,3\nLF:2\nLH:2\nBRF:0\nBRH:0\nend_of_record\n'
 
+/** The first store.set of a value `when` picks lands only once `until` settles; `isHeld` says it is waiting. */
+type StoreHold = { when: (value: any) => boolean; until: Promise<void>; isHeld?: boolean }
+
 type World = {
   isRepo: boolean
   isDirty: boolean
@@ -73,6 +76,8 @@ type World = {
   worktreeAddHold?: Promise<void>
   /** Worktrees git still has registered though their folder is gone: add refuses one until `git worktree remove` clears it. */
   staleWorktrees?: string[]
+  /** When set, a store stub that can hold one write stands in for mock.store. */
+  storeHold?: StoreHold
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -132,7 +137,16 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     ...w,
   }
   world.clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on, store)
+  const hold = world.storeHold
+  if (hold) {
+    on('store.get', ($: any, e: any) => ({ value: store[e.key] }))
+    on('store.set', ($: any, e: any) => {
+      const land = () => ((store[e.key] = e.value), { value: undefined })
+      if (hold.isHeld || !hold.when(e.value)) return land()
+      hold.isHeld = true
+      return hold.until.then(land)
+    })
+  } else mock.store(on, store)
   mock.env(on, { HOME: '/home/u' })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
@@ -1055,5 +1069,43 @@ describe('review of PR #41, round 4', () => {
     const status = (await run($, 'status')).text ?? ''
     expect(status).toContain(`${BRANCH} → main`)
     expect(status).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
+  })
+
+  test('a Stop whose write lands after the new branch was recorded keeps both the stop and the branch', async ($, on) => {
+    let releaseAdd = () => {}
+    let releaseStop = () => {}
+    const storeHold: StoreHold = { when: v => v?.step === 'stopped', until: new Promise<void>(r => (releaseStop = r)) }
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddHold: new Promise<void>(r => (releaseAdd = r)), storeHold })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'worktree' && a[2] === 'add'), 'the worktree add')
+    const stopping = run($, 'stop')
+    await until(w, () => storeHold.isHeld === true, "the stop's write")
+    releaseAdd()
+    for (let i = 0; i < 40; i++) await w.clock.advance(5)
+    releaseStop()
+    expect((await stopping).text).toContain('stopped #16')
+    await w.clock.settle()
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('stopped; the branch and its commits are kept')
+    expect(status).toContain(`${BRANCH} → main`)
+  })
+
+  test('a Publish pressed while the merge result is being written still publishes, once', async ($, on) => {
+    let release = () => {}
+    const storeHold: StoreHold = { when: v => v?.step === 'ready' && v?.merge !== undefined, until: new Promise<void>(r => (release = r)) }
+    const w = engine(on, { head: BRANCH, storeHold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => storeHold.isHeld === true, 'the merge write')
+    const publishing = run($, 'publish')
+    for (let i = 0; i < 60; i++) await w.clock.advance(5)
+    release()
+    expect((await publishing).text).toContain('publishing #16')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    await w.clock.settle()
+    expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
+    expect(w.argv.filter(a => a[1] === 'push')).toHaveLength(1)
+    expect(w.asked).toEqual([])
   })
 })

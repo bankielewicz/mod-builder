@@ -1045,4 +1045,9 @@ describe('review of PR #41, round 4', () => {
     expect(ready({ isClean: false, files: [], error: 'git fetch origin main failed: offline' })).toContain('merge check unavailable: git fetch origin main failed: offline')
     expect(ready()).toHaveLength(2)
   })
+
+  test('a made event writes the branch, folder and base onto the run at any step, a stopped one included', () => {
+    const keep = { branch: 'issue-16-x', workRoot: '/repo/wt', base: 'main' }
+    for (const step of ['preflight', 'stopped', 'blocked'] as const) expect(advance(run({ step }), { type: 'made', keep }, 1)).toMatchObject({ step, ...keep })
+  })
 })
