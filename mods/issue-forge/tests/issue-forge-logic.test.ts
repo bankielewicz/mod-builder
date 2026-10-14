@@ -1123,4 +1123,18 @@ describe('review of PR #41, round 6', () => {
     expect(keptWorktreePlan('missing', true)).toBe('block')
     expect(keptWorktreePlan('unregistered', true)).toBe('block')
   })
+
+  test("normalizePath keeps a UNC root's two leading slashes, so a worktree on a share stays on it (Codex 4274944503)", () => {
+    expect(normalizePath('//srv/share/repo')).toBe('//srv/share/repo')
+    expect(normalizePath('//srv/share/repo/../x/')).toBe('//srv/share/x')
+    // Only exactly two: three or more is a POSIX root, and a single backslash stays as it was.
+    expect(normalizePath('///x')).toBe('/x')
+    expect(normalizePath('/x//y')).toBe('/x/y')
+    expect(worktreePath('//srv/share/repo', 'scratch/issue-forge', 'issue-16-x')).toBe('//srv/share/repo/scratch/issue-forge/issue-16-x')
+    // A current-drive path is not inside the share.
+    expect(relativeTo('//srv/share/repo', '/srv/share/repo/x')).toBe(null)
+    expect(outsideWorkRoot('/srv/share/repo/wt/a.ts', '//srv/share/repo/wt')).toBe(true)
+    const share = { liveAgent: 'live', known: new Set(['live']), workRoot: '//srv/share/repo/wt', root: '//srv/share/repo' }
+    expect(guardAction({ tool: 'Edit', file_path: 'src/a.ts', agentId: 'live' }, share)).toEqual({ kind: 'rewrite', patch: { file_path: '//srv/share/repo/wt/src/a.ts' } })
+  })
 })
