@@ -324,16 +324,16 @@ describe('starting a run', () => {
     expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
   })
 
-  test('a dirty tree blocks at preflight, creates no branch, and a second start answers with the active run', async ($, on) => {
-    const w = engine(on, { isDirty: true })
+  test('a dirty tree blocks at preflight (workspace here), creates no branch, and a second start answers with the active run', async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' } })
     await start($)
     expect((await run($, '#16')).text).toContain('starting #16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
-    expect(w.toasts).toContain('#16 blocked: the working tree has changes')
-    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'switch')).toBe(false)
+    expect(w.toasts).toContain('#16 blocked: the checkout is busy (1 changed file)')
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'switch' || a[1] === 'worktree'))).toBe(false)
     const ui = await pane($)
-    expect(await ui.find({ type: 'Text', text: /✕ blocked at preflight: the working tree has changes/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /next: commit or stash them, then \/issue-forge resume/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /✕ blocked at preflight: the checkout is busy \(1 changed file\)/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /next: set "workspace" to "worktree" or "ask"/ })).toBeDefined()
     await ui.unmount()
     const again = (await run($, '17')).text ?? ''
     expect(again).toContain('a run is already active here.')
