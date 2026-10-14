@@ -631,8 +631,11 @@ function tomlString(s: string): string {
 const PROFILE = 'duet-mod-fs-scope'
 
 /** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
+/** An absolute path: `/…`, `\…` or a drive letter. */
+const ABSOLUTE = /^([/\\]|[A-Za-z]:)/
+
 export function folderUnder(cwd: string, folder: string): string | null {
-  if (/^([/\\]|[A-Za-z]:)/.test(folder)) return null
+  if (ABSOLUTE.test(folder)) return null
   const parts: string[] = []
   for (const part of folder.split(/[/\\]+/)) {
     if (part === '..') {
@@ -642,8 +645,11 @@ export function folderUnder(cwd: string, folder: string): string | null {
   return parts.length ? `${cwd}/${parts.join('/')}` : null
 }
 
-/** A run's `codexFsScope` inputs: the scope, the home folder Codex is installed under, and the folders its agent may write. */
-type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[] }
+/**
+ * A run's `codexFsScope` inputs: the scope, the home folder Codex is installed under, the folders its
+ * agent may write, and folders outside the project it may read (git's own folders in a linked worktree).
+ */
+type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[]; reads?: string[] }
 
 /**
  * The two `-c` overrides that make a `duet` permission profile the default (SPEC, Change 0.2.6): Codex's
@@ -659,6 +665,7 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
   const named = isWritable ? o.writePaths ?? [] : []
   const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWritable && o.writePaths === undefined ? 'write' : 'read']]
   for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) entries.push([folder, 'write'])
+  for (const path of new Set(o.reads ?? [])) if (ABSOLUTE.test(path) && path !== o.cwd && !isInside(o.cwd, path)) entries.push([path, 'read'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
   const table = entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
   return ['-c', `default_permissions="${PROFILE}"`, '-c', `permissions.${PROFILE}.filesystem={${table}}`]
@@ -673,7 +680,7 @@ export function codexArgv(o: { sandbox: Sandbox; model: string; cwd: string } & 
   const sandbox: Sandbox = o.sandbox === 'workspace-write' ? 'workspace-write' : 'read-only'
   const isScoped = o.fsScope === 'project'
   const mode = isScoped ? ['-c', `sandbox_mode="${sandbox}"`] : ['-s', sandbox]
-  const profile = isScoped ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths }) : []
+  const profile = isScoped ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths, reads: o.reads }) : []
   return ['codex', 'exec', '--json', '--skip-git-repo-check', ...mode, ...NEVER_ASK, ...profile, '-C', o.cwd, ...(o.model ? ['-m', o.model] : []), '-']
 }
 
@@ -697,7 +704,7 @@ export function parseReviewArgs(args: string): ReviewTarget | null {
  */
 export function reviewArgv(target: ReviewTarget, model: string, scope?: { cwd: string } & FsProfile): string[] {
   const which = target.kind === 'uncommitted' ? ['--uncommitted'] : [`--${target.kind}`, target.ref]
-  const profile = scope?.fsScope === 'project' ? profileArgs({ sandbox: 'read-only', cwd: scope.cwd, home: scope.home }) : []
+  const profile = scope?.fsScope === 'project' ? profileArgs({ sandbox: 'read-only', cwd: scope.cwd, home: scope.home, reads: scope.reads }) : []
   return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...profile, ...which, ...(model ? ['-m', model] : [])]
 }
 

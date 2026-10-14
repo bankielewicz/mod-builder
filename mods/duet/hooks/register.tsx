@@ -213,6 +213,11 @@ async function git($: EngineInterface, args: string[]): Promise<string> {
   }
 }
 
+/** Git's own folders, absolute: outside the session folder in a linked worktree or a submodule. */
+async function gitDirs($: EngineInterface): Promise<string[]> {
+  return (await git($, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n').map(l => l.trim()).filter(Boolean)
+}
+
 async function baseCommit($: EngineInterface): Promise<string> {
   return (await git($, ['rev-parse', '--short', 'HEAD'])) || 'none'
 }
@@ -308,12 +313,12 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = { id: string; type: string; cwd: string; home: string; writePaths: string[] | undefined; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = { id: string; type: string; cwd: string; home: string; writePaths: string[] | undefined; reads: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
 async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: j.writePaths }), j.prompt)
+  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads }), j.prompt)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
   const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
@@ -373,7 +378,8 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     await ensureTicker($)
     const named = writePathsOf(options.writePaths, type)
     const writePaths = options.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
-    const job: Job = { id, type, cwd, home: await homeDir($), writePaths, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
+    const reads = options.fsScope === 'project' ? await gitDirs($) : []
+    const job: Job = { id, type, cwd, home: await homeDir($), writePaths, reads, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
@@ -427,7 +433,7 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
   }
   Object.assign(task, { id: admitted.id })
   await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($) }), undefined)
+  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await gitDirs($) : [] }), undefined)
   const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
