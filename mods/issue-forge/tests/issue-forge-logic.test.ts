@@ -930,6 +930,6 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     expect(guardAction({ tool: 'Write', file_path: '/anywhere', agentId: 'live' }, { liveAgent: 'live', known: new Set(['live']), workRoot: null, root: null })).toEqual({ kind: 'pass' })
     const r = run({ branch: 'b', base: 'main', merge: { isClean: false, files: [], error: 'git fetch origin main failed: offline' } })
     expect(prBody(r)).toContain("## Merge check\n\nAt publish time the merge check couldn't run: git fetch origin main failed: offline")
-    expect(parseMergeTree({ exitCode: 128, stdout: '', stderr: '' })).toEqual({ isClean: false, files: [], error: '' })
+    expect(parseMergeTree({ exitCode: 128, stdout: '', stderr: '' })).toEqual({ isClean: false, files: [], error: 'exit 128' })
   })
 })
