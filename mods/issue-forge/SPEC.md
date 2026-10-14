@@ -738,3 +738,36 @@ Not fixed:
 - The result of the merge check shown at ready keeps its wording after "Not now", with no time. Publish
   checks again for the PR body.
 - Over-broad by design, already recorded above: any non-mod `redAgentType` is refused in a worktree run.
+
+## Review: PR #41, round 6: Codex's four open threads and `/code-review` (2026-10-14)
+
+Read at ff943e2. The four Codex threads with no reply, and two `/code-review` findings, were each checked
+against the code; git's behaviour was probed on git 2.53. Each fix is test-first (red → green below).
+
+| Sev | Finding | Fix |
+|---|---|---|
+| 1 | Resume trusted `fs.exists` about a kept worktree. A folder at its path that isn't the worktree (a plain folder, or one whose `.git` is gone) passed as the worktree, and git run there works on the main checkout (`/code-review` round 5, register.tsx:457 and the HEAD check in resumeRun). If `fs.exists` said a real worktree was missing, preflight ran `git worktree remove` on it (register.tsx:467). | Resume and preflight read `git worktree list --porcelain`: `worktreeStateOf` (present, missing as `prunable`, unregistered) and `keptWorktreePlan` (reuse, add, block). A worktree git has is reused, `git worktree remove` runs only with nothing at the path, a folder that isn't the worktree blocks, and no git command runs inside it. Probed: git lists a folder whose `.git` is gone as `prunable`, like a deleted one, and refuses `worktree remove` on it while the folder is there. `8a4a01f` → `b50872c` |
+| 2 | `normalizePath('//srv/share/repo')` gave `/srv/share/repo`, so a worktree for a repository on a UNC share was made on the current drive, and the guard read a current-drive path as inside the share (Codex 4274944503). | Exactly two leading slashes are kept; three or more still collapse. `964949a` → `9be6860` |
+| 2 | README: the tmux tip led to in-process teammates, whose hand-backs arrive as `session.receive`, which the mod doesn't consume, so each phase's end wakes the main model. "What it reaches" said `prompt.submit` drops all hand-backs (Codex 4273047098). | The code fix is #27 (open). The README now says the tip applies with agent teams on, what an in-process teammate does to the main model, and that `prompt.submit` drops only subagents' hand-backs. `732b347` |
+| 3 | `worktreeDir: ".GIT"` passed on a case-insensitive filesystem (probed on /mnt/c: with `.GIT/` ignored, `git worktree add .GIT/wt` lands in `.git/`) (Codex 4274944512). | A segment that is `.git` lowercased, with Windows' trailing dots and spaces dropped, is refused. `0d4de1d` → `3fe8f34` |
+| 3 | mod-builder was bumped to 0.2.5 with no `## Change` section (Codex 4274944520). 0.2.5 then went to #11's fix (PR #47). | `origin/main` merged in (`fe37c4a`); this PR's gotchas probes are mod-builder 0.2.6, in `plugin.json`, the marketplace entry and its SPEC. `e16030d` |
+| doc | README Processes listed `rev-list`, which the mod never runs, and not `git worktree list`. | Fixed in `732b347`, with the git 2.31 note below. |
+
+Test changes: four existing resume tests pinned every `git worktree` call. Resume and preflight now each
+read the list first, so `e67f4fa` adds those two read-only calls to the exact sequences. Two of them had
+counted the calls (length 1, meaning "no second add"); they now list them, which is stricter.
+
+Known limits, not fixed:
+
+- `git worktree list --porcelain` marks a deleted folder `prunable` from git 2.31. An older git lists it
+  as there, so the resume fails instead of adding it again (README Limits).
+- `GIT~1`, a Windows 8.3 short name for `.git`, passes the profile check. It needs short names on and an
+  ignore entry naming it.
+- A `locked` worktree (a `git worktree add` killed mid-checkout) is still reused (`/code-review` pass above).
+- Still open from `/code-review` round 5: `parseMergeTree` reads a bad ref's exit 1 as a conflict with no
+  files, and a kept-branch `here` resume doesn't check the tree is clean.
+- From this round's `/code-review`: a missing or invalid profile in the starting checkout makes the base
+  `main` silently (register.tsx:404); the conflict list goes unbounded and unescaped into the PR body;
+  `chooseWorktree`'s "Stop" only blocks; a `here` run judges relative edits against the root, not the
+  session's folder; `block.keep` repeats `recordMade`; `liveAgent` and `liveWork` change in pairs by hand.
+
