@@ -842,6 +842,9 @@ export function steerBash(command: string, dir: string): string {
   return `cd -- '${dir.replace(/'/g, `'\\''`)}' || exit 1\n${command}`
 }
 
+export type GuardContext = { liveAgent: string | null; known: ReadonlySet<string>; workRoot: string | null; root: string | null }
+export type GuardAction = { kind: 'pass' } | { kind: 'deny'; reason: string } | { kind: 'rewrite'; patch: Record<string, string> }
+
 const RETIRED = 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.'
 const EDIT_PATHS: Record<string, string> = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' }
 
