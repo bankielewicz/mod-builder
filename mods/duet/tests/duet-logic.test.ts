@@ -292,6 +292,14 @@ describe('0.2.0 rules', () => {
     expect(deliveryText({ ...base, failure: 'timed out after 20m' })).toBe('Background agent duet-d3 (duet:codex-reviewer) failed on Codex: timed out after 20m. It did not run on Claude either.')
   })
 
+  test('deliveryText: a failure keeps the cut-short search note on its own line (PR #48 review); an empty note adds nothing', () => {
+    const note = 'duet: the search for the reader agent definition was cut short at 8 folders deep; a definition past that was not read, so Claude may use a different one.'
+    const failed = { id: 'd3', label: 'reader', model: '', sandbox: 'read-only' as const, durationMs: 0, tokens: 0, text: '', footer: '', failure: 'timed out after 20m', searchNote: note }
+    const plain = { ...failed, searchNote: '' }
+    expect(deliveryText(failed)).toBe(`Background agent duet-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.\n${note}`)
+    expect(deliveryText(plain)).toBe('Background agent duet-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.')
+  })
+
   test('lostOnReload marks only running Codex rows this module did not start; liveCount counts agent runs', () => {
     const t = (id: string, status: 'running' | 'done', kind: 'agent' | 'review' = 'agent', provider: 'codex' | 'claude' = 'codex') =>
       ({ id, provider, kind, subagentType: 'x', model: '', status, startedAt: 0, endedAt: null, tokens: 0, description: '', detail: '', envelope: null })

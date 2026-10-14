@@ -900,4 +900,31 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     expect(sandboxOf(seen.argv[2])).toBe('workspace-write')
     expect(seen.stdin[2]).toContain('Version two.')
   })
+
+  // PR #48 review (Codex, P2): the note was joined into the footer only, and no failure path carries the footer.
+  test('a run that fails after a cut-short search keeps the note: in the denial, the background delivery and the .out.md file', { options: { ...options, codexAgents: 'reader, bgreader', codexRunMode: 'background, reader=wait' } }, async ($, on) => {
+    const eight = '/w/pkg/.claude/agents/d1/d2/d3/d4/d5/d6/d7/d8'
+    const seen = engine(on, { cwd: IN, codex: 'missing', agents: { '/home/u/.claude/agents/reader.md': agent('reader', READS, 'User level.'), '/home/u/.claude/agents/bgreader.md': agent('bgreader', READS, 'User level.') } })
+    await start($, IN)
+    // Nothing is cut short: the failure says nothing about the search.
+    const plain: any = await asks($, 'reader')
+    expect(plain.deny).toMatch(/codex not found on PATH/)
+    expect(plain.deny).not.toMatch(/cut short/i)
+    // A 9th folder holds a file the search never reaches; the runs below fail on Codex all the same.
+    seen.files[`${eight}/d9/reader.md`] = agent('reader', READS, 'Nine deep.')
+    // Waited on: the denial Claude reads.
+    const denied: any = await asks($, 'reader')
+    expect(denied.deny).toMatch(/the Codex handoff failed \(codex not found on PATH/)
+    expect(denied.deny).toMatch(/the search for the reader agent definition was cut short at 8 folders deep/)
+    // In the background: the delivered message and the file the launch record points to.
+    const launched: any = await asks($, 'bgreader')
+    expect(launched.result.status).toBe('async_launched')
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(1)
+    expect(seen.submitted[0]).toMatch(/duet-d\d \(bgreader\) failed on Codex: codex not found on PATH/)
+    expect(seen.submitted[0]).toMatch(/the search for the bgreader agent definition was cut short at 8 folders deep/)
+    const outFile = seen.files[launched.result.outputFile]
+    expect(outFile).toMatch(/failed on Codex: codex not found on PATH/)
+    expect(outFile).toMatch(/the search for the bgreader agent definition was cut short at 8 folders deep/)
+  })
 })
