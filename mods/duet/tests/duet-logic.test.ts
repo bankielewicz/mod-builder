@@ -574,3 +574,12 @@ describe('issue 3 part B: codexFsScope and codexWritePaths are read defensively'
     expect(read({ codexWritePaths: ' red-test-writer = tests ; test , impl-writer=src ' }).writePaths).toEqual({ 'red-test-writer': ['tests', 'test'], 'impl-writer': ['src'] })
   })
 })
+
+describe('issue 3 part B: the scope help matches what was checked', () => {
+  test('the /duet config help for scope says it was checked through codex exec on Codex 0.162.1, not that it is unchecked', () => {
+    const help = findConfigField('scope')!.help
+    expect(help).toContain('codex exec')
+    expect(help).toContain('0.162.1')
+    expect(help).not.toContain('not yet')
+  })
+})
