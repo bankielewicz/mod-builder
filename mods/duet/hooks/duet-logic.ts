@@ -830,8 +830,10 @@ export function foldEvent(run: Run, line: string): Run {
       const item = ev.item ?? {}
       if (item.type === 'agent_message') return { ...run, text: String(item.text ?? '') }
       if (item.type === 'error') return { ...run, warnings: [...run.warnings, String(item.message ?? '')] }
-      // On Linux, without Codex's install folder the sandbox (bwrap) can't exec Codex's own binary: every command fails, and the answer is hollow.
-      const unrunnable = item.type === 'command_execution' ? /bwrap: execvp (\S+): No such file or directory/.exec(String(item.aggregated_output ?? '')) : null
+      // On Linux, without Codex's install folder the sandbox (bwrap) can't run Codex's own binary: every command fails, and the answer is hollow.
+      // Only a failed command whose output has a line starting with bwrap's message counts; a diff or a file quoting it does not.
+      const isFailed = item.type === 'command_execution' && item.exit_code !== 0
+      const unrunnable = isFailed ? String(item.aggregated_output ?? '').match(/^bwrap: execvp (\S+): No such file or directory$/m) : null
       if (unrunnable && !run.failure) return { ...run, failure: `Codex could not run ${unrunnable[1]} inside its sandbox: under codexFsScope project its install folder must be readable, and duet grants only the folder of the codex on PATH and $CODEX_HOME/packages.` }
       return run
     }
