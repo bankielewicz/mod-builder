@@ -820,11 +820,11 @@ export function checkoutState(f: CheckoutFacts): CheckoutState {
 }
 
 /** `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. */
-export function workspacePlan(mode: Workspace, s: CheckoutState): WorkspacePlan {
+export function workspacePlan(mode: Workspace, s: CheckoutState, base: string): WorkspacePlan {
   if (mode === 'worktree') return { kind: 'worktree' }
   if (!s.isBusy) return { kind: 'here' }
   if (mode === 'ask') return { kind: 'ask' }
-  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE}, or clean the checkout` }
+  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads origin/${base}'s copy), or clean the checkout` }
 }
 
 export function worktreePath(root: string, dir: string, branch: string): string {

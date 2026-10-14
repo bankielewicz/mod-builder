@@ -356,7 +356,7 @@ async function whereToWork($: EngineInterface, issue: number, root: string, base
   const porcelain = await gitOut($, root, ['status', '--porcelain'])
   const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   const state = checkoutState({ porcelain, head, base })
-  const plan = workspacePlan(workspace, state)
+  const plan = workspacePlan(workspace, state, base)
   if (plan.kind === 'block') return block(plan.reason, plan.next)
   if (plan.kind === 'here') return { kind: 'here' }
   // Everything a worktree needs is checked before anyone is asked for one.
@@ -364,7 +364,7 @@ async function whereToWork($: EngineInterface, issue: number, root: string, base
   if (routed) return block(routed.reason, routed.next)
   if ((await git($, root, ['check-ignore', '-q', '--', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
   if (plan.kind === 'ask' && !(await chooseWorktree($, issue, root, state.why, worktreeDir))) {
-    return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE}, or clean the checkout`)
+    return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE} on ${base}, or clean the checkout`)
   }
   return { kind: 'worktree', worktreeDir, minutes: commandTimeoutMinutes }
 }
