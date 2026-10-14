@@ -332,7 +332,9 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     '/w/.claude/agents/code-explorer.md': EXPLORER,
   }
   const scoped = { codexAgents: 'red-test-writer, impl-writer, code-explorer', codexSandbox: 'workspace-write', codexFsScope: 'project', codexWritePaths: 'red-test-writer=tests;test', codexConsent: 'allow', codexRunMode: 'wait' }
-  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+  // These find duet's profile whether or not its name carries a per-run nonce; the nonce test checks the name itself.
+  const filesystem = (argv: string[]) => argv.find(a => /^permissions\.duet-mod-fs-scope(-[A-Za-z0-9]+)?\.filesystem=/.test(a)) ?? ''
+  const namesProfile = (argv: string[]) => argv.some(a => /^default_permissions="duet-mod-fs-scope(-[A-Za-z0-9]+)?"$/.test(a))
   const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
 
   test('an agent named in codexWritePaths may write only those folders; the rest of the project and the Codex install folder are read', { options: scoped }, async ($, on) => {
@@ -342,7 +344,7 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     const argv = seen.argv[0]!
     expect(argv[argv.indexOf('sandbox_mode="workspace-write"') - 1]).toBe('-c')
     expect(argv).not.toContain('-s')
-    expect(argv).toContain('default_permissions="duet-mod-fs-scope"')
+    expect(namesProfile(argv)).toBe(true)
     const fs = filesystem(argv)
     expect(fs).toContain(pair('/w', 'read'))
     expect(fs).toContain(pair('/w/tests', 'write'))
@@ -449,7 +451,7 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     await seen.clock.advance(1000)
     const argv = seen.argv[0]!
     expect(argv.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
-    expect(argv).toContain('default_permissions="duet-mod-fs-scope"')
+    expect(namesProfile(argv)).toBe(true)
     const fs = filesystem(argv)
     expect(fs).toContain(pair('/w', 'read'))
     expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
