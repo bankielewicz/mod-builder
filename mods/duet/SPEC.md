@@ -623,4 +623,4 @@ pane's keys; `/reload-plugins` picks up edits.
   - Codex 4274497636, malformed YAML elsewhere in a file: Claude loads a file with `bad: [` in another field, so skipping it would differ from Claude.
   - Finding 6, the walk without a repository: Claude walks on up too (4 levels probed).
   - Finding 7, a failed read: Claude also leaves out a file it can't read, so the farther definition is what it uses as well.
-  - Findings 5 (beyond the docs), 8, 9, 10 and 11 are for a follow-up issue: there is no `$` call for managed-settings or `--agents` agents; nothing says when a cap cut a scan short; `pickAgent`'s `root` field is unused now that each pick sees one folder; reads are sequential; and the cache keeps entries for files no longer listed.
+  - Findings 5 (beyond the docs), 8, 9, 10 and 11 are in #44: there is no `$` call for managed-settings or `--agents` agents; nothing says when a cap cut a scan short; `pickAgent`'s `root` field is unused now that each pick sees one folder; reads are sequential; and the cache keeps entries for files no longer listed.
