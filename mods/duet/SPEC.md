@@ -460,7 +460,11 @@ pane's keys; `/reload-plugins` picks up edits.
 
 ## Change 0.2.6 (2026-10-13)
 
-> Part B of issue #3: limit what Codex can read and write, behind an opt-in, default-off option. Checked through `codex exec` on Codex 0.162.1 (Linux): read-only and `workspace-write` with `codexWritePaths`. `/duet review` gets the same profile, but whether it holds there is not confirmed.
+> Part B of issue #3: limit what Codex can read and write, behind an opt-in, default-off option. On Codex 0.162.1 (Linux), `codex exec` runs confirmed:
+> - under `read-only` and under `workspace-write` with `codexWritePaths`, reads outside the project, `/tmp` and an outward symlink were blocked;
+> - a `codexWritePaths` folder was writable.
+>
+> Whether the rest of the project stays read-only was checked in `codex sandbox` only. `/duet review` gets the same profile, but whether it holds there is not confirmed.
 
 - **Evidence: `codex sandbox`** (issue #3, run 2026-10-13: Codex CLI 0.162.1, `x86_64-unknown-linux-musl`, WSL2 Linux; local runs, no model call):
   - With `default_permissions="duet"` and `permissions.duet.filesystem={":minimal"="read","<project>"="read","$HOME/.codex/packages"="read"}`, a file outside the project failed with "No such file or directory", and a project file printed. Adding `-c sandbox_mode="read-only"` gave the same result.
@@ -491,7 +495,11 @@ pane's keys; `/reload-plugins` picks up edits.
     - Codex's own memories file (`~/.codex/memories/MEMORY.md`) was readable.
   - **Readable beyond the table:** a no-model `codex sandbox` run with the same profile shows that `~/.codex` holds only `memories` and `packages`. Codex adds its own memories folder; `auth.json`, `config.toml`, `history.jsonl`, `~/.claude` and `~/.ssh` were not there.
 - **Why it can break on a Codex upgrade:** OpenAI's page says profiles "do not compose with the older sandbox settings", and that `sandbox_mode` in a loaded config file also makes the older settings win. On 0.162.1 that didn't happen: the profile held with `sandbox_mode` both in `config.toml` and as `-c`. duet relies on that behaviour, and duet's tests check only the argv. After upgrading Codex, re-run the canary probe above with the argv `codexArgv` builds before relying on `project`.
-- **Not checked:** macOS and Windows; whether `/duet review` holds the profile when the model does try an outside read; `workspace-write` with the whole project writable through `codex exec`, including whether the empty folders then appear at the project root.
+- **Not checked:**
+  - through `codex exec`, that a `codexWritePaths` agent can't write the rest of the project, and that `read-only` writes nothing in it (both checked in `codex sandbox` only);
+  - macOS and Windows;
+  - whether `/duet review` holds the profile when the model does try an outside read;
+  - `workspace-write` with the whole project writable through `codex exec`, including whether the empty folders then appear at the project root.
 - **What changes:**
   - `codexFsScope` (`anything` default, `project`). `anything` is the argv as before. `project` replaces `-s <mode>` with `-c sandbox_mode="<mode>"` in `codexArgv` (`reviewArgv` already used it), and adds two `-c` overrides to both: `default_permissions="duet"` and `permissions.duet.filesystem={…}`, built by `profileArgs`.
   - The table holds `":minimal"` read; the project read, or write under `workspace-write` when the agent has no `writePaths`; and `<home>/.codex/packages` read. `/tmp` is never in it. A review gets the table read-only. With `HOME` and `USERPROFILE` both unset, the install folder is left out; Codex then may not be able to re-run itself (unverified).
