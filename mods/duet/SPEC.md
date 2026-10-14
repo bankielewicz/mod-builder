@@ -553,3 +553,30 @@ pane's keys; `/reload-plugins` picks up edits.
   - Not checked: npm/nvm and brew installs, where `codex` may be a JavaScript shim beside the native binary, and Windows' `;` PATH.
 - **macOS `/tmp`** (Codex P1, from Codex's source, not run): on macOS a `:minimal` entry makes Seatbelt grant `/private/tmp` and `/private/var/tmp`. The help, `plugin.json` and README now say `/tmp` is hidden on Linux only. Explicit `none` entries are left for a macOS machine: on Linux, `/tmp="none"` also hid a project under `/tmp`.
 - **Left for a follow-up issue:** the macOS deny entries; showing the scope in routes and the footer, and noticing when a Codex upgrade drops the profile; tests for a missing HOME, a write path keyed by a role alias, and the `folderUnder` project-itself branch.
+
+### Review fixes, round 2 (2026-10-14)
+
+> `/code-review` of PR #39 at `d0e490b` checked Codex's six comments and found more. Each fix has a red test and its own commit. The live checks ran `codex sandbox` 0.162.1 (Linux, no model call) on the logic built at `03c4353`. The `codex exec` runs above weren't repeated.
+
+- **Write folders in `.git`, `.codex` or `.agents`** (`/code-review`): plain `workspace-write` and the whole-project entry keep these read-only (probed). Yet a named folder such as `tests -> .git/hooks` let the sandbox write `.git/hooks/pre-commit`, which the next `git commit` runs unsandboxed (reproduced).
+  - `isProtectedPath` drops a folder that is, or lies below, any of the three under the project: in `safeWritePaths` on the real path, and in `profileArgs` on the spelling.
+  - Commits: 9de5bda (red), 1c00a7a (fix).
+- **A quoted bwrap line failed a good run** (`/code-review`): `foldEvent` matched the bwrap text anywhere. So a `/duet review` of this PR (`git diff` prints the regex) became an error (reproduced). Now only a command with `exit_code` not 0, whose output has a line starting with the message, counts. Commits: 84c7201, 54821d1.
+- **Repeated key** (Codex P1, 4266372721): with `CODEX_HOME=$HOME/.codex`, the table held `~/.codex/packages` twice, and Codex refused it (`invalid type: string … expected struct FilesystemPermissionsToml`, reproduced). `profileArgs` now keeps each path once, after folding repeated and trailing slashes. Commits: 7d0ab1c, 2e10c31.
+- **Profile name** (`/code-review`, on Codex P1 4266133298): `duet-mod-fs-scope` is public, so a trusted repository's `.codex/config.toml` defining it widened reads (reproduced: the outside canary printed under a `read-only` argv).
+  - Each run and review now passes `crypto.randomUUID()` as a nonce: `duet-mod-fs-scope-<32 hex>`. With the nonce, the same repo's grant didn't apply.
+  - A trusted repo's config still shapes Codex otherwise: `codex mcp list` showed its MCP server. That is in #42.
+  - Commits: b840c2f, 5b16664 (routing helpers match the prefix), b6983d9.
+- **Install grant** (Codex P2 4266372737, `/code-review`): the `PATH` lookup now skips a `codex` that isn't a file (`fs.stat` kind; the executable bit can't be seen).
+  - `profileArgs` drops a read that is, or holds, the project or the home folder, so a `codex` at `~/codex` no longer makes `$HOME` readable.
+  - Commits: a78a07e (the stub gives kinds), 83924c1, b1800a3.
+- **Git before 2.31** (`/code-review`): `--path-format` failed there, and git's folders were silently not granted.
+  - `gitDirs` now runs `git rev-parse --git-dir --git-common-dir` and resolves a relative answer against the session folder (`resolveFrom`).
+  - On git 2.53 the answers are absolute in a linked worktree and `.git` at a main checkout's top. Old git itself wasn't run.
+  - Commits: e09998f, 47f1bf7.
+- **A dropped write folder was silent** (`/code-review`): a missing, outside or protected folder was dropped with no word, and Codex can't create a missing one (probed: `mkdir` gets "Read-only file system"). The footer now names each dropped folder. Commits: 96d95cd, 8048cc5, 71517ab (covers the footer's model branch).
+- **A review that failed after admission stayed running** (`/code-review`): it held a `maxConcurrent` slot for the session. Now the row ends as error, with the reason. Commits: 01aa793, 1b68f5c.
+- **Refactor:** one `scopeOf` builds the scope inputs at admission, and a job keeps the scope it was admitted with. `folderUnder`'s doc comment is back on it. Commit: 91a1787.
+- **macOS `/tmp`** (Codex P1 4266133283): Codex 0.162.1's `seatbelt_scratch.rs` makes `/private/tmp` and `/private/var/tmp` *writable* too, `read-only` included. The help, `plugin.json` and README now say so. The fix needs a Mac and is in #42. Commits: 1649aae, 03c4353.
+- **Moved to #42:** macOS; npm, nvm and brew installs (`bin/codex.js` is a shim, and the native binary sits in an optional dependency, per `npm view`); a git 2.25 check; the executable bit; showing the scope in routes and the footer; noticing a Codex upgrade that drops the profile.
+- The three tests listed above as left over (a missing HOME, a role alias, the project-itself branch) landed in 88de8b7.
