@@ -929,7 +929,7 @@ export function routedRedBlock(redAgentType: string, isWorktree: boolean): { rea
   if (!isWorktree || redAgentType.startsWith(`${NAME}:`)) return null
   return {
     reason: `redAgentType ${redAgentType} can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder`,
-    next: `set redAgentType to ${NAME}:red, or "workspace" to "here" in ${PROFILE_FILE}`,
+    next: `set redAgentType to ${NAME}:red (a red on Codex needs "workspace": "here" and a clean checkout on the base)`,
   }
 }
 
