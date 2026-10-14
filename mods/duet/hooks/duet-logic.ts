@@ -88,9 +88,10 @@ export function parseWritePaths(text: string): Record<string, string[]> {
   const paths: Record<string, string[]> = Object.create(null)
   for (const part of text.split(',')) {
     const eq = part.indexOf('=')
+    if (eq === -1) continue
     const key = part.slice(0, eq).trim()
     const folders = part.slice(eq + 1).split(';').map(f => f.trim()).filter(Boolean)
-    if (eq !== -1 && key && folders.length) paths[typeKey(key)] = folders
+    if (key && folders.length) paths[typeKey(key)] = folders
   }
   return paths
 }
@@ -616,7 +617,7 @@ function folderUnder(cwd: string, folder: string): string | null {
   return parts.length ? `${cwd}/${parts.join('/')}` : null
 }
 
-/** What `codexFsScope: project` adds: the project is the only place Codex reads, and writes only under workspace-write. */
+/** A run's `codexFsScope` inputs: the scope, the home folder Codex is installed under, and the folders its agent may write. */
 type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[] }
 
 /**
@@ -626,17 +627,15 @@ type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[] }
  * inside it when any are given; a folder outside the project is dropped. Codex's install folder is
  * read-only because the sandbox needs it to re-run `codex`.
  */
-function profileArgs(o: { sandbox: Sandbox; cwd: string; home?: string; writePaths?: string[] }): string[] {
+function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsScope'>): string[] {
+  // Read-only writes nothing, so its writePaths are ignored rather than allowed to widen it.
   const isWritable = o.sandbox === 'workspace-write'
-  const named = o.writePaths ?? []
-  const isWhole = isWritable && named.length === 0
-  const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWhole ? 'write' : 'read']]
-  if (isWritable && !isWhole) {
-    const folders = new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))
-    entries.push(...[...folders].map((f): [string, 'write'] => [f, 'write']))
-  }
+  const named = isWritable ? o.writePaths ?? [] : []
+  const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWritable && named.length === 0 ? 'write' : 'read']]
+  for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) entries.push([folder, 'write'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
-  return ['-c', 'default_permissions="duet"', '-c', `permissions.duet.filesystem={${entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')}}`]
+  const table = entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
+  return ['-c', 'default_permissions="duet"', '-c', `permissions.duet.filesystem={${table}}`]
 }
 
 /** `codex exec` for a routed subagent; the prompt goes on stdin (`-`). */
