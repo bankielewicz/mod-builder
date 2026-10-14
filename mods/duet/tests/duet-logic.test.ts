@@ -390,6 +390,13 @@ describe('third review round: tool lists in any YAML form', () => {
     expect(sandboxOf('tools:\n  - Read\n  - Edit\ndisallowedTools:\n  - Edit')).toBe('read-only')
   })
 
+  test('an empty - item in a block list names no tool; the items around it are still read', () => {
+    expect(agent('tools:\n  -\n  - Read\n  - Edit')?.tools).toEqual(['Read', 'Edit'])
+    expect(sandboxOf('tools:\n  - Read\n  -\n  - Edit')).toBe('workspace-write')
+    expect(agent('disallowedTools:\n  -\n  - Edit')?.disallowed).toEqual(['Edit'])
+    expect(sandboxOf('tools:\n  - Read\n  - Edit\ndisallowedTools:\n  -\n  - Edit')).toBe('read-only')
+  })
+
   test('comments and permission specifiers name the whole tool', () => {
     expect(sandboxOf('disallowedTools: Write, Edit, NotebookEdit, MultiEdit # read only')).toBe('read-only')
     expect(sandboxOf('disallowedTools:\n  - Write # no writes\n  - Edit\n  - NotebookEdit\n  - MultiEdit')).toBe('read-only')
