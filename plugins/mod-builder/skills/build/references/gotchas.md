@@ -177,6 +177,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `{ result: { questions, answers: { [question]: label } } }`. A `$.ui.ask` question must end in `?`.
 - **[probe]** `turn.complete` takes `{ answer }` and resolves `{ text }`. A stub answering
   otherwise is skipped with "returned no { text }".
+- **[probe]** Work a hook starts without awaiting (a background run) may not have reached its
+  `$` calls by the time the test's `await $.tool.call(...)` returns. In duet's background Codex run,
+  the stubbed `process.run` for `codex` had already run then on 2.1.299, and had not yet on 2.1.300.
+  A test that read the stub's log at once failed on 2.1.300, with the engine also reporting
+  `hooks stream chain failed: errorKind=HooksError errorChars=35` (#45). Take the clock with
+  `mock.clock(on)` and `await clock.settle()` before asserting on what background work did.
 - **[probe]** Test `options` reach the mod only for keys declared in `plugin.json`'s `userConfig`.
   Undeclared keys arrive as absent, so the mod's default applies.
 - **[probe]** `$.process.spawn` can't be stubbed in `claude plugin test` (2.1.296). Async or sync

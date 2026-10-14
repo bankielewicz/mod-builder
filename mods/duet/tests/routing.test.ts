@@ -190,7 +190,10 @@ describe('routing', () => {
   test('a custom agent brings its role and clamps workspace-write to read-only', { options: { codexAgents: 'code-explorer', codexSandbox: 'workspace-write', codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on, { agents: { '/w/.claude/agents/code-explorer.md': EXPLORER } })
     await start($)
-    await $.tool.call(call({ subagent_type: 'code-explorer' }) as never)
+    // A read-only agent runs in the background by default (codexRunMode), so Codex starts after the call returns (#45).
+    const r: any = await $.tool.call(call({ subagent_type: 'code-explorer' }) as never)
+    expect(r.result.status).toBe('async_launched')
+    await seen.clock.settle()
     expect(seen.beneath).toBe(0)
     expect(seen.stdin[0]).toContain('## Role instructions (code-explorer)')
     expect(seen.stdin[0]).toContain('You are a read-only code explorer.')
