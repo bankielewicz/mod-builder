@@ -668,6 +668,23 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(seen.stdin[0]).toContain('Only reads.')
   })
 
+  test('the user folder is searched once when the walk already passed it, whichever separators HOME uses (PR #43 review)', { options }, async ($, on) => {
+    // On a POSIX test host the engine places a `C:/` path under its working directory, so a folder is matched by its end.
+    const once = (seen: Seen, folder: string) => seen.listed.filter(d => d.replace(/\\/g, '/').endsWith(folder)).length
+    const posix = engine(on, { cwd: '/home/u/proj', top: null })
+    await start($, '/home/u/proj')
+    await asks($, 'editor')
+    expect(once(posix, '/home/u/.claude/agents')).toBe(1)
+  })
+
+  test('a Windows HOME with backslashes is the same user folder the walk passed', { options }, async ($, on) => {
+    const once = (seen: Seen, folder: string) => seen.listed.filter(d => d.replace(/\\/g, '/').endsWith(folder)).length
+    const windows = engine(on, { cwd: 'C:/Users/u/proj', top: null, env: { USERPROFILE: 'C:\\Users\\u' } })
+    await start($, 'C:/Users/u/proj')
+    await asks($, 'editor')
+    expect(once(windows, 'C:/Users/u/.claude/agents')).toBe(1)
+  })
+
   test('a symbolic link is followed, as Claude follows it: a linked folder and a linked file are both read', { options }, async ($, on) => {
     // Probed on 2.1.299 and 2.1.300: Claude loads agents through a linked file, a linked subfolder and a linked .claude/agents.
     const linked = '/w/pkg/.claude/agents/shared'
