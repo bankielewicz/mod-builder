@@ -622,16 +622,14 @@ export function isInside(root: string, path: string): boolean {
   return path.length > base.length + 1 && (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`))
 }
 
-/** PATH's absolute folders, in order (`:`-separated). Not yet written: the red test pins it. */
+/** PATH's absolute folders, in order (`:`-separated; Windows' `;` PATH isn't handled). */
 export function pathDirs(path: string): string[] {
-  void path
-  return []
+  return path.split(':').map(d => d.replace(/\/+$/, '')).filter(d => d.startsWith('/'))
 }
 
-/** The folder holding `path`. Not yet written: the red test pins it. */
+/** The folder holding `path`. */
 export function parentOf(path: string): string {
-  void path
-  return ''
+  return path.replace(/[/\\][^/\\]*$/, '')
 }
 
 /** A TOML basic string: JSON's escapes for `\`, `"` and control characters are TOML's. */
@@ -824,6 +822,9 @@ export function foldEvent(run: Run, line: string): Run {
       const item = ev.item ?? {}
       if (item.type === 'agent_message') return { ...run, text: String(item.text ?? '') }
       if (item.type === 'error') return { ...run, warnings: [...run.warnings, String(item.message ?? '')] }
+      // Linux's sandbox (bwrap) re-runs Codex for each command; unreadable, every command fails and the answer is hollow.
+      const unrunnable = item.type === 'command_execution' ? /bwrap: execvp (\S+): No such file or directory/.exec(String(item.aggregated_output ?? '')) : null
+      if (unrunnable && !run.failure) return { ...run, failure: `Codex could not run ${unrunnable[1]} inside its sandbox: under codexFsScope project its install folder must be readable, and duet grants only the folder of the codex on PATH and $CODEX_HOME/packages.` }
       return run
     }
     case 'turn.completed': {

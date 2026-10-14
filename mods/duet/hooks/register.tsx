@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, DEFAULT_TYPE,
+  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, parentOf, pathDirs, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -218,6 +218,22 @@ async function gitDirs($: EngineInterface): Promise<string[]> {
   return (await git($, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n').map(l => l.trim()).filter(Boolean)
 }
 
+/** Codex's install folders: where the codex on PATH really lands (Codex runs itself from there in its sandbox), and $CODEX_HOME/packages. */
+async function codexInstallDirs($: EngineInterface): Promise<string[]> {
+  const codexHome = (await $.env.get('CODEX_HOME')) || ''
+  const dirs = codexHome ? [`${codexHome}/packages`] : []
+  for (const dir of pathDirs((await $.env.get('PATH')) || '')) {
+    const real = await realPathOf($, `${dir}/codex`)
+    if (real) return [...dirs, parentOf(real)]
+  }
+  return dirs
+}
+
+/** What a project-scope run may read outside the session folder: git's own folders and Codex's install folders. */
+async function scopeReads($: EngineInterface): Promise<string[]> {
+  return [...(await gitDirs($)), ...(await codexInstallDirs($))]
+}
+
 async function baseCommit($: EngineInterface): Promise<string> {
   return (await git($, ['rev-parse', '--short', 'HEAD'])) || 'none'
 }
@@ -378,7 +394,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     await ensureTicker($)
     const named = writePathsOf(options.writePaths, type)
     const writePaths = options.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
-    const reads = options.fsScope === 'project' ? await gitDirs($) : []
+    const reads = options.fsScope === 'project' ? await scopeReads($) : []
     const job: Job = { id, type, cwd, home: await homeDir($), writePaths, reads, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
@@ -433,7 +449,7 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
   }
   Object.assign(task, { id: admitted.id })
   await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await gitDirs($) : [] }), undefined)
+  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($) : [] }), undefined)
   const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
