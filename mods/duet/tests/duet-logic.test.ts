@@ -672,4 +672,9 @@ describe('issue 3 part B: the scope help matches what was checked', () => {
     expect(help).toContain('0.162.1')
     expect(help).not.toContain('not yet')
   })
+
+  test('the scope help says hiding /tmp is checked on Linux only: on macOS, :minimal lets Seatbelt grant /private/tmp (PR #39 review)', () => {
+    const help = findConfigField('scope')!.help
+    expect(help).toMatch(/Linux only|Linux; not macOS/)
+  })
 })
