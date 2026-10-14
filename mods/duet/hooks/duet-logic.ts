@@ -996,9 +996,10 @@ export function launchedRecord(a: { id: string; description: string; prompt: str
 }
 
 /** The message a background run delivers to the main session when it ends. */
-export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string }): string {
+export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string; searchNote?: string }): string {
   const head = `Background agent duet-${a.id} (${a.label})`
-  if (a.failure) return `${head} failed on Codex: ${a.failure}. It did not run on Claude either.`
+  // A failure has no footer to carry the agent search's cut-short note, so it goes on a line of its own.
+  if (a.failure) return `${head} failed on Codex: ${a.failure}. It did not run on Claude either.${a.searchNote ? `\n${a.searchNote}` : ''}`
   return `${head} finished on Codex · ${a.model || 'default model'} · ${a.sandbox} · ${duration(a.durationMs)} · ${compact(a.tokens)} tok\n\n${a.text}\n\n${a.footer}`
 }
 

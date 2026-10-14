@@ -468,8 +468,8 @@ async function finishInBackground($: EngineInterface, j: Job, outputFile: string
   let text: string
   try {
     const r = await runJob($, j)
-    await $.fs.write(outputFile, r.failure ? `duet ${j.id} failed on Codex: ${r.failure}\n` : `${r.run.text}\n\n${r.footer}\n`).catch(() => undefined)
-    text = deliveryText({ id: j.id, label: j.type, model: options.model, sandbox: j.sandbox, durationMs: r.endedAt - j.startedAt, tokens: tokensOf(r.run), text: r.run.text, footer: r.footer, failure: r.failure })
+    await $.fs.write(outputFile, r.failure ? `duet ${j.id} failed on Codex: ${r.failure}\n${j.searchNote ? `${j.searchNote}\n` : ''}` : `${r.run.text}\n\n${r.footer}\n`).catch(() => undefined)
+    text = deliveryText({ id: j.id, label: j.type, model: options.model, sandbox: j.sandbox, durationMs: r.endedAt - j.startedAt, tokens: tokensOf(r.run), text: r.run.text, footer: r.footer, failure: r.failure, searchNote: j.searchNote })
   } catch (err) {
     const why = `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})`
     await patchTask($, j.id, { status: 'error', endedAt: Date.now(), detail: why }).catch(() => undefined)
@@ -525,7 +525,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     }
 
     const r = await runJob($, job)
-    if (r.failure) return { deny: `duet: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.` }
+    if (r.failure) return { deny: `duet: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.${searchNote ? `\n${searchNote}` : ''}` }
     return { result: agentResult({ id, prompt: e.prompt, text: r.run.text, footer: r.footer, durationMs: r.endedAt - startedAt, run: r.run, model: options.model }) }
   } catch (err) {
     await patchTask($, id, { status: 'error', endedAt: Date.now(), detail: `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }).catch(() => undefined)
