@@ -1012,6 +1012,10 @@ describe('review of PR #41, round 3', () => {
     expect(guardAction(write('src/a.ts'), here)).toEqual({ kind: 'pass' })
   })
 
+  test('merge-tree -z: a conflicted name holding a newline or only spaces stays whole (Codex P3)', () => {
+    expect(parseMergeTree({ exitCode: 1, stdout: 'oid\0nl\nname\0 \0ok.ts\0', stderr: '' })).toEqual({ isClean: false, files: ['nl\nname', ' ', 'ok.ts'] })
+  })
+
   test("Read: in a worktree run a relative path reads the worktree's copy; absolute and odd paths aren't confined", () => {
     expect(guardAction({ tool: 'Read', file_path: 'src/a.ts', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/src/a.ts` } })
     expect(guardAction({ tool: 'Read', file_path: '/etc/hosts', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
