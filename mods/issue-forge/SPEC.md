@@ -682,7 +682,8 @@ After round 3: 145 tests pass, validate and `tsc` are clean.
 ## Review: PR #41, round 4 (2026-10-14)
 
 Codex reviewed d6c5d25 and left two P2 findings: one real, one a false positive. `/code-review`
-added eight more. Each real one was fixed test-first and pushed on its own.
+added nine more (the two README ones share a row). Each real one was fixed test-first and pushed on
+its own.
 
 | Sev | Finding | Fix (commits) |
 |---|---|---|
