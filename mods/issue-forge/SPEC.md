@@ -705,3 +705,36 @@ session's folder); the early `liveAgent` window before a spawn returns its id (t
 
 After round 4: 153 tests pass; validate and `tsc` are clean; `issue-forge-logic.ts` has 100.00% of
 lines and 99.44% of branches covered, with no untaken branch on a changed line.
+
+## Review: PR #41, `/code-review` pass at xhigh effort (2026-10-14)
+
+Read at 23c7c42. Each fixed one was checked against the code (git behaviour probed on git 2.53) and
+fixed test-first: the red test failed by assertion before the change, and each red and green is its own
+commit (red → green below).
+
+| Sev | Finding | Fix |
+|---|---|---|
+| 2 | Resume at a later step, with the run's worktree folder deleted by hand, told the person to run `git worktree add <path> <branch>`. Git keeps such a folder registered and refuses ("is a missing but already registered worktree"), the very case round 4 fixed at preflight with a `worktree remove` first. | `readdWorktreeCommand`: `git worktree remove <path>; git worktree add <path> <branch>`, quoted for a shell. `a84092c` → `aae8545` |
+| 3 | The Grep and Glob rewrite made a path it can't place (`~/x`, `\x`, UNC, `D:x`) into `<worktree>/~/x`, a folder that doesn't exist. Read leaves such a path alone. | The rewrite skips an unplaceable path, as Read's does. `f947b55` → `2656175` |
+| 3 | `whereToWork` ran `git status` and a HEAD read in the session's checkout even for `workspace: "worktree"`, which ignores both. Status is the slow call on a big tree or a Windows mount, and this repository's profile is `worktree`. | `checkoutOf` runs only for `ask` and `here`. `d679dcf` → `8be81a5` |
+| 3 | `worktreeDir: ".git"` (or a `.git` segment) passed the profile check and only failed later as "isn't gitignored". | `isInsideDir` refuses a `.git` segment, and normalises once. `265dbf3` → `fa89223` |
+| tidy | `git worktree add failed: <timeout \| git's reason \| no output>` was written twice (new worktree, re-added one). | `worktreeAddFailure`. `3f93a70` |
+| doc | README: "The mod never removes a worktree", but preflight runs `git worktree remove` to clear the entry of a kept worktree whose folder is gone. | README says it never deletes a worktree's files, and what the one remove does. |
+
+Not fixed:
+
+- A `git worktree add` that is SIGKILLed mid-checkout leaves a registered, **locked**, part-filled
+  folder whose index shows every file staged as deleted (probed). `.issue-forge.json` is already in it,
+  so a resumed preflight that finds the folder skips the re-add and loads the profile. The engine ends
+  a spawn with SIGTERM (d.ts), and git removes its half-made folder on SIGTERM (probed), so this needs a
+  kill the mod doesn't send. A cheap guard would block a kept worktree whose `git status --porcelain`
+  isn't empty at preflight.
+- The publish write after the question (`saveRun` of a run loaded before an `await`) is the one run write
+  not moved onto `updateRun`. A Stop is dropped by `saveRun`, and a Publish pressed in that gap writes the
+  same `publishing` state, so no reachable loss was found.
+- A merge check can say `conflicts with origin/<base>: ` with no names if git exits 1 and lists none; not
+  seen from git, so no wording for it yet.
+- Case: a Windows path whose drive letter differs in case (`c:\` for `C:/`) is refused by the edit guard.
+- The result of the merge check shown at ready keeps its wording after "Not now", with no time. Publish
+  checks again for the PR body.
+- Over-broad by design, already recorded above: any non-mod `redAgentType` is refused in a worktree run.

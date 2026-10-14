@@ -67,8 +67,9 @@ from `origin/<base>`'s copy before anything is switched or created:
 | `worktreeDir` | `"scratch/issue-forge"` | where new worktrees go, relative to the repository root. It must be gitignored |
 
 A worktree run lives in `<worktreeDir>/<branch>/`. `/issue-forge status` names it, with the
-`git worktree remove <path>` to run once the pull request merges. The mod never removes a worktree or
-a branch. A relative `lcovPath` resolves against the run's folder, so runs in separate worktrees each
+`git worktree remove <path>` to run once the pull request merges. The mod never deletes a worktree's
+files or a branch: the one `git worktree remove` it runs only clears git's entry for a kept worktree
+whose folder is already gone, so that it can be added again. A relative `lcovPath` resolves against the run's folder, so runs in separate worktrees each
 write their own coverage file. Before it asks to publish, the run checks the result with
 `git merge-tree` against a freshly fetched `origin/<base>`, and the question names any files that
 would conflict.
