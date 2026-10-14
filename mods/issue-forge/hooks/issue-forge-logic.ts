@@ -806,7 +806,6 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'publish' ? { ...run, step: 'publishing', times: start(run, 'publish', now) } : run
     case 'publishing':
-      if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) } : run
     default:
       return run
