@@ -360,12 +360,7 @@ export function parseValidate(stdout: string, exitCode: number): ValidateReport 
   try {
     json = JSON.parse(stdout.slice(Math.max(0, stdout.indexOf('{')))) as ValidateJson
   } catch {
-    const errors = stdout
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .slice(0, 3)
-    return { ok: false, hooks: [], calls: [], gates: [], errors, warnings: [] }
+    return { ok: false, hooks: [], calls: [], gates: [], errors: nonBlankLines(stdout).slice(0, 3), warnings: [] }
   }
   const sections = [json.manifest, ...(json.contents ?? [])].filter(
     (section): section is ValidateSection => section !== undefined,
@@ -402,13 +397,13 @@ export function parseValidate(stdout: string, exitCode: number): ValidateReport 
   }
 }
 
-/** `claude plugin test` output (bun's reporter) and its exit code → a report. */
-export function parseTest(stdout: string, exitCode: number): TestReport {
+/** `claude plugin test` output (bun's reporter, with stderr) and its exit code → a report. */
+export function parseTest(output: string, exitCode: number): TestReport {
   const count = (word: string): number =>
-    Number(stdout.match(new RegExp(`^\\s*(\\d+) ${word}\\s*$`, 'm'))?.[1] ?? 0)
-  const time = stdout.match(/^Ran \d+ tests? across .*\[(\d+(?:\.\d+)?)(ms|s)\]\s*$/m)
+    Number(output.match(new RegExp(`^\\s*(\\d+) ${word}\\s*$`, 'm'))?.[1] ?? 0)
+  const time = output.match(/^Ran \d+ tests? across .*\[(\d+(?:\.\d+)?)(ms|s)\]\s*$/m)
   const durationMs = time ? Math.round(Number(time[1]) * (time[2] === 's' ? 1000 : 1)) : null
-  const lines = stdout.split('\n')
+  const lines = output.split('\n')
   const failures: string[] = []
   lines.forEach((line, at) => {
     if (!line.startsWith('(fail) ')) return
@@ -419,11 +414,9 @@ export function parseTest(stdout: string, exitCode: number): TestReport {
       .find(Boolean)
     if (detail && !detail.startsWith('(')) failures.push(`  ${detail}`)
   })
-  const failed = count('fail')
   // Exits before the runner starts (no tests, bad folder, corrupt manifest) print one stderr line and no `(fail)`.
-  if (exitCode !== 0 && !failures.length) {
-    failures.push(...lines.map(line => line.trim()).filter(Boolean).slice(-3))
-  }
+  if (exitCode !== 0 && !failures.length) failures.push(...nonBlankLines(output).slice(-3))
+  const failed = count('fail')
   return {
     ok: exitCode === 0 && failed === 0,
     passed: count('pass'),
@@ -484,6 +477,7 @@ export function reachesOf(calls: readonly string[]): Reach[] {
 // ── Text ──────────────────────────────────────────────────────────────────
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+const nonBlankLines = (text: string): string[] => text.split('\n').map(line => line.trim()).filter(Boolean)
 
 /** `0:42`, `12:05`, `3h`, `2d`; an empty string under a second. */
 export function durationOf(ms: number): string {
