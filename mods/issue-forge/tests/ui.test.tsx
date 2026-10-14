@@ -732,7 +732,7 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     expect(w.argv).toContainEqual(['git', 'show', 'origin/main:.issue-forge.json'])
     expect(w.asked.length).toBe(0)
     expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
-    expect((await run($, 'status')).text).toContain('next: set "workspace" to "worktree" or "ask" in .issue-forge.json, or clean the checkout')
+    expect((await run($, 'status')).text).toContain("next: set \"workspace\" to \"worktree\" or \"ask\" in .issue-forge.json on main (the run reads origin/main's copy), or clean the checkout")
     await run($, 'stop')
     w.isDirty = false
     w.head = 'feature'

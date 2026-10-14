@@ -830,16 +830,16 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
   test('workspacePlan: here blocks a busy checkout, ask asks only when busy, worktree always makes one', () => {
     const idle = checkoutState(facts())
     const busy = checkoutState(facts({ head: 'issue-3-duet' }))
-    expect(workspacePlan('here', idle)).toEqual({ kind: 'here' })
-    expect(workspacePlan('here', busy)).toEqual({
+    expect(workspacePlan('here', idle, 'main')).toEqual({ kind: 'here' })
+    expect(workspacePlan('here', busy, 'main')).toEqual({
       kind: 'block',
       reason: 'the checkout is busy (on issue-3-duet)',
-      next: 'set "workspace" to "worktree" or "ask" in .issue-forge.json, or clean the checkout',
+      next: "set \"workspace\" to \"worktree\" or \"ask\" in .issue-forge.json on main (the run reads origin/main's copy), or clean the checkout",
     })
-    expect(workspacePlan('ask', idle)).toEqual({ kind: 'here' })
-    expect(workspacePlan('ask', busy)).toEqual({ kind: 'ask' })
-    expect(workspacePlan('worktree', idle)).toEqual({ kind: 'worktree' })
-    expect(workspacePlan('worktree', busy)).toEqual({ kind: 'worktree' })
+    expect(workspacePlan('ask', idle, 'main')).toEqual({ kind: 'here' })
+    expect(workspacePlan('ask', busy, 'main')).toEqual({ kind: 'ask' })
+    expect(workspacePlan('worktree', idle, 'main')).toEqual({ kind: 'worktree' })
+    expect(workspacePlan('worktree', busy, 'main')).toEqual({ kind: 'worktree' })
   })
 
   test("worktreePath puts the run's branch under worktreeDir in the repository root", () => {
