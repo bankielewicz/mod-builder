@@ -360,12 +360,7 @@ export function parseValidate(stdout: string, exitCode: number): ValidateReport 
   try {
     json = JSON.parse(stdout.slice(Math.max(0, stdout.indexOf('{')))) as ValidateJson
   } catch {
-    const errors = stdout
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .slice(0, 3)
-    return { ok: false, hooks: [], calls: [], gates: [], errors, warnings: [] }
+    return { ok: false, hooks: [], calls: [], gates: [], errors: nonBlankLines(stdout).slice(0, 3), warnings: [] }
   }
   const sections = [json.manifest, ...(json.contents ?? [])].filter(
     (section): section is ValidateSection => section !== undefined,
@@ -402,13 +397,13 @@ export function parseValidate(stdout: string, exitCode: number): ValidateReport 
   }
 }
 
-/** `claude plugin test` output (bun's reporter) and its exit code → a report. */
-export function parseTest(stdout: string, exitCode: number): TestReport {
+/** `claude plugin test` output (bun's reporter, with stderr) and its exit code → a report. */
+export function parseTest(output: string, exitCode: number): TestReport {
   const count = (word: string): number =>
-    Number(stdout.match(new RegExp(`^\\s*(\\d+) ${word}\\s*$`, 'm'))?.[1] ?? 0)
-  const time = stdout.match(/^Ran \d+ tests? across .*\[(\d+(?:\.\d+)?)(ms|s)\]\s*$/m)
+    Number(output.match(new RegExp(`^\\s*(\\d+) ${word}\\s*$`, 'm'))?.[1] ?? 0)
+  const time = output.match(/^Ran \d+ tests? across .*\[(\d+(?:\.\d+)?)(ms|s)\]\s*$/m)
   const durationMs = time ? Math.round(Number(time[1]) * (time[2] === 's' ? 1000 : 1)) : null
-  const lines = stdout.split('\n')
+  const lines = output.split('\n')
   const failures: string[] = []
   lines.forEach((line, at) => {
     if (!line.startsWith('(fail) ')) return
@@ -419,6 +414,8 @@ export function parseTest(stdout: string, exitCode: number): TestReport {
       .find(Boolean)
     if (detail && !detail.startsWith('(')) failures.push(`  ${detail}`)
   })
+  // Exits before the runner starts (no tests, bad folder, corrupt manifest) print one stderr line and no `(fail)`.
+  if (exitCode !== 0 && !failures.length) failures.push(...nonBlankLines(output).slice(-3))
   const failed = count('fail')
   return {
     ok: exitCode === 0 && failed === 0,
@@ -452,7 +449,7 @@ export function summaryOfRun(
   }
   if (kind === 'Test' && detail.test) {
     const t = detail.test
-    if (!ok) return `${plural(Math.max(1, t.failed), 'test')} failing`
+    if (!ok) return t.failed === 0 ? 'tests did not run' : `${plural(t.failed, 'test')} failing`
     const time = t.durationMs === null ? '' : ` in ${(t.durationMs / 1000).toFixed(1)}s`
     return `${plural(t.passed, 'test')} passed${time}`
   }
@@ -480,6 +477,7 @@ export function reachesOf(calls: readonly string[]): Reach[] {
 // ── Text ──────────────────────────────────────────────────────────────────
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+const nonBlankLines = (text: string): string[] => text.split('\n').map(line => line.trim()).filter(Boolean)
 
 /** `0:42`, `12:05`, `3h`, `2d`; an empty string under a second. */
 export function durationOf(ms: number): string {
@@ -637,15 +635,19 @@ export function barOf(fraction: number, width = 15): { filled: string; empty: st
  * session should read it (see `displayPathOf`).
  */
 export function fixPromptOf(name: string, stage: Stage, errors: readonly string[], failedCount: number, path: string): string {
-  const what =
-    stage === 'Test'
+  // A Test with no failing test never ran: the errors are the runner's own line, not a test.
+  const didNotRun = stage === 'Test' && failedCount === 0
+  const what = didNotRun
+    ? 'the Test run'
+    : stage === 'Test'
       ? `the ${failedCount === 1 ? 'failing test' : `${failedCount} failing tests`}`
       : `the ${stage} problem${failedCount === 1 ? '' : 's'}`
   const [first, ...rest] = errors
   const quoted = [`    ✕ ${(first ?? '').trim()}`, ...rest.slice(0, 2).map(line => `      ${line.trim()}`)].join('\n')
   // `in .. First failure` would read as the parent folder.
   const where = path === '.' ? 'the current folder' : path
-  return `Fix ${what} in ${where}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
+  const note = didNotRun ? ' (the tests did not run)' : ''
+  return `Fix ${what} in ${where}${note}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
 }
 
 /** The done box's one line: `ready to share  ·  8/8 stages · 12 tests · validate clean · 1 gate`. */

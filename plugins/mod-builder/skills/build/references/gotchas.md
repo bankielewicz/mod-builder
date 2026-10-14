@@ -73,6 +73,20 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `init.env` is typed `Record<string, string>` [d.ts], so it can't unset a variable either, and an
   empty value isn't neutral for a path: with `CLAUDE_CONFIG_DIR=''`, `claude auth status` reports
   `configDirectory: ""` (probed on 2.1.296). Blank secrets, never paths or profile names.
+- **[probe]** `$.fs.list` isn't limited to the session folder. Probed on 2.1.299 with `claude -p --plugin-dir`
+  started in `fx/pkg/sub`: it listed `fx/.claude/agents`, two folders above the session folder, then its
+  subfolder `team` and its dot-folder `.dot`. A symbolic link to a file or a folder is listed as
+  `other` with `isLink` (size and `mtimeMs` 0); listing the link's own path still follows it and
+  returns the target's entries, so a walk that must not follow links skips `isLink` entries itself; to follow one, `$.fs.stat(path)` gives the kind it leads to. A missing
+  folder rejects with `ENOENT`, so wrap the call (`.catch(() => [])`) when a missing folder is normal.
+- **[probe]** Claude Code's own subagent discovery, for a mod that mirrors it. Read from the `agents` list in
+  the `init` message of `claude -p --output-format stream-json --verbose`, on 2.1.299 and 2.1.300. Project
+  `.claude/agents/` folders are found walking up from the session folder to the nearest folder holding a `.git`
+  entry, even an empty folder or file that git rejects; with none, the walk goes on up (4 levels probed).
+  Symbolic links are followed: a linked file, a linked subfolder and a linked `.claude/agents`. Dot-folders and
+  subfolders 9 and 12 deep are read. A file with a `name` but no `description` is left out, and so is one Claude
+  can't read; a `name` or `description` on the next indented line, a `description: >` block, and a file with
+  `bad: [` in another field are loaded (the `.git` stop and the unreadable file were probed on 2.1.299 only; the next-line `name`, the `>` block and a wrapped `description` on 2.1.300 only).
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every
@@ -191,6 +205,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `{ result: { questions, answers: { [question]: label } } }`. A `$.ui.ask` question must end in `?`.
 - **[probe]** `turn.complete` takes `{ answer }` and resolves `{ text }`. A stub answering
   otherwise is skipped with "returned no { text }".
+- **[probe]** Work a hook starts without awaiting (a background run) may not have reached its
+  `$` calls by the time the test's `await $.tool.call(...)` returns. In duet's background Codex run,
+  the stubbed `process.run` for `codex` had already run then on 2.1.299, and had not yet on 2.1.300.
+  A test that read the stub's log at once failed on 2.1.300, with the engine also reporting
+  `hooks stream chain failed: errorKind=HooksError errorChars=35` (#45). Take the clock with
+  `mock.clock(on)` and `await clock.settle()` before asserting on what background work did.
 - **[probe]** Test `options` reach the mod only for keys declared in `plugin.json`'s `userConfig`.
   Undeclared keys arrive as absent, so the mod's default applies.
 - **[probe]** `$.process.spawn` can't be stubbed in `claude plugin test` (2.1.296). Async or sync

@@ -159,14 +159,18 @@ Claude row (duration = `durationMs` of that turn's end minus `startedAt`, tokens
 
 ### Custom subagents (`.claude/agents/*.md`) (added at approval)
 
-A custom agent is spawned with its file name as `subagent_type`, so `codexAgents` routes it like any
-built-in type. For a routed custom agent the mod reads its definition (project `.claude/agents/<type>.md`
-first, then `~/.claude/agents/<type>.md`) with `$.fs`, and pure `parseAgentFile` takes its frontmatter
+A custom agent is spawned with its `name` as `subagent_type`, so `codexAgents` routes it like any
+built-in type. For a routed custom agent the mod finds its definition by Claude's discovery rules
+(0.2.7) with `$.fs.list` and `$.fs.read`, and pure `parseAgentFile` takes its frontmatter
 (`name`, `description`, `tools`, `model`) and body:
+- the folders searched, nearest first, are each `.claude/agents/` from the session folder up to the repository root (the nearest folder holding a `.git` entry, as Claude finds it, even one git can't read; with none, up to the filesystem root), then `~/.claude/agents/` (`HOME`, else `USERPROFILE`, with `/` separators). Each is searched with all its subfolders, dot-folders included, to 8 folders deep and 500 `.md` files (Claude has no such limits). Symbolic links are followed, as Claude follows them; a folder whose real path was already searched in that lookup isn't searched again;
+- a file matches on its frontmatter `name` alone (quotes and a trailing ` # comment` removed), never on its file name; a value may start on the next indented line or wrap onto it. A file with no `name` or no `description`, or a `name` that starts with `-`, contains `:` or is over 256 characters, is skipped as Claude skips it (`pickAgent`);
+- the nearest folder with a match wins. Two matches in that folder that differ on `canEdit` give the one that can't edit, since Claude's choice between them isn't documented;
 - the body goes into the handoff as **Role instructions**, ahead of the task;
 - `tools:` that grants no edit tool (no `Edit`, `Write`, `NotebookEdit`, `MultiEdit`) **clamps Codex to `read-only`**, whatever `codexSandbox` says (an agent can only lower the sandbox, never raise it);
 - `model:` is not mapped to Codex (Claude aliases mean nothing there); `codexModel` applies.
-- no file found → routed as a plain type, with no role instructions.
+- no match → routed as a plain type, with no role instructions, and `read-only` (only `general-purpose` edits without a definition). Agents from managed settings, `--agents`, a plugin (`<plugin>:<name>`) and `--add-dir` folders aren't reachable from the types, so they are this case, unless a project or user file has the same `name`: duet then uses that file, though Claude runs the higher-priority one. A plugin agent can't collide, since a `name` with `:` is skipped.
+- the folders are listed on every routed call; a file is read again only when its size or modification time changed.
 
 Three example agents are written to this repo's `.claude/agents/` to prove it end-to-end:
 `code-explorer` (read-only: Read, Grep, Glob), `test-writer` (Read, Write, Edit, Bash) and
@@ -176,7 +180,7 @@ Three example agents are written to this repo's `.claude/agents/` to prove it en
 
 - **Files written (repo):** `.claude/agents/code-explorer.md`, `test-writer.md`, `diff-reviewer.md` (examples); `mods/duet/…` (SPEC, README, plugin.json, hooks.json, register.tsx,
   duet-logic.ts, types/index.d.ts, tests, tsconfig.json, .gitignore); one entry in `.claude-plugin/marketplace.json`.
-- **Files read at run time:** `.claude/agents/<type>.md` and `~/.claude/agents/<type>.md` for routed types.
+- **Files read at run time:** the `.md` files under each `.claude/agents/` from the session folder up to the repository root, and under `~/.claude/agents/`, for routed types (0.2.7; before, only `.claude/agents/<type>.md` and `~/.claude/agents/<type>.md`).
 - **Files outside the repo, at run time:** `~/.claude/duet-data/runs.jsonl` (one line per run: id,
   kind, provider, model, subagent type, start, duration, tokens, exit, outcome; **no prompt text**),
   and `~/.claude/duet-data/sessions/<session>/review-<id>.md` (each review's full text, for `/duet show <id>`). *(Build note: Codex's answer is read from its JSONL stream, so no schema or last-message temp files are written.)*
@@ -457,3 +461,166 @@ pane's keys; `/reload-plugins` picks up edits.
   - Limits and README say blanking isn't a barrier: Claude Code's environment is readable at `/proc/<pid>/environ` (checked).
   - Follow-ups filed: #32 (the list lags; blanking isn't a barrier) and #33 (the coverage kit's missing matchers).
   - `CLAUDE_CODE_MESSAGING_SOCKET` is blanked, the one path blanked on purpose (Codex, second review). Codex's IMDS and Google metadata-server findings are deferred to #32: they concern the machine's identity, not Claude Code's environment.
+
+## Change 0.2.6 (2026-10-13)
+
+> Part B of issue #3: limit what Codex can read and write, behind an opt-in, default-off option. On Codex 0.162.1 (Linux), `codex exec` runs confirmed:
+> - under `read-only` and under `workspace-write` with `codexWritePaths`, reads outside the project, `/tmp` and an outward symlink were blocked;
+> - a `codexWritePaths` folder was writable.
+>
+> Whether the rest of the project stays read-only was checked in `codex sandbox` only. `/duet review` gets the same profile, but whether it holds there is not confirmed.
+
+- **Evidence: `codex sandbox`** (issue #3, run 2026-10-13: Codex CLI 0.162.1, `x86_64-unknown-linux-musl`, WSL2 Linux; local runs, no model call):
+  - With `default_permissions="duet"` and `permissions.duet.filesystem={":minimal"="read","<project>"="read","$HOME/.codex/packages"="read"}`, a file outside the project failed with "No such file or directory", and a project file printed. Adding `-c sandbox_mode="read-only"` gave the same result.
+  - With the project as `write`, writing in it worked. Writing outside it or in `/tmp` gave "Directory nonexistent". With the project as `read` and `<project>/tests` as `write`, writing `tests/…` worked and `src/…` gave "Read-only file system".
+  - `$HOME/.codex/packages` is the Codex install folder. The sandbox needs it to re-run `codex`.
+  - `default_permissions` is a config key. `-P`/`--permission-profile` exists on `codex sandbox` only, not on `codex exec` (`codex exec --help`, 0.162.1).
+- **Evidence: `codex exec`**:
+  - Setup:
+    - Four signed-in runs, each approved by the owner, between 2026-10-14 01:45 and 02:09 UTC, on the same Codex and machine.
+    - `~/.codex/config.toml` sets `sandbox_mode = "workspace-write"`.
+    - The project is `scratch/sbx-exec/proj`, its own git repository. `../outside/canary.txt` holds a canary, never a real secret.
+    - Results come from the `command_execution` events of `--json`, not from the model's prose.
+  - **`-s read-only` plus the two overrides (the argv green first wrote):** the profile was ignored. `cat ../outside/canary.txt` exited 0 and printed the canary, and `ls /tmp` listed the host's `/tmp`. OpenAI's permissions page (https://learn.chatgpt.com/docs/permissions, read 2026-10-14) says passing `--sandbox` makes Codex "use those older sandbox settings instead of `default_permissions`".
+  - **`-c sandbox_mode="read-only"` in place of `-s`:** the profile held.
+    - The outside `cat` exited 1 ("No such file or directory").
+    - `ls /tmp` exited 2.
+    - `cat`, `rg` and `git status` inside the project worked.
+    - `mktemp` failed, because there is no `/tmp`.
+  - **`workspace-write` with `codexWritePaths`:** the argv came from `codexArgv` (project `read`, `<project>/tests` `write`), and `<project>/link` was a symlink to `../outside`. These failed:
+    - reading the canary directly or through `link/`;
+    - writing through `link/`, to `../outside/` and to `/tmp`;
+    - `ls /tmp`.
+
+    These worked: `echo w > tests/w.txt`, a project read, `rg` and `git status`. The writes to `src/` and the project root left no file on the host, but they show up only in the model's prose ("Read-only file system"), with no command event, so they count as not run.
+  - **A side effect of `workspace-write` with `codexWritePaths`:** Codex created empty `.agents`, `.aws`, `.codex` and `.git` folders inside the writable `tests/` folder when its sandbox started, and left them there. The `codex sandbox` runs didn't.
+  - **`/duet review` (`codex exec review --uncommitted`, argv from `reviewArgv`):** the change under review was a script that compares `../outside/canary.txt` to a value. The reviewer chose not to read it ("its input is outside the authorized workspace"), so the direct check didn't run. Two things point to the profile being in place:
+    - `ls -la` showed the project's parent as a synthetic `drwx------` folder, not the real one.
+    - Codex's own memories file (`~/.codex/memories/MEMORY.md`) was readable.
+  - **Readable beyond the table:** a no-model `codex sandbox` run with the same profile shows that `~/.codex` holds only `memories` and `packages`. Codex adds its own memories folder; `auth.json`, `config.toml`, `history.jsonl`, `~/.claude` and `~/.ssh` were not there.
+- **Why it can break on a Codex upgrade:** OpenAI's page says profiles "do not compose with the older sandbox settings", and that `sandbox_mode` in a loaded config file also makes the older settings win. On 0.162.1 that didn't happen: the profile held with `sandbox_mode` both in `config.toml` and as `-c`. duet relies on that behaviour, and duet's tests check only the argv. After upgrading Codex, re-run the canary probe above with the argv `codexArgv` builds before relying on `project`.
+- **Not checked:**
+  - through `codex exec`, that a `codexWritePaths` agent can't write the rest of the project, and that `read-only` writes nothing in it (both checked in `codex sandbox` only);
+  - macOS and Windows;
+  - whether `/duet review` holds the profile when the model does try an outside read;
+  - `workspace-write` with the whole project writable through `codex exec`, including whether the empty folders then appear at the project root.
+- **What changes:**
+  - `codexFsScope` (`anything` default, `project`). `anything` is the argv as before. `project` replaces `-s <mode>` with `-c sandbox_mode="<mode>"` in `codexArgv` (`reviewArgv` already used it), and adds two `-c` overrides to both: `default_permissions="duet-mod-fs-scope"` (named `duet` until the review fixes below) and `permissions.duet.filesystem={…}`, built by `profileArgs`.
+  - The table holds `":minimal"` read; the project read, or write under `workspace-write` when the agent has no `writePaths`; and `<home>/.codex/packages` read. `/tmp` is never in it. A review gets the table read-only. With `HOME` and `USERPROFILE` both unset, the install folder is left out; Codex then may not be able to re-run itself (unverified).
+  - `codexWritePaths` (`agent=folder;folder`, comma-separated, agent names as `codexRunMode` reads them, roles by any of their names). Under `project` and `workspace-write`, a named agent gets the project as `read` and each of its folders as `write`. It only narrows:
+    - an absolute path, one that climbs out of the project, and the project itself are dropped;
+    - an entry whose folders are all dropped leaves the project read-only;
+    - read-only runs ignore it;
+    - an entry with no folder (`red=`) was ignored, so the agent kept the whole project. Since the review fixes it is an error.
+
+    Folders are joined to the session folder with `/`; Windows paths are untested.
+  - Paths are TOML basic strings, escaped by `JSON.stringify` (`\`, `"` and control characters), and tested with a path holding a quote and a backslash.
+  - The consent question is unchanged. It still says Codex can read any file the user can read. That is true under the default `anything`; under `project` it claims more access than Codex has, which is the safe side, and review and macOS/Windows are unconfirmed.
+  - Both options are in `/duet config` (aliases `scope`, `paths`), `plugin.json` and the README. Version 0.2.6 is in `plugin.json` and the marketplace entry. The issue named 0.2.4, but 0.2.4 and 0.2.5 had shipped.
+- **Considered and not taken:**
+  - `codexFsScope: project` as the default: that is the owner's call, and it depends on the upgrade check above.
+  - The profile with no `sandbox_mode` at all. That is OpenAI's "one system" advice, but it is unverified through `codex exec`. If a Codex lets `sandbox_mode` win, it would fall back to the user's `config.toml` (here `workspace-write`), not to the mode duet asked for.
+  - A private temp folder in the duet data for tools that need one. `mktemp` fails without `/tmp`, but no duet task has needed one yet.
+  - Removing the empty folders Codex leaves. That would mean deleting inside the user's project.
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `readOptions`, `parseWritePaths`, `profileArgs`, `codexArgv`, `reviewArgv` and `CONFIG_FIELDS`.
+  - `hooks/register.tsx`: `runJob` and `review` pass the scope and the home folder. `routeToCodex` reads the home folder before the job starts rather than inside `runJob`, so a background run reaches `process.run` as soon as it did before.
+  - `.claude-plugin/plugin.json`, the marketplace entry and the README.
+- **Tests:**
+  - `codexArgv` and `reviewArgv` with `fsScope` `project`: the two overrides; `-c sandbox_mode` and never `-s`; the table for each sandbox; `writePaths` narrowing; dropped paths; escaping.
+  - The same with `fsScope` `anything` or none: the argv is unchanged.
+  - `readOptions` for the two options.
+  - Routed calls and a review, through `process.run`, with the profile and a named agent's folders.
+  - Three red tests first pinned `-s` beside the profile. They were fixed in their own commit, citing the first `codex exec` run.
+- **Done means:** all tests pass, validate is clean, and the `codex exec` runs above are recorded.
+
+### Review fixes (2026-10-14)
+
+> PR #39's review: Codex left four comments, and `/code-review` added three findings. Each fix has a red test, its own commit, and a `codex sandbox` check (0.162.1, Linux, no model call). These checks weren't re-run through `codex exec`: they all use the `-c` form that the exec runs above confirmed.
+
+- **Profile name** (Codex P1): Codex merges a same-named `[permissions.duet]` from any loaded config into the `-c` override. `/code-review` reproduced a read that widened this way. The profile is now `duet-mod-fs-scope` (`PROFILE`); a config defining that name would still merge.
+- **A malformed `codexWritePaths` fails closed** (`/code-review`): `parseWritePaths` used to drop a part such as `red:tests` or `red=`, and the agent then wrote the whole project.
+  - Such a value is now an error. `/duet config` refuses it, and if set another way, every agent's project is read-only (`writePathsOf`).
+  - Any folder list, even an empty one, narrows: only an agent the option doesn't name writes the whole project.
+- **Symlinked write folders** (`/code-review`): `folderUnder` checked containment by spelling only, so a write folder that is a symlink out of the project made its target writable (reproduced). When a run is admitted, `safeWritePaths` resolves the project and each folder with `$.fs.stat({ resolve: true })` and keeps only folders strictly inside (`isInside`). A symlink out, a symlink to the project, and a folder not there yet are dropped. Codex follows a symlinked write entry: one spelled through an inside link is writable.
+- **Git in a linked worktree** (Codex P2): git failed with `fatal: not a git repository: …/.git/worktrees/<name>`.
+  - Under project scope, `git rev-parse --path-format=absolute --git-dir --git-common-dir` gives `reads`, which `profileArgs` adds read-only when they lie outside the project.
+  - With the table `codexArgv` builds for `scratch/wt-issue3`, `git status` and `git log` work, and the main checkout's files stay hidden.
+  - This exposes `.git/config`, with its remote URLs.
+  - Not handled: a session started in a subfolder of a repository.
+- **Codex's install folder** (Codex P1): with no install grant the sandbox can't run Codex (`bwrap: execvp …/bin/codex: No such file or directory`), and the run still read as done. These are now readable:
+  - the folder the first `codex` on `PATH` really lands in;
+  - `$CODEX_HOME/packages`;
+  - `~/.codex/packages`, as before.
+
+  A table whose only install entry is the PATH-derived `bin` folder runs commands. An entry for a missing folder is harmless. `foldEvent` turns a `bwrap: execvp <path>: No such file or directory` command output into a run failure naming the binary.
+  - Not checked: npm/nvm and brew installs, where `codex` may be a JavaScript shim beside the native binary, and Windows' `;` PATH.
+- **macOS `/tmp`** (Codex P1, from Codex's source, not run): on macOS a `:minimal` entry makes Seatbelt grant `/private/tmp` and `/private/var/tmp`. The help, `plugin.json` and README now say `/tmp` is hidden on Linux only. Explicit `none` entries are left for a macOS machine: on Linux, `/tmp="none"` also hid a project under `/tmp`.
+- **Left for a follow-up issue:** the macOS deny entries; showing the scope in routes and the footer, and noticing when a Codex upgrade drops the profile; tests for a missing HOME, a write path keyed by a role alias, and the `folderUnder` project-itself branch.
+
+### Review fixes, round 2 (2026-10-14)
+
+> `/code-review` of PR #39 at `d0e490b` checked Codex's six comments and found more. Each fix has a red test and its own commit. The live checks ran `codex sandbox` 0.162.1 (Linux, no model call) on the logic built at `03c4353`. The `codex exec` runs above weren't repeated.
+
+- **Write folders in `.git`, `.codex` or `.agents`** (`/code-review`): plain `workspace-write` and the whole-project entry keep these read-only (probed). Yet a named folder such as `tests -> .git/hooks` let the sandbox write `.git/hooks/pre-commit`, which the next `git commit` runs unsandboxed (reproduced).
+  - `isProtectedPath` drops a folder that is, or lies below, any of the three under the project: in `safeWritePaths` on the real path, and in `profileArgs` on the spelling.
+  - Commits: 9de5bda (red), 1c00a7a (fix).
+- **A quoted bwrap line failed a good run** (`/code-review`): `foldEvent` matched the bwrap text anywhere. So a `/duet review` of this PR (`git diff` prints the regex) became an error (reproduced). Now only a command with `exit_code` not 0, whose output has a line starting with the message, counts. Commits: 84c7201, 54821d1.
+- **Repeated key** (Codex P1, 4266372721): with `CODEX_HOME=$HOME/.codex`, the table held `~/.codex/packages` twice, and Codex refused it (`invalid type: string … expected struct FilesystemPermissionsToml`, reproduced). `profileArgs` now keeps each path once, after folding repeated and trailing slashes. Commits: 7d0ab1c, 2e10c31.
+- **Profile name** (`/code-review`, on Codex P1 4266133298): `duet-mod-fs-scope` is public, so a trusted repository's `.codex/config.toml` defining it widened reads (reproduced: the outside canary printed under a `read-only` argv).
+  - Each run and review now passes `crypto.randomUUID()` as a nonce: `duet-mod-fs-scope-<32 hex>`. With the nonce, the same repo's grant didn't apply.
+  - A trusted repo's config still shapes Codex otherwise: `codex mcp list` showed its MCP server. That is in #42.
+  - Commits: b840c2f, 5b16664 (routing helpers match the prefix), b6983d9.
+- **Install grant** (Codex P2 4266372737, `/code-review`): the `PATH` lookup now skips a `codex` that isn't a file (`fs.stat` kind; the executable bit can't be seen).
+  - `profileArgs` drops a read that is, or holds, the project or the home folder, so a `codex` at `~/codex` no longer makes `$HOME` readable.
+  - Commits: a78a07e (the stub gives kinds), 83924c1, b1800a3.
+- **Git before 2.31** (`/code-review`): `--path-format` failed there, and git's folders were silently not granted.
+  - `gitDirs` now runs `git rev-parse --git-dir --git-common-dir` and resolves a relative answer against the session folder (`resolveFrom`).
+  - On git 2.53 the answers are absolute in a linked worktree and `.git` at a main checkout's top. Old git itself wasn't run.
+  - Commits: e09998f, 47f1bf7.
+- **A dropped write folder was silent** (`/code-review`): a missing, outside or protected folder was dropped with no word, and Codex can't create a missing one (probed: `mkdir` gets "Read-only file system"). The footer now names each dropped folder. Commits: 96d95cd, 8048cc5, 71517ab (covers the footer's model branch).
+- **A review that failed after admission stayed running** (`/code-review`): it held a `maxConcurrent` slot for the session. Now the row ends as error, with the reason. Commits: 01aa793, 1b68f5c.
+- **Refactor:** one `scopeOf` builds the scope inputs at admission, and a job keeps the scope it was admitted with. `folderUnder`'s doc comment is back on it. Commit: 91a1787.
+- **macOS `/tmp`** (Codex P1 4266133283): Codex 0.162.1's `seatbelt_scratch.rs` makes `/private/tmp` and `/private/var/tmp` *writable* too, `read-only` included. The help, `plugin.json` and README now say so. The fix needs a Mac and is in #42. Commits: 1649aae, 03c4353.
+- **Moved to #42:** macOS; npm, nvm and brew installs (`bin/codex.js` is a shim, and the native binary sits in an optional dependency, per `npm view`); a git 2.25 check; the executable bit; showing the scope in routes and the footer; noticing a Codex upgrade that drops the profile.
+- The three tests listed above as left over (a missing HOME, a role alias, the project-itself branch) landed in 88de8b7.
+
+## Change 0.2.7 (2026-10-14)
+
+> Issue #4: find a routed custom agent the way Claude does. At 0.2.6 duet read two files, `<cwd>/.claude/agents/<type>.md` and `~/.claude/agents/<type>.md`. A miss runs read-only, which is the safe side, but an editing agent outside those paths lost write access and its instructions, a definition whose `name` differs from its file name was never matched, and a `general-purpose.md` that duet didn't find fell through to the built-in default, which edits.
+
+- **Evidence: probe** (Claude Code 2.1.299, `claude -p --plugin-dir` on a throwaway mod in the gitignored `scratch/`, started in `fx/pkg/sub`; recorded in `gotchas.md`): `$.fs.list` listed `fx/.claude/agents` two folders above the session folder, its subfolder `team` and its dot-folder `.dot`. A symbolic link to a file or a folder came back as `other` with `isLink`; listing the link's path still followed it. A missing folder rejected with `ENOENT`.
+- **Claude's rules** (https://code.claude.com/docs/en/sub-agents, as quoted in the issue; not re-read for this change): project agents are found by walking up from the working directory to the repository root; project and user folders are scanned recursively; identity comes only from `name`; a file with no `name`, a `name` that starts with `-`, has `:` or is over 256 characters, or no `description`, is skipped; two files with one `name` in one folder are resolved by filesystem read order.
+- **What changes:**
+  - `pickAgent(files, type)` in `duet-logic.ts` takes the files found, each with the index of its folder (nearest first), and returns the winning `AgentDef` or `null`. The skip rules, the quote and comment handling of `name`, the nearest-folder rule and the same-folder conflict rule (read-only) are all there.
+  - `agentDef` in `register.tsx` builds the folders (`agentRoots`: up to the nearest `.git` entry, through `$.fs.exists`; the user's folder last, once), lists each (`listAgentFiles`: subfolders and dot-folders, depth 8, 500 `.md` files in name order, links followed, each real path once, a failed list is an empty folder) and reads the files through a cache keyed by path, size and `mtimeMs` (`agentText`). It stops at the first folder with a match, so farther folders aren't read.
+  - A miss is unchanged: `read-only`, except `general-purpose`. A `general-purpose.md` that is found now decides it.
+- **Not resolved, so read-only:** managed-settings agents, the `--agents` flag, plugin agents and `--add-dir` folders. No `$` call returns Claude's resolved definition (`$.agent` has `spawn`, `list` and `register`). The README says so.
+- **Considered and not taken:**
+  - Parsing a block-scalar `description`: any non-empty value counts, as `parseAgentFile` keeps it.
+  - Sorting same-folder matches: the listing is in name order, so the pick doesn't depend on the engine's listing order.
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `pickAgent`, `AgentFile`.
+  - `hooks/register.tsx`: `agentDef`, `agentRoots`, `listAgentFiles`, `agentText`.
+  - `.claude-plugin/plugin.json`, the marketplace entry, the README (Custom agents, sandbox note, Files row) and this SPEC. `plugins/mod-builder/skills/build/references/gotchas.md` gains the probe above.
+  - Reads: more files (`$.fs.list` is new in the validate output). No new writes.
+- **Tests:**
+  - `pickAgent`: `name` against file name; a quoted name and one with a comment; no `name`, no `description`, and the `name` limits; the nearer folder wins in any order, and a skipped nearer file doesn't shadow a farther one; a same-folder conflict is read-only, for `general-purpose` too; a `general-purpose.md` that can't edit; no match.
+  - Routing, through `fs.list`, `fs.read` and `process.run` stubs: an editing agent in an ancestor folder keeps `workspace-write` and its instructions are sent; subfolders and dot-folders; a renamed file; a reading agent; `general-purpose.md` in an ancestor; nearest folder first; project over user; the repository root as the stop; no repository; symbolic links; depth 8; 500 files; listing on every call; the cache by size and time.
+- **Done means:** all tests pass, validate is clean, README and SPEC say which sources are read and which aren't, and the probe is recorded.
+
+### PR #43 review fixes (2026-10-14)
+
+> PR #43's review: `/code-review` (13 findings) and Codex (3 comments). Where a finding turned on what Claude itself does, it was settled by a probe: trees of agent files under the session scratchpad, read through the `agents` list of `claude -p --output-format stream-json --verbose`'s `init` message, on Claude Code 2.1.299 and, after it updated itself mid-session, 2.1.300 (recorded in `gotchas.md`). Each fix has a red test and its own commit.
+
+- **The repository root is the nearest `.git` entry** (findings 1 and 2, Codex 4274497656). Claude stops at the first folder holding `.git`, even an empty folder or file that git rejects. duet asked `git rev-parse --show-toplevel` instead. A git failure (missing git, dubious ownership, a timeout) widened the search to the filesystem root, and a session folder spelled otherwise than git's answer narrowed it to that folder. `agentRoots` now checks each folder with `$.fs.exists`, so no git process runs.
+- **Symbolic links are followed** (finding 4; the owner's choice). Claude reads a linked file, a linked subfolder and a linked `.claude/agents`. Not following them dropped agents kept in dotfiles, which 0.2.6 read, and made a linked read-only `general-purpose.md` a miss that edits. Red test 10 said links are not followed; it was corrected in its own commit. A folder's real path is recorded per lookup, so a link loop is searched once. Codex 4274497617 asked to reject linked roots; Claude reads them, so duet does too.
+- **A value on the next line** (finding 3). `parseAgentFile` dropped an indented line after a scalar key, so `description:` with its text below read as empty and the file was skipped; Claude loads it. An indented line now folds into a plain value. A `>` or `|` block keeps its indicator as its value, as before.
+- **A Windows `HOME`** (the refactor's follow-up): the user folder is built with `/` separators, so a home the walk already passed isn't listed twice.
+- **Tests added** (finding 12): the depth cap at 8 and 9 folders (`<` changed to `<=` now fails), a file that can no longer be read, and the user folder searched once.
+- **Docs** (findings 5 and 13): the logic file's section header; the README's Files row and Custom agents bullet (the `.git` stop, links, the caps against Claude's, a same-named project file shadowing a managed or `--agents` agent).
+- **Not changed, with the reason:**
+  - Codex 4274497636, malformed YAML elsewhere in a file: Claude loads a file with `bad: [` in another field, so skipping it would differ from Claude.
+  - Finding 6, the walk without a repository: Claude walks on up too (4 levels probed).
+  - Finding 7, a failed read: Claude also leaves out a file it can't read, so the farther definition is what it uses as well.
+  - Findings 5 (beyond the docs), 8, 9, 10 and 11 are in #44: there is no `$` call for managed-settings or `--agents` agents; nothing says when a cap cut a scan short; `pickAgent`'s `root` field is unused now that each pick sees one folder; reads are sequential; and the cache keeps entries for files no longer listed.

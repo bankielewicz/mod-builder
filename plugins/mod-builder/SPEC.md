@@ -370,3 +370,12 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **New (logic):** `displayPathOf(path, cwd)`. `fixPromptOf` takes the display path as a required fifth parameter, and `viewOf` a required trailing `path` after `fromVersion`; both stay pure.
 - **Register:** the working directory comes from `$.session.cwd()`, read in `fillFix` when F is pressed and when the pane draws the detail header, so a `/cd` shows at the next render and the header always matches what F writes (PR #37 review). Probed live: `cwd()` follows `/cd` and not a shell `cd` (`!cd`). If it can't be read the full path is shown and the failure is logged once.
 - **Tests:** 84 (logic and UI). The 9 new ones fail on 0.2.3.
+
+## Change 0.2.5 (2026-10-14)
+
+> Fix for issue #11: a Test that exits before its runner starts showed no error and no Fix.
+
+- **Fix:** `claude plugin test` exits 1 with one stderr line and no `(fail)` line when there are no test files (`claude plugin test: no *.test.ts or *.test.tsx under <dir>`, verified on Claude Code 2.1.296), and, as an audit run reported, for a missing plugin folder or a corrupt manifest. `parseTest` found no failures, so the error box and the Fix button (both need errors) stayed hidden. When the exit code is nonzero and no `(fail)` line was found, `parseTest` now keeps the output's last 3 non-blank lines as the errors, as the type-check path does.
+- **Fix:** with `failed` 0 on a failed Test, `summaryOfRun` says `tests did not run` (so the toast reads `✕ <mod>: tests did not run. Press F in Mod Lab to fix`) instead of `1 test failing`. `fixPromptOf` with `failedCount` 0 on Test writes `Fix the Test run in <path> (the tests did not run)` and quotes the error lines, instead of `Fix the 0 failing tests`. `fillFix` already passed the stored `failed` (0) through, so `register.tsx` is unchanged.
+- **Known edge:** a run killed after some `(fail)` lines but before bun's ` N fail` summary also has `failed` 0, so it reads `tests did not run`; its `(fail)` lines are still the errors.
+- **Tests:** 96 (logic and UI). The 7 new ones (4 logic, 3 UI, with the `test-none.ts` fixture) fail on 0.2.4.
