@@ -913,7 +913,7 @@ describe('review of PR #41', () => {
     w.files[`${WT}/t.sh`] = ''
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1, 'red')
-    expect(w.argv.filter(a => a[1] === 'worktree')).toHaveLength(1)
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain']])
     expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
     expect(w.spawned[0]).toMatchObject({ cwd: WT })
   })
@@ -980,7 +980,7 @@ describe('review of PR #41, round 2', () => {
     await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
     expect(w.spawned).toHaveLength(1)
     expect(w.calls.some(c => c.argv[1] === 'merge' && c.argv.includes('--ff-only') && c.cwd === WT)).toBe(true)
-    expect(w.argv.filter(a => a[1] === 'worktree')).toHaveLength(1)
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain']])
   })
 
   for (const [label, localProfile] of [
@@ -1027,7 +1027,7 @@ describe('review of PR #41, round 3', () => {
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1 || w.toasts.filter(t => t.includes('blocked')).length > 1, 'red or another block')
     expect(w.spawned).toHaveLength(1)
-    expect(w.argv.filter(a => a[1] === 'worktree').slice(1)).toEqual([['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
+    expect(w.argv.filter(a => a[1] === 'worktree').slice(1)).toEqual([['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
     expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
   })
 
@@ -1039,7 +1039,7 @@ describe('review of PR #41, round 3', () => {
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
     expect(w.spawned).toHaveLength(1)
-    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'list', '--porcelain'], ['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
   })
 
   test('with confirmPublish off nobody is asked, so the merge is checked once, at publish', { options: { confirmPublish: false } }, async ($, on) => {
