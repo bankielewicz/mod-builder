@@ -988,3 +988,34 @@ describe('review of PR #41, round 2', () => {
     expect(checkoutBaseOf(null)).toBe('main')
   })
 })
+
+describe('review of PR #41, round 3', () => {
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+  const known = new Set(['live'])
+  const worktree = { liveAgent: 'live', known, workRoot: WT, root: '/repo' }
+  const here = { liveAgent: 'live', known, workRoot: '/repo', root: '/repo' }
+  const write = (file_path: string, tool = 'Write') => ({ tool, file_path, agentId: 'live' })
+
+  test("the edit guard: in a worktree run a relative target is moved into the worktree; one that resolves outside it is refused (Codex P2)", () => {
+    expect(guardAction(write('src/a.ts'), worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/src/a.ts` } })
+    expect(guardAction(write('./src/../b.ts', 'Edit'), worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/b.ts` } })
+    expect(guardAction({ tool: 'NotebookEdit', notebook_path: 'n.ipynb', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { notebook_path: `${WT}/n.ipynb` } })
+    expect(guardAction(write('../../x.ts'), worktree)).toMatchObject({ kind: 'deny' })
+  })
+
+  test('the edit guard refuses targets it cannot place: Windows-rooted, UNC, drive-relative and ~ paths, in any run (Codex P2)', () => {
+    for (const path of ['\\outside\\f.ts', '/\\?\\x', '\\\\srv\\share\\f.ts', '~/x.ts', '~', 'D:foo.ts']) {
+      expect(guardAction(write(path), worktree)).toMatchObject({ kind: 'deny', reason: `issue-forge: ${path} is outside this run's folder ${WT}; edit files there.` })
+      expect(guardAction(write(path), here)).toMatchObject({ kind: 'deny' })
+    }
+    // In the session's own checkout a relative target already lands in the run's folder: left alone.
+    expect(guardAction(write('src/a.ts'), here)).toEqual({ kind: 'pass' })
+  })
+
+  test("Read: in a worktree run a relative path reads the worktree's copy; absolute and odd paths aren't confined", () => {
+    expect(guardAction({ tool: 'Read', file_path: 'src/a.ts', agentId: 'live' }, worktree)).toEqual({ kind: 'rewrite', patch: { file_path: `${WT}/src/a.ts` } })
+    expect(guardAction({ tool: 'Read', file_path: '/etc/hosts', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Read', file_path: '~/notes.md', agentId: 'live' }, worktree)).toEqual({ kind: 'pass' })
+    expect(guardAction({ tool: 'Read', file_path: 'src/a.ts', agentId: 'live' }, here)).toEqual({ kind: 'pass' })
+  })
+})
