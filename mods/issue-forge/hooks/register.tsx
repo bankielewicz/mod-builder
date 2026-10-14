@@ -28,6 +28,7 @@ import {
   findStash,
   gateG,
   gateR,
+  gitFailure,
   guardAction,
   hasSourceRecord,
   hasStash,
@@ -403,7 +404,7 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
   const made = { branch, workRoot, base }
   const added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
   if (added.exit !== 0) {
-    const why = added.isTimedOut ? `timed out after ${where.minutes} min` : firstLine(added.tail) || 'no output'
+    const why = added.isTimedOut ? `timed out after ${where.minutes} min` : gitFailure(added.tail) || 'no output'
     const failed = block(`git worktree add failed: ${why}`, `check ${workRoot} (git worktree remove --force removes a half-made one)`)
     // git creates the branch before it fills the folder: a branch left behind is kept, and resume adds the worktree for it.
     if ((await git($, root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode !== 0) return failed
@@ -431,7 +432,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
       await setActivity($, `git worktree add ${made.workRoot}`)
       const minutes = run.profile?.commandTimeoutMinutes ?? DEFAULT_COMMAND_MINUTES
       const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes)
-      if (again.exit !== 0) return { ...block(`git worktree add failed: ${again.isTimedOut ? `timed out after ${minutes} min` : firstLine(again.tail) || 'no output'}`, `check ${made.workRoot}`), keep: made }
+      if (again.exit !== 0) return { ...block(`git worktree add failed: ${again.isTimedOut ? `timed out after ${minutes} min` : gitFailure(again.tail) || 'no output'}`, `check ${made.workRoot}`), keep: made }
     }
     const unfetched = await fetchBase($, made.workRoot, made.base)
     if (unfetched) return { ...unfetched, keep: made }

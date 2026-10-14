@@ -521,6 +521,12 @@ export function tailLines(text: string, n = 200): string {
   return lines.slice(Math.max(0, lines.length - n)).join('\n')
 }
 
+/** Why a git command failed: its first `fatal:` or `error:` line (git prints progress before it), else its last line. */
+export function gitFailure(text: string): string {
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
+  return lines.find(line => /^(fatal|error):/.test(line)) ?? lines[lines.length - 1] ?? ''
+}
+
 function ended(r: CommandResult, minutes: number): string {
   return r.isTimedOut ? `timed out after ${minutes} min` : `exit ${r.exit ?? 'killed'}`
 }
