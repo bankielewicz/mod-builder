@@ -61,6 +61,8 @@ type World = {
   worktreeIgnored?: boolean
   /** `git merge-tree` at ready; absent, a clean merge. */
   mergeTree?: { exitCode: number; stdout: string; stderr?: string }
+  /** Where the coverage command last ran: a real reporter names files under that folder. */
+  lcovRoot?: string
   /** Every process.run with the folder it ran in. */
   calls: { argv: string[]; cwd?: string }[]
   /** The command each Bash call reached beneath the mod with. */
@@ -144,7 +146,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : PROFILE) }
     if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.baseProfile ?? PROFILE) }
-    if (e.path === LCOV_PATH) return { value: LCOV }
+    if (e.path === LCOV_PATH) return { value: LCOV.replace(`SF:${ROOT}/`, `SF:${world.lcovRoot ?? ROOT}/`) }
     return { deny: 'ENOENT' }
   })
   on('fs.stat', ($: any, e: any) => (e.path === LCOV_PATH ? { value: { kind: 'file', size: LCOV.length, mtimeMs: world.clock.now(), isLink: false } } : { deny: 'ENOENT' }))
@@ -158,6 +160,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     const s = a.join(' ')
     const testResult = () => (world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit))
     if (cmd === 't') return world.testHold ? world.testHold.then(testResult) : testResult()
+    if (cmd === 'c') world.lcovRoot = e.init?.cwd ?? ROOT
     if (cmd === 'c' || cmd === 't2') return ok('ran')
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
