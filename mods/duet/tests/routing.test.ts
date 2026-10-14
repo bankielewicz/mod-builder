@@ -77,8 +77,6 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     // `--git-dir --git-common-dir`: a plain repository's .git sits in the session folder unless `gitDirs` says otherwise.
     // `oldGit`: git before 2.31, which has no --path-format.
     if (argv[0] === 'git' && o.oldGit && argv.some(a => a.startsWith('--path-format'))) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unknown option', isStdoutTruncated: false, isStderrTruncated: false } }
-    // `--show-toplevel`: the repository root is `/w` unless `top` says otherwise; `top: null` is no repository.
-    if (argv[0] === 'git' && argv.includes('--show-toplevel')) return o.top === null ? { value: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository', isStdoutTruncated: false, isStderrTruncated: false } } : { value: { exitCode: 0, stdout: `${o.top ?? '/w'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git' && argv.includes('--git-common-dir')) return { value: { exitCode: 0, stdout: `${o.gitDirs ?? '/w/.git\n/w/.git'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git') return { value: { exitCode: 0, stdout: argv.includes('rev-parse') ? 'abc1234\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     seen.argv.push(argv)
