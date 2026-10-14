@@ -4,12 +4,12 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
-  parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
+  parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
-import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+import type { AgentDef, AgentFile, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
 /**
  * Duet: delegates chosen subagent types and its own `duet:` roles to Codex,
@@ -168,13 +168,79 @@ function logRun($: EngineInterface, task: Task): Promise<void> {
   return logChain
 }
 
-/** The custom agent's definition: project `.claude/agents` first, then the user's. */
+/** How many folders deep below a `.claude/agents` folder duet's own search goes. */
+const AGENT_DEPTH = 8
+/** How many `.md` files duet's own search reads per `.claude/agents` folder. */
+const AGENT_FILES = 500
+
+/** Agent files by path, read again only when their size or time changed; the folders are listed on every call. */
+const agentCache = new Map<string, { size: number; mtimeMs: number; text: string }>()
+
+type AgentEntry = { path: string; size: number; mtimeMs: number }
+
+/**
+ * The `.claude/agents` folders Claude scans, nearest first: the session folder up to the repository root,
+ * then the user's. As Claude does, the repository root is the nearest folder holding a `.git` entry, whether
+ * or not git can read it; without one the search goes up to the filesystem root.
+ */
+async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
+  const start = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  const folders: string[] = []
+  for (let dir = start; ; dir = parentOf(dir)) {
+    folders.push(`${dir}/.claude/agents`)
+    if (parentOf(dir) === dir || (await $.fs.exists(`${dir}/.git`).catch(() => false))) break
+  }
+  const home = await homeDir($)
+  const user = `${home.replace(/\\/g, '/').replace(/\/+$/, '')}/.claude/agents`
+  return home && !folders.includes(user) ? [...folders, user] : folders
+}
+
+/**
+ * The `.md` files under an agents folder, subfolders and dot-folders included. A symbolic link is followed, as
+ * Claude follows it; a folder whose real path was already searched (a link loop, or a root linked into another)
+ * isn't searched again. A failed list is an empty folder.
+ */
+async function listAgentFiles($: EngineInterface, dir: string, searched: Set<string>, found: AgentEntry[] = [], depth = 0): Promise<AgentEntry[]> {
+  const real = await realPathOf($, dir)
+  if (real === undefined || searched.has(real)) return found
+  searched.add(real)
+  const entries = []
+  for (const e of [...(await $.fs.list(dir).catch(() => []))].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    entries.push(e.isLink ? { ...e, ...(await $.fs.stat(`${dir}/${e.name}`).catch(() => ({ kind: 'other' as const }))) } : e)
+  }
+  for (const e of entries) {
+    if (e.kind === 'file' && e.name.endsWith('.md') && found.length < AGENT_FILES) found.push({ path: `${dir}/${e.name}`, size: e.size, mtimeMs: e.mtimeMs })
+  }
+  for (const e of entries) {
+    if (e.kind === 'dir' && depth < AGENT_DEPTH && found.length < AGENT_FILES) await listAgentFiles($, `${dir}/${e.name}`, searched, found, depth + 1)
+  }
+  return found
+}
+
+/** An agent file's text, from the cache while its size and time match the listing. */
+async function agentText($: EngineInterface, e: AgentEntry): Promise<string> {
+  const cached = agentCache.get(e.path)
+  if (cached && cached.size === e.size && cached.mtimeMs === e.mtimeMs) return cached.text
+  const text = await readText($, e.path)
+  if (text) agentCache.set(e.path, { size: e.size, mtimeMs: e.mtimeMs, text })
+  else agentCache.delete(e.path)
+  return text
+}
+
+/**
+ * The custom agent's definition by Claude's discovery rules: the nearest `.claude/agents` folder with a file
+ * named `type` in its `name` field. Agents from managed settings, `--agents`, a plugin or `--add-dir` aren't
+ * reachable, so they are a miss.
+ */
 async function agentDef($: EngineInterface, cwd: string, type: string): Promise<AgentDef | null> {
   if (!/^[\w.:-]+$/.test(type)) return null
-  const home = await homeDir($)
-  for (const path of [`${cwd}/.claude/agents/${type}.md`, ...(home ? [`${home}/.claude/agents/${type}.md`] : [])]) {
-    const text = await readText($, path)
-    if (text) return parseAgentFile(text)
+  // A folder is listed and read only when every nearer one had no match, so each pick sees that folder alone.
+  const searched = new Set<string>()
+  for (const [root, dir] of (await agentRoots($, cwd)).entries()) {
+    const files: AgentFile[] = []
+    for (const e of await listAgentFiles($, dir, searched)) files.push({ root, path: e.path, text: await agentText($, e) })
+    const def = pickAgent(files, type)
+    if (def) return def
   }
   return null
 }

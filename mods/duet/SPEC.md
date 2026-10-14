@@ -159,14 +159,18 @@ Claude row (duration = `durationMs` of that turn's end minus `startedAt`, tokens
 
 ### Custom subagents (`.claude/agents/*.md`) (added at approval)
 
-A custom agent is spawned with its file name as `subagent_type`, so `codexAgents` routes it like any
-built-in type. For a routed custom agent the mod reads its definition (project `.claude/agents/<type>.md`
-first, then `~/.claude/agents/<type>.md`) with `$.fs`, and pure `parseAgentFile` takes its frontmatter
+A custom agent is spawned with its `name` as `subagent_type`, so `codexAgents` routes it like any
+built-in type. For a routed custom agent the mod finds its definition by Claude's discovery rules
+(0.2.7) with `$.fs.list` and `$.fs.read`, and pure `parseAgentFile` takes its frontmatter
 (`name`, `description`, `tools`, `model`) and body:
+- the folders searched, nearest first, are each `.claude/agents/` from the session folder up to the repository root (the nearest folder holding a `.git` entry, as Claude finds it, even one git can't read; with none, up to the filesystem root), then `~/.claude/agents/` (`HOME`, else `USERPROFILE`, with `/` separators). Each is searched with all its subfolders, dot-folders included, to 8 folders deep and 500 `.md` files (Claude has no such limits). Symbolic links are followed, as Claude follows them; a folder whose real path was already searched in that lookup isn't searched again;
+- a file matches on its frontmatter `name` alone (quotes and a trailing ` # comment` removed), never on its file name; a value may start on the next indented line or wrap onto it. A file with no `name` or no `description`, or a `name` that starts with `-`, contains `:` or is over 256 characters, is skipped as Claude skips it (`pickAgent`);
+- the nearest folder with a match wins. Two matches in that folder that differ on `canEdit` give the one that can't edit, since Claude's choice between them isn't documented;
 - the body goes into the handoff as **Role instructions**, ahead of the task;
 - `tools:` that grants no edit tool (no `Edit`, `Write`, `NotebookEdit`, `MultiEdit`) **clamps Codex to `read-only`**, whatever `codexSandbox` says (an agent can only lower the sandbox, never raise it);
 - `model:` is not mapped to Codex (Claude aliases mean nothing there); `codexModel` applies.
-- no file found → routed as a plain type, with no role instructions.
+- no match → routed as a plain type, with no role instructions, and `read-only` (only `general-purpose` edits without a definition). Agents from managed settings, `--agents`, a plugin (`<plugin>:<name>`) and `--add-dir` folders aren't reachable from the types, so they are this case, unless a project or user file has the same `name`: duet then uses that file, though Claude runs the higher-priority one. A plugin agent can't collide, since a `name` with `:` is skipped.
+- the folders are listed on every routed call; a file is read again only when its size or modification time changed.
 
 Three example agents are written to this repo's `.claude/agents/` to prove it end-to-end:
 `code-explorer` (read-only: Read, Grep, Glob), `test-writer` (Read, Write, Edit, Bash) and
@@ -176,7 +180,7 @@ Three example agents are written to this repo's `.claude/agents/` to prove it en
 
 - **Files written (repo):** `.claude/agents/code-explorer.md`, `test-writer.md`, `diff-reviewer.md` (examples); `mods/duet/…` (SPEC, README, plugin.json, hooks.json, register.tsx,
   duet-logic.ts, types/index.d.ts, tests, tsconfig.json, .gitignore); one entry in `.claude-plugin/marketplace.json`.
-- **Files read at run time:** `.claude/agents/<type>.md` and `~/.claude/agents/<type>.md` for routed types.
+- **Files read at run time:** the `.md` files under each `.claude/agents/` from the session folder up to the repository root, and under `~/.claude/agents/`, for routed types (0.2.7; before, only `.claude/agents/<type>.md` and `~/.claude/agents/<type>.md`).
 - **Files outside the repo, at run time:** `~/.claude/duet-data/runs.jsonl` (one line per run: id,
   kind, provider, model, subagent type, start, duration, tokens, exit, outcome; **no prompt text**),
   and `~/.claude/duet-data/sessions/<session>/review-<id>.md` (each review's full text, for `/duet show <id>`). *(Build note: Codex's answer is read from its JSONL stream, so no schema or last-message temp files are written.)*
@@ -580,3 +584,43 @@ pane's keys; `/reload-plugins` picks up edits.
 - **macOS `/tmp`** (Codex P1 4266133283): Codex 0.162.1's `seatbelt_scratch.rs` makes `/private/tmp` and `/private/var/tmp` *writable* too, `read-only` included. The help, `plugin.json` and README now say so. The fix needs a Mac and is in #42. Commits: 1649aae, 03c4353.
 - **Moved to #42:** macOS; npm, nvm and brew installs (`bin/codex.js` is a shim, and the native binary sits in an optional dependency, per `npm view`); a git 2.25 check; the executable bit; showing the scope in routes and the footer; noticing a Codex upgrade that drops the profile.
 - The three tests listed above as left over (a missing HOME, a role alias, the project-itself branch) landed in 88de8b7.
+
+## Change 0.2.7 (2026-10-14)
+
+> Issue #4: find a routed custom agent the way Claude does. At 0.2.6 duet read two files, `<cwd>/.claude/agents/<type>.md` and `~/.claude/agents/<type>.md`. A miss runs read-only, which is the safe side, but an editing agent outside those paths lost write access and its instructions, a definition whose `name` differs from its file name was never matched, and a `general-purpose.md` that duet didn't find fell through to the built-in default, which edits.
+
+- **Evidence: probe** (Claude Code 2.1.299, `claude -p --plugin-dir` on a throwaway mod in the gitignored `scratch/`, started in `fx/pkg/sub`; recorded in `gotchas.md`): `$.fs.list` listed `fx/.claude/agents` two folders above the session folder, its subfolder `team` and its dot-folder `.dot`. A symbolic link to a file or a folder came back as `other` with `isLink`; listing the link's path still followed it. A missing folder rejected with `ENOENT`.
+- **Claude's rules** (https://code.claude.com/docs/en/sub-agents, as quoted in the issue; not re-read for this change): project agents are found by walking up from the working directory to the repository root; project and user folders are scanned recursively; identity comes only from `name`; a file with no `name`, a `name` that starts with `-`, has `:` or is over 256 characters, or no `description`, is skipped; two files with one `name` in one folder are resolved by filesystem read order.
+- **What changes:**
+  - `pickAgent(files, type)` in `duet-logic.ts` takes the files found, each with the index of its folder (nearest first), and returns the winning `AgentDef` or `null`. The skip rules, the quote and comment handling of `name`, the nearest-folder rule and the same-folder conflict rule (read-only) are all there.
+  - `agentDef` in `register.tsx` builds the folders (`agentRoots`: up to the nearest `.git` entry, through `$.fs.exists`; the user's folder last, once), lists each (`listAgentFiles`: subfolders and dot-folders, depth 8, 500 `.md` files in name order, links followed, each real path once, a failed list is an empty folder) and reads the files through a cache keyed by path, size and `mtimeMs` (`agentText`). It stops at the first folder with a match, so farther folders aren't read.
+  - A miss is unchanged: `read-only`, except `general-purpose`. A `general-purpose.md` that is found now decides it.
+- **Not resolved, so read-only:** managed-settings agents, the `--agents` flag, plugin agents and `--add-dir` folders. No `$` call returns Claude's resolved definition (`$.agent` has `spawn`, `list` and `register`). The README says so.
+- **Considered and not taken:**
+  - Parsing a block-scalar `description`: any non-empty value counts, as `parseAgentFile` keeps it.
+  - Sorting same-folder matches: the listing is in name order, so the pick doesn't depend on the engine's listing order.
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `pickAgent`, `AgentFile`.
+  - `hooks/register.tsx`: `agentDef`, `agentRoots`, `listAgentFiles`, `agentText`.
+  - `.claude-plugin/plugin.json`, the marketplace entry, the README (Custom agents, sandbox note, Files row) and this SPEC. `plugins/mod-builder/skills/build/references/gotchas.md` gains the probe above.
+  - Reads: more files (`$.fs.list` is new in the validate output). No new writes.
+- **Tests:**
+  - `pickAgent`: `name` against file name; a quoted name and one with a comment; no `name`, no `description`, and the `name` limits; the nearer folder wins in any order, and a skipped nearer file doesn't shadow a farther one; a same-folder conflict is read-only, for `general-purpose` too; a `general-purpose.md` that can't edit; no match.
+  - Routing, through `fs.list`, `fs.read` and `process.run` stubs: an editing agent in an ancestor folder keeps `workspace-write` and its instructions are sent; subfolders and dot-folders; a renamed file; a reading agent; `general-purpose.md` in an ancestor; nearest folder first; project over user; the repository root as the stop; no repository; symbolic links; depth 8; 500 files; listing on every call; the cache by size and time.
+- **Done means:** all tests pass, validate is clean, README and SPEC say which sources are read and which aren't, and the probe is recorded.
+
+### PR #43 review fixes (2026-10-14)
+
+> PR #43's review: `/code-review` (13 findings) and Codex (3 comments). Where a finding turned on what Claude itself does, it was settled by a probe: trees of agent files under the session scratchpad, read through the `agents` list of `claude -p --output-format stream-json --verbose`'s `init` message, on Claude Code 2.1.299 and, after it updated itself mid-session, 2.1.300 (recorded in `gotchas.md`). Each fix has a red test and its own commit.
+
+- **The repository root is the nearest `.git` entry** (findings 1 and 2, Codex 4274497656). Claude stops at the first folder holding `.git`, even an empty folder or file that git rejects. duet asked `git rev-parse --show-toplevel` instead. A git failure (missing git, dubious ownership, a timeout) widened the search to the filesystem root, and a session folder spelled otherwise than git's answer narrowed it to that folder. `agentRoots` now checks each folder with `$.fs.exists`, so no git process runs.
+- **Symbolic links are followed** (finding 4; the owner's choice). Claude reads a linked file, a linked subfolder and a linked `.claude/agents`. Not following them dropped agents kept in dotfiles, which 0.2.6 read, and made a linked read-only `general-purpose.md` a miss that edits. Red test 10 said links are not followed; it was corrected in its own commit. A folder's real path is recorded per lookup, so a link loop is searched once. Codex 4274497617 asked to reject linked roots; Claude reads them, so duet does too.
+- **A value on the next line** (finding 3). `parseAgentFile` dropped an indented line after a scalar key, so `description:` with its text below read as empty and the file was skipped; Claude loads it. An indented line now folds into a plain value. A `>` or `|` block keeps its indicator as its value, as before.
+- **A Windows `HOME`** (the refactor's follow-up): the user folder is built with `/` separators, so a home the walk already passed isn't listed twice.
+- **Tests added** (finding 12): the depth cap at 8 and 9 folders (`<` changed to `<=` now fails), a file that can no longer be read, and the user folder searched once.
+- **Docs** (findings 5 and 13): the logic file's section header; the README's Files row and Custom agents bullet (the `.git` stop, links, the caps against Claude's, a same-named project file shadowing a managed or `--agents` agent).
+- **Not changed, with the reason:**
+  - Codex 4274497636, malformed YAML elsewhere in a file: Claude loads a file with `bad: [` in another field, so skipping it would differ from Claude.
+  - Finding 6, the walk without a repository: Claude walks on up too (4 levels probed).
+  - Finding 7, a failed read: Claude also leaves out a file it can't read, so the farther definition is what it uses as well.
+  - Findings 5 (beyond the docs), 8, 9, 10 and 11 are in #44: there is no `$` call for managed-settings or `--agents` agents; nothing says when a cap cut a scan short; `pickAgent`'s `root` field is unused now that each pick sees one folder; reads are sequential; and the cache keeps entries for files no longer listed.

@@ -15,27 +15,49 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
-type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
+type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string } = {}): Seen {
-  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[] } = {}): Seen {
+  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
   on('prompt.submit', ($: any, e: any) => (seen.submitted.push(e.text), { text: e.text }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer, usage: e.usage }))
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
-  on('session.cwd', () => ({ value: '/w' }))
+  // `cwd`: where the session started, below the repository root unless it is the root itself.
+  on('session.cwd', () => ({ value: o.cwd ?? '/w' }))
   on('session.id', () => ({ value: 's1' }))
   // `denyEnv`, read at call time: that variable's lookup fails, as a broken engine call would.
   on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   on('fs.read', ($: any, e: any) => {
+    seen.reads.push(e.path)
     const text = seen.files[e.path]
     if (text === undefined) return { deny: 'ENOENT: no such file' }
+    // `unreadable` paths are listed but can't be read, as a file without read permission.
+    if (o.unreadable?.includes(e.path)) return { deny: 'EACCES: permission denied' }
     return { value: text }
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
+  // A folder lists what the same path map holds below it: a file (its time from `mtimes`, else 1), or a folder for a deeper path;
+  // `links` are listed as symbolic links (`other`, `isLink`), as the engine lists them; fs.stat says what each leads to.
+  // A folder with nothing below it is not there.
+  on('fs.list', ($: any, e: any) => {
+    const dir = String(e.path).replace(/\/+$/, '')
+    seen.listed.push(dir)
+    const entries = new Map<string, { name: string; kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number; isLink: boolean }>()
+    for (const [path, text] of Object.entries(seen.files)) {
+      if (!path.startsWith(`${dir}/`)) continue
+      const [name = '', ...deeper] = path.slice(dir.length + 1).split('/')
+      const child = `${dir}/${name}`
+      if (entries.has(name)) continue
+      if (o.links?.includes(child)) entries.set(name, { name, kind: 'other', size: 0, mtimeMs: 0, isLink: true })
+      else if (deeper.length) entries.set(name, { name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })
+      else entries.set(name, { name, kind: 'file', size: text.length, mtimeMs: seen.mtimes[path] ?? 1, isLink: false })
+    }
+    return entries.size ? { value: [...entries.values()] } : { deny: 'ENOENT: no such directory' }
+  })
   // Every path is a folder at its own spelling unless `real` says where it lands (null: not there); a codex binary or
   // codex.js is a file. `kinds` overrides the kind by the path asked for.
   on('fs.stat', ($: any, e: any) => {
@@ -43,6 +65,13 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     if (real === null) return { deny: 'ENOENT: no such file' }
     const kind = o.kinds?.[e.path] ?? (/\/codex(\.js)?$/.test(real) ? 'file' : 'dir')
     return { value: { kind, size: 0, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) } }
+  })
+  // A folder holds `.git` when `gitAt` names it, else when it is the repository root `top` (`/w`; none for `top: null`).
+  // Any other path exists when the map holds it or something below it.
+  on('fs.exists', ($: any, e: any) => {
+    const path = String(e.path).replace(/\/+$/, '')
+    if (path.endsWith('/.git')) return { value: (o.gitAt ?? (o.top === null ? [] : [o.top ?? '/w'])).includes(path.slice(0, -'/.git'.length)) }
+    return { value: Object.keys(seen.files).some(p => p === path || p.startsWith(`${path}/`)) }
   })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
@@ -72,8 +101,8 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   return seen
 }
 
-async function start($: any) {
-  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+async function start($: any, cwd = '/w') {
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd })
 }
 
 const call = (extra: Record<string, unknown> = {}) => ({ tool: 'Agent', description: 'Find callers', prompt: 'List callers of parseConfig.', ...extra })
@@ -170,7 +199,7 @@ describe('routing', () => {
   })
 
   test('an editing agent keeps workspace-write when configured', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow' } }, async ($, on) => {
-    const seen = engine(on, { agents: { '/home/u/.claude/agents/test-writer.md': '---\nname: test-writer\ntools: Read, Write, Edit, Bash\n---\nWrite tests.' } })
+    const seen = engine(on, { agents: { '/home/u/.claude/agents/test-writer.md': '---\nname: test-writer\ndescription: Writes tests.\ntools: Read, Write, Edit, Bash\n---\nWrite tests.' } })
     await start($)
     await $.tool.call(call({ subagent_type: 'test-writer' }) as never)
     const argv = seen.argv[0]!
@@ -179,7 +208,7 @@ describe('routing', () => {
   })
 
   test('with no HOME, a user-level agent is found under USERPROFILE', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow' } }, async ($, on) => {
-    const seen = engine(on, { env: { USERPROFILE: '/users/u' }, agents: { '/users/u/.claude/agents/test-writer.md': '---\nname: test-writer\ntools: Read, Write, Edit\n---\nWrite tests.' } })
+    const seen = engine(on, { env: { USERPROFILE: '/users/u' }, agents: { '/users/u/.claude/agents/test-writer.md': '---\nname: test-writer\ndescription: Writes tests.\ntools: Read, Write, Edit\n---\nWrite tests.' } })
     await start($)
     await $.tool.call(call({ subagent_type: 'test-writer' }) as never)
     const argv = seen.argv[0]!
@@ -282,7 +311,7 @@ describe('0.2.0: roles, background runs, honest routing', () => {
   })
 
   test('an editing run always waits, even in background mode', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'background' } }, async ($, on) => {
-    const seen = engine(on, { agents: { '/w/.claude/agents/test-writer.md': '---\nname: test-writer\ntools: Read, Write, Edit\n---\nWrite tests.' } })
+    const seen = engine(on, { agents: { '/w/.claude/agents/test-writer.md': '---\nname: test-writer\ndescription: Writes tests.\ntools: Read, Write, Edit\n---\nWrite tests.' } })
     await start($)
     const r: any = await $.tool.call(call({ subagent_type: 'test-writer' }) as never)
     expect(r.result.status).toBe('completed')
@@ -345,7 +374,7 @@ describe('review admission', () => {
 })
 
 describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
-  const WRITER = (name: string) => `---\nname: ${name}\ntools: Read, Write, Edit\n---\nWrite files.`
+  const WRITER = (name: string) => `---\nname: ${name}\ndescription: Writes files.\ntools: Read, Write, Edit\n---\nWrite files.`
   const agents = {
     '/w/.claude/agents/red-test-writer.md': WRITER('red-test-writer'),
     '/w/.claude/agents/impl-writer.md': WRITER('impl-writer'),
@@ -516,5 +545,259 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
     expect(fs).not.toContain('="write"')
     expect(argv).toContain('sandbox_mode="read-only"')
+  })
+})
+
+describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => {
+  // The session starts in /w/pkg, inside the repository whose root is /w.
+  const IN = '/w/pkg'
+  const options = { codexAgents: 'editor, writer, reader, outsider, general-purpose, ghost', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'wait' }
+  const agent = (name: string, tools: string, body: string) => `---\nname: ${name}\ndescription: An agent.\ntools: ${tools}\n---\n\n${body}`
+  const EDITS = 'Read, Write, Edit'
+  const READS = 'Read, Grep'
+  const sandboxOf = (argv: string[] | undefined) => argv?.[argv.indexOf('-s') + 1]
+  const asks = ($: any, type: string) => $.tool.call(call({ subagent_type: type }) as never)
+
+  test('an editing agent in an ancestor folder keeps workspace-write and sends its instructions; a miss stays read-only, except general-purpose', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/.claude/agents/editor.md': agent('editor', EDITS, 'You edit files.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    await asks($, 'ghost')
+    await asks($, 'general-purpose')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('## Role instructions (editor)')
+    expect(seen.stdin[0]).toContain('You edit files.')
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
+    expect(seen.stdin[1]).not.toContain('## Role instructions')
+    expect(sandboxOf(seen.argv[2])).toBe('workspace-write')
+  })
+
+  test('an editing agent in a subfolder of .claude/agents is found, dot-folders included', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/review/editor.md': agent('editor', EDITS, 'In a subfolder.'), '/w/pkg/.claude/agents/.team/writer.md': agent('writer', EDITS, 'In a dot-folder.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    await asks($, 'writer')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('In a subfolder.')
+    expect(sandboxOf(seen.argv[1])).toBe('workspace-write')
+    expect(seen.stdin[1]).toContain('In a dot-folder.')
+  })
+
+  test('a definition whose name differs from its file name is found by its name', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/ed.md': agent('"editor" # renamed', EDITS, 'Renamed on disk.'), '/w/pkg/.claude/agents/editor.md': agent('someone-else', READS, 'Not this one.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('Renamed on disk.')
+    expect(seen.stdin[0]).not.toContain('Not this one.')
+  })
+
+  test('a reading agent in an ancestor folder runs read-only and its instructions are sent', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/.claude/agents/reader.md': agent('reader', READS, 'You only read.') } })
+    await start($, IN)
+    await asks($, 'reader')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('## Role instructions (reader)')
+    expect(seen.stdin[0]).toContain('You only read.')
+  })
+
+  test('a general-purpose.md in an ancestor folder without edit tools makes general-purpose read-only', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/.claude/agents/general-purpose.md': agent('general-purpose', 'Read', 'Only reads.') } })
+    await start($, IN)
+    await asks($, 'general-purpose')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Only reads.')
+  })
+
+  test('the nearest folder wins over an ancestor', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/team/editor.md': agent('editor', EDITS, 'Near.'), '/w/.claude/agents/editor.md': agent('editor', READS, 'Far.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('Near.')
+    expect(seen.stdin[0]).not.toContain('Far.')
+  })
+
+  test('a project definition wins over the user\'s, and the user\'s folder is searched by name too', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/home/u/.claude/agents/editor.md': agent('editor', READS, 'User level.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Project level.'), '/home/u/.claude/agents/mine/ed.md': agent('writer', EDITS, 'Mine.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    await asks($, 'writer')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('Project level.')
+    expect(seen.stdin[0]).not.toContain('User level.')
+    expect(sandboxOf(seen.argv[1])).toBe('workspace-write')
+    expect(seen.stdin[1]).toContain('Mine.')
+  })
+
+  test('the search goes up to the repository root and stops there', { options }, async ($, on) => {
+    const deep = '/w/pkg/sub'
+    const seen = engine(on, { cwd: deep, top: '/w/pkg', agents: { '/w/pkg/.claude/agents/editor.md': agent('editor', EDITS, 'Inside.'), '/w/.claude/agents/outsider.md': agent('outsider', EDITS, 'Above the root.') } })
+    await start($, deep)
+    await asks($, 'editor')
+    await asks($, 'outsider')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('Inside.')
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
+    expect(seen.stdin[1]).not.toContain('Above the root.')
+  })
+
+  test('with no git repository the search goes up to the filesystem root', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: '/a/b/c', top: null, agents: { '/a/.claude/agents/editor.md': agent('editor', EDITS, 'Far up.') } })
+    await start($, '/a/b/c')
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('Far up.')
+  })
+
+  test('a folder holding .git ends the search even when git can\'t read it, as it ends Claude\'s', { options }, async ($, on) => {
+    // Probed on 2.1.299: an empty .git folder, or an empty .git file, stops Claude's walk although `git rev-parse` fails there.
+    const deep = '/w/pkg/sub'
+    const seen = engine(on, { cwd: deep, top: null, gitAt: ['/w/pkg'], agents: { '/w/.claude/agents/outsider.md': agent('outsider', EDITS, 'Above the root.') } })
+    await start($, deep)
+    await asks($, 'outsider')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).not.toContain('Above the root.')
+  })
+
+  test('a session folder reached through a link is still searched up to the repository root', { options }, async ($, on) => {
+    // git would answer with the real path (/data/proj); the walk goes by the session folder's own spelling.
+    const cwd = '/home/u/link/pkg'
+    const seen = engine(on, { cwd, gitAt: ['/home/u/link'], agents: { '/home/u/link/.claude/agents/general-purpose.md': agent('general-purpose', READS, 'Only reads.') } })
+    await start($, cwd)
+    await asks($, 'general-purpose')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Only reads.')
+  })
+
+  test('the user folder is searched once when the walk already passed it, whichever separators HOME uses (PR #43 review)', { options }, async ($, on) => {
+    // On a POSIX test host the engine places a `C:/` path under its working directory, so a folder is matched by its end.
+    const once = (seen: Seen, folder: string) => seen.listed.filter(d => d.replace(/\\/g, '/').endsWith(folder)).length
+    const posix = engine(on, { cwd: '/home/u/proj', top: null })
+    await start($, '/home/u/proj')
+    await asks($, 'editor')
+    expect(once(posix, '/home/u/.claude/agents')).toBe(1)
+  })
+
+  test('a Windows HOME with backslashes is the same user folder the walk passed', { options }, async ($, on) => {
+    const once = (seen: Seen, folder: string) => seen.listed.filter(d => d.replace(/\\/g, '/').endsWith(folder)).length
+    const windows = engine(on, { cwd: 'C:/Users/u/proj', top: null, env: { USERPROFILE: 'C:\\Users\\u' } })
+    await start($, 'C:/Users/u/proj')
+    await asks($, 'editor')
+    expect(once(windows, 'C:/Users/u/.claude/agents')).toBe(1)
+  })
+
+  test('a symbolic link is followed, as Claude follows it: a linked folder and a linked file are both read', { options }, async ($, on) => {
+    // Probed on 2.1.299 and 2.1.300: Claude loads agents through a linked file, a linked subfolder and a linked .claude/agents.
+    const linked = '/w/pkg/.claude/agents/shared'
+    const file = '/w/pkg/.claude/agents/gp.md'
+    const seen = engine(on, { cwd: IN, links: [linked, file], kinds: { [file]: 'file' }, agents: { [`${linked}/editor.md`]: agent('editor', READS, 'Through a link.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Real.'), [file]: agent('general-purpose', READS, 'A linked file.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    await asks($, 'general-purpose')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Through a link.')
+    expect(seen.stdin[0]).not.toContain('Real.')
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
+    expect(seen.stdin[1]).toContain('A linked file.')
+  })
+
+  test('a linked folder that leads back to a folder already searched is not searched again', { options }, async ($, on) => {
+    const loop = '/w/pkg/.claude/agents/loop'
+    const seen = engine(on, { cwd: IN, links: [loop], real: { [loop]: '/w/pkg/.claude/agents' }, agents: { '/w/pkg/.claude/agents/editor.md': agent('editor', READS, 'Once.'), [`${loop}/x.md`]: '' } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Once.')
+    expect(seen.listed).not.toContain(loop)
+  })
+
+  test('a definition nested more than 8 folders down is not read, so the user-level one is used', { options }, async ($, on) => {
+    const tooDeep = '/w/pkg/.claude/agents/a/b/c/d/e/f/g/h/i/j/k/l/editor.md'
+    const seen = engine(on, { cwd: IN, agents: { [tooDeep]: agent('editor', READS, 'Too deep.'), '/home/u/.claude/agents/mine/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(seen.stdin[0]).not.toContain('Too deep.')
+  })
+
+  test('a definition 8 folders down is read and one 9 down is not: duet\'s own cap, since Claude reads deeper (PR #43 review)', { options }, async ($, on) => {
+    const eight = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8'
+    const seen = engine(on, { cwd: IN, agents: { [`${eight}/reader.md`]: agent('reader', READS, 'Eight deep.'), [`${eight}/9/editor.md`]: agent('editor', READS, 'Nine deep.'), '/home/u/.claude/agents/editor.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    await asks($, 'reader')
+    await asks($, 'editor')
+    expect(seen.stdin[0]).toContain('Eight deep.')
+    expect(sandboxOf(seen.argv[1])).toBe('workspace-write')
+    expect(seen.stdin[1]).toContain('User level.')
+    expect(seen.reads).not.toContain(`${eight}/9/editor.md`)
+  })
+
+  test('a file that can no longer be read is skipped, as Claude skips it, and its cached text is not used (PR #43 review)', { options }, async ($, on) => {
+    // Probed on 2.1.299: Claude leaves out an agent file it has no permission to read.
+    const near = '/w/pkg/.claude/agents/editor.md'
+    const unreadable: string[] = []
+    const seen = engine(on, { cwd: IN, unreadable, agents: { [near]: agent('editor', READS, 'Near.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Readable.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    unreadable.push(near)
+    seen.mtimes[near] = 2
+    await asks($, 'editor')
+    expect(seen.argv.map(sandboxOf)).toEqual(['read-only', 'workspace-write'])
+    expect(seen.stdin[0]).toContain('Near.')
+    expect(seen.stdin[1]).toContain('Readable.')
+    expect(seen.stdin[1]).not.toContain('Near.')
+  })
+
+  test('only the first 500 files of a root are read, so the 601st does not shadow the user-level definition', { options }, async ($, on) => {
+    const agents: Record<string, string> = {}
+    for (let i = 0; i < 600; i++) agents[`/w/pkg/.claude/agents/f${String(i).padStart(3, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    agents['/w/pkg/.claude/agents/zz-editor.md'] = agent('editor', READS, 'Past the limit.')
+    agents['/home/u/.claude/agents/mine/ed.md'] = agent('editor', EDITS, 'User level.')
+    const seen = engine(on, { cwd: IN, agents })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(seen.stdin[0]).not.toContain('Past the limit.')
+  })
+
+  test('folders are listed on every call: a definition added or removed between two calls is seen at once', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN })
+    await start($, IN)
+    const path = '/w/.claude/agents/editor.md'
+    await asks($, 'editor')
+    seen.files[path] = agent('editor', EDITS, 'Added later.')
+    await asks($, 'editor')
+    delete seen.files[path]
+    await asks($, 'editor')
+    expect(seen.argv.map(sandboxOf)).toEqual(['read-only', 'workspace-write', 'read-only'])
+    expect(seen.stdin[1]).toContain('Added later.')
+  })
+
+  test('a definition is read once while its size and time are unchanged, and again when either changes', { options }, async ($, on) => {
+    const path = '/w/.claude/agents/editor.md'
+    const seen = engine(on, { cwd: IN, agents: { [path]: agent('editor', 'Read, Grep, Edit', 'Version one.') } })
+    await start($, IN)
+    const reads = () => seen.reads.filter(p => p === path).length
+    await asks($, 'editor')
+    await asks($, 'editor')
+    expect(reads()).toBe(1)
+    expect(seen.argv.map(sandboxOf)).toEqual(['workspace-write', 'workspace-write'])
+
+    // Same size, newer time: Edit becomes Glob, so the agent can no longer edit.
+    seen.files[path] = agent('editor', 'Read, Grep, Glob', 'Version one.')
+    seen.mtimes[path] = 2
+    await asks($, 'editor')
+    expect(reads()).toBe(2)
+    expect(sandboxOf(seen.argv[2])).toBe('read-only')
+
+    // Same time, different size: it edits again.
+    seen.files[path] = agent('editor', 'Read, Write, Edit', 'Version three.')
+    await asks($, 'editor')
+    expect(reads()).toBe(3)
+    expect(sandboxOf(seen.argv[3])).toBe('workspace-write')
+    expect(seen.stdin[3]).toContain('Version three.')
   })
 })
