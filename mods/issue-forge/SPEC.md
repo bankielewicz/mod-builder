@@ -678,3 +678,29 @@ committed and pushed on its own.
 | tidy | `baseOf`'s doc comment sat above `checkoutBaseOf`; the worktree test and the kept-branch type were written twice. | Moved back; `isWorktreeRun` and `Kept` exported and shared. `ce4d1b6` |
 
 After round 3: 145 tests pass, validate and `tsc` are clean.
+
+## Review: PR #41, round 4 (2026-10-14)
+
+Codex reviewed d6c5d25 and left two P2 findings: one real, one a false positive. `/code-review`
+added eight more. Each real one was fixed test-first and pushed on its own.
+
+| Sev | Finding | Fix (commits) |
+|---|---|---|
+| P2 (Codex) | `worktreeDir: "D:tmp"` passed the profile check, though it names a folder on drive D. | `isInsideDir` refuses `^[A-Za-z]:`, as the edit guard does. `0b5429d` → `eb3245e` |
+| P2 (Codex) | "Check `worktreeDir` against `origin/<base>`'s ignore rules." | Not a bug. The folder is made inside the session's checkout, so that checkout's rules decide whether it shows. Probe (git 2.53): base ignores `scratch/`, the session's stale branch doesn't; after `worktree add` there, `git status` shows `?? scratch/` and `git add -A` warns "adding embedded git repository". Replied and resolved. |
+| 2 | A Stop while `git worktree add` ran lost the branch it made: `runLong` throws `Stopped` before `recordMade`. | `makeBranch` catches `Stopped` around the add and records a branch that exists (`hasBranch`), then stops. `c41132f` → `182a45f` |
+| 2 | A kept worktree deleted by hand couldn't be added again: git still has it registered ("is a missing but already registered worktree"). | Before the re-add, `git worktree remove <path>`. Probed on git 2.53: on a missing folder it exits 0 and clears only that entry. `prune` would also clear other sessions' missing worktrees, and `add -f` also lets a branch be checked out twice. A locked entry stays and the add names git's refusal. `5bd7944` → `9860e32` |
+| 2 | Lost updates: the merge result's write could land over a Publish (a done run back at ready), and a Stop's write over `recordMade` (the branch dropped). | `updateRun` chains every run write in the module and applies each to the run as stored then. `recordMade` is a `made` event; stop, publish and the merge result go through it, and `saveRun` too. This closes round 3's narrowed window within the module (the store itself has no compare-and-set). `a7d611e` → `5e5f7e3` |
+| 3 | A failed add was named by git's "Preparing worktree (…)" line, not its `fatal:` line. | `gitFailure` picks the first `fatal:` or `error:` line, else the last. `110d6e8` → `26c3f5b`, edges `34f51ca` |
+| 3 | `/issue-forge status` at ready left out the merge check the pane shows. | It adds `mergeLine`. `99f7d5e` → `6bd0103` |
+| 3 | `advance` handled `merged` at publishing, which can't happen: drive writes it only at ready, and publish carries its own. | The case is gone; the test that pinned it was corrected in its own commit. `107828e` → `6cb3f20` |
+| tidy | The three questions each wrapped `$.ui.ask` in the same try/catch; the merge result was worded in three branching copies. | `askOr` and `mergeSaid`. `70572cc` |
+| docs | README: the Agents row said "in the repository root"; Limits didn't say the guard reads paths as text. | Agents work in the run's folder; a symlink inside the worktree can lead an edit outside it; `worktree remove` is listed. `b54f824` |
+
+Not fixed, by design: the double fetch on resume and publish (fresh data on purpose); refusing a
+non-mod `redAgentType` in a worktree (that option means routing to Codex, which runs in the
+session's folder); the early `liveAgent` window before a spawn returns its id (the kit gives no
+`agentId`, so no test reaches it).
+
+After round 4: 153 tests pass; validate and `tsc` are clean; `issue-forge-logic.ts` has 100.00% of
+lines and 99.44% of branches covered, with no untaken branch on a changed line.
