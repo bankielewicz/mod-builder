@@ -401,7 +401,7 @@ export function modelsText(models: CodexModel[], current: string): string {
   return ['Codex models (codex debug models)', ...rows, `Set one: /duet config model <slug>   ("" uses Codex's default${current === '' ? ', the current setting' : ''})`].join('\n')
 }
 
-// ── Custom agents (.claude/agents/<type>.md) ─────────────────────────────
+// ── Custom agents (.claude/agents, by Claude's discovery rules) ──────────
 
 export type AgentDef = {
   name: string
