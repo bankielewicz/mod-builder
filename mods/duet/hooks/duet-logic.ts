@@ -616,10 +616,10 @@ export function buildHandoff(args: {
 
 const NEVER_ASK = ['-c', 'approval_policy="never"'] as const
 
-/** True when `path` lies below `root` (both real, absolute paths). Not yet written: the red test pins it. */
+/** True when `path` lies below `root` (both real, absolute paths): never the root itself, nor a sibling sharing its prefix. */
 export function isInside(root: string, path: string): boolean {
-  void root, path
-  return false
+  const base = root.replace(/[/\\]+$/, '')
+  return path.length > base.length + 1 && (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`))
 }
 
 /** A TOML basic string: JSON's escapes for `\`, `"` and control characters are TOML's. */
@@ -631,7 +631,7 @@ function tomlString(s: string): string {
 const PROFILE = 'duet-mod-fs-scope'
 
 /** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
-function folderUnder(cwd: string, folder: string): string | null {
+export function folderUnder(cwd: string, folder: string): string | null {
   if (/^([/\\]|[A-Za-z]:)/.test(folder)) return null
   const parts: string[] = []
   for (const part of folder.split(/[/\\]+/)) {
