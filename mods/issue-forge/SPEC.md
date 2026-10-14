@@ -657,3 +657,24 @@ and pushed on its own:
 
 After round 2: 136 tests pass (82 logic, 54 UI and behaviour), validate is clean, `tsc` is clean, and
 `hooks/issue-forge-logic.ts` has 100.00% lines and 99.43% branches, with no untaken branch on a changed line.
+
+## Review: PR #41, round 3 (2026-10-14)
+
+Codex reviewed 5008b79 and left three findings: two P2 and one P3. `/code-review` agreed and added
+eight more. Each was checked against the code, fixed test-first where a kit test can reach it, and
+committed and pushed on its own.
+
+| Sev | Finding | Fix (commits) |
+|---|---|---|
+| P2 (Codex, wider) | In a worktree run the edit guard passed relative, `\`-rooted, UNC, `~` and drive-relative targets unchanged. The tools resolve a relative path in the session's folder (P4). | A relative Edit, Write, NotebookEdit or Read target is made absolute under the worktree. A target the guard can't place is refused in every run. `a989042` → `c5a24da` |
+| P2 (Codex) | A Stop pressed during the awaits after `worktree add` left the branch and worktree unrecorded. | `recordMade` writes them onto the stored run as soon as they exist, even over a stop. `721eff2` → `72aaa6b` |
+| 2 | A failed `worktree add -b` leaves its branch behind (git 2.43), so resume cut `-2`. | The branch is kept, and resume adds the worktree for it. `721eff2` → `72aaa6b` |
+| 2 | Resume after the kept worktree was removed by hand threw in the HEAD check. | At preflight it is made again (`git worktree add <path> <branch>`); at a later step resume names the missing folder. `721eff2` → `72aaa6b` |
+| P3 (Codex) | `merge-tree -z` names were also split on `\n`, and names of only spaces were dropped. | Split on NUL only. The old newline-separated fixture was corrected in its own commit (`bf4c31d`). `15ca9c6` → `c1121f3` |
+| 3 | With `confirmPublish` off, the merge was checked twice. | It is checked ahead only for a question. `dc719d2` → `595c667` |
+| 3 | After the merge write, a stop could still bring up the publish question. | Ownership is checked again before asking. `$.store` has no compare-and-set, so this narrows the window; no kit test reaches it. `04cb03f` |
+| 3 | The busy-checkout hint said to edit `.issue-forge.json`, but the run reads `origin/<base>`'s copy. | The hint names the base. `94a7830` → `27c9075` |
+| 3 | The routed-red advice offered `here`, which blocks a busy checkout. | The advice says what `here` needs. `c036f96` → `6e536c8` |
+| tidy | `baseOf`'s doc comment sat above `checkoutBaseOf`; the worktree test and the kept-branch type were written twice. | Moved back; `isWorktreeRun` and `Kept` exported and shared. `ce4d1b6` |
+
+After round 3: 145 tests pass, validate and `tsc` are clean.
