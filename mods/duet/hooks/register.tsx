@@ -201,14 +201,18 @@ async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
  * The `.md` files under an agents folder, subfolders and dot-folders included. A symbolic link is followed, as
  * Claude follows it; a folder whose real path was already searched (a link loop, or a root linked into another)
  * isn't searched again. A failed list is an empty folder. Past the limits, a folder isn't entered and a file
- * isn't listed, and `cut` records which limit it was.
+ * isn't listed; `cut` records which limit hid a `.md` file, or a folder or link that may hold one.
  */
 async function listAgentFiles($: EngineInterface, dir: string, searched: Set<string>, cut: AgentCut, found: AgentEntry[] = [], depth = 0): Promise<AgentEntry[]> {
   const real = await realPathOf($, dir)
   if (real === undefined || searched.has(real)) return found
   if (depth > AGENT_DEPTH || found.length >= AGENT_FILES) {
-    if (depth > AGENT_DEPTH) cut.depth = true
-    else cut.files = true
+    // A look inside, one level and no reads: only a folder that may hold a definition cuts the search short.
+    const inside = await $.fs.list(dir).catch(() => [])
+    if (inside.some(e => e.isLink || e.kind === 'dir' || (e.kind === 'file' && e.name.endsWith('.md')))) {
+      if (depth > AGENT_DEPTH) cut.depth = true
+      else cut.files = true
+    }
     return found
   }
   searched.add(real)
