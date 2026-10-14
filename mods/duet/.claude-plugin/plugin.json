@@ -60,7 +60,7 @@
     "codexFsScope": {
       "type": "string",
       "title": "Codex filesystem scope",
-      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: a duet permission profile limits Codex to the session folder (writable only under workspace-write) and hides /tmp and files outside it. Checked in codex sandbox on Codex 0.162.1 (Linux); not yet through codex exec.",
+      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: a duet permission profile limits Codex to the session folder (writable only under workspace-write), plus read-only system paths and Codex's own install and memories folders, and hides /tmp and every other file. Checked through codex exec on Codex 0.162.1 (Linux); re-check after upgrading Codex.",
       "options": [
         "anything",
         "project"

@@ -460,22 +460,64 @@ pane's keys; `/reload-plugins` picks up edits.
 
 ## Change 0.2.6 (2026-10-13)
 
-> Part B of issue #3: limit what Codex can read and write, behind an opt-in, default-off option. Left open: the `codex exec` probe, so nothing here is claimed as a restriction yet.
+> Part B of issue #3: limit what Codex can read and write, behind an opt-in, default-off option. Checked through `codex exec` on Codex 0.162.1 (Linux): read-only and `workspace-write` with `codexWritePaths`. `/duet review` gets the same profile, but whether it holds there is not confirmed.
 
-- **Evidence** (issue #3, run 2026-10-13: Codex CLI 0.162.1, `x86_64-unknown-linux-musl`, WSL2 Linux; local `codex sandbox` runs, no model call):
-  - With `default_permissions="duet"` and `permissions.duet.filesystem={":minimal"="read","<project>"="read","$HOME/.codex/packages"="read"}`, a file outside the project failed with "No such file or directory" and a project file printed. Adding `sandbox_mode="read-only"`, as `-s read-only` does, gave the same result.
-  - With the project as `write`: writing in it worked, and writing outside it or in `/tmp` gave "Directory nonexistent". With the project as `read` and `<project>/tests` as `write`: writing `tests/…` worked and `src/…` gave "Read-only file system".
-  - `$HOME/.codex/packages` is the Codex install folder; the sandbox needs it to re-run `codex`.
-  - `default_permissions` is a config key; `-P`/`--permission-profile` exists on `codex sandbox` only, not on `codex exec` (`codex exec --help`, 0.162.1).
-- **Not verified, so left open:** whether `codex exec` applies the profile to the commands the model runs. Checking it takes a signed-in `codex exec` run, which uses the owner's Codex quota and sends a prompt to OpenAI, so it needs the owner's go-ahead; it wasn't run. The issue's probe: put a canary file outside the project, run `codex exec --json --skip-git-repo-check -s read-only -c default_permissions="duet" -c permissions.duet.filesystem={…} -C <project> "Run exactly: cat ../outside/canary.txt …"`, and pass if the read fails; also check that `rg`, `git status` and any temp file Codex writes still work without `/tmp`. Also unchecked: macOS and Windows, and a symlink inside the project that points outside it.
+- **Evidence: `codex sandbox`** (issue #3, run 2026-10-13: Codex CLI 0.162.1, `x86_64-unknown-linux-musl`, WSL2 Linux; local runs, no model call):
+  - With `default_permissions="duet"` and `permissions.duet.filesystem={":minimal"="read","<project>"="read","$HOME/.codex/packages"="read"}`, a file outside the project failed with "No such file or directory", and a project file printed. Adding `-c sandbox_mode="read-only"` gave the same result.
+  - With the project as `write`, writing in it worked. Writing outside it or in `/tmp` gave "Directory nonexistent". With the project as `read` and `<project>/tests` as `write`, writing `tests/…` worked and `src/…` gave "Read-only file system".
+  - `$HOME/.codex/packages` is the Codex install folder. The sandbox needs it to re-run `codex`.
+  - `default_permissions` is a config key. `-P`/`--permission-profile` exists on `codex sandbox` only, not on `codex exec` (`codex exec --help`, 0.162.1).
+- **Evidence: `codex exec`**:
+  - Setup:
+    - Four signed-in runs, each approved by the owner, between 2026-10-14 01:45 and 02:09 UTC, on the same Codex and machine.
+    - `~/.codex/config.toml` sets `sandbox_mode = "workspace-write"`.
+    - The project is `scratch/sbx-exec/proj`, its own git repository. `../outside/canary.txt` holds a canary, never a real secret.
+    - Results come from the `command_execution` events of `--json`, not from the model's prose.
+  - **`-s read-only` plus the two overrides (the argv green first wrote):** the profile was ignored. `cat ../outside/canary.txt` exited 0 and printed the canary, and `ls /tmp` listed the host's `/tmp`. OpenAI's permissions page (https://learn.chatgpt.com/docs/permissions, read 2026-10-14) says passing `--sandbox` makes Codex "use those older sandbox settings instead of `default_permissions`".
+  - **`-c sandbox_mode="read-only"` in place of `-s`:** the profile held.
+    - The outside `cat` exited 1 ("No such file or directory").
+    - `ls /tmp` exited 2.
+    - `cat`, `rg` and `git status` inside the project worked.
+    - `mktemp` failed, because there is no `/tmp`.
+  - **`workspace-write` with `codexWritePaths`:** the argv came from `codexArgv` (project `read`, `<project>/tests` `write`), and `<project>/link` was a symlink to `../outside`. These failed:
+    - reading the canary directly or through `link/`;
+    - writing through `link/`, to `../outside/` and to `/tmp`;
+    - `ls /tmp`.
+
+    These worked: `echo w > tests/w.txt`, a project read, `rg` and `git status`. The writes to `src/` and the project root left no file on the host, but they show up only in the model's prose ("Read-only file system"), with no command event, so they count as not run.
+  - **A side effect of `workspace-write` with `codexWritePaths`:** Codex created empty `.agents`, `.aws`, `.codex` and `.git` folders inside the writable `tests/` folder when its sandbox started, and left them there. The `codex sandbox` runs didn't.
+  - **`/duet review` (`codex exec review --uncommitted`, argv from `reviewArgv`):** the change under review was a script that compares `../outside/canary.txt` to a value. The reviewer chose not to read it ("its input is outside the authorized workspace"), so the direct check didn't run. Two things point to the profile being in place:
+    - `ls -la` showed the project's parent as a synthetic `drwx------` folder, not the real one.
+    - Codex's own memories file (`~/.codex/memories/MEMORY.md`) was readable.
+  - **Readable beyond the table:** a no-model `codex sandbox` run with the same profile shows that `~/.codex` holds only `memories` and `packages`. Codex adds its own memories folder; `auth.json`, `config.toml`, `history.jsonl`, `~/.claude` and `~/.ssh` were not there.
+- **Why it can break on a Codex upgrade:** OpenAI's page says profiles "do not compose with the older sandbox settings", and that `sandbox_mode` in a loaded config file also makes the older settings win. On 0.162.1 that didn't happen: the profile held with `sandbox_mode` both in `config.toml` and as `-c`. duet relies on that behaviour, and duet's tests check only the argv. After upgrading Codex, re-run the canary probe above with the argv `codexArgv` builds before relying on `project`.
+- **Not checked:** macOS and Windows; whether `/duet review` holds the profile when the model does try an outside read; `workspace-write` with the whole project writable through `codex exec`, including whether the empty folders then appear at the project root.
 - **What changes:**
-  - `codexFsScope` (`anything` default, `project`). `anything` is the argv as before. `project` adds two `-c` overrides to `codexArgv` and `reviewArgv`: `default_permissions="duet"` and `permissions.duet.filesystem={…}`, built by `profileArgs`.
-  - The table holds `":minimal"` read, the project read (or write: under `workspace-write` with no `writePaths` for the agent), and `<home>/.codex/packages` read. `/tmp` is never in it. A review gets the table read-only. With `HOME` and `USERPROFILE` both unset the install folder is left out (Codex then may not be able to re-run itself; unverified).
-  - `codexWritePaths` (`agent=folder;folder`, comma-separated, agent names as `codexRunMode` reads them, roles by any of their names). Under `project` and `workspace-write`, a named agent gets the project as `read` and each of its folders as `write`. It only narrows: an absolute path, one that climbs out of the project, and the project itself are dropped; an entry whose folders are all dropped leaves the project read-only; read-only runs ignore it. An entry with no folder (`red=`) is ignored, so the agent keeps the whole project. Folders are joined to the session folder with `/`; Windows paths are untested.
+  - `codexFsScope` (`anything` default, `project`). `anything` is the argv as before. `project` replaces `-s <mode>` with `-c sandbox_mode="<mode>"` in `codexArgv` (`reviewArgv` already used it), and adds two `-c` overrides to both: `default_permissions="duet"` and `permissions.duet.filesystem={…}`, built by `profileArgs`.
+  - The table holds `":minimal"` read; the project read, or write under `workspace-write` when the agent has no `writePaths`; and `<home>/.codex/packages` read. `/tmp` is never in it. A review gets the table read-only. With `HOME` and `USERPROFILE` both unset, the install folder is left out; Codex then may not be able to re-run itself (unverified).
+  - `codexWritePaths` (`agent=folder;folder`, comma-separated, agent names as `codexRunMode` reads them, roles by any of their names). Under `project` and `workspace-write`, a named agent gets the project as `read` and each of its folders as `write`. It only narrows:
+    - an absolute path, one that climbs out of the project, and the project itself are dropped;
+    - an entry whose folders are all dropped leaves the project read-only;
+    - read-only runs ignore it;
+    - an entry with no folder (`red=`) is ignored, so the agent keeps the whole project.
+
+    Folders are joined to the session folder with `/`; Windows paths are untested.
   - Paths are TOML basic strings, escaped by `JSON.stringify` (`\`, `"` and control characters), and tested with a path holding a quote and a backslash.
-  - The consent question is unchanged: it still says Codex can read any file the user can read, since the restriction isn't verified through `codex exec`.
-  - Both options are in `/duet config` (aliases `scope`, `paths`), `plugin.json` and the README. Version 0.2.6 in `plugin.json` and the marketplace entry (the issue named 0.2.4; 0.2.4 and 0.2.5 had shipped).
-- **Considered and not taken:** `codexFsScope: project` as the default (waits for the `codex exec` probe and the owner); a private temp folder in the duet data for tools that need one (nothing shown to need it yet, and the probe will tell).
-- **What gets touched:** `hooks/duet-logic.ts` (`readOptions`, `parseWritePaths`, `profileArgs`, `codexArgv`, `reviewArgv`, `CONFIG_FIELDS`), `hooks/register.tsx` (`runJob` and `review` pass the scope and the home folder; `routeToCodex` reads the home folder before the job starts, not inside `runJob`, so a background run reaches `process.run` as soon as before), `.claude-plugin/plugin.json`, the marketplace entry, README.
-- **Tests:** `codexArgv` and `reviewArgv` with `fsScope` `project` (exactly two overrides, the table for each sandbox, `writePaths` narrowing, dropped paths, escaping) and `anything` or none (unchanged argv); `readOptions` for the two options; routed calls and a review, through `process.run`, with the profile and a named agent's folders.
-- **Done means:** all tests pass, validate is clean.
+  - The consent question is unchanged. It still says Codex can read any file the user can read. That is true under the default `anything`; under `project` it claims more access than Codex has, which is the safe side, and review and macOS/Windows are unconfirmed.
+  - Both options are in `/duet config` (aliases `scope`, `paths`), `plugin.json` and the README. Version 0.2.6 is in `plugin.json` and the marketplace entry. The issue named 0.2.4, but 0.2.4 and 0.2.5 had shipped.
+- **Considered and not taken:**
+  - `codexFsScope: project` as the default: that is the owner's call, and it depends on the upgrade check above.
+  - The profile with no `sandbox_mode` at all. That is OpenAI's "one system" advice, but it is unverified through `codex exec`. If a Codex lets `sandbox_mode` win, it would fall back to the user's `config.toml` (here `workspace-write`), not to the mode duet asked for.
+  - A private temp folder in the duet data for tools that need one. `mktemp` fails without `/tmp`, but no duet task has needed one yet.
+  - Removing the empty folders Codex leaves. That would mean deleting inside the user's project.
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `readOptions`, `parseWritePaths`, `profileArgs`, `codexArgv`, `reviewArgv` and `CONFIG_FIELDS`.
+  - `hooks/register.tsx`: `runJob` and `review` pass the scope and the home folder. `routeToCodex` reads the home folder before the job starts rather than inside `runJob`, so a background run reaches `process.run` as soon as it did before.
+  - `.claude-plugin/plugin.json`, the marketplace entry and the README.
+- **Tests:**
+  - `codexArgv` and `reviewArgv` with `fsScope` `project`: the two overrides; `-c sandbox_mode` and never `-s`; the table for each sandbox; `writePaths` narrowing; dropped paths; escaping.
+  - The same with `fsScope` `anything` or none: the argv is unchanged.
+  - `readOptions` for the two options.
+  - Routed calls and a review, through `process.run`, with the profile and a named agent's folders.
+  - Three red tests first pinned `-s` beside the profile. They were fixed in their own commit, citing the first `codex exec` run.
+- **Done means:** all tests pass, validate is clean, and the `codex exec` runs above are recorded.
