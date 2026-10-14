@@ -669,6 +669,7 @@ export type RunEvent =
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
   | { type: 'block'; reason: string; next: string; keep?: Kept }
   | { type: 'merged'; merge: MergeCheck }
+  | { type: 'made'; keep: Kept }
   | { type: 'resume' }
   | { type: 'stop' }
   | { type: 'publish' }
@@ -735,6 +736,8 @@ function blockedAt(run: Run, at: Step, reason: string, next: string): Run {
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
+  // The branch and folder preflight made land at any step, a stopped one too, so a Stop never loses them.
+  if (ev.type === 'made') return { ...run, ...ev.keep }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
   if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next) : run
   if (ev.type === 'resume') {

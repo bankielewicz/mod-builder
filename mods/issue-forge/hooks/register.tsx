@@ -103,6 +103,8 @@ let liveWork: { root: string; workRoot: string } | null = null
  * can't be ended, only refused).
  */
 let knownRefs = new Set<string>()
+/** The last run write queued: updateRun chains each one after it. */
+let runWrites: Promise<void> = Promise.resolve()
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
 
 function readOptions(raw: unknown): Options {
@@ -150,14 +152,31 @@ async function loadRun($: EngineInterface, root: string): Promise<Run | null> {
   return ((await $.store.get(storeKey(root))) as Run | undefined) ?? null
 }
 
-async function saveRun($: EngineInterface, run: Run): Promise<Run> {
+/**
+ * Every write of a stored run, one at a time, so none is computed from a read another write has since made stale
+ * (PR #41 round 4). `change` gets the run as stored now and returns what to store, or null to write nothing.
+ * Resolves to the run written, or null.
+ */
+async function updateRun($: EngineInterface, root: string, change: (stored: Run | null) => Run | null): Promise<Run | null> {
+  const before = runWrites
+  let done = () => {}
+  runWrites = new Promise<void>(resolve => (done = resolve))
+  try {
+    await before
+    const next = change(await loadRun($, root))
+    if (!next) return null
+    await $.store.set(storeKey(root), next)
+    await update($, runAtom, () => next)
+    for (const ref of refsOf(next)) knownRefs.add(ref)
+    return next
+  } finally {
+    done()
+  }
+}
+
+async function saveRun($: EngineInterface, run: Run): Promise<void> {
   // A stop wins every race: a write that would bring a stopped run back is dropped.
-  const stored = run.step === 'stopped' ? null : await loadRun($, run.root)
-  if (stored && stored.id === run.id && stored.step === 'stopped') return stored
-  await $.store.set(storeKey(run.root), run)
-  await update($, runAtom, () => run)
-  for (const ref of refsOf(run)) knownRefs.add(ref)
-  return run
+  await updateRun($, run.root, stored => (run.step !== 'stopped' && stored?.id === run.id && stored.step === 'stopped' ? null : run))
 }
 
 /**
@@ -165,11 +184,8 @@ async function saveRun($: EngineInterface, run: Run): Promise<Run> {
  * Stop pressed before preflight returns never loses them (Codex, PR #41 round 3).
  */
 async function recordMade($: EngineInterface, run: Run, made: Kept): Promise<void> {
-  const stored = await loadRun($, run.root)
-  if (!stored || stored.id !== run.id) return
-  const next: Run = { ...stored, branch: made.branch, workRoot: made.workRoot, base: made.base }
-  await $.store.set(storeKey(run.root), next)
-  await update($, runAtom, () => next)
+  const now = await $.clock.now()
+  await updateRun($, run.root, stored => (stored?.id === run.id ? advance(stored, { type: 'made', keep: made }, now) : null))
 }
 
 /** Adds agents to the repository's known list (memory and store); they are refused tools unless live. */
@@ -755,12 +771,11 @@ async function drive($: EngineInterface, root: string, runId: string, mayAsk: bo
         // The merge is checked ahead only for a question; publish checks it again for the PR body.
         if (options.confirmPublish) {
           const merge = await mergeCheck($, run)
-          // A Publish or Stop pressed during the check moved the run on: its result is dropped, never written over them.
-          const fresh = await loadRun($, root)
-          if (!fresh || fresh.id !== runId || fresh.step !== 'ready' || !isMine()) return
-          const checked = await saveRun($, advance(fresh, { type: 'merged', merge }, await $.clock.now()))
-          // saveRun hands back a stop that landed after the check above: only a run still ready and driven is asked about.
-          if (checked.step !== 'ready' || !isMine()) return
+          const at = await $.clock.now()
+          // A Publish or Stop pressed during the check moved the run on: its result lands only on a run still ready and driven.
+          const checked = await updateRun($, root, stored => (stored?.id === runId && stored.step === 'ready' && isMine() ? advance(stored, { type: 'merged', merge }, at) : null))
+          // One pressed while the result was written takes the run over: only a run still driven is asked about.
+          if (!checked || !isMine()) return
           if (!(await confirmPublish($, checked))) return
         }
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
@@ -829,7 +844,8 @@ async function startRun($: EngineInterface, issue: number): Promise<string> {
   const existing = await loadRun($, root)
   if (isActive(existing) && existing) return `a run is already active here.\n${statusText(existing, driving?.runId === existing.id, await $.clock.now())}`
   const now = await $.clock.now()
-  const run = await saveRun($, newRun(`${issue}-${now}`, root, issue, now))
+  const run = newRun(`${issue}-${now}`, root, issue, now)
+  await saveRun($, run)
   await update($, demoAtom, () => null)
   void openPane($).catch(() => undefined)
   startDrive($, root, run.id)
@@ -876,7 +892,9 @@ async function publishRun($: EngineInterface): Promise<string> {
   if (!root || !run || run.step !== 'ready') return run ? `#${run.issue} isn't ready to publish (${run.step}).` : 'no run to publish here.'
   // A drive waiting on the publish question is taken over: when that question is answered, it finds the run moved on.
   if (driving?.runId === run.id) driving = null
-  await saveRun($, advance(run, { type: 'publish' }, await $.clock.now()))
+  const now = await $.clock.now()
+  const moved = await updateRun($, root, stored => (stored?.id === run.id && stored.step === 'ready' ? advance(stored, { type: 'publish' }, now) : null))
+  if (!moved) return `#${run.issue} moved on before it could be published; /issue-forge status says where it is.`
   startDrive($, root, run.id, false)
   return `publishing #${run.issue}: pushing ${run.branch} and opening a pull request against ${run.base}.`
 }
@@ -893,9 +911,10 @@ async function stopRun($: EngineInterface): Promise<string> {
     delete waiting[id]
     w.reject(new Error('stopped'))
   }
-  await saveRun($, advance(run, { type: 'stop' }, await $.clock.now()))
+  const now = await $.clock.now()
+  const stopped = await updateRun($, run.root, stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
   $.ui.status(undefined)
-  return `stopped #${run.issue}. Its branch ${run.branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
+  return `stopped #${run.issue}. Its branch ${(stopped ?? run).branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
 }
 
 async function statusOf($: EngineInterface): Promise<string> {
