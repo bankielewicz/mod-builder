@@ -191,7 +191,7 @@ async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
     if (parentOf(dir) === dir || (await $.fs.exists(`${dir}/.git`).catch(() => false))) break
   }
   const home = await homeDir($)
-  const user = `${home.replace(/\/+$/, '')}/.claude/agents`
+  const user = `${home.replace(/\\/g, '/').replace(/\/+$/, '')}/.claude/agents`
   return home && !folders.includes(user) ? [...folders, user] : folders
 }
 
