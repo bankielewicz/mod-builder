@@ -379,3 +379,12 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Fix:** with `failed` 0 on a failed Test, `summaryOfRun` says `tests did not run` (so the toast reads `✕ <mod>: tests did not run. Press F in Mod Lab to fix`) instead of `1 test failing`. `fixPromptOf` with `failedCount` 0 on Test writes `Fix the Test run in <path> (the tests did not run)` and quotes the error lines, instead of `Fix the 0 failing tests`. `fillFix` already passed the stored `failed` (0) through, so `register.tsx` is unchanged.
 - **Known edge:** a run killed after some `(fail)` lines but before bun's ` N fail` summary also has `failed` 0, so it reads `tests did not run`; its `(fail)` lines are still the errors.
 - **Tests:** 96 (logic and UI). The 7 new ones (4 logic, 3 UI, with the `test-none.ts` fixture) fail on 0.2.4.
+
+## Change 0.2.6 (2026-10-14)
+
+> For issue-forge 0.2.0 (PR #41). 0.2.5 went to issue #11's fix (PR #47), which merged while this PR was open.
+
+- **Changed:** in `references/gotchas.md`, the hand-back entry now says `<agent-message from="<name>">` is a named agent's shape with agent teams off; with them on, a named agent is a teammate and hands back another way.
+- **New:** four `[probe]` entries under "Subagents a mod spawns", probed on 2.1.296 for issue-forge's P4. With agent teams on, a named `$.agent.spawn` starts a teammate, whose hand-back arrives as a `session.receive` (no `prompt.submit`), and `{ consumed }` keeps the main model idle. Inside tmux with the default teammate mode, a named spawn of a plugin-registered agent type is refused, and `teammateMode: "in-process"` lets it start. A variable in `settings.json`'s `env` overrides the shell's. `$.agent.spawn`'s `cwd` is ignored, and a `tool.call` rewrite of the Bash command moves the agent.
+- **Unchanged:** Mod Lab's code and tests.
+- **Version:** 0.2.6 in `plugin.json` and the marketplace entry.
