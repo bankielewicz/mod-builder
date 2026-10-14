@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -28,7 +28,8 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('command.register', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: '/w' }))
   on('session.id', () => ({ value: 's1' }))
-  on('env.get', ($: any, e: any) => ({ value: (o.env ?? { HOME: '/home/u' })[e.name] }))
+  // `denyEnv`, read at call time: that variable's lookup fails, as a broken engine call would.
+  on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   on('fs.read', ($: any, e: any) => {
     const text = seen.files[e.path]
     if (text === undefined) return { deny: 'ENOENT: no such file' }
@@ -325,6 +326,21 @@ describe('review admission', () => {
     const env = seen.env[0]!
     for (const k of BLANKED) expect([k, env[k]]).toEqual([k, ''])
     for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
+  })
+
+  test('a review that fails after it was admitted ends as error and frees its slot, so the next review runs (PR #39 review round 2)', { options: { codexConsent: 'allow', maxConcurrent: 1, codexFsScope: 'project' } }, async ($: any, on: any) => {
+    const o: { denyEnv?: string } = {}
+    const seen = engine(on, o)
+    await start($)
+    o.denyEnv = 'HOME'
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv).toEqual([])
+    o.denyEnv = undefined
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(1)
+    expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
   })
 })
 
