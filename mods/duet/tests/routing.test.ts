@@ -405,6 +405,16 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(fs).not.toContain(pair('/w', 'write'))
   })
 
+  test('a codexWritePaths folder that is dropped (here: not there yet, so Codex could not create it) is named in the result Claude reads (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: 'red-test-writer=tests;src' } }, async ($, on) => {
+    const seen = engine(on, { agents, real: { '/w/tests': null } })
+    await start($)
+    const r: any = await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    expect(filesystem(seen.argv[0]!)).toContain(pair('/w/src', 'write'))
+    const text = r.result.content[0].text as string
+    expect(text).toContain('not writable: tests')
+    expect(text).not.toContain('not writable: tests, src')
+  })
+
   test('in a linked worktree, a routed run and a review can read git\'s own folders, read-only (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
     const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n/main/.git' })
     await start($)

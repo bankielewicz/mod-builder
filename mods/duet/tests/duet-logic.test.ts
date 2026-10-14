@@ -4,7 +4,7 @@ import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
   isInside, isProtectedPath, isRouted, resolveFrom, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
-  statsText, summarize, verdictOf,
+  footerOf, statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
 } from '../hooks/duet-logic'
@@ -786,5 +786,14 @@ describe('PR #39 review round 2: git\'s answers without --path-format', () => {
     expect(resolveFrom('/w', '.git')).toBe('/w/.git')
     expect(resolveFrom('/w/sub', '../../main/./.git')).toBe('/main/.git')
     expect(resolveFrom('/w', '../../..')).toBe('/')
+  })
+})
+
+describe('PR #39 review round 2: a dropped write folder is reported', () => {
+  test('the footer names the codexWritePaths folders that were dropped; with none, it is as before', () => {
+    const base = { id: 'x1', model: '', sandbox: 'workspace-write' as const, base: 'abc1234', candidate: '' }
+    const footer = footerOf({ ...base, dropped: ['tests', 'cfg'] } as never)
+    expect(footer).toContain('not writable: tests, cfg')
+    expect(footerOf({ ...base, dropped: [] } as never)).toBe(footerOf(base))
   })
 })
