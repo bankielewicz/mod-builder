@@ -18,7 +18,7 @@ import {
   branchName,
   canRetry,
   checkoutState,
-  cleanupCommand,
+  cleanupLine,
   commitMessage,
   coverageLine,
   demoRun,
@@ -49,6 +49,7 @@ import {
   profileProblems,
   profileStatusText,
   publishQuestion,
+  routedRedBlock,
   splitZ,
   stashApplyArgv,
   stashMessage,
@@ -62,7 +63,7 @@ import {
   workspacePlan,
   worktreePath,
 } from './issue-forge-logic'
-import type { CommandResult, DemoState, Gate, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
+import type { CommandResult, DemoState, Gate, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -271,7 +272,9 @@ async function stashAll($: EngineInterface, run: Run, message: string): Promise<
 
 // ── Steps ─────────────────────────────────────────────────────────────────
 
-type Blocked = { type: 'block'; reason: string; next: string }
+/** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
+type Made = { branch: string; workRoot: string; base: string }
+type Blocked = { type: 'block'; reason: string; next: string; keep?: Made }
 const block = (reason: string, next: string): Blocked => ({ type: 'block', reason, next })
 
 async function issueCheck($: EngineInterface, run: Run): Promise<Blocked | { title: string; body: string; url: string }> {
@@ -305,45 +308,54 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   return problems.length > 0 ? { profile: null, errors: problems } : { profile: p, errors: [] }
 }
 
+/** `git fetch origin <base>`, or the block naming why it failed. */
+async function fetchBase($: EngineInterface, cwd: string, base: string): Promise<Blocked | null> {
+  await setActivity($, `git fetch origin ${base}`)
+  const fetched = await git($, cwd, ['fetch', 'origin', base])
+  return fetched.exitCode === 0 ? null : block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+}
+
+type Where = { kind: 'here' } | { kind: 'worktree'; worktreeDir: string; minutes: number }
+
 /**
  * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from origin/<base> before
  * anything is made or switched; a busy checkout is never branched in place.
  */
-async function whereToWork($: EngineInterface, issue: number, root: string, base: string): Promise<Blocked | { kind: 'here' | 'worktree'; worktreeDir: string }> {
+async function whereToWork($: EngineInterface, issue: number, root: string, base: string): Promise<Blocked | Where> {
   await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
   const shown = await git($, root, ['show', `origin/${base}:${PROFILE_FILE}`])
   const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
   if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
-  const { workspace, worktreeDir } = atBase.profile
+  const { workspace, worktreeDir, commandTimeoutMinutes } = atBase.profile
   await setActivity($, 'checking the checkout')
-  const [gitDir = '', commonDir = ''] = (await gitOut($, root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n')
   const porcelain = await gitOut($, root, ['status', '--porcelain'])
   const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-  const state = checkoutState({ gitDir, commonDir, porcelain, head, base })
+  const state = checkoutState({ porcelain, head, base })
   const plan = workspacePlan(workspace, state)
   if (plan.kind === 'block') return block(plan.reason, plan.next)
+  if (plan.kind === 'here') return { kind: 'here' }
+  // Everything a worktree needs is checked before anyone is asked for one.
+  const routed = routedRedBlock(options.redAgentType, true)
+  if (routed) return block(routed.reason, routed.next)
+  if ((await git($, root, ['check-ignore', '-q', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
   if (plan.kind === 'ask' && !(await chooseWorktree($, issue, root, state.why, worktreeDir))) {
     return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE}, or clean the checkout`)
   }
-  return { kind: plan.kind === 'here' ? 'here' : 'worktree', worktreeDir }
+  return { kind: 'worktree', worktreeDir, minutes: commandTimeoutMinutes }
 }
 
-/** Step 1 and 2: preconditions, where the run works, then the run's branch. */
-async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
+/** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree. */
+async function makeBranch($: EngineInterface, run: Run, issueBody: string): Promise<Blocked | Made> {
   const root = run.root
-  await setActivity($, 'checking gh and the issue')
-  const issue = await issueCheck($, run)
-  if ('type' in issue) return issue
   await setActivity($, `reading ${PROFILE_FILE}`)
   const { profile, errors } = await loadProfile($, root)
   if (!profile) return block(errors[0] ?? `no ${PROFILE_FILE} in ${root}`, `fix ${PROFILE_FILE} (see the README)`)
-  const asked = baseOf(profile, issue.body)
+  const asked = baseOf(profile, issueBody)
   const base = asked === profile.baseBranch ? asked : await chooseBase($, run.issue, asked, profile.baseBranch)
   if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profile.baseBranch}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
   stillDriving(run)
-  await setActivity($, `git fetch origin ${base}`)
-  const fetched = await git($, root, ['fetch', 'origin', base])
-  if (fetched.exitCode !== 0) return block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+  const unfetched = await fetchBase($, root, base)
+  if (unfetched) return unfetched
   const where = await whereToWork($, run.issue, root, base)
   if ('type' in where) return where
   const local = splitZ((await gitOut($, root, ['for-each-ref', '--format=%(refname:short)%00', `refs/heads/issue-${run.issue}-*`, `refs/heads/issue-${run.issue}`])).replace(/\n/g, ''))
@@ -351,29 +363,55 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     .split('\n')
     .map(line => line.split('refs/heads/')[1] ?? '')
     .filter(Boolean)
-  const branch = branchName(run.issue, issue.title, [...local, ...remote])
-  let workRoot = root
-  if (where.kind === 'worktree') {
-    const worktreeDir = where.worktreeDir
-    if ((await git($, root, ['check-ignore', '-q', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
-    workRoot = worktreePath(root, worktreeDir, branch)
-    if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
-    stillDriving(run)
-    await setActivity($, `git worktree add ${worktreeDir}/${branch}`)
-    const added = await git($, root, ['worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`])
-    if (added.exitCode !== 0) return block(`git worktree add failed: ${firstLine(added.stderr)}`, 'check the repository state')
-  } else {
-    stillDriving(run)
+  const branch = branchName(run.issue, run.title, [...local, ...remote])
+  stillDriving(run)
+  if (where.kind === 'here') {
     await setActivity($, `git switch -c ${branch}`)
     const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
     if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
+    return { branch, workRoot: root, base }
   }
-  const mergeBase = (await gitOut($, workRoot, ['merge-base', 'HEAD', `origin/${base}`])).trim()
-  // The profile whose commands run is the base's, not the checkout the run started from (which anyone may have pushed).
-  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
-  const trusted = await loadProfile($, workRoot)
-  if (!trusted.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
-  return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base, branch, mergeBase, profile: trusted.profile, workRoot }
+  const workRoot = worktreePath(root, where.worktreeDir, branch)
+  if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
+  await setActivity($, `git worktree add ${where.worktreeDir}/${branch}`)
+  // A full checkout can outlast git's 60 s on a slow disk: it runs like the profile's commands, on their timeout.
+  const added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
+  if (added.exit !== 0) {
+    const why = added.isTimedOut ? `timed out after ${where.minutes} min` : firstLine(added.tail) || 'no output'
+    return block(`git worktree add failed: ${why}`, `check ${workRoot} (git worktree remove --force removes a half-made one)`)
+  }
+  return { branch, workRoot, base }
+}
+
+/**
+ * Steps 1 and 2. A preflight that blocked after making its branch recorded it with the block, so a
+ * resume reuses that branch and folder instead of making another (Codex, PR #41).
+ */
+async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
+  await setActivity($, 'checking gh and the issue')
+  const issue = await issueCheck($, run)
+  if ('type' in issue) return issue
+  let made: Made
+  if (run.branch) {
+    made = { branch: run.branch, workRoot: workOf(run), base: run.base }
+    const unfetched = await fetchBase($, made.workRoot, made.base)
+    if (unfetched) return { ...unfetched, keep: made }
+  } else {
+    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body)
+    if ('type' in fresh) return fresh
+    made = fresh
+  }
+  try {
+    const mergeBase = (await gitOut($, made.workRoot, ['merge-base', 'HEAD', `origin/${made.base}`])).trim()
+    // The profile whose commands run is the base's, not the checkout the run started from (which anyone may have pushed).
+    await setActivity($, `reading ${PROFILE_FILE} from origin/${made.base}`)
+    const trusted = await loadProfile($, made.workRoot)
+    if (!trusted.profile) return { ...block(`origin/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
+    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot }
+  } catch (err) {
+    if (err instanceof Stopped) throw err
+    return { ...block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status'), keep: made }
+  }
 }
 
 /**
@@ -382,9 +420,8 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
  */
 async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
   const root = workOf(run)
-  await setActivity($, `git fetch origin ${run.base}`)
-  const fetched = await git($, root, ['fetch', 'origin', run.base])
-  if (fetched.exitCode !== 0) return block(`git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+  const unfetched = await fetchBase($, root, run.base)
+  if (unfetched) return unfetched
   const hasNoOwnCommits = (await git($, root, ['merge-base', '--is-ancestor', 'HEAD', `origin/${run.base}`])).exitCode === 0
   if (hasNoOwnCommits) {
     stillDriving(run)
@@ -425,6 +462,8 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   })
   const subagentType = which === 'red' ? options.redAgentType : `issue-forge:${which}`
   const isOwn = subagentType.startsWith('issue-forge:')
+  const routed = routedRedBlock(subagentType, workOf(run) !== run.root)
+  if (routed) return block(routed.reason, routed.next)
   const name = isOwn ? agentName(run, which) : undefined
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
@@ -435,18 +474,25 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   // Wait before any other await, so a fast agent's turn.complete finds its waiter.
   const answer = agentId && !isInline ? waitForAnswer(agentId) : null
   void answer?.catch(() => undefined)
+  // Steer the agent from its first tool call: set before any other await, like the waiter.
+  if (agentId) {
+    liveAgent = agentId
+    liveWork = { root: run.root, workRoot: workOf(run) }
+  }
   // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
   const latest = await loadRun($, run.root)
   if (!latest || latest.id !== run.id || latest.step !== run.step || !isDriving(run)) {
     if (agentId) {
       delete waiting[agentId]
+      if (liveAgent === agentId) {
+        liveAgent = null
+        liveWork = null
+      }
       await rememberAgents($, run.root, name ? [agentId, name] : [agentId])
     }
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
-  liveAgent = agentId
-  liveWork = { root: run.root, workRoot: workOf(run) }
   await rememberAgents($, run.root, name ? [agentId, name] : [agentId])
   await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()))
   await setActivity($, 'agent working')
@@ -551,7 +597,9 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
     const tip = (await gitOut($, workOf(run), ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
-  await $.fs.write(body, prBody(run))
+  // The PR body says what was true when it was pushed: the merge is checked again here.
+  const merge = await mergeCheck($, run)
+  await $.fs.write(body, prBody({ ...run, merge }))
   stillDriving(run)
   await setActivity($, `git push origin ${run.branch}`)
   const pushed = await git($, workOf(run), ['push', 'origin', run.gatedHead ? `${run.gatedHead}:refs/heads/${run.branch}` : run.branch])
@@ -560,7 +608,7 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   await setActivity($, 'gh pr create')
   const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
-  return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '' }
+  return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '', merge }
 }
 
 /**
@@ -587,15 +635,16 @@ async function chooseWorktree($: EngineInterface, issue: number, root: string, w
   }
 }
 
-/** Case 1 at ready: does the gated commit still merge into a freshly fetched base? It informs, never blocks. */
-async function mergeCheck($: EngineInterface, run: Run): Promise<Run> {
+/** Case 1: does the gated commit still merge into a freshly fetched base? It informs, never blocks, and never throws. */
+async function mergeCheck($: EngineInterface, run: Run): Promise<MergeCheck> {
   const work = workOf(run)
   await setActivity($, `checking the merge with origin/${run.base}`)
   try {
     const fetched = await git($, work, ['fetch', 'origin', run.base])
-    if (fetched.exitCode !== 0) return { ...run, merge: { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` } }
-    const r = await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`])
-    return { ...run, merge: parseMergeTree(r) }
+    if (fetched.exitCode !== 0) return { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` }
+    return parseMergeTree(await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`]))
+  } catch (err) {
+    return { isClean: false, files: [], error: err instanceof Error ? err.message : String(err) }
   } finally {
     await setActivity($, null)
   }
@@ -651,8 +700,11 @@ async function drive($: EngineInterface, root: string, runId: string, mayAsk: bo
       if (!run || run.id !== runId || !isMine()) return
       if (run.step === 'ready' && mayAsk) {
         mayAsk = false
-        const checked = await saveRun($, await mergeCheck($, run))
-        if (!isMine()) return
+        const merge = await mergeCheck($, run)
+        // A Publish or Stop pressed during the check moved the run on: its result is dropped, never written over them.
+        const fresh = await loadRun($, root)
+        if (!fresh || fresh.id !== runId || fresh.step !== 'ready' || !isMine()) return
+        const checked = await saveRun($, advance(fresh, { type: 'merged', merge }, await $.clock.now()))
         if (!(await confirmPublish($, checked))) return
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, root)
@@ -941,7 +993,7 @@ export const register: Register = (on, raw) => {
         {view === 'empty' && <Text dimColor>/issue-forge demo shows every state.</Text>}
         {view === 'stopped' && run && <Text dimColor>{truncate(`Run #${run.issue} stopped; its branch ${run.branch || '(none)'} is kept.`, cols)}</Text>}
         {view === 'stopped' && <Text dimColor>/issue-forge &lt;issue number&gt; starts another.</Text>}
-        {(view === 'stopped' || view === 'done') && run && cleanupCommand(run) && <Text dimColor>{truncate(`after the merge: ${cleanupCommand(run)}`, cols)}</Text>}
+        {(view === 'stopped' || view === 'done') && run && cleanupLine(run) && <Text dimColor>{truncate(cleanupLine(run) ?? '', cols)}</Text>}
         {view === 'blocked' && run?.blocked && (
           <Text color="#E06C6C">{truncate(`✕ blocked at ${run.blocked.at}: ${run.blocked.reason}`, cols)}</Text>
         )}

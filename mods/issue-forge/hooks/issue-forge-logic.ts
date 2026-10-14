@@ -641,11 +641,12 @@ export type RunEvent =
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string }
+  | { type: 'block'; reason: string; next: string; keep?: { branch: string; workRoot: string; base: string } }
+  | { type: 'merged'; merge: MergeCheck }
   | { type: 'resume' }
   | { type: 'stop' }
   | { type: 'publish' }
-  | { type: 'published'; url: string }
+  | { type: 'published'; url: string; merge?: MergeCheck }
 
 export const WORKING: readonly Step[] = ['preflight', 'baseline', 'red', 'gateR', 'green', 'gateG', 'refactor', 'gateF', 'publishing']
 
@@ -708,7 +709,8 @@ function blockedAt(run: Run, at: Step, reason: string, next: string): Run {
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
-  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt(run, run.step, ev.reason, ev.next) : run
+  // A preflight that made the branch before it blocked keeps it, so resume reuses it.
+  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next) : run
   if (ev.type === 'resume') {
     if (isWorking(run.step)) {
       const phase = phaseOf(run.step)
@@ -775,9 +777,11 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       return blockedAt(gated, 'gateG', `gate G failed after ${run.used.green} attempts: ${firstFailure(ev.gate)}`, 'fix it by hand on the branch')
     }
     case 'ready':
+      if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'publish' ? { ...run, step: 'publishing', times: start(run, 'publish', now) } : run
     case 'publishing':
-      return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, times: end(run, 'publish', now) } : run
+      if (ev.type === 'merged') return { ...run, merge: ev.merge }
+      return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) } : run
     default:
       return run
   }
@@ -785,21 +789,18 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
 
 // ── Workspace (Change 0.2.0) ─────────────────────────────────────────────
 
-export type CheckoutFacts = { gitDir: string; commonDir: string; porcelain: string; head: string; base: string }
-export type CheckoutState = { isLinkedWorktree: boolean; isBusy: boolean; why: string }
+export type CheckoutFacts = { porcelain: string; head: string; base: string }
+export type CheckoutState = { isBusy: boolean; why: string }
 export type WorkspacePlan = { kind: 'here' } | { kind: 'worktree' } | { kind: 'ask' } | { kind: 'block'; reason: string; next: string }
 
-/**
- * Whether the session's checkout may be branched in place. Busy: it has changes, or HEAD isn't the
- * base (another branch, or detached). `--git-dir` differs from `--git-common-dir` in a linked worktree.
- */
+/** Whether the session's checkout may be branched in place. Busy: it has changes, or HEAD isn't the base (another branch, or detached). */
 export function checkoutState(f: CheckoutFacts): CheckoutState {
   const changed = f.porcelain.split('\n').filter(line => line.trim() !== '').length
   const reasons = [
     changed > 0 ? `${changed} changed file${changed === 1 ? '' : 's'}` : '',
     f.head === f.base ? '' : f.head === 'HEAD' ? 'detached HEAD' : `on ${f.head}`,
   ].filter(Boolean)
-  return { isLinkedWorktree: normalizePath(f.gitDir) !== normalizePath(f.commonDir), isBusy: reasons.length > 0, why: reasons.join(', ') }
+  return { isBusy: reasons.length > 0, why: reasons.join(', ') }
 }
 
 /** `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. */
@@ -814,11 +815,14 @@ export function worktreePath(root: string, dir: string, branch: string): string 
   return normalizePath(`${root}/${dir}/${branch}`)
 }
 
-/** `git merge-tree --write-tree --name-only`: exit 0 clean, 1 conflicts (the names follow the tree id), else it couldn't run. */
+/**
+ * `git merge-tree --write-tree --name-only -z`: exit 0 clean, 1 conflicts (the names follow the tree id,
+ * NUL-separated), else it couldn't run (stderr's first line, or the exit code).
+ */
 export function parseMergeTree(r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
   if (r.exitCode === 0) return { isClean: true, files: [] }
-  if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split('\n').slice(1).filter(line => line.trim() !== ''))] }
-  return { isClean: false, files: [], error: r.stderr.trim().replace(/\n[\s\S]*$/, '') }
+  if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split(/\0|\n/).slice(1).filter(name => name.trim() !== ''))] }
+  return { isClean: false, files: [], error: r.stderr.trim().replace(/\n[\s\S]*$/, '') || `exit ${r.exitCode}` }
 }
 
 /** Where git, the profile's commands and the agents work; runs stored before 0.2.0 have only `root`. */
@@ -880,12 +884,23 @@ export function cleanupCommand(run: Run): string | null {
   return isWorktreeRun(run) && run.workRoot ? `git worktree remove ${shellQuote(run.workRoot)}` : null
 }
 
-export function cleanupLine(_run: Run): string | null {
-  return null
+/** The cleanup advice for a worktree run: after its PR merges, or, stopped, once it isn't needed. */
+export function cleanupLine(run: Run): string | null {
+  const command = cleanupCommand(run)
+  if (!command) return null
+  return `${run.step === 'stopped' ? 'when you no longer need it' : 'once the PR merges'}: ${command}`
 }
 
-export function routedRedBlock(_redAgentType: string, _isWorktree: boolean): { reason: string; next: string } | null {
-  return null
+/**
+ * A red type that isn't the mod's own is spawned unnamed so duet may route it to Codex, which runs in the
+ * session's folder whatever the spawn says: in a worktree run it would edit the wrong checkout.
+ */
+export function routedRedBlock(redAgentType: string, isWorktree: boolean): { reason: string; next: string } | null {
+  if (!isWorktree || redAgentType.startsWith(`${NAME}:`)) return null
+  return {
+    reason: `redAgentType ${redAgentType} can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder`,
+    next: `set redAgentType to ${NAME}:red, or "workspace" to "here" in ${PROFILE_FILE}`,
+  }
 }
 
 export function mergeLine(run: Run): string | null {
@@ -1240,8 +1255,8 @@ export function statusText(run: Run | null, isDriving: boolean, now: number): st
   else if (view === 'ready') lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
   else if (view === 'done') lines.push(`done: ${run.prUrl ?? ''}`)
   else lines.push(`${run.step} · ${badgeOf(run, now)}`)
-  const cleanup = cleanupCommand(run)
-  if (cleanup) lines.push(`worktree: ${run.workRoot} (once the PR merges: ${cleanup})`)
+  const cleanup = cleanupLine(run)
+  if (cleanup) lines.push(`worktree: ${run.workRoot} (${cleanup})`)
   if (run.baseline) lines.push(`baseline: total lines ${pctText(run.baseline.lines)} · branches ${pctText(run.baseline.branches)}`)
   const cov = coverageLine(run)
   if (cov) lines.push(`coverage: ${cov}`)
