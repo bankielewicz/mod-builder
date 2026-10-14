@@ -645,8 +645,14 @@ function tomlString(s: string): string {
   return JSON.stringify(s)
 }
 
-/** The permission profile's name: not plain `duet`, since Codex merges a same-named profile from any loaded config into it. */
-const PROFILE = 'duet-mod-fs-scope'
+/**
+ * The permission profile's name. Codex merges a same-named profile from any loaded config into it,
+ * a trusted repository's `.codex/config.toml` included, so each run adds a nonce no config can know.
+ */
+function profileName(nonce = ''): string {
+  const suffix = nonce.replace(/[^A-Za-z0-9]/g, '')
+  return suffix ? `duet-mod-fs-scope-${suffix}` : 'duet-mod-fs-scope'
+}
 
 /** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
 /** An absolute path: `/…`, `\…` or a drive letter. */
@@ -667,7 +673,7 @@ export function folderUnder(cwd: string, folder: string): string | null {
  * A run's `codexFsScope` inputs: the scope, the home folder Codex is installed under, the folders its
  * agent may write, and folders outside the project it may read (git's own folders in a linked worktree).
  */
-type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[]; reads?: string[] }
+type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[]; reads?: string[]; nonce?: string }
 
 /**
  * The two `-c` overrides that make a `duet` permission profile the default (SPEC, Change 0.2.6): Codex's
@@ -692,7 +698,8 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
     if (!unique.has(key)) unique.set(key, access)
   }
   const table = [...unique].map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
-  return ['-c', `default_permissions="${PROFILE}"`, '-c', `permissions.${PROFILE}.filesystem={${table}}`]
+  const name = profileName(o.nonce)
+  return ['-c', `default_permissions="${name}"`, '-c', `permissions.${name}.filesystem={${table}}`]
 }
 
 /**
@@ -704,7 +711,7 @@ export function codexArgv(o: { sandbox: Sandbox; model: string; cwd: string } & 
   const sandbox: Sandbox = o.sandbox === 'workspace-write' ? 'workspace-write' : 'read-only'
   const isScoped = o.fsScope === 'project'
   const mode = isScoped ? ['-c', `sandbox_mode="${sandbox}"`] : ['-s', sandbox]
-  const profile = isScoped ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths, reads: o.reads }) : []
+  const profile = isScoped ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths, reads: o.reads, nonce: o.nonce }) : []
   return ['codex', 'exec', '--json', '--skip-git-repo-check', ...mode, ...NEVER_ASK, ...profile, '-C', o.cwd, ...(o.model ? ['-m', o.model] : []), '-']
 }
 
@@ -728,7 +735,7 @@ export function parseReviewArgs(args: string): ReviewTarget | null {
  */
 export function reviewArgv(target: ReviewTarget, model: string, scope?: { cwd: string } & FsProfile): string[] {
   const which = target.kind === 'uncommitted' ? ['--uncommitted'] : [`--${target.kind}`, target.ref]
-  const profile = scope?.fsScope === 'project' ? profileArgs({ sandbox: 'read-only', cwd: scope.cwd, home: scope.home, reads: scope.reads }) : []
+  const profile = scope?.fsScope === 'project' ? profileArgs({ sandbox: 'read-only', cwd: scope.cwd, home: scope.home, reads: scope.reads, nonce: scope.nonce }) : []
   return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...profile, ...which, ...(model ? ['-m', model] : [])]
 }
 

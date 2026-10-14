@@ -334,7 +334,7 @@ type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
 async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads }), j.prompt)
+  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
   const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
@@ -449,7 +449,7 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
   }
   Object.assign(task, { id: admitted.id })
   await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($) : [] }), undefined)
+  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($) : [], nonce: crypto.randomUUID() }), undefined)
   const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
