@@ -187,7 +187,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
     if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
     if (a[0] === 'worktree' && a[1] === 'add') {
-      if (world.worktreeAddFails) return fail(`fatal: could not create work tree dir '${a[5]}': Permission denied`, 128)
+      // As git 2.53 does: the progress line, then the reason, both on stderr.
+      if (world.worktreeAddFails) return fail(`Preparing worktree (new branch '${a[4]}')\nfatal: could not create work tree dir '${a[5]}': Permission denied`, 128)
       const path = a.includes('-b') ? a[5] ?? '' : a[2] ?? ''
       return world.worktrees.push(path), (world.wtProfiles[path] = world.baseProfile ?? PROFILE), ok()
     }
@@ -1013,5 +1014,18 @@ describe('review of PR #41, round 3', () => {
     engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
     await start($)
     expect((await run($, 'resume')).text).toBe(`still blocked: the run's worktree ${WT} is gone.`)
+  })
+})
+
+describe('review of PR #41, round 4', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+
+  test("a failed worktree add is named by git's fatal: line, not the progress line before it", async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddFails: true })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`blocked at preflight: git worktree add failed: fatal: could not create work tree dir '${WT}': Permission denied`)
   })
 })
