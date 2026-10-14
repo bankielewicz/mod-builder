@@ -89,10 +89,15 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - A new worktree has only what is committed: no `node_modules` or other untracked setup. Profile
   commands that need them fail in a worktree run (there's no setup command yet).
 - Agents ignore the folder they're spawned in, so in a worktree run the mod moves the live agent's
-  Bash, Grep and Glob into the worktree and refuses its edits outside it. A Bash command that `cd`s
-  elsewhere still runs there.
-- Needs git 2.38 or later (`merge-tree --write-tree` at ready; `rev-parse --path-format` at
-  preflight needs 2.31). An older git blocks preflight with `unexpected: git rev-parse failed`.
+  Bash, Grep and Glob into the worktree and refuses its Edit and Write outside it. That catches honest
+  mistakes; it isn't a sandbox. A Bash command that `cd`s elsewhere or names an absolute path still
+  reaches it, and a `here` run's agents can't Write outside the repository either (`/tmp` included).
+- A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: duet's Codex runs in
+  the session's folder whatever the spawn says, so a worktree run with one blocks before it starts.
+- A run started in a linked worktree puts its new worktree under that checkout's `worktreeDir`, so
+  the agents' writes stay under the session's folder.
+- The merge check at ready needs git 2.38 or later (`merge-tree --write-tree`); with an older git it
+  reads `merge check unavailable` and the run goes on.
 - Runs were checked with Claude Code's `auto` permission mode. In other modes a phase agent's Edit or
   Bash may wait on a permission prompt nobody sees; the pane then shows `agent working` until you
   `/issue-forge stop`. There's no agent timeout yet.
@@ -152,7 +157,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the repository root, under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
-| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; keeps the live agent's edits inside the run's folder, and in a worktree run rewrites its Bash, Grep and Glob to run there), `prompt.submit` (drops the run's own agents' hand-back messages) |
+| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit and Write outside the run's folder, and in a worktree run rewrites its Bash, Grep and Glob to run there), `prompt.submit` (drops the run's own agents' hand-back messages) |
 
 The agents read the issue body, which anyone who can file an issue writes. Run it only on
 repositories and issues you trust. The agents are told to treat the issue as requirements, never

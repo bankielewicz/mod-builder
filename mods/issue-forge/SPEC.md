@@ -617,3 +617,29 @@ the amended version.
     doesn't single out the Bash rewrite (P4 does).
   - As #27 predicts, each phase's hand-back reached the driver as a `<teammate-message>`, and the
     driver answered `ok` with no tools.
+
+## Review: PR #41 (2026-10-14)
+
+Codex left three inline findings on db7fdde, and its security review found none. `/code-review` agreed
+all three were real and found twelve more. Each was checked against the code. The fixed ones have a
+test (red `d858f05`; on the earlier code 8 UI tests and 5 logic tests fail), and green is `c20dcf8`.
+Six tests were corrected in their own commits, each giving its reason: `e2cb3d7`, `02d80a0`,
+`7bbdb6a`, and the toast-length, normalized-path and host-cap fixes.
+
+| Sev | Finding | Fix |
+|---|---|---|
+| P1 (Codex) | The merge-check result was saved over the stored run before checking the drive still owned it. A Publish pressed during the check was overwritten back to `ready`. | The result goes through `advance({ type: 'merged' })`, onto a freshly loaded run, only while it is still `ready` and driven. |
+| P2 (Codex) | A routed `redAgentType` (duet's Codex) runs in the session's folder, so in a worktree run it could edit the main checkout. | `routedRedBlock`: refused at preflight before anything is made, and again before a spawn. |
+| P2 (Codex) | A preflight block after `worktree add` or `switch -c` left the branch and folder unrecorded, so resume made `issue-N-…-2` and a second worktree. | The block event carries `keep: { branch, workRoot, base }`. A resumed preflight reuses them. |
+| 2 | A tool call in the gap between the spawn resolving and `liveAgent`/`liveWork` being set passed unsteered. | Both are set right after the spawn resolves, before any await. No kit test can reach this (gotchas.md: no `agentId` under the kit). |
+| 2 | A *thrown* git call in the merge check skipped the publish question with no word. | `mergeCheck` catches and records `merge check unavailable: <why>`. |
+| 3 | `worktree add` ran on git's 60 s cap. | It runs through `runLong` on the profile's timeout. `$.process.run` refuses more than 600000 ms, so that's the kit fallback's cap. |
+| 3 | The PR body said "At publish time" for a result computed at ready. | `publish()` checks again, and the result rides on the `published` event. |
+| 3 | `isLinkedWorktree` was never read, and its `rev-parse --path-format` call raised preflight's git floor to 2.31. | Removed. A run started in a linked worktree nests its worktree under that checkout on purpose, so the agents' writes stay under the session's folder. |
+| 3 | Under `ask`, "New worktree" was asked before the `worktreeDir` gitignore check. | The routed-red and gitignore checks come first. |
+| 3 | An empty stderr gave `merge check unavailable: `; names were read without `-z`. | `exit <code>`, and `-z` names (format checked live on git 2.43). |
+| doc | The edit guard was described as keeping agents inside the folder; it is a prefix check on Edit and Write. | README Limits says it catches mistakes and isn't a sandbox; a `here` run's agents can't Write outside the repository. |
+| doc | The design doc's §3 still described a clean-tree precondition and `switch -c` only. A stopped run said "once the PR merges". | §3 updated; `cleanupLine` words a stopped run's advice. |
+| tidy | Two comments on the guard; the same quoting written twice; the fetch-then-block sequence written three times. | One comment, `singleQuoted`, `fetchBase`. |
+| left | The register-level steering has no kit test, and the live run didn't single out the Bash rewrite. | Covered by `guardAction`'s logic tests and P4. P4's log also shows a named teammate's `tool.call` carrying the `agentId` its spawn returned. |
+| left | mod-builder 0.2.4 → 0.2.5 for `gotchas.md` only. | The owner decides. |

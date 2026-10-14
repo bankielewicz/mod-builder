@@ -68,17 +68,22 @@ without a coverage tool (the gate can't be measured, so the run refuses to start
 
 Every step names its commands and its pass condition. A failed condition stops the run in the
 state named, with the reason shown, unless the step says to retry. `<…>` values come from the
-profile (§4). Every command is an argument vector run in the repository root, with no shell
-unless the profile's own command uses one.
+profile (§4). Every command is an argument vector run in the run's folder (the repository root, or
+the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own command uses one.
 
 **Step 1: preconditions.** All must hold; otherwise the run stops in `blocked` with the first failure:
 1. `gh auth status` exits 0, and `gh issue view <N> --json number,title,body,state,url` shows `state: OPEN`.
-2. `git status --porcelain` is empty (a clean working tree).
-3. The profile exists and validates (§4.2).
-4. `git fetch origin <base>` succeeds.
+2. The profile exists and validates (§4.2).
+3. `git fetch origin <base>` succeeds.
+4. Where the run works (`workspace`, read from `git show origin/<base>:.issue-forge.json`): a
+   checkout is *busy* when `git status --porcelain` isn't empty or HEAD isn't `<base>`. `here`
+   blocks a busy checkout; `ask` offers a new worktree for one (no answer blocks); `worktree` always
+   makes one. A worktree needs `worktreeDir` ignored by git, and a red type the mod spawns itself.
 5. No other run for this repository is active (§7.4).
 
-**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> origin/<base>`. `<slug>` is the
+**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> origin/<base>` in the checkout, or
+`git worktree add --no-track -b issue-<N>-<slug> <worktreeDir>/<branch> origin/<base>`. A preflight
+that blocks after this keeps the branch and folder, and resuming it reuses them. `<slug>` is the
 issue title in lowercase, each run of non-alphanumeric characters replaced with one `-`, leading
 and trailing `-` removed, cut to 40 characters (then a trailing `-` removed again). If that branch
 name exists locally or on `origin`, append `-2`, `-3`, … until it doesn't.
