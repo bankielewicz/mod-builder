@@ -98,22 +98,29 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `prompt.submit` with origin `peer`, which starts a main-model turn. The text starts
   `<agent-message from="<agentId>">` for an unnamed agent. A `prompt.submit` hook that returns
   `{ drop: reason }` for its own agents keeps the main model idle, and the `turn.complete` still
-  arrives. The reason is shown to the person. In C0 a named agent's text started
-  `<agent-message from="<name>">`, but a named agent that runs as a teammate hands back another
+  arrives. The reason is shown to the person. With agent teams off, a named agent's text starts
+  `<agent-message from="<name>">`. With them on, a named agent is a teammate and hands back another
   way (next entry).
-- **[probe]** A named `$.agent.spawn` can start an in-process teammate: its answer and its
-  `$.agent.list()` entry carry `teammateId: "<name>@session-<id>"`. When that teammate finishes, the
+- **[probe]** With agent teams on (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), a named
+  `$.agent.spawn` starts a teammate: its answer and its `$.agent.list()` entry carry
+  `teammateId: "<name>@session-<id>"`, and its `agentId` reads `a<name>-<hex>`. With them off it's an
+  ordinary subagent (`agentId: "a<hex>"`, no `teammateId`). Either way, its `tool.call`s carry the
+  `agentId` the spawn returned. When that teammate finishes, the
   hand-back arrives as a `session.receive` with origin `{ kind: 'peer', teammate: '<name>',
   isVerified: true }`, no `agentId`, and text `{"type":"idle_notification",…,"result":"<answer>"}`.
   No `prompt.submit` fires for it, and it starts a main-model turn. Answering that `session.receive`
   with `{ consumed: reason }` keeps the main model idle, and the delivery didn't come again within
-  78 s. Probed on 2.1.296 (issue-forge P4, issue #27). What makes a named spawn a teammate here but
-  not in C0 isn't known.
-- **[probe]** Inside tmux, with the default teammate mode, a named `$.agent.spawn` of a type a plugin
-  registered is refused: `{ deny: "Agent type '<plugin>:<agent>' was registered at run time by a
+  78 s. Probed on 2.1.296 (issue-forge P4, issue #27). A mod whose named agents must stay quiet
+  handles both shapes: `{ drop }` in `prompt.submit` and `{ consumed }` in `session.receive`.
+- **[probe]** With agent teams on, inside tmux, with the default teammate mode, a named
+  `$.agent.spawn` of a type a plugin registered is refused: `{ deny: "Agent type '<plugin>:<agent>' was registered at run time by a
   plugin and exists only in this process; a pane-based teammate cannot run it. Spawn it with the
   Agent tool instead, or use in-process teammates." }`. With `--settings
-  '{"teammateMode":"in-process"}'` it starts. An unnamed spawn isn't affected.
+  '{"teammateMode":"in-process"}'` it starts. An unnamed spawn isn't affected, and with agent teams
+  off a named one isn't either. In cmux (no `TMUX` variable) the default runs teammates in-process.
+- **[probe]** A variable in `settings.json`'s `env` block overrides the same variable set in the
+  shell: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0 claude …` still made teammates while
+  `~/.claude/settings.json` set it to `1`. `--settings '{"env":{"…":"0"}}'` turned it off.
 - **[probe]** `$.agent.spawn`'s `cwd` is ignored. An unnamed agent and a named one (an in-process
   teammate), each spawned with `cwd: <session>/wt`, ran `pwd` in the session's folder. To keep an
   agent in another folder, a `tool.call` hook rewrites its Bash `command` to
