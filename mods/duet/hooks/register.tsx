@@ -345,7 +345,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = { id: string; type: string; cwd: string; home: string; writePaths: string[] | undefined; reads: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = { id: string; type: string; cwd: string; home: string; writePaths: string[] | undefined; dropped: string[]; reads: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
@@ -358,7 +358,7 @@ async function runJob($: EngineInterface, j: Job): Promise<Finished> {
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
   $.ui.toast((failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
-  return { run, failure, endedAt, footer: footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand }) }
+  return { run, failure, endedAt, footer: footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped }) }
 }
 
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */
@@ -410,8 +410,9 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     await ensureTicker($)
     const named = writePathsOf(options.writePaths, type)
     const writePaths = options.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
+    const dropped = named && writePaths ? named.filter(folder => !writePaths.includes(folder)) : []
     const reads = options.fsScope === 'project' ? await scopeReads($, cwd) : []
-    const job: Job = { id, type, cwd, home: await homeDir($), writePaths, reads, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
+    const job: Job = { id, type, cwd, home: await homeDir($), writePaths, dropped, reads, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`

@@ -917,8 +917,10 @@ export function tokensOf(run: Run): number {
 
 export const ONE_SHOT = 'one-shot run: start a new duet task to follow up'
 
-export function footerOf(t: { id: string; model: string; sandbox: Sandbox; base: string; candidate: string }): string {
-  return `[duet ${t.id} · codex${t.model ? ` ${t.model}` : ''} · sandbox ${t.sandbox} · base ${t.base} · ${t.candidate || 'no files changed by this run'} · ${ONE_SHOT}]`
+/** The result's last line; `dropped` names the codexWritePaths folders Codex could not write. */
+export function footerOf(t: { id: string; model: string; sandbox: Sandbox; base: string; candidate: string; dropped?: string[] }): string {
+  const dropped = t.dropped?.length ? ` · not writable: ${t.dropped.join(', ')} (missing, outside the project, or in .git, .codex or .agents)` : ''
+  return `[duet ${t.id} · codex${t.model ? ` ${t.model}` : ''} · sandbox ${t.sandbox} · base ${t.base} · ${t.candidate || 'no files changed by this run'}${dropped} · ${ONE_SHOT}]`
 }
 
 /** The Agent tool's `completed` record, answered for Codex's run. */
