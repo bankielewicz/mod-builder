@@ -158,6 +158,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |
+| Session | Reads the working directory (to name a mod's folder the way the session reads it) and the session id (to name the log file) |
 | Store | Its own `$.store`: last results per mod, which mods were announced, and edit generations |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |

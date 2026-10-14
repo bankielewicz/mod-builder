@@ -78,10 +78,15 @@ import {
   pushLine,
   shouldLog,
 } from '../hooks/mod-builder-logic'
+import * as Logic from '../hooks/mod-builder-logic'
 import { testFail } from './fixtures/test-fail'
 import { testPass } from './fixtures/test-pass'
 import { validateClean } from './fixtures/validate-clean'
 import { validateMissing } from './fixtures/validate-missing'
+
+/** Read off the namespace, so a rule that is not there yet fails its assertion instead of the import. */
+const displayPathOf = (path: string, cwd: string | null): string | undefined =>
+  (Logic as unknown as { displayPathOf?: (path: string, cwd: string | null) => string }).displayPathOf?.(path, cwd)
 
 const EMPTY: FileFacts = {
   name: 'git-branch',
@@ -245,7 +250,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('summary, masthead, badge', () => {
-    const view = (lights: ModView['lights']): ModView => ({ ...viewOf(EMPTY, {}, [], null, false), lights })
+    const view = (lights: ModView['lights']): ModView => ({ ...viewOf(EMPTY, {}, [], null, false, null, null, 'mods/git-branch'), lights })
     const green = view(STAGES.map(() => 'passed'))
     const building = view(['passed', 'running', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending'])
     const failing = view(['passed', 'passed', 'failed', 'pending', 'pending', 'pending', 'pending', 'pending'])
@@ -303,7 +308,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('fix prompt and done line use the design copy', () => {
-    const text = fixPromptOf('inbox-zero', 'Test', ['archives threads older than 30 days', '  expected 3 archived, received 0', '  at test/archive.test.ts:42:7'], 2)
+    const text = fixPromptOf('inbox-zero', 'Test', ['archives threads older than 30 days', '  expected 3 archived, received 0', '  at test/archive.test.ts:42:7'], 2, 'mods/inbox-zero')
     expect(text).toBe(
       'Fix the 2 failing tests in mods/inbox-zero. First failure, from Mod Lab:\n' +
         '    ✕ archives threads older than 30 days\n' +
@@ -311,16 +316,42 @@ describe('mod-builder-logic', () => {
         '      at test/archive.test.ts:42:7\n' +
         'Then re-run Test.',
     )
-    expect(fixPromptOf('x', 'Validate', ['oops'])).toStartWith('Fix the Validate problem in mods/x.')
+    expect(fixPromptOf('x', 'Validate', ['oops'], 1, 'mods/x')).toStartWith('Fix the Validate problem in mods/x.')
     const withGates: Results = { ...GREEN, Validate: { ...GREEN.Validate!, validate: { ok: true, hooks: [], calls: [], gates: [{ hook: 'tool.call', hasCatch: true }], errors: [], warnings: [] } } }
     expect(doneLineOf(withGates)).toBe('8/8 stages · 12 tests · validate clean · 1 gate')
   })
 
+  test('fix prompt names the path it is given, not mods/<name>', () => {
+    expect(fixPromptOf('foo', 'Test', ['x'], 1, '/work/mods/foo')).toStartWith('Fix the failing test in /work/mods/foo. First failure, from Mod Lab:')
+    expect(fixPromptOf('foo', 'Validate', ['x'], 2, 'other/foo')).toStartWith('Fix the Validate problems in other/foo. First failure, from Mod Lab:')
+  })
+
+  test('fix prompt says "the current folder" when the mod folder is the working directory, not "in .."', () => {
+    expect(fixPromptOf('foo', 'Test', ['x'], 1, '.')).toStartWith('Fix the failing test in the current folder. First failure, from Mod Lab:')
+  })
+
+  test('view: the detail header shows the display path it is given, with a trailing slash', () => {
+    expect(viewOf(FULL, GREEN, [], null, true, null, null, '/work/mods/git-branch').path).toBe('/work/mods/git-branch/')
+    expect(viewOf(FULL, {}, [], null, false, null, null, 'other/git-branch').path).toBe('other/git-branch/')
+  })
+
+  test('displayPathOf: inside the cwd it is relative, the cwd itself is ".", anything else stays absolute', () => {
+    expect(displayPathOf('/m/mods/foo', '/m')).toBe('mods/foo')
+    expect(displayPathOf('/m', '/m')).toBe('.')
+    expect(displayPathOf('/work/mods/foo', '/m')).toBe('/work/mods/foo')
+    expect(displayPathOf('/m2/mods/foo', '/m')).toBe('/m2/mods/foo')
+  })
+
+  test('displayPathOf: with no working directory to compare, the path stays absolute', () => {
+    expect(displayPathOf('/m/mods/foo', null)).toBe('/m/mods/foo')
+    expect(displayPathOf('/m/./mods//foo', null)).toBe('/m/mods/foo')
+  })
+
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {
-    const freshView = viewOf(FULL, GREEN, [], null, true)
+    const freshView = viewOf(FULL, GREEN, [], null, true, null, null, 'mods/git-branch')
     expect(freshView).toMatchObject({ status: 'ready to share', isFresh: true, doneLine: '8/8 stages · 12 tests · validate clean', version: '0.1.0', path: 'mods/git-branch/', time: '0:03' })
-    expect(viewOf(FULL, GREEN, [], null, false)).toMatchObject({ status: '12 tests · clean', isFresh: false, doneLine: null })
-    expect(viewOf(FULL, {}, [], null, true).isFresh).toBe(false)
+    expect(viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')).toMatchObject({ status: '12 tests · clean', isFresh: false, doneLine: null })
+    expect(viewOf(FULL, {}, [], null, true, null, null, 'mods/git-branch').isFresh).toBe(false)
   })
 
   test('paths and facts from a folder read', () => {
@@ -373,7 +404,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('band: real progress only; runs, then reports, then the demo; three at most', () => {
-    const view = viewOf(FULL, {}, [], null, false)
+    const view = viewOf(FULL, {}, [], null, false, null, null, 'mods/git-branch')
     const entries = bandEntriesOf(
       [{ mod: 'git-branch', kind: 'Test', startedAt: 1, passed: 7, failed: 0, total: 12 }],
       { b: { stage: 'Spec', status: 'running', since: 3, note: 'writing SPEC.md' }, c: { stage: 'Spec', status: 'passed', since: 4 } },

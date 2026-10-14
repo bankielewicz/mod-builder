@@ -162,6 +162,10 @@ async function writeLog($: Engine): Promise<void> {
 
 const modsDirOf = ($: Engine): string => Lab.normalizePath(configuredDir || `${$.plugin.root}/../../mods`)
 
+/** The session's working directory, read at each use so a `/cd` is followed; null when it can't be read. */
+const cwdOf = ($: Engine): Promise<string | null> =>
+  $.session.cwd().catch((error: unknown) => (logCaught($, 'session.cwd', error), null))
+
 const list = ($: Engine, path: string): Promise<Lab.Entry[]> =>
   $.fs
     .list(path)
@@ -245,6 +249,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const marketplace = (await readText($, `${dir}/../.claude-plugin/marketplace.json`)) ?? ''
   const results = await resultsOf($)
   const generations = await generationsOf($)
+  const cwd = await cwdOf($)
   const inFlight = await read($, runs)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
   factsByMod.clear()
@@ -290,6 +295,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         freshNames.includes(facts.name),
         generations[facts.name]?.since ?? null,
         generations[facts.name]?.fromVersion ?? null,
+        Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
       ),
     )
   const newlyGreen = await announceGreen($, judge([]), isAnnounced)
@@ -556,7 +562,8 @@ async function moveSelection($: Engine, by: number): Promise<void> {
 
 async function fillFix($: Engine, view: ModView): Promise<void> {
   const failed = (await resultsOf($))[view.name]?.Test?.tests?.failed ?? 1
-  await $.prompt.fill({ text: Lab.fixPromptOf(view.name, view.failedStage ?? 'Test', view.errors, failed) })
+  const path = Lab.displayPathOf(`${modsDirOf($)}/${view.name}`, await cwdOf($))
+  await $.prompt.fill({ text: Lab.fixPromptOf(view.name, view.failedStage ?? 'Test', view.errors, failed, path) })
 }
 
 async function warnNarrowOnce($: Engine): Promise<void> {
@@ -1072,7 +1079,9 @@ export const register: Register = (on, options) => {
     const detail: ReturnType<typeof blank>[] = []
     if (current && layout !== 'compact') {
       detail.push(blank('d-gap-0'), rule('d-rule'), blank('d-gap-1'))
-      const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), current.path].filter(Boolean).join(' · ')
+      // Read the working directory now, not at the last scan, so a /cd shows at once and matches what F writes.
+      const shown = current.isDemo ? current.path : `${Lab.displayPathOf(`${modsDirOf($)}/${current.name}`, await cwdOf($))}/`
+      const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), shown].filter(Boolean).join(' · ')
       detail.push(
         <Box key="d-head" justifyContent="space-between">
           <Text>
@@ -1080,7 +1089,14 @@ export const register: Register = (on, options) => {
             {current.isDemo && <Text>{'  '}</Text>}
             {current.isDemo && demoChip('d-chip')}
           </Text>
-          {layout === 'full' ? dim(where) : <Text> </Text>}
+          {layout === 'full' ? (
+            // A path outside the working directory is absolute and can be long: cut its start, keep the mod folder.
+            <Text color={COLOR.dim} wrap="truncate-start">
+              {where}
+            </Text>
+          ) : (
+            <Text> </Text>
+          )}
         </Box>,
       )
       if (layout === 'full' && current.description) {

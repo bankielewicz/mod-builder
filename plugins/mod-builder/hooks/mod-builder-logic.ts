@@ -633,16 +633,19 @@ export function barOf(fraction: number, width = 15): { filled: string; empty: st
 
 /**
  * The draft `[F] Fix with Claude` puts in the prompt box: plain words, the
- * first failure quoted from the error box.
+ * first failure quoted from the error box. `path` is the mod's folder as the
+ * session should read it (see `displayPathOf`).
  */
-export function fixPromptOf(name: string, stage: Stage, errors: readonly string[], failedCount = 1): string {
+export function fixPromptOf(name: string, stage: Stage, errors: readonly string[], failedCount: number, path: string): string {
   const what =
     stage === 'Test'
       ? `the ${failedCount === 1 ? 'failing test' : `${failedCount} failing tests`}`
       : `the ${stage} problem${failedCount === 1 ? '' : 's'}`
   const [first, ...rest] = errors
   const quoted = [`    ✕ ${(first ?? '').trim()}`, ...rest.slice(0, 2).map(line => `      ${line.trim()}`)].join('\n')
-  return `Fix ${what} in mods/${name}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
+  // `in .. First failure` would read as the parent folder.
+  const where = path === '.' ? 'the current folder' : path
+  return `Fix ${what} in ${where}. First failure, from Mod Lab:\n${quoted}\nThen re-run ${stage}.`
 }
 
 /** The done box's one line: `ready to share  ·  8/8 stages · 12 tests · validate clean · 1 gate`. */
@@ -656,7 +659,10 @@ export function doneLineOf(results: Results): string {
   return parts.join(' · ')
 }
 
-/** The view of one mod, from everything gathered. */
+/**
+ * The view of one mod, from everything gathered. `path` is the mod's folder
+ * as shown in the detail header (see `displayPathOf`).
+ */
 export function viewOf(
   facts: FileFacts,
   results: Results,
@@ -665,6 +671,7 @@ export function viewOf(
   isFresh: boolean,
   sinceMs: number | null = null,
   fromVersion: string | null = null,
+  path: string,
 ): ModView {
   const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
@@ -685,7 +692,7 @@ export function viewOf(
     isFresh: fresh,
     version: facts.version,
     description: facts.description,
-    path: `mods/${facts.name}/`,
+    path: `${path}/`,
     isReadmeStale: facts.isReadmeStale,
     doneLine: fresh ? doneLineOf(results) : null,
     archetype: facts.archetype,
@@ -812,6 +819,21 @@ export function normalizePath(path: string): string {
     }
   }
   return (isAbsolute ? '/' : '') + parts.join('/')
+}
+
+/**
+ * A path as the session reads it: relative to `cwd` when inside it
+ * (`mods/foo`), `.` when it is `cwd`, absolute otherwise, and absolute when
+ * the working directory couldn't be read (`cwd` null).
+ */
+export function displayPathOf(path: string, cwd: string | null): string {
+  const target = normalizePath(path)
+  if (cwd === null) return target
+  const root = normalizePath(cwd)
+  if (target === root) return '.'
+  // `normalizePath` keeps a trailing `/` only for the root itself: cwd `/` gives prefix `/`, not `//`.
+  const prefix = `${root.replace(/\/$/, '')}/`
+  return target.startsWith(prefix) ? target.slice(prefix.length) : target
 }
 
 /** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */
