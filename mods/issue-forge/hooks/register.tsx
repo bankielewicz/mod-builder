@@ -68,7 +68,7 @@ import {
   workspacePlan,
   worktreePath,
 } from './issue-forge-logic'
-import type { CommandResult, DemoState, Gate, Kept, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
+import type { CheckoutState, CommandResult, DemoState, Gate, Kept, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -362,6 +362,14 @@ async function catchUp($: EngineInterface, run: Run, cwd: string, base: string):
 
 type Where = { kind: 'here' } | { kind: 'worktree'; worktreeDir: string; minutes: number }
 
+/** Whether the session's checkout has changes or isn't on the base: one `git status` and one `rev-parse`. */
+async function checkoutOf($: EngineInterface, root: string, base: string): Promise<CheckoutState> {
+  await setActivity($, 'checking the checkout')
+  const porcelain = await gitOut($, root, ['status', '--porcelain'])
+  const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  return checkoutState({ porcelain, head, base })
+}
+
 /**
  * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from origin/<base> before
  * anything is made or switched; a busy checkout is never branched in place.
@@ -372,10 +380,8 @@ async function whereToWork($: EngineInterface, issue: number, root: string, base
   const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
   if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
   const { workspace, worktreeDir, commandTimeoutMinutes } = atBase.profile
-  await setActivity($, 'checking the checkout')
-  const porcelain = await gitOut($, root, ['status', '--porcelain'])
-  const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-  const state = checkoutState({ porcelain, head, base })
+  // `worktree` makes one whatever the checkout holds, so it isn't looked at (a status is slow on a big tree or a Windows mount).
+  const state = workspace === 'worktree' ? { isBusy: false, why: '' } : await checkoutOf($, root, base)
   const plan = workspacePlan(workspace, state, base)
   if (plan.kind === 'block') return block(plan.reason, plan.next)
   if (plan.kind === 'here') return { kind: 'here' }
