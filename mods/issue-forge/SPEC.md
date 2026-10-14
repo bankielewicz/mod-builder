@@ -643,3 +643,17 @@ Six tests were corrected in their own commits, each giving its reason: `e2cb3d7`
 | tidy | Two comments on the guard; the same quoting written twice; the fetch-then-block sequence written three times. | One comment, `singleQuoted`, `fetchBase`. |
 | left | The register-level steering has no kit test, and the live run didn't single out the Bash rewrite. | Covered by `guardAction`'s logic tests and P4. P4's log also shows a named teammate's `tool.call` carrying the `agentId` its spawn returned. |
 | left | mod-builder 0.2.4 → 0.2.5 for `gotchas.md` only. | The owner decides. |
+
+## Review: PR #41, Codex round 2 (2026-10-14)
+
+Codex reviewed 01fd259 and left three P2 findings. All three were real, and each was fixed test-first
+and pushed on its own:
+
+| Finding | Fix | Red → green |
+|---|---|---|
+| A `worktreeDir` (or `lcovPath`) starting with `-` was read by `git check-ignore` as options. | `--` before the path in both calls. | `e54353b` → `11c8960` |
+| A stale, broken or missing profile in the starting checkout blocked preflight before the worktree was chosen. | `checkoutBaseOf`: that copy only names the base (a safe `baseBranch`, else `main`); the full checks run on the run folder's copy from `origin/<base>`. `/issue-forge status` still checks the checkout's file in full. | `50dbddc` → `0663fea` (test correction `4ce48ee`: under the kit every spawn is followed by a "no agent id" block) |
+| Resume after a fix pushed to the base re-checked the kept worktree's old profile, and so blocked again. | `catchUp` (shared with the baseline step) fast-forwards a kept branch with no commits of its own before it is checked again. | `e6dda8b` → `f6e11df` |
+
+After round 2: 136 tests pass (82 logic, 54 UI and behaviour), validate is clean, `tsc` is clean, and
+`hooks/issue-forge-logic.ts` has 100.00% lines and 99.43% branches, with no untaken branch on a changed line.
