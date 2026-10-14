@@ -755,4 +755,13 @@ describe('PR #39 review round 2: the profile table and its name', () => {
     expect(fs).not.toContain('//packages')
     expect(fs).toContain('"/opt/codex/bin"="read"')
   })
+
+  test('a nonce makes the profile name one no config can know; default_permissions names that profile; the nonce keeps letters and digits only', () => {
+    const argv = codexArgv({ sandbox: 'read-only', model: '', cwd: '/w', fsScope: 'project', nonce: 'ab12-CD34' } as never)
+    expect(argv).toContain('default_permissions="duet-mod-fs-scope-ab12CD34"')
+    expect(tableOf(argv).startsWith('permissions.duet-mod-fs-scope-ab12CD34.filesystem={')).toBe(true)
+    const review = reviewArgv({ kind: 'uncommitted' }, '', { cwd: '/w', fsScope: 'project', nonce: 'x.y"z' } as never)
+    expect(review).toContain('default_permissions="duet-mod-fs-scope-xyz"')
+    expect(review.some(a => a.startsWith('permissions.duet-mod-fs-scope-xyz.filesystem='))).toBe(true)
+  })
 })

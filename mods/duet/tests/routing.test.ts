@@ -426,6 +426,22 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(fs).not.toContain('/usr/bin')
   })
 
+  test('each run and each review gets its own random profile name, so no loaded Codex config can name it and merge in (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const seen = engine(on, { agents })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(3)
+    const names = seen.argv.map(argv => (argv.find(a => a.startsWith('default_permissions=')) ?? '').slice('default_permissions="'.length, -1))
+    expect(new Set(names).size).toBe(3)
+    seen.argv.forEach((argv, at) => {
+      expect(names[at]).toMatch(/^duet-mod-fs-scope-[A-Za-z0-9]{16,}$/)
+      expect(argv.some(a => a.startsWith(`permissions.${names[at]}.filesystem=`))).toBe(true)
+    })
+  })
+
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
     await start($)
