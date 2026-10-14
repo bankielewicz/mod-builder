@@ -635,11 +635,6 @@ export function pathDirs(path: string): string[] {
   return path.split(':').map(d => d.replace(/\/+$/, '')).filter(d => d.startsWith('/'))
 }
 
-/** Red stub (PR #39 review round 2). */
-export function resolveFrom(cwd: string, path: string): string {
-  return path
-}
-
 /** The folder holding `path`. */
 export function parentOf(path: string): string {
   return path.replace(/[/\\][^/\\]*$/, '')
@@ -672,6 +667,17 @@ export function folderUnder(cwd: string, folder: string): string | null {
     } else if (part !== '' && part !== '.') parts.push(part)
   }
   return parts.length ? `${cwd}/${parts.join('/')}` : null
+}
+
+/** `path` made absolute: kept when it is, else resolved against `cwd`, with `.` and `..` folded and never above `/`. */
+export function resolveFrom(cwd: string, path: string): string {
+  if (ABSOLUTE.test(path)) return path
+  const parts = cwd.split('/').filter(Boolean)
+  for (const part of path.split(/[/\\]+/)) {
+    if (part === '..') parts.pop()
+    else if (part !== '' && part !== '.') parts.push(part)
+  }
+  return `/${parts.join('/')}`
 }
 
 /**

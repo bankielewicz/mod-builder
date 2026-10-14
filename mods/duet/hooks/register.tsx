@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, DEFAULT_TYPE,
+  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -213,9 +213,12 @@ async function git($: EngineInterface, args: string[]): Promise<string> {
   }
 }
 
-/** Git's own folders, absolute: outside the session folder in a linked worktree or a submodule. */
-async function gitDirs($: EngineInterface): Promise<string[]> {
-  return (await git($, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n').map(l => l.trim()).filter(Boolean)
+/**
+ * Git's own folders, absolute: outside the session folder in a linked worktree or a submodule. Without
+ * --path-format (git 2.31 and later only), a relative answer is resolved against the session folder.
+ */
+async function gitDirs($: EngineInterface, cwd: string): Promise<string[]> {
+  return (await git($, ['rev-parse', '--git-dir', '--git-common-dir'])).split('\n').map(l => l.trim()).filter(Boolean).map(path => resolveFrom(cwd, path))
 }
 
 /** Where a path really lands when it leads to a file; undefined for a folder, anything else, or nothing. */
@@ -243,8 +246,8 @@ async function codexInstallDirs($: EngineInterface): Promise<string[]> {
 }
 
 /** What a project-scope run may read outside the session folder: git's own folders and Codex's install folders. */
-async function scopeReads($: EngineInterface): Promise<string[]> {
-  return [...(await gitDirs($)), ...(await codexInstallDirs($))]
+async function scopeReads($: EngineInterface, cwd: string): Promise<string[]> {
+  return [...(await gitDirs($, cwd)), ...(await codexInstallDirs($))]
 }
 
 async function baseCommit($: EngineInterface): Promise<string> {
@@ -407,7 +410,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     await ensureTicker($)
     const named = writePathsOf(options.writePaths, type)
     const writePaths = options.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
-    const reads = options.fsScope === 'project' ? await scopeReads($) : []
+    const reads = options.fsScope === 'project' ? await scopeReads($, cwd) : []
     const job: Job = { id, type, cwd, home: await homeDir($), writePaths, reads, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
@@ -462,7 +465,7 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
   }
   Object.assign(task, { id: admitted.id })
   await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($) : [], nonce: crypto.randomUUID() }), undefined)
+  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($), reads: options.fsScope === 'project' ? await scopeReads($, cwd) : [], nonce: crypto.randomUUID() }), undefined)
   const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
