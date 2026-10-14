@@ -728,3 +728,20 @@ describe('PR #39 review round 2: a write folder never reaches what Codex protect
     for (const gone of ['/w/.git', '/w/.codex', '/w/.agents']) expect(fs).not.toContain(gone)
   })
 })
+
+describe('PR #39 review round 2: only a failed command with a bwrap line is a sandbox failure', () => {
+  const cmd = (aggregated_output: string, exit_code: number | null) => ({ type: 'item.completed', item: { type: 'command_execution', command: 'x', aggregated_output, exit_code, status: exit_code ? 'failed' : 'completed' } })
+  const fold = (...items: object[]) => foldAll([...items, { type: 'item.completed', item: { type: 'agent_message', text: 'answer' } }].map(l => JSON.stringify(l)).join('\n'))
+
+  test('a command that succeeds, whose output quotes the bwrap line (a git diff or cat of duet itself), leaves the run done', () => {
+    const quoted = "+      const unrunnable = /bwrap: execvp (\\S+): No such file or directory/\n  'bwrap: execvp /opt/codex/bin/codex: No such file or directory'\n"
+    const run = fold(cmd(quoted, 0))
+    expect(run.failure).toBe('')
+    expect(run.text).toBe('answer')
+  })
+
+  test('a failed command that only quotes the line mid-text is not a sandbox failure; one whose output line starts with it is', () => {
+    expect(fold(cmd("grep: x\n  see 'bwrap: execvp /x/codex: No such file or directory'\n", 1)).failure).toBe('')
+    expect(fold(cmd('some noise\nbwrap: execvp /x/codex: No such file or directory\n', 1)).failure).toContain('/x/codex')
+  })
+})
