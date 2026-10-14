@@ -242,7 +242,7 @@ export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
 }
 
-/** `/`-separated, `.` and `..` resolved, no trailing `/`. */
+/** `/`-separated, `.` and `..` resolved, no trailing `/`; a UNC root's two leading slashes are kept. */
 export function normalizePath(path: string): string {
   const isAbsolute = isAbsolutePath(path)
   const parts: string[] = []
@@ -254,7 +254,8 @@ export function normalizePath(path: string): string {
     } else parts.push(part)
   }
   const joined = parts.join('/')
-  return path.startsWith('/') ? `/${joined}` : joined
+  const lead = /^\/\/(?!\/)/.test(path) ? '//' : path.startsWith('/') ? '/' : ''
+  return `${lead}${joined}`
 }
 
 /** `abs` relative to `root`, or null when it is outside. */
