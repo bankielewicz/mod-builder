@@ -520,6 +520,36 @@ export function parseAgentFile(text: string): AgentDef | null {
   }
 }
 
+/** An agent file found under a `.claude/agents` folder; `root` counts the folders searched, nearest first. */
+export type AgentFile = { root: number; path: string; text: string }
+
+/** A frontmatter scalar as YAML reads it: without its ` # comment` and one pair of surrounding quotes. */
+function scalarOf(value: string): string {
+  return uncommented(value).replace(/^(["'])(.*)\1$/, '$2').trim()
+}
+
+/**
+ * The definition Claude would use for a subagent type, from the files found under the folders it scans.
+ * Identity comes only from the `name` field; a file with no `name` or no `description`, or a `name` that
+ * starts with `-`, holds a `:` or is over 256 characters, is skipped as Claude skips it. The nearest
+ * folder holding a match wins; two matches there that disagree on editing (Claude's pick between them
+ * isn't documented) give the one that can't edit. No match is null.
+ */
+export function pickAgent(files: AgentFile[], type: string): AgentDef | null {
+  const found: { root: number; def: AgentDef }[] = []
+  for (const file of files) {
+    const def = parseAgentFile(file.text)
+    if (!def) continue
+    const name = scalarOf(def.name)
+    if (name !== type || name.startsWith('-') || name.includes(':') || name.length > 256 || scalarOf(def.description) === '') continue
+    found.push({ root: file.root, def: { ...def, name } })
+  }
+  if (!found.length) return null
+  const nearest = Math.min(...found.map(f => f.root))
+  const defs = found.filter(f => f.root === nearest).map(f => f.def)
+  return defs.find(def => !canEdit(def, type)) ?? defs[0]!
+}
+
 /** A filesystem-safe folder name for a session id. */
 export function sessionFolderOf(sessionId: string): string {
   return sessionId.replace(/[^\w.-]/g, '_').slice(0, 80) || 'unknown'

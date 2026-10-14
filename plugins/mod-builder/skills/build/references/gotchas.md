@@ -73,6 +73,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `init.env` is typed `Record<string, string>` [d.ts], so it can't unset a variable either, and an
   empty value isn't neutral for a path: with `CLAUDE_CONFIG_DIR=''`, `claude auth status` reports
   `configDirectory: ""` (probed on 2.1.296). Blank secrets, never paths or profile names.
+- **[probe]** `$.fs.list` isn't limited to the session folder. Probed on 2.1.299 with `claude -p --plugin-dir`
+  started in `fx/pkg/sub`: it listed `fx/.claude/agents`, two folders above the session folder, then its
+  subfolder `team` and its dot-folder `.dot`. A symbolic link to a file or a folder is listed as
+  `other` with `isLink` (size and `mtimeMs` 0); listing the link's own path still follows it and
+  returns the target's entries, so a recursive walk must skip `isLink` entries itself. A missing
+  folder rejects with `ENOENT`, so wrap the call (`.catch(() => [])`) when a missing folder is normal.
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every
