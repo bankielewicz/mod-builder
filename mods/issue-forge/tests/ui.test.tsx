@@ -772,13 +772,13 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
   })
 
   test('ready: the merge check against a fresh origin/main names conflicting files in the question and the pane', async ($, on) => {
-    const w = engine(on, { head: BRANCH, mergeTree: { exitCode: 1, stdout: 'tree0\n.claude-plugin/marketplace.json\n' } }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    const w = engine(on, { head: BRANCH, mergeTree: { exitCode: 1, stdout: 'tree0\0.claude-plugin/marketplace.json\0' } }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
     await start($)
     await run($, 'resume')
     await until(w, () => w.asked.length === 1, 'the question')
     expect(w.asked[0]).toBe(`Push ${BRANCH} and open a pull request against main? It conflicts with origin/main in: .claude-plugin/marketplace.json.`)
     const mergeAt = w.argv.findIndex(a => a[1] === 'merge-tree')
-    expect(w.argv[mergeAt]).toEqual(['git', 'merge-tree', '--write-tree', '--name-only', '--no-messages', 'c0', 'origin/main'])
+    expect(w.argv[mergeAt]).toEqual(['git', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'c0', 'origin/main'])
     expect(w.argv.slice(0, mergeAt).some(a => a[1] === 'fetch' && a[3] === 'main')).toBe(true)
     await w.clock.settle()
     const ui = await pane($)
