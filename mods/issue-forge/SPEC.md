@@ -437,57 +437,65 @@ After round 3: validate is clean; 99 tests pass (65 logic, 34 UI and behaviour);
 > config where the issue-forge configuration gui allows configuring of working in local repo or new
 > worktree., 4-if preflight detects its present in a worktree, should i fork from origin/main into my
 > own worktree?
+>
+> it is to be pushed to repo so the setting is project wide
 
 Why: run #27 blocked at preflight (`the working tree has changes`). The main folder was on
 `issue-3-…` with #3's unchecked refactor still uncommitted, and the run's only way forward was to move
 that folder onto a new branch. This repository's rule is that the main folder is never switched,
 because the installed plugins load from whatever branch it is on.
 
-Answers given on 2026-10-13: the setting is a `/config` option; a busy checkout asks by default; run
-worktrees go in a gitignored folder inside the repository; case 1 is a merge check at ready.
+Decisions (2026-10-13): the setting is committed with the repository, so it applies project wide; a
+busy checkout asks by default; run worktrees go in a gitignored folder inside the repository; case 1
+is a merge check at ready. The first draft put the setting in `/config`. The person then asked for it
+in the repository, and probe P4 (below) changed how agents are kept in the worktree. This section is
+the amended version.
 
 - **What changes:**
-  - **Two options** (`userConfig`, so two `/config` rows; the values live in `~/.claude/settings.json`
-    under `pluginConfigs["issue-forge@claudemod"].options`, never in the plugin folder):
-    - `workspace`: a picker over `ask`, `worktree`, `here`; default `ask`. A stored value outside them
-      counts as unset (the engine's rule), so `ask`.
-    - `worktreeDir`: a string, relative to the repository root; default `scratch/issue-forge`.
-  - **Where a run works (preflight, before the clean-tree check).** Pure `checkoutState` reads
-    `git rev-parse --git-dir --git-common-dir` (main checkout or linked worktree),
-    `git status --porcelain` and `git rev-parse --abbrev-ref HEAD`. A checkout is *busy* when it has
-    changes or HEAD isn't `<base>` (a detached HEAD is busy). Pure `workspacePlan(mode, state)`:
+  - **Two profile fields** in `.issue-forge.json` (committed, so every clone and session gets them):
+    - `workspace`: `"ask"`, `"worktree"` or `"here"`; default `"ask"`. Any other value is a profile
+      error naming the field.
+    - `worktreeDir`: a path relative to the repository root, default `"scratch/issue-forge"`. An
+      absolute path, a `..` segment or an empty string is a profile error.
+    - **This repository's profile sets `"workspace": "worktree"`**, so a run here never switches the
+      main folder, even a clean one on `main` (which `ask` would treat as not busy).
+    - **Which copy decides:** the workspace fields are read from the base's profile,
+      `git show origin/<base>:.issue-forge.json` right after `git fetch origin <base>`, before anything
+      is switched or created. That's the same trusted copy round 3 made the run use. The checkout you
+      start from only names the base, as before.
+  - **Where a run works (preflight).** Pure `checkoutState` reads `git rev-parse --git-dir
+    --git-common-dir` (main checkout or linked worktree), `git status --porcelain` and
+    `git rev-parse --abbrev-ref HEAD`. A checkout is *busy* when it has changes or HEAD isn't
+    `<base>` (a detached HEAD is busy). Pure `workspacePlan(mode, state)`:
     - `here`: not busy → `git switch -c` in this checkout, as today. Busy → blocked:
-      `the checkout is busy (<changed files | on <branch>>)` / `next: set workspace to worktree or ask
-      in /config, or clean the checkout`. **A tightening:** today a clean checkout on another branch is
-      switched; from now on it blocks.
+      `the checkout is busy (<changed files | on <branch>>)` / `next: set "workspace" to "worktree" or
+      "ask" in .issue-forge.json, or clean the checkout`. **A tightening:** today a clean checkout on
+      another branch is switched; from now on it blocks.
     - `ask`: not busy → here. Busy → `$.ui.ask` `<checkout> is busy (<why>). Run #<N> in a new worktree
       under <worktreeDir>?` with `New worktree` / `Stop`. No answer possible counts as Stop (blocked),
       like the base-branch question.
     - `worktree`: always a new worktree, busy or not: `git worktree add --no-track -b <branch>
       <root>/<worktreeDir>/<branch> origin/<base>` in place of `git switch -c`. The session's
       checkout is never switched, staged or committed.
-    - With a new worktree, the clean-tree check is skipped (the worktree carries none of the
-      checkout's changes). `worktreeDir` must be relative with no `..` segment, and
-      `git check-ignore -q <worktreeDir>/` must pass, or preflight blocks:
-      `<worktreeDir> isn't gitignored` / `next: add <worktreeDir>/ to .gitignore`. A path that already
-      exists blocks too.
-  - **The run's folder.** `Run` gains `workRoot`: the folder where git, the profile's commands and
-    the agents run. `root` stays the session's checkout, which keys the store as today
-    (`issue-forge:run:<root>`). **Decided here:** keys are unchanged, so no stored run is orphaned and
-    runs from different checkouts can still run side by side. A run is driven from the checkout that
-    started it. A stored run without `workRoot` uses `root`.
-  - **Agents stay in that folder.** They are spawned with `cwd: workRoot`, and `phasePrompt` names it:
-    `Repository root: <workRoot>. Work only inside it, and run every command from it.` The existing
-    `tool.call` guard also denies the live agent's `Edit`, `Write` or `NotebookEdit` whose path
-    resolves outside `workRoot` (pure `outsideWorkRoot`): `issue-forge: <path> is outside this run's
-    folder <workRoot>; edit files there.` This holds in `here` mode too (`workRoot` = `root`).
-  - **Probe P4, before the register changes.** The d.ts says a teammate runs in the session's folder
-    and ignores `cwd`, and #27's evidence shows this mod's named agents arriving as teammates. A
-    throwaway mod in `scratch/` spawns a named agent and an unnamed agent with `cwd` set to another
-    folder; each runs `pwd` and writes a file by a relative path. The results go in `gotchas.md` as
-    `[probe]` and in this section. If `cwd` is honoured, nothing more. If it isn't, the guard rewrites
-    the live agent's Bash command to `cd '<workRoot>' && <command>`, with a test. Either way, the
-    live check runs only after the guard is in place.
+    - The clean-tree check moves after this choice and applies only to `here`. A new worktree carries
+      none of the checkout's changes. `git check-ignore -q <worktreeDir>/` must pass, or preflight
+      blocks (`<worktreeDir> isn't gitignored` / `next: add <worktreeDir>/ to .gitignore`). A worktree
+      path that already exists blocks too.
+  - **The run's folder.** `Run` gains `workRoot`: the folder where git and the profile's commands
+    run, and where the agents are steered. `root` stays the session's checkout, which keys the store
+    as today (`issue-forge:run:<root>`). **Decided here:** keys are unchanged, so no stored run is
+    orphaned and runs from different checkouts can still run side by side. A run is driven from the
+    checkout that started it. A stored run without `workRoot` uses `root`.
+  - **Agents are steered into that folder (P4: `cwd` is ignored).** `$.agent.spawn` still passes
+    `cwd: workRoot`, but on 2.1.296 both a named and an unnamed agent ran in the session's folder
+    anyway. So the existing `tool.call` guard does it, for the live agent of a run whose `workRoot`
+    differs from `root` (pure functions, one test each):
+    - **Bash:** the command becomes `cd -- '<workRoot>' || exit 1` + newline + the command
+      (`'` escaped). P4 showed this moves both kinds of agent.
+    - **Grep and Glob:** a missing `path` becomes `workRoot`; a relative one is resolved against it.
+    - **Edit, Write and NotebookEdit,** in every mode: a path outside `workRoot` is denied:
+      `issue-forge: <path> is outside this run's folder <workRoot>; edit files there.`
+    - `phasePrompt` names the folder: `Repository root: <workRoot>. Work only inside it.`
   - **Conflicts (case 1), at ready.** Before asking to publish: `git fetch origin <base>`, then
     `git merge-tree --write-tree --name-only --no-messages <gatedHead> origin/<base>` (git ≥ 2.38;
     2.43 here). Pure `parseMergeTree(stdout, exitCode)`: exit 0 is clean; exit 1 means conflicts, with
@@ -501,45 +509,72 @@ worktrees go in a gitignored folder inside the repository; case 1 is a merge che
   - **Pane:** the branch line reads `<branch> → <base> · worktree` in a worktree (≥ 60 columns only);
     status has the full path. Ready's summary adds the merge line (`merges cleanly with origin/main` or
     `conflicts with origin/main: <files>`).
+- **Probe P4 (passed 2026-10-13, Claude Code 2.1.296).** Throwaway mods `scratch/issue-forge-probe-cwd`
+  and `-cwd2` ran in interactive sessions in tmux, under `auto` mode. Each spawned a `haiku` agent with
+  `cwd: <session>/wt`, and the agent ran `pwd > where-<tag>.txt`:
+  - Unnamed and named (`teammateMode: "in-process"`), both files landed in the session's folder,
+    holding its path. `cwd` was ignored.
+  - With the guard's rewrite `cd -- '<wt>' || exit 1⏎<command>`, both files landed in `wt/`, holding
+    its path.
+  - In tmux with the default teammate mode, the named spawn was refused: `Agent type 'ifcwd:worker'
+    was registered at run time by a plugin and exists only in this process; a pane-based teammate
+    cannot run it.` With `--settings '{"teammateMode":"in-process"}'` it started, with
+    `teammateId: "ifcwd-named@session-8b7e59a9"`.
+  - #27's evidence, recorded for that issue: the named agent's hand-back arrived as `session.receive`
+    with origin `{ kind: 'peer', teammate: 'ifcwd-named', isVerified: true }`, no `agentId`, and text
+    `{"type":"idle_notification",…,"result":"PROBE DONE"}`. No `prompt.submit` fired for it, and it
+    started a main-model turn. `{ consumed }` stopped that turn, and no re-delivery came in 78 s.
+    The unnamed agent's hand-back was a `prompt.submit` with origin `peer` and text
+    `<agent-message from="<agentId>">`, and `{ drop }` stopped it.
 - **What gets touched:**
-  - Files: `mods/issue-forge/{SPEC.md, README.md, .claude-plugin/plugin.json, hooks/issue-forge-logic.ts,
-    hooks/register.tsx, types/index.d.ts, tests/issue-forge-logic.test.ts, tests/ui.test.tsx}`;
-    `.claude-plugin/marketplace.json` (both versions); `plugins/mod-builder/skills/build/references/gotchas.md`
-    (P4), and so mod-builder's patch version 0.2.4 → 0.2.5 in its `plugin.json` and the marketplace
-    entry; `scratch/issue-forge-probe-cwd/` (the throwaway probe, gitignored).
-  - At run time: new git calls `rev-parse --git-dir --git-common-dir`, `rev-parse --abbrev-ref HEAD`,
-    `worktree add --no-track -b`, `merge-tree --write-tree`, `check-ignore` on `worktreeDir`. A
-    worktree mode run creates `<root>/<worktreeDir>/<branch>/` (a full checkout, gitignored) and an
-    entry in `.git/worktrees/`. Both are left in place.
-  - Settings: two new `/config` rows. Nothing else is written outside the repository.
-  - Costs: P4 spawns two small agents. A run spawns the same agents as before.
-  - Versions: issue-forge 0.1.0 → 0.2.0 (a minor bump: new options; `here` is tightened). #25, #27
-    and #28 also bump issue-forge, so the number is checked against `main` at PR time.
-  - Not in this change: a `setupCommand` for a fresh worktree's untracked dependencies (`node_modules`);
-    the README's Limits names it. Parallel runs from one checkout.
+  - Files: `mods/issue-forge/{SPEC.md, README.md, .claude-plugin/plugin.json (version),
+    hooks/issue-forge-logic.ts, hooks/register.tsx, types/index.d.ts, tests/issue-forge-logic.test.ts,
+    tests/ui.test.tsx}`; `.issue-forge.json` (`"workspace": "worktree"`);
+    `.claude-plugin/marketplace.json` (both versions); `docs/specs/issue-forge.md` §4.1 (the two
+    fields); `plugins/mod-builder/skills/build/references/gotchas.md` (P4,
+    and a correction to the hand-back entry), and so mod-builder's patch version 0.2.4 → 0.2.5 in its
+    `plugin.json` and the marketplace entry.
+  - At run time: new git calls `show origin/<base>:.issue-forge.json`, `rev-parse --git-dir
+    --git-common-dir`, `rev-parse --abbrev-ref HEAD`, `worktree add --no-track -b`,
+    `merge-tree --write-tree`, and `check-ignore` on `worktreeDir`. A worktree run creates
+    `<root>/<worktreeDir>/<branch>/` (a full checkout, gitignored) and an entry in `.git/worktrees/`.
+    Both are left in place. The guard now rewrites the live agent's Bash, Grep and Glob input in a
+    worktree run.
+  - Costs: P4 spawned four small `haiku` agents, and two woken main-model turns read files. A run
+    spawns the same agents as before.
+  - Versions: issue-forge 0.1.0 → 0.2.0 (a minor bump: new profile fields; `here` is tightened). #25,
+    #27 and #28 also bump issue-forge, so the number is checked against `main` at PR time.
+  - Not in this change: #27's hand-back fix (the probe settles its cause; the issue stays its own);
+    a `setupCommand` for a fresh worktree's untracked dependencies (`node_modules`), which the README's
+    Limits names; parallel runs from one checkout.
 - **Tests:**
-  - Logic: `checkoutState` (changes → busy; another branch → busy; detached → busy; clean on base →
-    not busy; a linked worktree is detected); `workspacePlan` for each of the three modes, busy and not
-    busy; `worktreeDir` refusals (absolute, `..`, empty); the worktree path; `parseMergeTree` (clean,
-    conflicts with names, unavailable); `outsideWorkRoot` (inside allowed; outside, a `..` escape, and a
-    relative path resolved against `workRoot` denied; `notebook_path`); `phasePrompt` names `workRoot`;
-    an unknown `workspace` value reads as `ask`.
-  - UI and behaviour: `here` with changes still blocks naming the check, and `here` on another
-    branch blocks as busy. `ask` with changes, answered `New worktree`, runs `git worktree add …
-    origin/main`, no `git switch`, and nothing staged or committed in `root`. `ask` under a rejecting
-    `$.ui.ask` blocks with no git write. `worktree` with an un-ignored `worktreeDir` blocks. Gate R
-    stages and commits in `workRoot`. The guard denies the live agent's Write outside `workRoot` and
-    passes one inside. Ready with merge-tree exit 1 names the files in the question. A stored run
-    without `workRoot` resumes in `root`.
+  - Logic: the profile's `workspace` (default, each value, a wrong one) and `worktreeDir` (default;
+    absolute, `..`, empty refused); `checkoutState` (changes → busy; another branch → busy; detached
+    → busy; clean on base → not busy; a linked worktree is detected); `workspacePlan` for each of the
+    three modes, busy and not busy; the worktree path; `parseMergeTree` (clean, conflicts with names,
+    unavailable); the Bash rewrite (quoting a `'` in the path); Grep/Glob `path` (missing, relative,
+    absolute left alone); `outsideWorkRoot` (inside allowed; outside, a `..` escape, and a relative
+    path resolved against `workRoot` denied; `notebook_path`); `phasePrompt` names `workRoot`.
+  - UI and behaviour: the workspace is read from `git show origin/main:.issue-forge.json`, not the
+    checkout's file. `here` with changes still blocks naming the check, and `here` on another branch
+    blocks as busy. `ask` with changes, answered `New worktree`, runs `git worktree add … origin/main`,
+    no `git switch`, and nothing staged or committed in `root`. `ask` under a rejecting `$.ui.ask`
+    blocks with no git write. `worktree` with an un-ignored `worktreeDir` blocks. Gate R stages and
+    commits in `workRoot`. The guard rewrites the live agent's Bash and Grep in a worktree run, leaves
+    them alone in a `here` run and for the main loop, denies a Write outside `workRoot`, and passes one
+    inside. Ready with merge-tree exit 1 names the files in the question. A stored run without
+    `workRoot` resumes in `root`.
 - **Done means:**
-  - With `workspace` set to `worktree` in `/config`, `/issue-forge 27` from the main folder, with #3's
-    work still in it, runs #27 in `scratch/issue-forge/issue-27-…`. The main folder's HEAD and
-    `git status` are the same before and after. The red, green and refactor commits land on the
-    worktree's branch, and the run stops at ready, naming any conflict with `origin/main`. The live
-    check loads this worktree's copy with an absolute `--plugin-dir`. That copy keeps its own store
-    (`issue-forge@inline`), so it starts #27 fresh rather than resuming the installed copy's record.
+  - Once this is on `main`, `/issue-forge 27` from the main folder runs #27 in
+    `scratch/issue-forge/issue-27-…`, busy or not. The main folder's HEAD and `git status` are the same
+    before and after. The red, green and refactor commits land on the worktree's branch, and the run
+    stops at ready, naming any conflict with `origin/main`.
+  - The live check before merge: `origin/main`'s profile has no `workspace` yet, so it reads `ask`.
+    It loads this worktree's copy with an absolute `--plugin-dir` (with `teammateMode: "in-process"`
+    in tmux) from the main folder, which is busy (on `issue-3-…`), and answers `New worktree`. That
+    copy keeps its own store (`issue-forge@inline`), so it starts #27 fresh.
   - P4 is recorded in `gotchas.md`. Validate is clean, every test passes, `tsc` is clean, the changed
     logic is ≥ 95% covered, and total coverage doesn't drop.
-  - README: the two options, `here`'s tightening, the worktree cleanup command, the Limits line, and
-    a "What it reaches" table regenerated from `claude plugin validate`. `plugin.json` and the
-    marketplace entry agree.
+  - README: the two profile fields, `here`'s tightening, the worktree cleanup command, the tmux
+    teammate-mode and `setupCommand` limits, and a "What it reaches" table regenerated from
+    `claude plugin validate`. `plugin.json` and the marketplace entry agree.
