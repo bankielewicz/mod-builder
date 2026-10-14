@@ -21,7 +21,7 @@
       "name": "duet",
       "source": "./mods/duet",
       "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on; independent Codex reviews; measures every run.",
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "name": "issue-forge",

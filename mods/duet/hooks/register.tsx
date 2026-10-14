@@ -9,7 +9,7 @@ import {
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
-import type { AgentDef, AgentFile, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
 /**
  * Duet: delegates chosen subagent types and its own `duet:` roles to Codex,
@@ -177,6 +177,8 @@ const AGENT_FILES = 500
 const agentCache = new Map<string, { size: number; mtimeMs: number; text: string }>()
 
 type AgentEntry = { path: string; size: number; mtimeMs: number }
+/** Which of the search's limits a lookup reached: a folder it did not enter, or a `.md` file it did not read. */
+type AgentCut = { depth: boolean; files: boolean }
 
 /**
  * The `.claude/agents` folders Claude scans, nearest first: the session folder up to the repository root,
@@ -198,21 +200,29 @@ async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
 /**
  * The `.md` files under an agents folder, subfolders and dot-folders included. A symbolic link is followed, as
  * Claude follows it; a folder whose real path was already searched (a link loop, or a root linked into another)
- * isn't searched again. A failed list is an empty folder.
+ * isn't searched again. A failed list is an empty folder. Past the limits, a folder isn't entered and a file
+ * isn't listed, and `cut` records which limit it was.
  */
-async function listAgentFiles($: EngineInterface, dir: string, searched: Set<string>, found: AgentEntry[] = [], depth = 0): Promise<AgentEntry[]> {
+async function listAgentFiles($: EngineInterface, dir: string, searched: Set<string>, cut: AgentCut, found: AgentEntry[] = [], depth = 0): Promise<AgentEntry[]> {
   const real = await realPathOf($, dir)
   if (real === undefined || searched.has(real)) return found
+  if (depth > AGENT_DEPTH || found.length >= AGENT_FILES) {
+    if (depth > AGENT_DEPTH) cut.depth = true
+    else cut.files = true
+    return found
+  }
   searched.add(real)
   const entries = []
   for (const e of [...(await $.fs.list(dir).catch(() => []))].sort((a, b) => (a.name < b.name ? -1 : 1))) {
     entries.push(e.isLink ? { ...e, ...(await $.fs.stat(`${dir}/${e.name}`).catch(() => ({ kind: 'other' as const }))) } : e)
   }
   for (const e of entries) {
-    if (e.kind === 'file' && e.name.endsWith('.md') && found.length < AGENT_FILES) found.push({ path: `${dir}/${e.name}`, size: e.size, mtimeMs: e.mtimeMs })
+    if (e.kind !== 'file' || !e.name.endsWith('.md')) continue
+    if (found.length < AGENT_FILES) found.push({ path: `${dir}/${e.name}`, size: e.size, mtimeMs: e.mtimeMs })
+    else cut.files = true
   }
   for (const e of entries) {
-    if (e.kind === 'dir' && depth < AGENT_DEPTH && found.length < AGENT_FILES) await listAgentFiles($, `${dir}/${e.name}`, searched, found, depth + 1)
+    if (e.kind === 'dir') await listAgentFiles($, `${dir}/${e.name}`, searched, cut, found, depth + 1)
   }
   return found
 }
@@ -227,22 +237,39 @@ async function agentText($: EngineInterface, e: AgentEntry): Promise<string> {
   return text
 }
 
+/** Forgets the cached files under a searched folder that its listing no longer holds, so the cache never outgrows the folders. */
+function pruneAgentCache(dir: string, listed: Set<string>): void {
+  for (const path of [...agentCache.keys()]) {
+    if (path.startsWith(`${dir}/`) && !listed.has(path)) agentCache.delete(path)
+  }
+}
+
+/** What Claude reads when a lookup reached a limit: a definition past it was never read, so the one used may not be Claude's. */
+function cutText(type: string, cut: AgentCut): string {
+  const limits = [...(cut.depth ? [`${AGENT_DEPTH} folders deep`] : []), ...(cut.files ? [`${AGENT_FILES} .md files per folder`] : [])]
+  return limits.length ? `duet: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, and Claude, which reads deeper, may use another.` : ''
+}
+
 /**
  * The custom agent's definition by Claude's discovery rules: the nearest `.claude/agents` folder with a file
- * named `type` in its `name` field. Agents from managed settings, `--agents`, a plugin or `--add-dir` aren't
- * reachable, so they are a miss.
+ * named `type` in its `name` field, and a note when the search was cut short by its depth or file limit.
+ * Agents from managed settings, `--agents`, a plugin or `--add-dir` aren't reachable, so they are a miss.
  */
-async function agentDef($: EngineInterface, cwd: string, type: string): Promise<AgentDef | null> {
-  if (!/^[\w.:-]+$/.test(type)) return null
+async function agentDef($: EngineInterface, cwd: string, type: string): Promise<{ def: AgentDef | null; cut: string }> {
+  if (!/^[\w.:-]+$/.test(type)) return { def: null, cut: '' }
   // A folder is listed and read only when every nearer one had no match, so each pick sees that folder alone.
   const searched = new Set<string>()
-  for (const [root, dir] of (await agentRoots($, cwd)).entries()) {
-    const files: AgentFile[] = []
-    for (const e of await listAgentFiles($, dir, searched)) files.push({ root, path: e.path, text: await agentText($, e) })
-    const def = pickAgent(files, type)
-    if (def) return def
+  const cut: AgentCut = { depth: false, files: false }
+  const listed = new Set<string>()
+  let def: AgentDef | null = null
+  for (const dir of await agentRoots($, cwd)) {
+    const entries = await listAgentFiles($, dir, searched, cut)
+    for (const e of entries) listed.add(e.path)
+    pruneAgentCache(dir, listed)
+    def = pickAgent(await Promise.all(entries.map(e => agentText($, e))), type)
+    if (def) break
   }
-  return null
+  return { def, cut: cutText(type, cut) }
 }
 
 /** Where a path really lands, or undefined when it leads nowhere. */
@@ -419,7 +446,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; searchNote: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
@@ -432,7 +459,8 @@ async function runJob($: EngineInterface, j: Job): Promise<Finished> {
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
   $.ui.toast((failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
-  return { run, failure, endedAt, footer: footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped }) }
+  const footer = footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped })
+  return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer }
 }
 
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */
@@ -475,7 +503,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   mine.add(id)
   let handedOff = false
   try {
-    const def: AgentDef | null = role ? roleDef(role) : await agentDef($, cwd, type)
+    const { def, cut: searchNote } = role ? { def: roleDef(role), cut: '' } : await agentDef($, cwd, type)
     const sandbox = effectiveSandbox(options.sandbox, def, type)
     const baseSha = await baseCommit($)
     const before = sandbox === 'read-only' ? '' : await porcelain($)
@@ -486,7 +514,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     const scope = await scopeOf($, cwd)
     const writePaths = scope.fsScope === 'project' && sandbox === 'workspace-write' ? await safeWritePaths($, cwd, named) : named
     const dropped = named && writePaths ? named.filter(folder => !writePaths.includes(folder)) : []
-    const job: Job = { ...scope, id, type, cwd, writePaths, dropped, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
+    const job: Job = { ...scope, id, type, cwd, writePaths, dropped, searchNote, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
