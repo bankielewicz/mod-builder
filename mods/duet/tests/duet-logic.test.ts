@@ -625,6 +625,23 @@ describe('PR #39 review: a write folder must land strictly inside the project', 
   })
 })
 
+describe('PR #39 review: git\'s own folders are readable in a linked worktree', () => {
+  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+  test('reads outside the project are added read-only; ones inside the project, repeated or not absolute are not', () => {
+    const reads = ['/repo/.git/worktrees/wt', '/repo/.git', '/repo/.git', '/w/wt/.git', 'abc1234']
+    for (const sandbox of ['read-only', 'workspace-write']) {
+      const fs = fsOf(codexArgv({ sandbox, model: '', cwd: '/w/wt', fsScope: 'project', reads } as never))
+      expect(fs).toContain('"/repo/.git/worktrees/wt"="read"')
+      expect(fs.split('"/repo/.git"="read"').length - 1).toBe(1)
+      expect(fs).not.toContain('/w/wt/.git')
+      expect(fs).not.toContain('abc1234')
+    }
+    const review = fsOf(reviewArgv({ kind: 'uncommitted' }, '', { cwd: '/w/wt', fsScope: 'project', reads } as never))
+    expect(review).toContain('"/repo/.git"="read"')
+    expect(codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/wt', fsScope: 'anything', reads } as never).join(' ')).not.toContain('/repo/.git')
+  })
+})
+
 describe('issue 3 part B: the scope help matches what was checked', () => {
   test('the /duet config help for scope says it was checked through codex exec on Codex 0.162.1, not that it is unchecked', () => {
     const help = findConfigField('scope')!.help

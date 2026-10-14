@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null> } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; gitDirs?: string } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -45,6 +45,8 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('ui.toast', () => ({ value: undefined }))
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
+    // `--git-dir --git-common-dir`: a plain repository's .git sits in the session folder unless `gitDirs` says otherwise.
+    if (argv[0] === 'git' && argv.includes('--git-common-dir')) return { value: { exitCode: 0, stdout: `${o.gitDirs ?? '/w/.git\n/w/.git'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git') return { value: { exitCode: 0, stdout: argv.includes('rev-parse') ? 'abc1234\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     seen.argv.push(argv)
     seen.stdin.push(e.init?.stdin ?? '')
@@ -385,6 +387,22 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(fs).toContain(pair('/w/test', 'write'))
     for (const gone of ['/w/tests', '/w/spec', '/w/self', '/outside/tests']) expect(fs).not.toContain(JSON.stringify(gone))
     expect(fs).not.toContain(pair('/w', 'write'))
+  })
+
+  test('in a linked worktree, a routed run and a review can read git\'s own folders, read-only (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n/main/.git' })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(2)
+    for (const argv of seen.argv) {
+      const fs = filesystem(argv)
+      expect(fs).toContain(pair('/main/.git/worktrees/w', 'read'))
+      expect(fs).toContain(pair('/main/.git', 'read'))
+      expect(fs).not.toContain(pair('/main/.git', 'write'))
+    }
+    expect(filesystem(seen.argv[0]!)).toContain(pair('/w', 'write'))
   })
 
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
