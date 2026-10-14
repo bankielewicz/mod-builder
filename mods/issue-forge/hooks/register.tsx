@@ -225,7 +225,7 @@ async function runLong($: EngineInterface, argv: string[], root: string, minutes
   }
 }
 
-/** Thrown when /issue-forge stop (or a takeover) ends the run mid-step: nothing after it may touch git. */
+/** Thrown when /issue-forge stop (or a takeover) ends the run mid-step: nothing after it may change the repository. */
 class Stopped extends Error {
   constructor() {
     super('stopped')
@@ -239,6 +239,10 @@ function isDriving(run: Run): boolean {
 
 function stillDriving(run: Run): void {
   if (!isDriving(run)) throw new Stopped()
+}
+
+async function hasBranch($: EngineInterface, root: string, branch: string): Promise<boolean> {
+  return (await git($, root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode === 0
 }
 
 /** A gate commits only on the run's own branch: an agent may have switched branches. */
@@ -402,12 +406,19 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
   await setActivity($, `git worktree add ${where.worktreeDir}/${branch}`)
   // A full checkout can outlast git's 60 s on a slow disk: it runs like the profile's commands, on their timeout.
   const made = { branch, workRoot, base }
-  const added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
+  let added: CommandResult
+  try {
+    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
+  } catch (err) {
+    // A Stop during the add: the branch git already made is kept on the stopped run, like one made before it.
+    if (err instanceof Stopped && (await hasBranch($, root, branch))) await recordMade($, run, made)
+    throw err
+  }
   if (added.exit !== 0) {
     const why = added.isTimedOut ? `timed out after ${where.minutes} min` : gitFailure(added.tail) || 'no output'
     const failed = block(`git worktree add failed: ${why}`, `check ${workRoot} (git worktree remove --force removes a half-made one)`)
     // git creates the branch before it fills the folder: a branch left behind is kept, and resume adds the worktree for it.
-    if ((await git($, root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode !== 0) return failed
+    if (!(await hasBranch($, root, branch))) return failed
     await recordMade($, run, made)
     return { ...failed, keep: made }
   }
