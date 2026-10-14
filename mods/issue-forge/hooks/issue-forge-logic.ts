@@ -866,6 +866,9 @@ export function steerBash(command: string, dir: string): string {
 export type GuardContext = { liveAgent: string | null; known: ReadonlySet<string>; workRoot: string | null; root: string | null }
 export type GuardAction = { kind: 'pass' } | { kind: 'deny'; reason: string } | { kind: 'rewrite'; patch: Record<string, string> }
 
+/** A path that names no folder the guard can place: rooted on the current drive (`\\x`), UNC, `~`, or drive-relative (`D:x`). */
+const isUnplaceable = (path: string): boolean => !isAbsolutePath(path) && (/^[\\/]/.test(path) || /^~([\\/]|$)/.test(path) || /^[A-Za-z]:/.test(path))
+
 const RETIRED = 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.'
 const EDIT_PATHS: Record<string, string> = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' }
 
@@ -881,8 +884,15 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
   if (!work) return { kind: 'pass' }
   const key = EDIT_PATHS[e.tool]
   const target = key ? e[key] : undefined
-  if (typeof target === 'string' && outsideWorkRoot(target, work)) return { kind: 'deny', reason: `issue-forge: ${target} is outside this run's folder ${work}; edit files there.` }
+  if (key && typeof target === 'string') {
+    if (isUnplaceable(target) || outsideWorkRoot(target, work)) return { kind: 'deny', reason: `issue-forge: ${target} is outside this run's folder ${work}; edit files there.` }
+    // The agent's tools resolve a relative path in the session's folder (P4): in a worktree run it is made absolute here.
+    return !isAbsolutePath(target) && work !== ctx.root ? { kind: 'rewrite', patch: { [key]: normalizePath(`${work}/${target}`) } } : { kind: 'pass' }
+  }
   if (work === ctx.root) return { kind: 'pass' }
+  if (e.tool === 'Read' && typeof e.file_path === 'string' && !isAbsolutePath(e.file_path) && !isUnplaceable(e.file_path)) {
+    return { kind: 'rewrite', patch: { file_path: normalizePath(`${work}/${e.file_path}`) } }
+  }
   if (e.tool === 'Bash' && typeof e.command === 'string') return { kind: 'rewrite', patch: { command: steerBash(e.command, work) } }
   if (e.tool === 'Grep' || e.tool === 'Glob') {
     const path = e.path
