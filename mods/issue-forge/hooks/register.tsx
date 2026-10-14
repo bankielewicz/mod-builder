@@ -17,6 +17,7 @@ import {
   branchLine,
   branchName,
   canRetry,
+  checkoutBaseOf,
   checkoutState,
   cleanupLine,
   commitMessage,
@@ -347,12 +348,13 @@ async function whereToWork($: EngineInterface, issue: number, root: string, base
 /** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree. */
 async function makeBranch($: EngineInterface, run: Run, issueBody: string): Promise<Blocked | Made> {
   const root = run.root
+  // This checkout's profile only names the base; the profile that is checked and runs is origin/<base>'s.
   await setActivity($, `reading ${PROFILE_FILE}`)
-  const { profile, errors } = await loadProfile($, root)
-  if (!profile) return block(errors[0] ?? `no ${PROFILE_FILE} in ${root}`, `fix ${PROFILE_FILE} (see the README)`)
-  const asked = baseOf(profile, issueBody)
-  const base = asked === profile.baseBranch ? asked : await chooseBase($, run.issue, asked, profile.baseBranch)
-  if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profile.baseBranch}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
+  const path = `${root}/${PROFILE_FILE}`
+  const profileBase = checkoutBaseOf((await $.fs.exists(path)) ? await $.fs.read(path) : null)
+  const asked = baseOf({ baseBranch: profileBase }, issueBody)
+  const base = asked === profileBase ? asked : await chooseBase($, run.issue, asked, profileBase)
+  if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profileBase}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
   stillDriving(run)
   const unfetched = await fetchBase($, root, base)
   if (unfetched) return unfetched

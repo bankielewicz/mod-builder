@@ -167,11 +167,21 @@ export function profileProblems(p: Profile, facts: { isLcovIgnored: boolean | nu
  * §2: the issue's first `Base branch: x` line, else the profile's. The name reaches git, and anyone who
  * can file an issue writes it, so a name `isSafeBranch` refuses is ignored (the profile's base stands).
  */
-export function checkoutBaseOf(_text: string | null): string {
-  return ''
+/**
+ * The base the starting checkout's profile names. That copy only picks the base: the run checks
+ * origin/<base>'s, so a stale, broken or missing one here reads as the default, and an unsafe name too.
+ */
+export function checkoutBaseOf(text: string | null): string {
+  try {
+    const o = text === null ? null : (JSON.parse(text) as unknown)
+    const named = o !== null && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>).baseBranch : undefined
+    return typeof named === 'string' && isSafeBranch(named) ? named : DEFAULTS.baseBranch
+  } catch {
+    return DEFAULTS.baseBranch
+  }
 }
 
-export function baseOf(p: Profile, issueBody: string): string {
+export function baseOf(p: Pick<Profile, 'baseBranch'>, issueBody: string): string {
   for (const line of issueBody.split(/\r?\n/)) {
     const m = line.match(/^Base branch: (\S+)$/)
     if (m?.[1]) return isSafeBranch(m[1]) ? m[1] : p.baseBranch
