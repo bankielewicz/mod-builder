@@ -635,6 +635,11 @@ export function pathDirs(path: string): string[] {
   return path.split(':').map(d => d.replace(/\/+$/, '')).filter(d => d.startsWith('/'))
 }
 
+/** Red stub (PR #39 review round 2). */
+export function resolveFrom(cwd: string, path: string): string {
+  return path
+}
+
 /** The folder holding `path`. */
 export function parentOf(path: string): string {
   return path.replace(/[/\\][^/\\]*$/, '')

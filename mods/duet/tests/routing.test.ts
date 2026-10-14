@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -48,6 +48,8 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     // `--git-dir --git-common-dir`: a plain repository's .git sits in the session folder unless `gitDirs` says otherwise.
+    // `oldGit`: git before 2.31, which has no --path-format.
+    if (argv[0] === 'git' && o.oldGit && argv.some(a => a.startsWith('--path-format'))) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unknown option', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git' && argv.includes('--git-common-dir')) return { value: { exitCode: 0, stdout: `${o.gitDirs ?? '/w/.git\n/w/.git'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git') return { value: { exitCode: 0, stdout: argv.includes('rev-parse') ? 'abc1234\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     seen.argv.push(argv)
@@ -417,6 +419,15 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
       expect(fs).not.toContain(pair('/main/.git', 'write'))
     }
     expect(filesystem(seen.argv[0]!)).toContain(pair('/w', 'write'))
+  })
+
+  test('on git before 2.31, which has no --path-format, git\'s own folders are still readable; a relative answer is taken from the session folder (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
+    const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n../main/.git', oldGit: true })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/main/.git/worktrees/w', 'read'))
+    expect(fs).toContain(pair('/main/.git', 'read'))
   })
 
   test('the Codex on PATH and CODEX_HOME\'s packages are readable, so Codex can run itself in the sandbox (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {

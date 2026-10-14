@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isInside, isProtectedPath, isRouted, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isProtectedPath, isRouted, resolveFrom, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -777,5 +777,14 @@ describe('PR #39 review round 2: a read grant never covers the home folder or th
     const homeless = tableOf(codexArgv({ sandbox: 'read-only', model: '', cwd: '/srv/proj', fsScope: 'project', reads: ['/srv', '/srv/other'] } as never))
     expect(homeless).not.toContain('"/srv"=')
     expect(homeless).toContain('"/srv/other"="read"')
+  })
+})
+
+describe('PR #39 review round 2: git\'s answers without --path-format', () => {
+  test('resolveFrom keeps an absolute path and resolves a relative one against the folder, .. included', () => {
+    expect(resolveFrom('/w', '/main/.git')).toBe('/main/.git')
+    expect(resolveFrom('/w', '.git')).toBe('/w/.git')
+    expect(resolveFrom('/w/sub', '../../main/./.git')).toBe('/main/.git')
+    expect(resolveFrom('/w', '../../..')).toBe('/')
   })
 })
