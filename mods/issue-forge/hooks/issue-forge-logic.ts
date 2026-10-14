@@ -31,6 +31,8 @@ const DEFAULTS = {
 }
 
 export const WORKSPACES: readonly Workspace[] = ['ask', 'worktree', 'here']
+/** The command timeout before a run has its profile (a preflight blocked before it was read). */
+export const DEFAULT_COMMAND_MINUTES = DEFAULTS.commandTimeoutMinutes
 
 /** A relative path with no `..` segment that names a folder inside the repository. */
 const isInsideDir = (v: unknown): v is string => typeof v === 'string' && !isAbsolutePath(v) && !/^[\\/]/.test(v) && normalizePath(v) !== '' && !normalizePath(v).split('/').includes('..')
@@ -844,7 +846,8 @@ export function workOf(run: Run): string {
   return run.workRoot ?? run.root
 }
 
-const isWorktreeRun = (run: Run): boolean => !!run.workRoot && run.workRoot !== run.root
+/** A run working in a worktree of its own, not in the session's checkout. */
+export const isWorktreeRun = (run: Run): boolean => !!run.workRoot && run.workRoot !== run.root
 
 export function outsideWorkRoot(path: string, workRoot: string): boolean {
   return relativeTo(workRoot, isAbsolutePath(path) ? path : `${workRoot}/${path}`) === null

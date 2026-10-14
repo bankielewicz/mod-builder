@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import {
   AGENT_DESCRIPTIONS,
+  DEFAULT_COMMAND_MINUTES,
   DEMO_STATES,
   NAME,
   PHASES,
@@ -34,6 +35,7 @@ import {
   isActive,
   isOwnHandback,
   isWorking,
+  isWorktreeRun,
   layoutOf,
   lcovFileOf,
   mergeLine,
@@ -155,6 +157,18 @@ async function saveRun($: EngineInterface, run: Run): Promise<Run> {
   await update($, runAtom, () => run)
   for (const ref of refsOf(run)) knownRefs.add(ref)
   return run
+}
+
+/**
+ * The branch and folder preflight just made, written onto the stored run at once, even over a stop, so a
+ * Stop pressed before preflight returns never loses them (Codex, PR #41 round 3).
+ */
+async function recordMade($: EngineInterface, run: Run, made: Made): Promise<void> {
+  const stored = await loadRun($, run.root)
+  if (!stored || stored.id !== run.id) return
+  const next: Run = { ...stored, branch: made.branch, workRoot: made.workRoot, base: made.base }
+  await $.store.set(storeKey(run.root), next)
+  await update($, runAtom, () => next)
 }
 
 /** Adds agents to the repository's known list (memory and store); they are refused tools unless live. */
@@ -381,18 +395,25 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
     await setActivity($, `git switch -c ${branch}`)
     const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
     if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
+    await recordMade($, run, { branch, workRoot: root, base })
     return { branch, workRoot: root, base }
   }
   const workRoot = worktreePath(root, where.worktreeDir, branch)
   if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
   await setActivity($, `git worktree add ${where.worktreeDir}/${branch}`)
   // A full checkout can outlast git's 60 s on a slow disk: it runs like the profile's commands, on their timeout.
+  const made = { branch, workRoot, base }
   const added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
   if (added.exit !== 0) {
     const why = added.isTimedOut ? `timed out after ${where.minutes} min` : firstLine(added.tail) || 'no output'
-    return block(`git worktree add failed: ${why}`, `check ${workRoot} (git worktree remove --force removes a half-made one)`)
+    const failed = block(`git worktree add failed: ${why}`, `check ${workRoot} (git worktree remove --force removes a half-made one)`)
+    // git creates the branch before it fills the folder: a branch left behind is kept, and resume adds the worktree for it.
+    if ((await git($, root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode !== 0) return failed
+    await recordMade($, run, made)
+    return { ...failed, keep: made }
   }
-  return { branch, workRoot, base }
+  await recordMade($, run, made)
+  return made
 }
 
 /**
@@ -406,6 +427,14 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   let made: Made
   if (run.branch) {
     made = { branch: run.branch, workRoot: workOf(run), base: run.base }
+    // A kept worktree that is gone (removed by hand, or never filled) is made again for the kept branch.
+    if (isWorktreeRun(run) && !(await $.fs.exists(made.workRoot))) {
+      stillDriving(run)
+      await setActivity($, `git worktree add ${made.workRoot}`)
+      const minutes = run.profile?.commandTimeoutMinutes ?? DEFAULT_COMMAND_MINUTES
+      const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes)
+      if (again.exit !== 0) return { ...block(`git worktree add failed: ${again.isTimedOut ? `timed out after ${minutes} min` : firstLine(again.tail) || 'no output'}`, `check ${made.workRoot}`), keep: made }
+    }
     const unfetched = await fetchBase($, made.workRoot, made.base)
     if (unfetched) return { ...unfetched, keep: made }
     // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
@@ -472,7 +501,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   })
   const subagentType = which === 'red' ? options.redAgentType : `issue-forge:${which}`
   const isOwn = subagentType.startsWith('issue-forge:')
-  const routed = routedRedBlock(subagentType, workOf(run) !== run.root)
+  const routed = routedRedBlock(subagentType, isWorktreeRun(run))
   if (routed) return block(routed.reason, routed.next)
   const name = isOwn ? agentName(run, which) : undefined
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
@@ -798,8 +827,20 @@ async function resumeRun($: EngineInterface): Promise<string> {
   const back = advance(run, { type: 'resume' }, await $.clock.now())
   if (back.branch) {
     const issue = await issueCheck($, back)
-    const head = (await gitOut($, workOf(back), ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    const why = 'type' in issue ? issue : head !== back.branch ? block(`HEAD is on ${head}, not ${back.branch}`, `git switch ${back.branch}`) : null
+    const work = workOf(back)
+    // A worktree that is gone is made again by preflight; at a later step it holds the run's work, so the person decides.
+    const isGone = isWorktreeRun(back) && !(await $.fs.exists(work))
+    const head = isGone ? null : (await gitOut($, work, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    const why =
+      'type' in issue
+        ? issue
+        : isGone
+          ? back.step === 'preflight'
+            ? null
+            : block(`the run's worktree ${work} is gone`, `git worktree add ${work} ${back.branch}`)
+          : head !== back.branch
+            ? block(`HEAD is on ${head}, not ${back.branch}`, `git switch ${back.branch}`)
+            : null
     if (why) {
       await saveRun($, advance(back, why, await $.clock.now()))
       return `still blocked: ${why.reason}.`
