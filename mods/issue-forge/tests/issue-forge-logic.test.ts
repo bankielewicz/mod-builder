@@ -62,6 +62,7 @@ import {
   profileStatusText,
   publishQuestion,
   ranges,
+  readdWorktreeCommand,
   relativeTo,
   routedRedBlock,
   slugOf,
@@ -1049,5 +1050,12 @@ describe('review of PR #41, round 4', () => {
   test('a made event writes the branch, folder and base onto the run at any step, a stopped one included', () => {
     const keep = { branch: 'issue-16-x', workRoot: '/repo/wt', base: 'main' }
     for (const step of ['preflight', 'stopped', 'blocked'] as const) expect(advance(run({ step }), { type: 'made', keep }, 1)).toMatchObject({ step, ...keep })
+  })
+})
+
+describe('review of PR #41, code-review pass', () => {
+  test("readdWorktreeCommand clears git's entry for a folder deleted by hand before adding it again, quoting what a shell would split", () => {
+    expect(readdWorktreeCommand('/repo/scratch/issue-forge/issue-16-x', 'issue-16-x')).toBe('git worktree remove /repo/scratch/issue-forge/issue-16-x; git worktree add /repo/scratch/issue-forge/issue-16-x issue-16-x')
+    expect(readdWorktreeCommand('/my repo/wt', 'issue-16-x')).toBe("git worktree remove '/my repo/wt'; git worktree add '/my repo/wt' issue-16-x")
   })
 })

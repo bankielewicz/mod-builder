@@ -53,6 +53,7 @@ import {
   profileProblems,
   profileStatusText,
   publishQuestion,
+  readdWorktreeCommand,
   routedRedBlock,
   splitZ,
   stashApplyArgv,
@@ -866,7 +867,7 @@ async function resumeRun($: EngineInterface): Promise<string> {
         : isGone
           ? back.step === 'preflight'
             ? null
-            : block(`the run's worktree ${work} is gone`, `git worktree add ${work} ${back.branch}`)
+            : block(`the run's worktree ${work} is gone`, readdWorktreeCommand(work, back.branch))
           : head !== back.branch
             ? block(`HEAD is on ${head}, not ${back.branch}`, `git switch ${back.branch}`)
             : null

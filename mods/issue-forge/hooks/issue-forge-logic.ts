@@ -934,6 +934,15 @@ export function cleanupLine(run: Run): string | null {
 }
 
 /**
+ * What to run by hand to give a kept branch its worktree back. A folder deleted by hand stays registered with
+ * git, which refuses to add it again until its entry is cleared; the remove may find nothing to clear, and the add still runs.
+ */
+export function readdWorktreeCommand(workRoot: string, branch: string): string {
+  const path = shellQuote(workRoot)
+  return `git worktree remove ${path}; git worktree add ${path} ${shellQuote(branch)}`
+}
+
+/**
  * A red type that isn't the mod's own is spawned unnamed so duet may route it to Codex, which runs in the
  * session's folder whatever the spawn says: in a worktree run it would edit the wrong checkout.
  */
