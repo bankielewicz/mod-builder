@@ -218,12 +218,25 @@ async function gitDirs($: EngineInterface): Promise<string[]> {
   return (await git($, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n').map(l => l.trim()).filter(Boolean)
 }
 
-/** Codex's install folders: where the codex on PATH really lands (Codex runs itself from there in its sandbox), and $CODEX_HOME/packages. */
+/** Where a path really lands when it leads to a file; undefined for a folder, anything else, or nothing. */
+async function fileRealPathOf($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    const stat = await $.fs.stat(path, { resolve: true })
+    return stat.kind === 'file' ? stat.realPath : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Codex's install folders: where the codex on PATH really lands (Codex runs itself from there in its sandbox), and
+ * $CODEX_HOME/packages. Like the shell, the lookup skips a codex that is not a file; it can't see the executable bit.
+ */
 async function codexInstallDirs($: EngineInterface): Promise<string[]> {
   const codexHome = (await $.env.get('CODEX_HOME')) || ''
   const dirs = codexHome ? [`${codexHome}/packages`] : []
   for (const dir of pathDirs((await $.env.get('PATH')) || '')) {
-    const real = await realPathOf($, `${dir}/codex`)
+    const real = await fileRealPathOf($, `${dir}/codex`)
     if (real) return [...dirs, parentOf(real)]
   }
   return dirs

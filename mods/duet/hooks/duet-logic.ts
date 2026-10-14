@@ -689,7 +689,10 @@ function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsS
   const named = isWritable ? o.writePaths ?? [] : []
   const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWritable && o.writePaths === undefined ? 'write' : 'read']]
   for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) if (!isProtectedPath(o.cwd, folder)) entries.push([folder, 'write'])
-  for (const path of new Set(o.reads ?? [])) if (ABSOLUTE.test(path) && path !== o.cwd && !isInside(o.cwd, path)) entries.push([path, 'read'])
+  // A read outside the project only: never the project or inside it, and never a folder holding the project or the home folder.
+  const covers = (folder: string, path: string) => folder.replace(/[/\\]+$/, '') === path.replace(/[/\\]+$/, '') || isInside(folder, path)
+  const isNarrow = (path: string) => !covers(o.cwd, path) && !covers(path, o.cwd) && !(o.home && covers(path, o.home))
+  for (const path of new Set(o.reads ?? [])) if (ABSOLUTE.test(path) && isNarrow(path)) entries.push([path, 'read'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
   // TOML refuses a repeated key (CODEX_HOME=$HOME/.codex repeats ~/.codex/packages), so each path goes in once, as first given.
   const unique = new Map<string, 'read' | 'write'>()
