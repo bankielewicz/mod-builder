@@ -255,8 +255,8 @@ function cutText(type: string, cut: AgentCut): string {
  * named `type` in its `name` field, and a note when the search was cut short by its depth or file limit.
  * Agents from managed settings, `--agents`, a plugin or `--add-dir` aren't reachable, so they are a miss.
  */
-async function agentDef($: EngineInterface, cwd: string, type: string): Promise<{ def: AgentDef | null; cut: string }> {
-  if (!/^[\w.:-]+$/.test(type)) return { def: null, cut: '' }
+async function agentDef($: EngineInterface, cwd: string, type: string): Promise<{ def: AgentDef | null; note: string }> {
+  if (!/^[\w.:-]+$/.test(type)) return { def: null, note: '' }
   // A folder is listed and read only when every nearer one had no match, so each pick sees that folder alone.
   const searched = new Set<string>()
   const cut: AgentCut = { depth: false, files: false }
@@ -269,7 +269,7 @@ async function agentDef($: EngineInterface, cwd: string, type: string): Promise<
     def = pickAgent(await Promise.all(entries.map(e => agentText($, e))), type)
     if (def) break
   }
-  return { def, cut: cutText(type, cut) }
+  return { def, note: cutText(type, cut) }
 }
 
 /** Where a path really lands, or undefined when it leads nowhere. */
@@ -503,7 +503,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   mine.add(id)
   let handedOff = false
   try {
-    const { def, cut: searchNote } = role ? { def: roleDef(role), cut: '' } : await agentDef($, cwd, type)
+    const { def, note: searchNote } = role ? { def: roleDef(role), note: '' } : await agentDef($, cwd, type)
     const sandbox = effectiveSandbox(options.sandbox, def, type)
     const baseSha = await baseCommit($)
     const before = sandbox === 'read-only' ? '' : await porcelain($)
