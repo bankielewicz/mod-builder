@@ -1292,8 +1292,11 @@ export function statusText(run: Run | null, isDriving: boolean, now: number): st
   if (view === 'blocked' && run.blocked) lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then /issue-forge resume`)
   else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
   else if (view === 'stopped') lines.push('stopped; the branch and its commits are kept')
-  else if (view === 'ready') lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
-  else if (view === 'done') lines.push(`done: ${run.prUrl ?? ''}`)
+  else if (view === 'ready') {
+    lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
+    const merge = mergeLine(run)
+    if (merge) lines.push(merge)
+  } else if (view === 'done') lines.push(`done: ${run.prUrl ?? ''}`)
   else lines.push(`${run.step} · ${badgeOf(run, now)}`)
   const cleanup = cleanupLine(run)
   if (cleanup) lines.push(`worktree: ${run.workRoot} (${cleanup})`)
