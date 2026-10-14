@@ -920,8 +920,7 @@ export const register: Register = (on, raw) => {
     return next(e)
   })
 
-  // A run's agent that isn't the live one (stopped, or orphaned by a reload) may not use tools.
-  // A run's agent that isn't live is refused; the live one is kept in the run's folder (guardAction).
+  // A run's agent that isn't live (stopped, or orphaned by a reload) is refused; the live one is kept in the run's folder (guardAction).
   on('tool.call', async ($, e, next) => {
     if (!e.agentId) return next(e)
     const action = guardAction(e, { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null })

@@ -836,14 +836,17 @@ export function outsideWorkRoot(path: string, workRoot: string): boolean {
   return relativeTo(workRoot, isAbsolutePath(path) ? path : `${workRoot}/${path}`) === null
 }
 
+/** A word in single quotes, its own `'` closed, escaped and reopened. */
+const singleQuoted = (word: string): string => `'${word.replace(/'/g, `'\\''`)}'`
+
 /** A word git or a shell reads as itself: quoted when it holds anything but safe characters. */
 export function shellQuote(word: string): string {
-  return /^[A-Za-z0-9_./:@%+=-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`
+  return /^[A-Za-z0-9_./:@%+=-]+$/.test(word) ? word : singleQuoted(word)
 }
 
 /** P4: an agent's `cwd` is ignored, so each Bash command first moves to the run's folder, and stops if it can't. */
 export function steerBash(command: string, dir: string): string {
-  return `cd -- '${dir.replace(/'/g, `'\\''`)}' || exit 1\n${command}`
+  return `cd -- ${singleQuoted(dir)} || exit 1\n${command}`
 }
 
 export type GuardContext = { liveAgent: string | null; known: ReadonlySet<string>; workRoot: string | null; root: string | null }
