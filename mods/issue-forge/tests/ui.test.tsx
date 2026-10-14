@@ -1001,6 +1001,14 @@ describe('review of PR #41, round 3', () => {
     expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', WT, BRANCH]])
   })
 
+  test('with confirmPublish off nobody is asked, so the merge is checked once, at publish', { options: { confirmPublish: false } }, async ($, on) => {
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    expect(w.argv.filter(a => a[1] === 'merge-tree')).toHaveLength(1)
+  })
+
   test("resume of a later step whose worktree is gone names the folder instead of failing on it", async ($, on) => {
     engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'gateG', reason: 'r', next: 'n' }, workRoot: WT }) })
     await start($)
