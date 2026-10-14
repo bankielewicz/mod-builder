@@ -528,6 +528,9 @@ function scalarOf(value: string): string {
   return uncommented(value).replace(/^(["'])(.*)\1$/, '$2').trim()
 }
 
+/** A `name` Claude skips its file for: one that starts with `-`, holds a `:` or is over 256 characters. */
+const isSkippedName = (name: string): boolean => name.startsWith('-') || name.includes(':') || name.length > 256
+
 /**
  * The definition Claude would use for a subagent type, from the files found under the folders it scans.
  * Identity comes only from the `name` field; a file with no `name` or no `description`, or a `name` that
@@ -541,7 +544,7 @@ export function pickAgent(files: AgentFile[], type: string): AgentDef | null {
     const def = parseAgentFile(file.text)
     if (!def) continue
     const name = scalarOf(def.name)
-    if (name !== type || name.startsWith('-') || name.includes(':') || name.length > 256 || scalarOf(def.description) === '') continue
+    if (name !== type || isSkippedName(name) || scalarOf(def.description) === '') continue
     found.push({ root: file.root, def: { ...def, name } })
   }
   if (!found.length) return null

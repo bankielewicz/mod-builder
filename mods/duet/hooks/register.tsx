@@ -168,8 +168,9 @@ function logRun($: EngineInterface, task: Task): Promise<void> {
   return logChain
 }
 
-/** Folders below a `.claude/agents` folder that are searched, and `.md` files read per folder: the limits of duet's own search. */
+/** How many folders deep below a `.claude/agents` folder duet's own search goes. */
 const AGENT_DEPTH = 8
+/** How many `.md` files duet's own search reads per `.claude/agents` folder. */
 const AGENT_FILES = 500
 
 /** Agent files by path, read again only when their size or time changed; the folders are listed on every call. */
@@ -185,7 +186,8 @@ type AgentEntry = { path: string; size: number; mtimeMs: number }
 async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
   const top = await git($, ['-C', cwd, 'rev-parse', '--show-toplevel'])
   const start = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
-  const stop = top === '' ? null : start === top || isInside(top, start) ? top : start
+  let stop: string | null = null
+  if (top !== '') stop = start === top || isInside(top, start) ? top : start
   const folders: string[] = []
   for (let dir = start; ; dir = parentOf(dir)) {
     folders.push(`${dir}/.claude/agents`)
@@ -197,7 +199,7 @@ async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
 }
 
 /** The `.md` files under an agents folder, subfolders and dot-folders included; a symbolic link is not followed. A failed list is an empty folder. */
-async function listAgentFiles($: EngineInterface, dir: string, found: AgentEntry[], depth = 0): Promise<void> {
+async function listAgentFiles($: EngineInterface, dir: string, found: AgentEntry[] = [], depth = 0): Promise<AgentEntry[]> {
   const entries = [...(await $.fs.list(dir).catch(() => []))].sort((a, b) => (a.name < b.name ? -1 : 1))
   for (const e of entries) {
     if (e.kind === 'file' && !e.isLink && e.name.endsWith('.md') && found.length < AGENT_FILES) found.push({ path: `${dir}/${e.name}`, size: e.size, mtimeMs: e.mtimeMs })
@@ -205,8 +207,10 @@ async function listAgentFiles($: EngineInterface, dir: string, found: AgentEntry
   for (const e of entries) {
     if (e.kind === 'dir' && !e.isLink && depth < AGENT_DEPTH && found.length < AGENT_FILES) await listAgentFiles($, `${dir}/${e.name}`, found, depth + 1)
   }
+  return found
 }
 
+/** An agent file's text, from the cache while its size and time match the listing. */
 async function agentText($: EngineInterface, e: AgentEntry): Promise<string> {
   const cached = agentCache.get(e.path)
   if (cached && cached.size === e.size && cached.mtimeMs === e.mtimeMs) return cached.text
@@ -223,12 +227,10 @@ async function agentText($: EngineInterface, e: AgentEntry): Promise<string> {
  */
 async function agentDef($: EngineInterface, cwd: string, type: string): Promise<AgentDef | null> {
   if (!/^[\w.:-]+$/.test(type)) return null
-  const roots = await agentRoots($, cwd)
-  const files: AgentFile[] = []
-  for (let root = 0; root < roots.length; root++) {
-    const found: AgentEntry[] = []
-    await listAgentFiles($, roots[root]!, found)
-    for (const e of found) files.push({ root, path: e.path, text: await agentText($, e) })
+  // A folder is listed and read only when every nearer one had no match, so each pick sees that folder alone.
+  for (const [root, dir] of (await agentRoots($, cwd)).entries()) {
+    const files: AgentFile[] = []
+    for (const e of await listAgentFiles($, dir)) files.push({ root, path: e.path, text: await agentText($, e) })
     const def = pickAgent(files, type)
     if (def) return def
   }
