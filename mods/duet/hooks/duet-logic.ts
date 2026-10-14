@@ -622,6 +622,11 @@ export function isInside(root: string, path: string): boolean {
   return path.length > base.length + 1 && (path.startsWith(`${base}/`) || path.startsWith(`${base}\\`))
 }
 
+/** Red stub (PR #39 review round 2). */
+export function isProtectedPath(root: string, path: string): boolean {
+  return false
+}
+
 /** PATH's absolute folders, in order (`:`-separated; Windows' `;` PATH isn't handled). */
 export function pathDirs(path: string): string[] {
   return path.split(':').map(d => d.replace(/\/+$/, '')).filter(d => d.startsWith('/'))

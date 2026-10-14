@@ -389,6 +389,16 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     expect(fs).not.toContain(pair('/w', 'write'))
   })
 
+  test('a codexWritePaths folder that is, or links into, .git, .codex or .agents is dropped, so Codex keeps them read-only (PR #39 review round 2)', { options: { ...scoped, codexWritePaths: 'red-test-writer=tests;cfg;skills;.git;src' } }, async ($, on) => {
+    const seen = engine(on, { agents, real: { '/w/tests': '/w/.git/hooks', '/w/cfg': '/w/.codex', '/w/skills': '/w/.agents/skills' } })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'red-test-writer' }) as never)
+    const fs = filesystem(seen.argv[0]!)
+    expect(fs).toContain(pair('/w/src', 'write'))
+    for (const gone of ['/w/tests', '/w/cfg', '/w/skills', '/w/.git']) expect(fs).not.toContain(JSON.stringify(gone))
+    expect(fs).not.toContain(pair('/w', 'write'))
+  })
+
   test('in a linked worktree, a routed run and a review can read git\'s own folders, read-only (PR #39 review)', { options: { ...scoped, codexWritePaths: '' } }, async ($, on) => {
     const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n/main/.git' })
     await start($)

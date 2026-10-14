@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isInside, isRouted, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isProtectedPath, isRouted, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -710,5 +710,21 @@ describe('issue 3 part B: the scope help matches what was checked', () => {
   test('the scope help says hiding /tmp is checked on Linux only: on macOS, :minimal lets Seatbelt grant /private/tmp (PR #39 review)', () => {
     const help = findConfigField('scope')!.help
     expect(help).toMatch(/Linux only|Linux; not macOS/)
+  })
+})
+
+describe('PR #39 review round 2: a write folder never reaches what Codex protects', () => {
+  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+
+  test('isProtectedPath is true for a .git, .codex or .agents folder under the root and anything below one; never for other names or another root', () => {
+    for (const path of ['/w/.git', '/w/.git/hooks', '/w/.codex', '/w/.codex/config.toml', '/w/.agents', '/w/.agents/skills', '/w/vendor/lib/.git/hooks']) expect(isProtectedPath('/w', path)).toBe(true)
+    for (const path of ['/w', '/w/src', '/w/.github', '/w/.gitignore', '/w/.codexrc', '/w/agents', '/x/.git', '/wx/.git']) expect(isProtectedPath('/w', path)).toBe(false)
+  })
+
+  test('a named write folder in .git, .codex or .agents is dropped from the profile; the others stay writable', () => {
+    const fs = fsOf(codexArgv({ sandbox: 'workspace-write', model: '', cwd: '/w', fsScope: 'project', writePaths: ['.git/hooks', '.codex', './.agents/skills', 'src'] } as never))
+    expect(fs).toContain('"/w/src"="write"')
+    expect(fs).toContain('"/w"="read"')
+    for (const gone of ['/w/.git', '/w/.codex', '/w/.agents']) expect(fs).not.toContain(gone)
   })
 })
