@@ -14,8 +14,11 @@ import {
   agentPrompt,
   badgeOf,
   baseOf,
+  branchLine,
   branchName,
   canRetry,
+  checkoutState,
+  cleanupCommand,
   commitMessage,
   coverageLine,
   demoRun,
@@ -23,6 +26,7 @@ import {
   findStash,
   gateG,
   gateR,
+  guardAction,
   hasSourceRecord,
   hasStash,
   isAbsolutePath,
@@ -31,17 +35,20 @@ import {
   isWorking,
   layoutOf,
   lcovFileOf,
+  mergeLine,
   newRun,
   nextDemoState,
   outsideChecks,
   parseCommand,
   parseLcov,
+  parseMergeTree,
   parseProfile,
   phasePrompt,
   phaseRows,
   prBody,
   profileProblems,
   profileStatusText,
+  publishQuestion,
   splitZ,
   stashApplyArgv,
   stashMessage,
@@ -51,6 +58,9 @@ import {
   truncate,
   unstagedOf,
   viewOf,
+  workOf,
+  workspacePlan,
+  worktreePath,
 } from './issue-forge-logic'
 import type { CommandResult, DemoState, Gate, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
 
@@ -80,6 +90,8 @@ let driving: { runId: string; isStopped: boolean } | null = null
 let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
 let liveAgent: string | null = null
+/** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
+let liveWork: { root: string; workRoot: string } | null = null
 /**
  * Every agent id and name a run of this repository has started, in memory for the tool.call guard
  * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
@@ -214,7 +226,7 @@ function stillDriving(run: Run): void {
 
 /** A gate commits only on the run's own branch: an agent may have switched branches. */
 async function offBranch($: EngineInterface, run: Run): Promise<Blocked | null> {
-  const head = (await gitOut($, run.root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  const head = (await gitOut($, workOf(run), ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   return head === run.branch ? null : block(`HEAD is on ${head}, not ${run.branch}`, `git switch ${run.branch}`)
 }
 
@@ -240,7 +252,7 @@ async function readLcov($: EngineInterface, path: string, since: number): Promis
 
 async function commitAll($: EngineInterface, run: Run, message: string): Promise<string | undefined> {
   stillDriving(run)
-  const root = run.root
+  const root = workOf(run)
   const staged = await git($, root, ['diff', '--cached', '--quiet'])
   if (staged.exitCode === 0) return undefined
   const r = await git($, root, ['commit', '-q', '-F', '-'], message)
@@ -251,7 +263,7 @@ async function commitAll($: EngineInterface, run: Run, message: string): Promise
 /** Stashes the tree under a unique message and records the entry's SHA (the list is shared by every worktree). */
 async function stashAll($: EngineInterface, run: Run, message: string): Promise<StashRef | undefined> {
   stillDriving(run)
-  const root = run.root
+  const root = workOf(run)
   await gitOut($, root, ['stash', 'push', '--include-untracked', '-m', message])
   const sha = findStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), message)
   return sha ? { sha, message } : undefined
@@ -293,14 +305,12 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   return problems.length > 0 ? { profile: null, errors: problems } : { profile: p, errors: [] }
 }
 
-/** Step 1 and 2: preconditions, then the run's branch. */
+/** Step 1 and 2: preconditions, where the run works (Change 0.2.0), then the run's branch. */
 async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   const root = run.root
   await setActivity($, 'checking gh and the issue')
   const issue = await issueCheck($, run)
   if ('type' in issue) return issue
-  await setActivity($, 'checking the working tree')
-  if ((await gitOut($, root, ['status', '--porcelain'])).trim() !== '') return block('the working tree has changes', 'commit or stash them')
   await setActivity($, `reading ${PROFILE_FILE}`)
   const { profile, errors } = await loadProfile($, root)
   if (!profile) return block(errors[0] ?? `no ${PROFILE_FILE} in ${root}`, `fix ${PROFILE_FILE} (see the README)`)
@@ -311,22 +321,52 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   await setActivity($, `git fetch origin ${base}`)
   const fetched = await git($, root, ['fetch', 'origin', base])
   if (fetched.exitCode !== 0) return block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+  // Where the run works is the base's to say: its profile is read before anything is made or switched.
+  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
+  const shown = await git($, root, ['show', `origin/${base}:${PROFILE_FILE}`])
+  const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
+  if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
+  const { workspace, worktreeDir } = atBase.profile
+  await setActivity($, 'checking the checkout')
+  const [gitDir = '', commonDir = ''] = (await gitOut($, root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n')
+  const porcelain = await gitOut($, root, ['status', '--porcelain'])
+  const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  const state = checkoutState({ gitDir, commonDir, porcelain, head, base })
+  let plan = workspacePlan(workspace, state)
+  if (plan.kind === 'block') return block(plan.reason, plan.next)
+  if (plan.kind === 'ask') {
+    if (!(await chooseWorktree($, run.issue, root, state.why, worktreeDir))) {
+      return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE}, or clean the checkout`)
+    }
+    plan = { kind: 'worktree' }
+  }
   const local = splitZ((await gitOut($, root, ['for-each-ref', '--format=%(refname:short)%00', `refs/heads/issue-${run.issue}-*`, `refs/heads/issue-${run.issue}`])).replace(/\n/g, ''))
   const remote = (await gitOut($, root, ['ls-remote', '--heads', 'origin', `issue-${run.issue}*`]))
     .split('\n')
     .map(line => line.split('refs/heads/')[1] ?? '')
     .filter(Boolean)
   const branch = branchName(run.issue, issue.title, [...local, ...remote])
-  stillDriving(run)
-  await setActivity($, `git switch -c ${branch}`)
-  const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
-  if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
-  const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${base}`])).trim()
+  let workRoot = root
+  if (plan.kind === 'worktree') {
+    if ((await git($, root, ['check-ignore', '-q', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
+    workRoot = worktreePath(root, worktreeDir, branch)
+    if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
+    stillDriving(run)
+    await setActivity($, `git worktree add ${worktreeDir}/${branch}`)
+    const added = await git($, root, ['worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`])
+    if (added.exitCode !== 0) return block(`git worktree add failed: ${firstLine(added.stderr)}`, 'check the repository state')
+  } else {
+    stillDriving(run)
+    await setActivity($, `git switch -c ${branch}`)
+    const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
+    if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
+  }
+  const mergeBase = (await gitOut($, workRoot, ['merge-base', 'HEAD', `origin/${base}`])).trim()
   // The profile whose commands run is the base's, not the checkout the run started from (which anyone may have pushed).
   await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
-  const trusted = await loadProfile($, root)
+  const trusted = await loadProfile($, workRoot)
   if (!trusted.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
-  return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base, branch, mergeBase, profile: trusted.profile }
+  return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base, branch, mergeBase, profile: trusted.profile, workRoot }
 }
 
 /**
@@ -334,7 +374,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
  * works), and the merge base is computed afresh every time, so a blocked baseline never leaves a stale one.
  */
 async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
-  const root = run.root
+  const root = workOf(run)
   await setActivity($, `git fetch origin ${run.base}`)
   const fetched = await git($, root, ['fetch', 'origin', run.base])
   if (fetched.exitCode !== 0) return block(`git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
@@ -369,7 +409,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   const last = run.lastGate
   // A retry is this phase's own gate having failed last (an attempt count resets on resume; the failure stays relevant).
   const isRetry = !!last && !last.passed && last.gate === (which === 'red' ? 'R' : which === 'green' ? 'G' : 'F')
-  const redTestPaths = which === 'green' && run.redCommit ? splitZ(await gitOut($, run.root, ['diff', '--name-only', '-z', run.mergeBase, run.redCommit])) : undefined
+  const redTestPaths = which === 'green' && run.redCommit ? splitZ(await gitOut($, workOf(run), ['diff', '--name-only', '-z', run.mergeBase, run.redCommit])) : undefined
   const prompt = phasePrompt(which, run, {
     failures: isRetry && last ? failuresOf(last) : undefined,
     behaviourFor: which === 'red' ? run.behaviourFor : undefined,
@@ -381,7 +421,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   const name = isOwn ? agentName(run, which) : undefined
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
-  const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: run.root, ...(name ? { name } : {}) })
+  const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
   const agentId = spawned.agentId
   // An agent another plugin answered in-line (duet's Codex) has no loop and no turn.complete (C0).
   const isInline = !!agentId && (spawned.model.startsWith('codex') || agentId.startsWith('duet-'))
@@ -399,13 +439,17 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
   liveAgent = agentId
+  liveWork = { root: run.root, workRoot: workOf(run) }
   await rememberAgents($, run.root, name ? [agentId, name] : [agentId])
   await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()))
   await setActivity($, 'agent working')
   try {
     return { type: 'agentDone', answer: answer ? await answer : '' }
   } finally {
-    if (liveAgent === agentId) liveAgent = null
+    if (liveAgent === agentId) {
+      liveAgent = null
+      liveWork = null
+    }
   }
 }
 
@@ -419,7 +463,7 @@ async function stagedSince($: EngineInterface, root: string, ref: string): Promi
 
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
 async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
-  const root = run.root
+  const root = workOf(run)
   const away = await offBranch($, run)
   if (away) return away
   stillDriving(run)
@@ -447,7 +491,7 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
 
 /** Gates G and F (§3 steps 5–6): G1–G7 over facts gathered here, judged in the logic module. */
 async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 'F'): Promise<RunEvent> {
-  const root = run.root
+  const root = workOf(run)
   const redCommit = run.redCommit ?? run.mergeBase
   const away = await offBranch($, run)
   if (away) return away
@@ -497,17 +541,17 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   const body = `${dir}/pr.md`
   // Only what gate F checked leaves the machine: HEAD must still be that commit, and that commit is what's pushed.
   if (run.gatedHead) {
-    const tip = (await gitOut($, run.root, ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
+    const tip = (await gitOut($, workOf(run), ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
   await $.fs.write(body, prBody(run))
   stillDriving(run)
   await setActivity($, `git push origin ${run.branch}`)
-  const pushed = await git($, run.root, ['push', 'origin', run.gatedHead ? `${run.gatedHead}:refs/heads/${run.branch}` : run.branch])
+  const pushed = await git($, workOf(run), ['push', 'origin', run.gatedHead ? `${run.gatedHead}:refs/heads/${run.branch}` : run.branch])
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
   stillDriving(run)
   await setActivity($, 'gh pr create')
-  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
+  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
   return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '' }
 }
@@ -527,11 +571,31 @@ async function chooseBase($: EngineInterface, issue: number, asked: string, prof
   }
 }
 
+/** A busy checkout under `ask`: a new worktree, or nothing. No answer possible counts as no. */
+async function chooseWorktree($: EngineInterface, issue: number, root: string, why: string, dir: string): Promise<boolean> {
+  try {
+    return (await $.ui.ask(`${root} is busy (${why}). Run #${issue} in a new worktree under ${dir}?`, ['New worktree', 'Stop'])) === 'New worktree'
+  } catch {
+    return false
+  }
+}
+
+/** Case 1 at ready: does the gated commit still merge into a freshly fetched base? It informs, never blocks. */
+async function mergeCheck($: EngineInterface, run: Run): Promise<Run> {
+  const work = workOf(run)
+  await setActivity($, `checking the merge with origin/${run.base}`)
+  const fetched = await git($, work, ['fetch', 'origin', run.base])
+  if (fetched.exitCode !== 0) return { ...run, merge: { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` } }
+  const r = await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`])
+  await setActivity($, null)
+  return { ...run, merge: parseMergeTree(r) }
+}
+
 /** Asks before anything leaves the machine; no answer possible (claude -p, dismissed) counts as no. */
 async function confirmPublish($: EngineInterface, run: Run): Promise<boolean> {
   if (!options.confirmPublish) return true
   try {
-    const answer = await $.ui.ask(`Push ${run.branch} and open a pull request against ${run.base}?`, ['Publish', 'Not now'])
+    const answer = await $.ui.ask(publishQuestion(run), ['Publish', 'Not now'])
     return answer === 'Publish'
   } catch {
     return false
@@ -577,7 +641,9 @@ async function drive($: EngineInterface, root: string, runId: string, mayAsk: bo
       if (!run || run.id !== runId || !isMine()) return
       if (run.step === 'ready' && mayAsk) {
         mayAsk = false
-        if (!(await confirmPublish($, run))) return
+        const checked = await saveRun($, await mergeCheck($, run))
+        if (!isMine()) return
+        if (!(await confirmPublish($, checked))) return
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, root)
         if (!now || now.id !== runId || now.step !== 'ready' || !isMine()) return
@@ -660,7 +726,7 @@ async function resumeRun($: EngineInterface): Promise<string> {
   const back = advance(run, { type: 'resume' }, await $.clock.now())
   if (back.branch) {
     const issue = await issueCheck($, back)
-    const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    const head = (await gitOut($, workOf(back), ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
     const why = 'type' in issue ? issue : head !== back.branch ? block(`HEAD is on ${head}, not ${back.branch}`, `git switch ${back.branch}`) : null
     if (why) {
       await saveRun($, advance(back, why, await $.clock.now()))
@@ -691,6 +757,7 @@ async function stopRun($: EngineInterface): Promise<string> {
   if (driving?.runId === run.id) driving.isStopped = true
   stopCommand?.()
   liveAgent = null
+  liveWork = null
   for (const [id, w] of Object.entries(waiting)) {
     delete waiting[id]
     w.reject(new Error('stopped'))
@@ -792,9 +859,12 @@ export const register: Register = (on, raw) => {
   })
 
   // A run's agent that isn't the live one (stopped, or orphaned by a reload) may not use tools.
+  // A run's agent that isn't live is refused; the live one is kept in the run's folder (guardAction).
   on('tool.call', async ($, e, next) => {
-    const id = e.agentId
-    if (id && id !== liveAgent && knownRefs.has(id)) return { deny: 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.' }
+    if (!e.agentId) return next(e)
+    const action = guardAction(e as unknown as { tool: string; agentId?: string }, { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null })
+    if (action.kind === 'deny') return { deny: action.reason }
+    if (action.kind === 'rewrite') return next({ ...e, ...action.patch } as typeof e)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -861,6 +931,7 @@ export const register: Register = (on, raw) => {
         {view === 'empty' && <Text dimColor>/issue-forge demo shows every state.</Text>}
         {view === 'stopped' && run && <Text dimColor>{truncate(`Run #${run.issue} stopped; its branch ${run.branch || '(none)'} is kept.`, cols)}</Text>}
         {view === 'stopped' && <Text dimColor>/issue-forge &lt;issue number&gt; starts another.</Text>}
+        {(view === 'stopped' || view === 'done') && run && cleanupCommand(run) && <Text dimColor>{truncate(`after the merge: ${cleanupCommand(run)}`, cols)}</Text>}
         {view === 'blocked' && run?.blocked && (
           <Text color="#E06C6C">{truncate(`✕ blocked at ${run.blocked.at}: ${run.blocked.reason}`, cols)}</Text>
         )}
@@ -882,6 +953,9 @@ export const register: Register = (on, raw) => {
           </Box>
         ))}
         {view === 'interrupted' && run && <Text color="#E0B15A">{truncate(`◌ interrupted during ${run.step}; /issue-forge resume restarts it`, cols)}</Text>}
+        {view === 'ready' && run && layout !== 'compact' && mergeLine(run) && (
+          <Text color={run.merge?.isClean ? '#7FB685' : '#E0B15A'}>{truncate(mergeLine(run) ?? '', cols)}</Text>
+        )}
         {view === 'ready' && run && layout !== 'compact' && (
           <Text>{truncate(`Push ${run.branch} and open a pull request against ${run.base}?`, cols)}</Text>
         )}
@@ -889,7 +963,7 @@ export const register: Register = (on, raw) => {
         {view === 'done' && run?.prUrl && <Text color="#D97757">{truncate(run.prUrl, cols)}</Text>}
         {(cov || (run?.branch && layout === 'full')) && <Text dimColor>{'─'.repeat(cols)}</Text>}
         {cov && <Text dimColor>{truncate(layout === 'full' ? `coverage   ${cov}` : cov, cols)}</Text>}
-        {run?.branch && layout === 'full' && <Text dimColor>{truncate(`branch     ${run.branch} → ${run.base}`, cols)}</Text>}
+        {run?.branch && layout === 'full' && <Text dimColor>{truncate(`branch     ${branchLine(run)}`, cols)}</Text>}
         <Box gap={2} marginTop={1}>
           {view === 'ready' && <Button key="publish" label="Publish" hotkey="p" variant="primary" onPress={() => void pressPublish($).catch(() => undefined)} />}
           {(view === 'blocked' || view === 'interrupted') && <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={() => void pressResume($).catch(() => undefined)} />}

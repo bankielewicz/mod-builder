@@ -26,7 +26,14 @@ const DEFAULTS = {
   commandTimeoutMinutes: 15,
   notes: '',
   commitTrailers: [] as string[],
+  workspace: 'ask' as Workspace,
+  worktreeDir: 'scratch/issue-forge',
 }
+
+export const WORKSPACES: readonly Workspace[] = ['ask', 'worktree', 'here']
+
+/** A relative path with no `..` segment that names a folder inside the repository. */
+const isInsideDir = (v: unknown): v is string => typeof v === 'string' && !isAbsolutePath(v) && !/^[\\/]/.test(v) && normalizePath(v) !== '' && !normalizePath(v).split('/').includes('..')
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
 
@@ -92,6 +99,8 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
   may('regressionTolerance', v => typeof v === 'number' && v >= 0, 'a number ≥ 0')
   may('commandTimeoutMinutes', v => typeof v === 'number' && v > 0, 'a number > 0')
   may('notes', v => typeof v === 'string', 'a string')
+  may('workspace', v => WORKSPACES.includes(v as Workspace), 'one of "ask", "worktree", "here"')
+  may('worktreeDir', isInsideDir, 'a relative path inside the repository (no .. segment)')
   const isCount = (v: unknown) => v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 1)
   may(
     'attempts',
@@ -123,8 +132,8 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
     commandTimeoutMinutes: (o.commandTimeoutMinutes as number | undefined) ?? DEFAULTS.commandTimeoutMinutes,
     notes: (o.notes as string | undefined) ?? DEFAULTS.notes,
     commitTrailers: (o.commitTrailers as string[] | undefined) ?? DEFAULTS.commitTrailers,
-    workspace: 'ask',
-    worktreeDir: 'scratch/issue-forge',
+    workspace: (o.workspace as Workspace | undefined) ?? DEFAULTS.workspace,
+    worktreeDir: normalizePath((o.worktreeDir as string | undefined) ?? DEFAULTS.worktreeDir),
   }
   return { profile, errors: [] }
 }
@@ -715,7 +724,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   switch (run.step) {
     case 'preflight':
       if (ev.type !== 'preflighted') return run
-      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, step: 'baseline' }
+      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), step: 'baseline' }
     case 'baseline':
       if (ev.type !== 'baselined') return run
       return { ...run, baseline: ev.baseline, mergeBase: ev.mergeBase ?? run.mergeBase, step: 'red', times: start(run, 'red', now) }
@@ -780,55 +789,106 @@ export type CheckoutFacts = { gitDir: string; commonDir: string; porcelain: stri
 export type CheckoutState = { isLinkedWorktree: boolean; isBusy: boolean; why: string }
 export type WorkspacePlan = { kind: 'here' } | { kind: 'worktree' } | { kind: 'ask' } | { kind: 'block'; reason: string; next: string }
 
-export function checkoutState(_f: CheckoutFacts): CheckoutState {
-  return { isLinkedWorktree: false, isBusy: false, why: '' }
+/**
+ * Whether the session's checkout may be branched in place. Busy: it has changes, or HEAD isn't the
+ * base (another branch, or detached). `--git-dir` differs from `--git-common-dir` in a linked worktree.
+ */
+export function checkoutState(f: CheckoutFacts): CheckoutState {
+  const changed = f.porcelain.split('\n').filter(line => line.trim() !== '').length
+  const reasons = [
+    changed > 0 ? `${changed} changed file${changed === 1 ? '' : 's'}` : '',
+    f.head === f.base ? '' : f.head === 'HEAD' ? 'detached HEAD' : `on ${f.head}`,
+  ].filter(Boolean)
+  return { isLinkedWorktree: normalizePath(f.gitDir) !== normalizePath(f.commonDir), isBusy: reasons.length > 0, why: reasons.join(', ') }
 }
 
-export function workspacePlan(_mode: Workspace, _s: CheckoutState): WorkspacePlan {
-  return { kind: 'here' }
+/** `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. */
+export function workspacePlan(mode: Workspace, s: CheckoutState): WorkspacePlan {
+  if (mode === 'worktree') return { kind: 'worktree' }
+  if (!s.isBusy) return { kind: 'here' }
+  if (mode === 'ask') return { kind: 'ask' }
+  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE}, or clean the checkout` }
 }
 
-export function worktreePath(root: string, _dir: string, _branch: string): string {
-  return root
+export function worktreePath(root: string, dir: string, branch: string): string {
+  return normalizePath(`${root}/${dir}/${branch}`)
 }
 
-export function parseMergeTree(_r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
-  return { isClean: true, files: [] }
+/** `git merge-tree --write-tree --name-only`: exit 0 clean, 1 conflicts (the names follow the tree id), else it couldn't run. */
+export function parseMergeTree(r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
+  if (r.exitCode === 0) return { isClean: true, files: [] }
+  if (r.exitCode === 1) return { isClean: false, files: [...new Set(r.stdout.split('\n').slice(1).filter(line => line.trim() !== ''))] }
+  return { isClean: false, files: [], error: r.stderr.trim().split('\n')[0] ?? '' }
 }
 
+/** Where git, the profile's commands and the agents work; runs stored before 0.2.0 have only `root`. */
 export function workOf(run: Run): string {
-  return run.root
+  return run.workRoot ?? run.root
 }
 
-export function outsideWorkRoot(_path: string, _workRoot: string): boolean {
-  return false
+const isWorktreeRun = (run: Run): boolean => !!run.workRoot && run.workRoot !== run.root
+
+export function outsideWorkRoot(path: string, workRoot: string): boolean {
+  return relativeTo(workRoot, isAbsolutePath(path) ? path : `${workRoot}/${path}`) === null
 }
 
-export function steerBash(command: string, _dir: string): string {
-  return command
+/** A word git or a shell reads as itself: quoted when it holds anything but safe characters. */
+export function shellQuote(word: string): string {
+  return /^[A-Za-z0-9_./:@%+=-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`
 }
 
-export type GuardContext = { liveAgent: string | null; known: ReadonlySet<string>; workRoot: string | null; root: string | null }
-export type GuardAction = { kind: 'pass' } | { kind: 'deny'; reason: string } | { kind: 'rewrite'; patch: Record<string, string> }
+/** P4: an agent's `cwd` is ignored, so each Bash command first moves to the run's folder, and stops if it can't. */
+export function steerBash(command: string, dir: string): string {
+  return `cd -- '${dir.replace(/'/g, `'\\''`)}' || exit 1\n${command}`
+}
 
-export function guardAction(_e: { tool: string; agentId?: string; [key: string]: unknown }, _ctx: GuardContext): GuardAction {
+const RETIRED = 'issue-forge: this run was stopped or restarted; end your turn now without further tool calls.'
+const EDIT_PATHS: Record<string, string> = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' }
+
+/**
+ * The tool.call guard (SPEC 9; Change 0.2.0). A run's agent that isn't live is refused. The live one may
+ * not edit outside the run's folder, and in a worktree run its Bash, Grep and Glob are moved into it.
+ */
+export function guardAction(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext): GuardAction {
+  const id = e.agentId
+  if (!id) return { kind: 'pass' }
+  if (id !== ctx.liveAgent) return ctx.known.has(id) ? { kind: 'deny', reason: RETIRED } : { kind: 'pass' }
+  const work = ctx.workRoot
+  if (!work) return { kind: 'pass' }
+  const key = EDIT_PATHS[e.tool]
+  const target = key ? e[key] : undefined
+  if (typeof target === 'string' && outsideWorkRoot(target, work)) return { kind: 'deny', reason: `issue-forge: ${target} is outside this run's folder ${work}; edit files there.` }
+  if (work === ctx.root) return { kind: 'pass' }
+  if (e.tool === 'Bash' && typeof e.command === 'string') return { kind: 'rewrite', patch: { command: steerBash(e.command, work) } }
+  if (e.tool === 'Grep' || e.tool === 'Glob') {
+    const path = e.path
+    if (path === undefined || path === '') return { kind: 'rewrite', patch: { path: work } }
+    if (typeof path === 'string' && !isAbsolutePath(path)) return { kind: 'rewrite', patch: { path: normalizePath(`${work}/${path}`) } }
+  }
   return { kind: 'pass' }
 }
 
 export function branchLine(run: Run): string {
-  return `${run.branch} → ${run.base}`
+  return `${run.branch} → ${run.base}${isWorktreeRun(run) ? ' · worktree' : ''}`
 }
 
-export function cleanupCommand(_run: Run): string | null {
-  return null
+/** How to remove a run's worktree once its PR merges; null when the run worked in the checkout. */
+export function cleanupCommand(run: Run): string | null {
+  return isWorktreeRun(run) && run.workRoot ? `git worktree remove ${shellQuote(run.workRoot)}` : null
 }
 
-export function mergeLine(_run: Run): string | null {
-  return null
+export function mergeLine(run: Run): string | null {
+  const m = run.merge
+  if (!m) return null
+  if (m.error !== undefined) return `merge check unavailable: ${m.error}`
+  return m.isClean ? `merges cleanly with origin/${run.base}` : `conflicts with origin/${run.base}: ${m.files.join(', ')}`
 }
 
 export function publishQuestion(run: Run): string {
-  return `Push ${run.branch} and open a pull request against ${run.base}?`
+  const ask = `Push ${run.branch} and open a pull request against ${run.base}?`
+  const m = run.merge
+  if (!m || m.isClean) return ask
+  return m.error !== undefined ? `${ask} (${mergeLine(run)})` : `${ask} It conflicts with origin/${run.base} in: ${m.files.join(', ')}.`
 }
 
 // ── Prompts and messages (§6) ─────────────────────────────────────────────
@@ -887,7 +947,7 @@ export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): st
     RULES[phase],
     TRUST,
     '',
-    `Repository root: ${run.root}`,
+    `Repository root: ${workOf(run)}. Work only inside it, and run every command from it.`,
     `Branch: ${run.branch} (base ${run.base})`,
     ...(p ? profileLines(p) : []),
     '',
@@ -998,6 +1058,18 @@ export function prBody(run: Run): string {
     `Changed lines ${pctText(cov?.diffLines ?? null)} · changed branches ${pctText(cov?.diffBranches ?? null)} (threshold ${run.profile?.threshold ?? 95}%).`,
     `Total lines ${pctText(cov?.totalLines ?? null)} (baseline ${pctText(run.baseline?.lines ?? null)}) · total branches ${pctText(cov?.totalBranches ?? null)} (baseline ${pctText(run.baseline?.branches ?? null)}).`,
     '',
+    ...(run.merge
+      ? [
+          '## Merge check',
+          '',
+          run.merge.error !== undefined
+            ? `At publish time the merge check couldn't run: ${run.merge.error}`
+            : run.merge.isClean
+              ? `At publish time this merged cleanly with origin/${run.base}.`
+              : `At publish time this conflicted with origin/${run.base} in: ${run.merge.files.join(', ')}.`,
+          '',
+        ]
+      : []),
     '## Tests the red phase wrote',
     '',
     run.redAnswer?.trim() || "Not available: the red agent's answer didn't come back (for example, it ran on Codex).",
@@ -1157,6 +1229,8 @@ export function statusText(run: Run | null, isDriving: boolean, now: number): st
   else if (view === 'ready') lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
   else if (view === 'done') lines.push(`done: ${run.prUrl ?? ''}`)
   else lines.push(`${run.step} · ${badgeOf(run, now)}`)
+  const cleanup = cleanupCommand(run)
+  if (cleanup) lines.push(`worktree: ${run.workRoot} (once the PR merges: ${cleanup})`)
   if (run.baseline) lines.push(`baseline: total lines ${pctText(run.baseline.lines)} · branches ${pctText(run.baseline.branches)}`)
   const cov = coverageLine(run)
   if (cov) lines.push(`coverage: ${cov}`)
@@ -1181,8 +1255,6 @@ export function nextDemoState(state: DemoState): DemoState {
 }
 
 const DEMO_PROFILE: Profile = {
-  workspace: 'ask',
-  worktreeDir: 'scratch/issue-forge',
   ...DEFAULTS,
   testCommand: ['npm', 'test'],
   coverageCommand: ['npm', 'run', 'coverage'],
