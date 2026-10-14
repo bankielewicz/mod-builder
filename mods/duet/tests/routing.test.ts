@@ -39,7 +39,8 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
   // A folder lists what the same path map holds below it: a file (its time from `mtimes`, else 1), or a folder for a deeper path;
-  // `links` are listed as symbolic links, which are `other` and not followed. A folder with nothing below it is not there.
+  // `links` are listed as symbolic links (`other`, `isLink`), as the engine lists them; fs.stat says what each leads to.
+  // A folder with nothing below it is not there.
   on('fs.list', ($: any, e: any) => {
     const dir = String(e.path).replace(/\/+$/, '')
     seen.listed.push(dir)
@@ -667,15 +668,19 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(seen.stdin[0]).toContain('Only reads.')
   })
 
-  test('a symbolic link is not followed, so what lies beyond it does not shadow the real definition', { options }, async ($, on) => {
+  test('a symbolic link is followed, as Claude follows it: a linked folder and a linked file are both read', { options }, async ($, on) => {
+    // Probed on 2.1.299 and 2.1.300: Claude loads agents through a linked file, a linked subfolder and a linked .claude/agents.
     const linked = '/w/pkg/.claude/agents/shared'
-    const seen = engine(on, { cwd: IN, links: [linked], agents: { [`${linked}/editor.md`]: agent('editor', READS, 'Through a link.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Real.') } })
+    const file = '/w/pkg/.claude/agents/gp.md'
+    const seen = engine(on, { cwd: IN, links: [linked, file], kinds: { [file]: 'file' }, agents: { [`${linked}/editor.md`]: agent('editor', READS, 'Through a link.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Real.'), [file]: agent('general-purpose', READS, 'A linked file.') } })
     await start($, IN)
     await asks($, 'editor')
-    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
-    expect(seen.stdin[0]).toContain('Real.')
-    expect(seen.stdin[0]).not.toContain('Through a link.')
-    expect(seen.listed).not.toContain(linked)
+    await asks($, 'general-purpose')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Through a link.')
+    expect(seen.stdin[0]).not.toContain('Real.')
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
+    expect(seen.stdin[1]).toContain('A linked file.')
   })
 
   test('a definition nested more than 8 folders down is not read, so the user-level one is used', { options }, async ($, on) => {
