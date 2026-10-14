@@ -71,6 +71,8 @@ type World = {
   worktreeAddFails?: boolean
   /** When set, the next `git worktree add` waits for it (once). */
   worktreeAddHold?: Promise<void>
+  /** Worktrees git still has registered though their folder is gone: add refuses one until `git worktree remove` clears it. */
+  staleWorktrees?: string[]
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -192,10 +194,16 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       // As git 2.53 does: the progress line, then the reason, both on stderr.
       if (world.worktreeAddFails) return fail(`Preparing worktree (new branch '${a[4]}')\nfatal: could not create work tree dir '${a[5]}': Permission denied`, 128)
       const path = a.includes('-b') ? a[5] ?? '' : a[2] ?? ''
+      if (world.staleWorktrees?.includes(path)) return fail(`Preparing worktree (checking out '${a[3]}')\nfatal: '${path}' is a missing but already registered worktree;\nuse 'add -f' to override, or 'prune' or 'remove' to clear`, 128)
       const add = () => (world.worktrees.push(path), (world.wtProfiles[path] = world.baseProfile ?? PROFILE), ok())
       const hold = world.worktreeAddHold
       world.worktreeAddHold = undefined
       return hold ? hold.then(add) : add()
+    }
+    if (a[0] === 'worktree' && a[1] === 'remove') {
+      const path = a[a.length - 1] ?? ''
+      if (!world.staleWorktrees?.includes(path)) return fail(`fatal: '${path}' is not a working tree`, 128)
+      return (world.staleWorktrees = world.staleWorktrees.filter(p => p !== path)), ok()
     }
     if (a[0] === 'merge' && a.includes('--ff-only') && inWorktree) return (world.wtProfiles[e.init?.cwd] = world.baseProfile ?? PROFILE), ok()
     // As git does: a path starting with '-' and not after '--' is read as options.
@@ -993,18 +1001,19 @@ describe('review of PR #41, round 3', () => {
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1 || w.toasts.filter(t => t.includes('blocked')).length > 1, 'red or another block')
     expect(w.spawned).toHaveLength(1)
-    expect(w.argv.filter(a => a[1] === 'worktree')[1]).toEqual(['git', 'worktree', 'add', WT, BRANCH])
+    expect(w.argv.filter(a => a[1] === 'worktree').slice(1)).toEqual([['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
     expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
   })
 
   test('resume after the kept worktree was removed by hand makes it again at preflight, and says so at a later step', async ($, on) => {
     const atPreflight = storedRun('blocked', { blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] })
-    const w = engine(on, { baseProfile: WORKTREE }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    // A folder removed by hand stays registered with git until something clears it.
+    const w = engine(on, { baseProfile: WORKTREE, staleWorktrees: [WT] }, { [`issue-forge:run:${ROOT}`]: atPreflight })
     await start($)
     expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
     await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
     expect(w.spawned).toHaveLength(1)
-    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'add', WT, BRANCH]])
+    expect(w.argv.filter(a => a[1] === 'worktree')).toEqual([['git', 'worktree', 'remove', WT], ['git', 'worktree', 'add', WT, BRANCH]])
   })
 
   test('with confirmPublish off nobody is asked, so the merge is checked once, at publish', { options: { confirmPublish: false } }, async ($, on) => {
