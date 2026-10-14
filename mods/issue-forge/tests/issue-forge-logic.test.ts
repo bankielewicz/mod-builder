@@ -1038,4 +1038,12 @@ describe('review of PR #41, round 4', () => {
     expect(gitFailure('one\ntwo\n\n')).toBe('two')
     expect(gitFailure('  \n')).toBe('')
   })
+
+  test('status at ready says what the merge check found, as the pane does', () => {
+    const ready = (merge?: Run['merge']) => statusText(run({ step: 'ready', branch: 'b', base: 'main', ...(merge ? { merge } : {}) }), false, 0).split('\n')
+    expect(ready({ isClean: false, files: ['x.json', 'y.ts'] })).toContain('conflicts with origin/main: x.json, y.ts')
+    expect(ready({ isClean: true, files: [] })).toContain('merges cleanly with origin/main')
+    expect(ready({ isClean: false, files: [], error: 'git fetch origin main failed: offline' })).toContain('merge check unavailable: git fetch origin main failed: offline')
+    expect(ready()).toHaveLength(2)
+  })
 })
