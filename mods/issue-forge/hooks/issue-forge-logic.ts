@@ -880,6 +880,14 @@ export function cleanupCommand(run: Run): string | null {
   return isWorktreeRun(run) && run.workRoot ? `git worktree remove ${shellQuote(run.workRoot)}` : null
 }
 
+export function cleanupLine(_run: Run): string | null {
+  return null
+}
+
+export function routedRedBlock(_redAgentType: string, _isWorktree: boolean): { reason: string; next: string } | null {
+  return null
+}
+
 export function mergeLine(run: Run): string | null {
   const m = run.merge
   if (!m) return null

@@ -14,6 +14,7 @@ import {
   canRetry,
   checkoutState,
   cleanupCommand,
+  cleanupLine,
   commitMessage,
   coverageLine,
   demoRun,
@@ -60,6 +61,7 @@ import {
   publishQuestion,
   ranges,
   relativeTo,
+  routedRedBlock,
   slugOf,
   splitZ,
   stashApplyArgv,
@@ -931,5 +933,45 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     const r = run({ branch: 'b', base: 'main', merge: { isClean: false, files: [], error: 'git fetch origin main failed: offline' } })
     expect(prBody(r)).toContain("## Merge check\n\nAt publish time the merge check couldn't run: git fetch origin main failed: offline")
     expect(parseMergeTree({ exitCode: 128, stdout: '', stderr: '' })).toEqual({ isClean: false, files: [], error: 'exit 128' })
+  })
+})
+
+describe('review of PR #41', () => {
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+
+  test("a merge check result lands only on a run that is still ready or publishing; publish carries its own", () => {
+    const merge = { isClean: false, files: ['a.json'] }
+    expect(advance(run({ step: 'ready' }), { type: 'merged', merge }, 1).merge).toEqual(merge)
+    expect(advance(run({ step: 'publishing' }), { type: 'merged', merge }, 1).merge).toEqual(merge)
+    for (const step of ['done', 'stopped', 'blocked', 'gateF'] as const) expect(advance(run({ step }), { type: 'merged', merge }, 1).merge).toBeUndefined()
+    const done = advance(run({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1', merge }, 2)
+    expect(done).toMatchObject({ step: 'done', prUrl: 'https://x/pull/1', merge })
+  })
+
+  test('a preflight block after the branch was made keeps the branch, its folder and the base, so resume reuses them', () => {
+    const r = advance(run({ step: 'preflight' }), { type: 'block', reason: 'r', next: 'n', keep: { branch: 'issue-16-fix-it', workRoot: WT, base: 'main' } }, 1)
+    expect(r).toMatchObject({ step: 'blocked', branch: 'issue-16-fix-it', workRoot: WT, base: 'main', blocked: { at: 'preflight', reason: 'r', next: 'n' } })
+    expect(advance(run({ step: 'preflight' }), { type: 'block', reason: 'r', next: 'n' }, 1).branch).toBe('')
+  })
+
+  test("a red type another plugin routes can't run in a worktree; the mod's own can", () => {
+    expect(routedRedBlock('issue-forge:red', true)).toBeNull()
+    expect(routedRedBlock('general-purpose', false)).toBeNull()
+    expect(routedRedBlock('general-purpose', true)).toEqual({
+      reason: "redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder",
+      next: 'set redAgentType to issue-forge:red, or "workspace" to "here" in .issue-forge.json',
+    })
+  })
+
+  test('merge-tree -z output: the names after the tree id are NUL-separated', () => {
+    expect(parseMergeTree({ exitCode: 1, stdout: 'abc\0a.json\0dir/café.ts\0a.json\0', stderr: '' })).toEqual({ isClean: false, files: ['a.json', 'dir/café.ts'] })
+    expect(parseMergeTree({ exitCode: 0, stdout: 'abc\0', stderr: '' })).toEqual({ isClean: true, files: [] })
+  })
+
+  test('cleanup advice: once the PR merges, or for a stopped run when it is no longer needed', () => {
+    expect(cleanupLine(run({ step: 'ready', workRoot: WT }))).toBe(`once the PR merges: git worktree remove ${WT}`)
+    expect(cleanupLine(run({ step: 'stopped', workRoot: WT }))).toBe(`when you no longer need it: git worktree remove ${WT}`)
+    expect(cleanupLine(run())).toBeNull()
+    expect(statusText(run({ step: 'stopped', branch: 'b', base: 'main', workRoot: WT }), false, 0)).toContain(`worktree: ${WT} (when you no longer need it: git worktree remove ${WT})`)
   })
 })

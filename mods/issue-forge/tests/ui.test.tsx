@@ -61,10 +61,14 @@ type World = {
   worktreeIgnored?: boolean
   /** `git merge-tree` at ready; absent, a clean merge. */
   mergeTree?: { exitCode: number; stdout: string; stderr?: string }
+  /** When set, the next `git merge-tree` waits for it (once). */
+  mergeHold?: Promise<void>
+  /** `git merge-tree` throws, as a timed-out process.run does. */
+  mergeThrows?: boolean
   /** Where the coverage command last ran: a real reporter names files under that folder. */
   lcovRoot?: string
   /** Every process.run with the folder it ran in. */
-  calls: { argv: string[]; cwd?: string }[]
+  calls: { argv: string[]; cwd?: string; timeoutMs?: number }[]
   /** The command each Bash call reached beneath the mod with. */
   bash: string[]
   argv: string[][]
@@ -154,12 +158,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     world.argv.push(argv)
-    world.calls.push({ argv, cwd: e.init?.cwd })
+    world.calls.push({ argv, cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs })
     const inWorktree = world.worktrees.includes(e.init?.cwd)
     const [cmd, ...a] = argv
     const s = a.join(' ')
     const testResult = () => (world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit))
-    if (cmd === 't') return world.testHold ? world.testHold.then(testResult) : testResult()
+    if (cmd === 't' || cmd === './t.sh') return world.testHold ? world.testHold.then(testResult) : testResult()
     if (cmd === 'c') world.lcovRoot = e.init?.cwd ?? ROOT
     if (cmd === 'c' || cmd === 't2') return ok('ran')
     if (cmd === 'sh') return ok('/usr/bin/x')
@@ -174,7 +178,13 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
     if (a[0] === 'worktree' && a[1] === 'add') return world.worktrees.push(a[5] ?? ''), ok()
     if (a[0] === 'check-ignore' && world.worktreeIgnored === false) return fail('', 1)
-    if (a[0] === 'merge-tree') return world.mergeTree ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.mergeTree } } : ok('tree0\n')
+    if (a[0] === 'merge-tree') {
+      if (world.mergeThrows) return { deny: 'process timed out after 60000 ms' }
+      const result = world.mergeTree ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.mergeTree } } : ok('tree0\0')
+      const hold = world.mergeHold
+      world.mergeHold = undefined
+      return hold ? hold.then(() => result) : result
+    }
     if (s === 'rev-parse --abbrev-ref HEAD') return ok(`${world.heads && world.heads.length > 0 ? (world.heads.length > 1 ? world.heads.shift() : world.heads[0]) : world.head}\n`)
     if (s === 'rev-parse HEAD') return ok(`c${world.commits.length}\n`)
     if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
@@ -793,5 +803,91 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     expect((await $.tool.call({ tool: 'Bash', command: 'git status', agentId: 'someone-else' } as never)) as any).toMatchObject({ result: 'ran' })
     expect(w.bash).toEqual(['ls', 'git status'])
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-red' } as never)) as any).deny).toContain('issue-forge:')
+  })
+})
+
+describe('review of PR #41', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+
+  test('a Publish pressed while the merge check runs is kept: one push, one PR, and the run ends done (Codex P1)', async ($, on) => {
+    let release = () => {}
+    const w = engine(on, { head: BRANCH, mergeHold: new Promise<void>(r => (release = r)) }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.argv.some(a => a[1] === 'merge-tree'), 'the merge check')
+    expect((await run($, 'publish')).text).toContain('publishing #16')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    release()
+    await w.clock.settle()
+    expect((await run($, 'status')).text).toContain('done: https://github.com/o/r/pull/20')
+    expect(w.argv.filter(a => a[1] === 'push')).toHaveLength(1)
+    expect(w.asked).toEqual([])
+  })
+
+  test("a red type another plugin routes is refused in a worktree run, before any worktree is made and before a spawn (Codex P2)", { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain("#16 blocked: redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder")
+    expect(w.argv.some(a => a[1] === 'worktree' || a[1] === 'switch')).toBe(false)
+  })
+
+  test('a stored worktree run at red with a routed red type blocks instead of spawning (Codex P2)', { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
+    const w = engine(on, { worktrees: [WT] }, { [`issue-forge:run:${ROOT}`]: storedRun('red', { workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.spawned).toHaveLength(0)
+  })
+
+  test('a block after the worktree was made records it, and resume reuses it instead of making another (Codex P2)', async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, testCommand: ['./t.sh'], workspace: 'worktree' }, files: { [`${ROOT}/./t.sh`]: '' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain('#16 blocked: origin/main has no valid .issue-forge.json: command not found: ./t.sh')
+    expect((await run($, 'status')).text).toContain(`worktree: ${WT}`)
+    w.files[`${WT}/./t.sh`] = ''
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.filter(a => a[1] === 'worktree')).toHaveLength(1)
+    expect(w.argv.some(a => a.some(x => x.includes(`${BRANCH}-2`)))).toBe(false)
+    expect(w.spawned[0]).toMatchObject({ cwd: WT })
+  })
+
+  test('a merge check that throws still asks, naming why it could not run', async ($, on) => {
+    const w = engine(on, { head: BRANCH, mergeThrows: true }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    expect(w.asked[0]).toContain(`Push ${BRANCH} and open a pull request against main? (merge check unavailable: `)
+    expect(w.asked[0]).toContain('timed out')
+  })
+
+  test("git worktree add gets the profile's command timeout, not git's 60 s", async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.calls.find(c => c.argv[1] === 'worktree')?.timeoutMs).toBe(15 * 60_000)
+  })
+
+  test('publish checks the merge again, so the PR body says what was true when it was pushed', async ($, on) => {
+    const w = engine(on, { head: BRANCH, mergeTree: { exitCode: 1, stdout: 'tree0\0x.json\0' } }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0', merge: { isClean: true, files: [] } }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    const body = Object.entries(w.files).find(([path]) => path.endsWith('/pr.md'))?.[1] ?? ''
+    expect(body).toContain('At publish time this conflicted with origin/main in: x.json.')
+  })
+
+  test('under ask, an un-ignored worktreeDir blocks before the question is asked', async ($, on) => {
+    const w = engine(on, { isDirty: true, worktreeIgnored: false, answer: 'New worktree' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain("#16 blocked: scratch/issue-forge isn't gitignored")
+    expect(w.asked).toEqual([])
   })
 })
