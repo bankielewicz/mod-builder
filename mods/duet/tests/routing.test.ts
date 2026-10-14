@@ -728,7 +728,8 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     const seen = engine(on, { cwd: IN, agents: { [tooDeep]: agent('editor', READS, 'Too deep.'), '/home/u/.claude/agents/mine/ed.md': agent('editor', EDITS, 'User level.') } })
     await start($, IN)
     await asks($, 'editor')
-    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    // The read-only editor too deep to read may be Claude's pick, so the cut-short search runs read-only (PR #48 review).
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
     expect(seen.stdin[0]).toContain('User level.')
     expect(seen.stdin[0]).not.toContain('Too deep.')
   })
