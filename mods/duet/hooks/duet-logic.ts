@@ -573,9 +573,12 @@ export function canEdit(def: AgentDef | null, type: string = DEFAULT_TYPE): bool
   return allowed.some(t => !(def.disallowed ?? []).includes(t))
 }
 
-/** An agent can only lower the sandbox, never raise it. */
-export function effectiveSandbox(configured: Sandbox, def: AgentDef | null, type: string = DEFAULT_TYPE): Sandbox {
-  return configured === 'workspace-write' && canEdit(def, type) ? 'workspace-write' : 'read-only'
+/**
+ * An agent can only lower the sandbox, never raise it. A search cut short by duet's limits runs read-only:
+ * a definition past them, which Claude reads, may forbid the edits that duet's pick allows.
+ */
+export function effectiveSandbox(configured: Sandbox, def: AgentDef | null, type: string = DEFAULT_TYPE, isSearchCut = false): Sandbox {
+  return configured === 'workspace-write' && !isSearchCut && canEdit(def, type) ? 'workspace-write' : 'read-only'
 }
 
 // ── Handoff ──────────────────────────────────────────────────────────────

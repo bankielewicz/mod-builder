@@ -247,7 +247,7 @@ function pruneAgentCache(dir: string, listed: Set<string>): void {
 /** What Claude reads when a lookup reached a limit: a definition past it was never read, so the one used may not be Claude's. */
 function cutText(type: string, cut: AgentCut): string {
   const limits = [...(cut.depth ? [`${AGENT_DEPTH} folders deep`] : []), ...(cut.files ? [`${AGENT_FILES} .md files in one .claude/agents folder`] : [])]
-  return limits.length ? `duet: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, so Claude may use a different one.` : ''
+  return limits.length ? `duet: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, so Claude may use a different one, and duet ran this agent read-only.` : ''
 }
 
 /**
@@ -504,7 +504,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   let handedOff = false
   try {
     const { def, note: searchNote } = role ? { def: roleDef(role), note: '' } : await agentDef($, cwd, type)
-    const sandbox = effectiveSandbox(options.sandbox, def, type)
+    const sandbox = effectiveSandbox(options.sandbox, def, type, searchNote !== '')
     const baseSha = await baseCommit($)
     const before = sandbox === 'read-only' ? '' : await porcelain($)
     const handoff = buildHandoff({ id, description: e.description, prompt: e.prompt, base: baseSha, cwd, sandbox, def, subagentType: type })
