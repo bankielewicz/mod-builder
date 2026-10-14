@@ -28,6 +28,7 @@ import {
   findStash,
   gateG,
   gateR,
+  gitFailure,
   globToRegExp,
   guardAction,
   hasSourceRecord,
@@ -1029,5 +1030,12 @@ describe('review of PR #41, round 4', () => {
     const refused = (dir: string) => parseProfile(JSON.stringify({ ...MIN_PROFILE, worktreeDir: dir }), HOME).errors.join('; ')
     for (const dir of ['D:tmp', 'd:', 'C:runs/x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
     expect(refused('scratch/D:x')).toBe('')
+  })
+
+  test("gitFailure: git's first fatal: or error: line, else its last line", () => {
+    expect(gitFailure("\nPreparing worktree (new branch 'b')\nfatal: could not create work tree dir 'x': Permission denied\n")).toBe("fatal: could not create work tree dir 'x': Permission denied")
+    expect(gitFailure('Preparing worktree\n  error: unable to write\nfatal: later')).toBe('error: unable to write')
+    expect(gitFailure('one\ntwo\n\n')).toBe('two')
+    expect(gitFailure('  \n')).toBe('')
   })
 })
