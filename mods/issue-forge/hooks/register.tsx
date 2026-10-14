@@ -305,7 +305,30 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   return problems.length > 0 ? { profile: null, errors: problems } : { profile: p, errors: [] }
 }
 
-/** Step 1 and 2: preconditions, where the run works (Change 0.2.0), then the run's branch. */
+/**
+ * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from origin/<base> before
+ * anything is made or switched; a busy checkout is never branched in place.
+ */
+async function whereToWork($: EngineInterface, issue: number, root: string, base: string): Promise<Blocked | { kind: 'here' | 'worktree'; worktreeDir: string }> {
+  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
+  const shown = await git($, root, ['show', `origin/${base}:${PROFILE_FILE}`])
+  const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
+  if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
+  const { workspace, worktreeDir } = atBase.profile
+  await setActivity($, 'checking the checkout')
+  const [gitDir = '', commonDir = ''] = (await gitOut($, root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n')
+  const porcelain = await gitOut($, root, ['status', '--porcelain'])
+  const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  const state = checkoutState({ gitDir, commonDir, porcelain, head, base })
+  const plan = workspacePlan(workspace, state)
+  if (plan.kind === 'block') return block(plan.reason, plan.next)
+  if (plan.kind === 'ask' && !(await chooseWorktree($, issue, root, state.why, worktreeDir))) {
+    return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE}, or clean the checkout`)
+  }
+  return { kind: plan.kind === 'here' ? 'here' : 'worktree', worktreeDir }
+}
+
+/** Step 1 and 2: preconditions, where the run works, then the run's branch. */
 async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   const root = run.root
   await setActivity($, 'checking gh and the issue')
@@ -321,25 +344,8 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   await setActivity($, `git fetch origin ${base}`)
   const fetched = await git($, root, ['fetch', 'origin', base])
   if (fetched.exitCode !== 0) return block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
-  // Where the run works is the base's to say: its profile is read before anything is made or switched.
-  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
-  const shown = await git($, root, ['show', `origin/${base}:${PROFILE_FILE}`])
-  const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
-  if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
-  const { workspace, worktreeDir } = atBase.profile
-  await setActivity($, 'checking the checkout')
-  const [gitDir = '', commonDir = ''] = (await gitOut($, root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).split('\n')
-  const porcelain = await gitOut($, root, ['status', '--porcelain'])
-  const head = (await gitOut($, root, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-  const state = checkoutState({ gitDir, commonDir, porcelain, head, base })
-  let plan = workspacePlan(workspace, state)
-  if (plan.kind === 'block') return block(plan.reason, plan.next)
-  if (plan.kind === 'ask') {
-    if (!(await chooseWorktree($, run.issue, root, state.why, worktreeDir))) {
-      return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE}, or clean the checkout`)
-    }
-    plan = { kind: 'worktree' }
-  }
+  const where = await whereToWork($, run.issue, root, base)
+  if ('type' in where) return where
   const local = splitZ((await gitOut($, root, ['for-each-ref', '--format=%(refname:short)%00', `refs/heads/issue-${run.issue}-*`, `refs/heads/issue-${run.issue}`])).replace(/\n/g, ''))
   const remote = (await gitOut($, root, ['ls-remote', '--heads', 'origin', `issue-${run.issue}*`]))
     .split('\n')
@@ -347,7 +353,8 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     .filter(Boolean)
   const branch = branchName(run.issue, issue.title, [...local, ...remote])
   let workRoot = root
-  if (plan.kind === 'worktree') {
+  if (where.kind === 'worktree') {
+    const worktreeDir = where.worktreeDir
     if ((await git($, root, ['check-ignore', '-q', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
     workRoot = worktreePath(root, worktreeDir, branch)
     if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
@@ -584,11 +591,14 @@ async function chooseWorktree($: EngineInterface, issue: number, root: string, w
 async function mergeCheck($: EngineInterface, run: Run): Promise<Run> {
   const work = workOf(run)
   await setActivity($, `checking the merge with origin/${run.base}`)
-  const fetched = await git($, work, ['fetch', 'origin', run.base])
-  if (fetched.exitCode !== 0) return { ...run, merge: { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` } }
-  const r = await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`])
-  await setActivity($, null)
-  return { ...run, merge: parseMergeTree(r) }
+  try {
+    const fetched = await git($, work, ['fetch', 'origin', run.base])
+    if (fetched.exitCode !== 0) return { ...run, merge: { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` } }
+    const r = await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`])
+    return { ...run, merge: parseMergeTree(r) }
+  } finally {
+    await setActivity($, null)
+  }
 }
 
 /** Asks before anything leaves the machine; no answer possible (claude -p, dismissed) counts as no. */
@@ -862,7 +872,7 @@ export const register: Register = (on, raw) => {
   // A run's agent that isn't live is refused; the live one is kept in the run's folder (guardAction).
   on('tool.call', async ($, e, next) => {
     if (!e.agentId) return next(e)
-    const action = guardAction(e as unknown as { tool: string; agentId?: string }, { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null })
+    const action = guardAction(e, { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null })
     if (action.kind === 'deny') return { deny: action.reason }
     if (action.kind === 'rewrite') return next({ ...e, ...action.patch } as typeof e)
     return next(e)
