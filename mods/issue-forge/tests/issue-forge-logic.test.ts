@@ -849,7 +849,7 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
 
   test('parseMergeTree: exit 0 is clean, exit 1 lists the conflicted files, anything else is unavailable', () => {
     expect(parseMergeTree({ exitCode: 0, stdout: '4b825dc642cb6eb9a060e54bf8d69288fbee4904\n', stderr: '' })).toEqual({ isClean: true, files: [] })
-    expect(parseMergeTree({ exitCode: 1, stdout: 'abc123\nmods/issue-forge/.claude-plugin/plugin.json\n.claude-plugin/marketplace.json\nmods/issue-forge/.claude-plugin/plugin.json\n', stderr: '' })).toEqual({
+    expect(parseMergeTree({ exitCode: 1, stdout: 'abc123\0mods/issue-forge/.claude-plugin/plugin.json\0.claude-plugin/marketplace.json\0mods/issue-forge/.claude-plugin/plugin.json\0', stderr: '' })).toEqual({
       isClean: false,
       files: ['mods/issue-forge/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json'],
     })
