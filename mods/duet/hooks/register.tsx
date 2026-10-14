@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, typeKey, verdictOf, DEFAULT_TYPE,
+  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -291,7 +291,7 @@ type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
 async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: options.writePaths[typeKey(j.type)] }), j.prompt)
+  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: writePathsOf(options.writePaths, j.type) }), j.prompt)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
   const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))

@@ -22,8 +22,11 @@ export type Options = {
   consent: 'ask' | 'allow'
   runModes: RunModes
   fsScope: FsScope
-  writePaths: Record<string, string[]>
+  writePaths: WritePaths
 }
+
+/** `codexWritePaths`: project folders per agent type, or the error a malformed value gives (every agent then writes nothing). */
+export type WritePaths = Record<string, string[]> | { error: string }
 
 /** `codexFsScope`: `project` confines Codex's filesystem to a duet profile; `anything` leaves Codex's own sandbox as it was. */
 export type FsScope = 'project' | 'anything'
@@ -82,18 +85,27 @@ export function modeOf(o: Options, type: string, role: Role | null): RunMode {
   return own ?? role?.mode ?? o.runModes.fallback
 }
 
-/** `"red-test-writer=tests;test, impl=src"` → project folders per agent type (roles by any of their names); an entry with no folder is ignored. */
-export function parseWritePaths(text: string): Record<string, string[]> {
+/** `"red-test-writer=tests;test, impl=src"` → project folders per agent type (roles by any of their names), or `{ error }` naming the part that isn't agent=folder;folder. */
+export function parseWritePaths(text: string): WritePaths {
   // No prototype: a type named constructor or __proto__ is just a key.
   const paths: Record<string, string[]> = Object.create(null)
-  for (const part of text.split(',')) {
+  for (const raw of text.split(',')) {
+    const part = raw.trim()
+    if (!part) continue
     const eq = part.indexOf('=')
-    if (eq === -1) continue
-    const key = part.slice(0, eq).trim()
-    const folders = part.slice(eq + 1).split(';').map(f => f.trim()).filter(Boolean)
-    if (key && folders.length) paths[typeKey(key)] = folders
+    const key = eq === -1 ? '' : part.slice(0, eq).trim()
+    const folders = eq === -1 ? [] : part.slice(eq + 1).split(';').map(f => f.trim()).filter(Boolean)
+    if (!/^[\w.:-]+$/.test(key) || !folders.length) return { error: `codexWritePaths: "${part}" needs agent=folder;folder, e.g. red-test-writer=tests;test.` }
+    paths[typeKey(key)] = folders
   }
   return paths
+}
+
+/** The folders one agent type may write: none when the option is malformed, undefined when the type isn't named (the whole project). */
+export function writePathsOf(w: WritePaths, type: string): string[] | undefined {
+  if (typeof w.error === 'string') return []
+  const key = typeKey(type)
+  return Object.prototype.hasOwnProperty.call(w, key) ? (w as Record<string, string[]>)[key] : undefined
 }
 
 /** `"general-purpose, Explore"` → a set; `"*"` → every type; blank → none. */
@@ -323,6 +335,10 @@ export function coerceConfigValue(f: ConfigField, text: string): { value: string
   if (f.field === 'codexRunMode') {
     const m = parseRunModes(t)
     if ('error' in m) return { error: m.error }
+  }
+  if (f.field === 'codexWritePaths') {
+    const w = parseWritePaths(t)
+    if (typeof w.error === 'string') return { error: w.error }
   }
   return { value: t }
 }
@@ -631,10 +647,11 @@ type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[] }
  * read-only because the sandbox needs it to re-run `codex`.
  */
 function profileArgs(o: { sandbox: Sandbox; cwd: string } & Omit<FsProfile, 'fsScope'>): string[] {
-  // Read-only writes nothing, so its writePaths are ignored rather than allowed to widen it.
+  // Read-only writes nothing, so its writePaths are ignored rather than allowed to widen it. Any list,
+  // even an empty one, narrows: only an agent with none gets the whole project.
   const isWritable = o.sandbox === 'workspace-write'
   const named = isWritable ? o.writePaths ?? [] : []
-  const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWritable && named.length === 0 ? 'write' : 'read']]
+  const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWritable && o.writePaths === undefined ? 'write' : 'read']]
   for (const folder of new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))) entries.push([folder, 'write'])
   if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
   const table = entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')
