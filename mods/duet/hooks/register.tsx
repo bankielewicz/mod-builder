@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseAgentFile, parseReviewArgs, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, DEFAULT_TYPE,
+  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, typeKey, verdictOf, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -286,12 +286,12 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = { id: string; type: string; cwd: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = { id: string; type: string; cwd: string; home: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
 async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd }), j.prompt)
+  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: options.fsScope, home: j.home, writePaths: options.writePaths[typeKey(j.type)] }), j.prompt)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
   const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
@@ -349,7 +349,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     const handoff = buildHandoff({ id, description: e.description, prompt: e.prompt, base: baseSha, cwd, sandbox, def, subagentType: type })
     await patchTask($, id, { envelope: handoff.envelope })
     await ensureTicker($)
-    const job: Job = { id, type, cwd, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
+    const job: Job = { id, type, cwd, home: await homeDir($), sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
     if (runsInBackground(options, sandbox, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
@@ -403,7 +403,7 @@ async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
   }
   Object.assign(task, { id: admitted.id })
   await ensureTicker($)
-  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model), undefined)
+  const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, fsScope: options.fsScope, home: await homeDir($) }), undefined)
   const done: Task = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)

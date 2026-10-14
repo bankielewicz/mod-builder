@@ -21,7 +21,12 @@ export type Options = {
   timeoutMs: number
   consent: 'ask' | 'allow'
   runModes: RunModes
+  fsScope: FsScope
+  writePaths: Record<string, string[]>
 }
+
+/** `codexFsScope`: `project` confines Codex's filesystem to a duet profile; `anything` leaves Codex's own sandbox as it was. */
+export type FsScope = 'project' | 'anything'
 
 /** Whether a Codex run makes Claude wait for it or answers later. */
 export type RunMode = 'wait' | 'background'
@@ -77,6 +82,19 @@ export function modeOf(o: Options, type: string, role: Role | null): RunMode {
   return own ?? role?.mode ?? o.runModes.fallback
 }
 
+/** `"red-test-writer=tests;test, impl=src"` → project folders per agent type (roles by any of their names); an entry with no folder is ignored. */
+export function parseWritePaths(text: string): Record<string, string[]> {
+  // No prototype: a type named constructor or __proto__ is just a key.
+  const paths: Record<string, string[]> = Object.create(null)
+  for (const part of text.split(',')) {
+    const eq = part.indexOf('=')
+    const key = part.slice(0, eq).trim()
+    const folders = part.slice(eq + 1).split(';').map(f => f.trim()).filter(Boolean)
+    if (eq !== -1 && key && folders.length) paths[typeKey(key)] = folders
+  }
+  return paths
+}
+
 /** `"general-purpose, Explore"` → a set; `"*"` → every type; blank → none. */
 export function parseRoutes(text: string): Set<string> | '*' {
   const t = text.trim()
@@ -95,6 +113,8 @@ export function readOptions(raw: unknown): Options {
     maxConcurrent: Math.max(0, Math.floor(num(o.maxConcurrent, 2))),
     timeoutMs: Math.max(1, num(o.timeoutMinutes, 20)) * 60_000,
     consent: o.codexConsent === 'allow' ? 'allow' : 'ask',
+    fsScope: o.codexFsScope === 'project' ? 'project' : 'anything',
+    writePaths: parseWritePaths(String(o.codexWritePaths ?? '')),
     runModes: ((m) => ('error' in m ? { fallback: 'background' as const, overrides: Object.create(null) as Record<string, RunMode> } : m))(parseRunModes(String(o.codexRunMode ?? 'background'))),
   }
 }
@@ -245,6 +265,8 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: 'a Codex run past this is stopped' },
   { field: 'codexConsent', alias: 'consent', kind: 'text', choices: ['ask', 'allow'], fallback: 'ask', help: 'ask once per session before the first handoff, or pre-approve' },
   { field: 'codexRunMode', alias: 'mode', kind: 'text', fallback: 'background', help: 'wait or background for codexAgents types, then overrides: advisor=background, Explore=wait (editing runs always wait)' },
+  { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked in `codex sandbox` only, not yet `codex exec`' },
+  { field: 'codexWritePaths', alias: 'paths', kind: 'text', fallback: '', help: 'with scope project and workspace-write: red-test-writer=tests;test, impl=src limits a named agent to those project folders; empty = whole project' },
 ]
 
 /** A field's stored value as text, its default when unset. */
@@ -577,10 +599,51 @@ export function buildHandoff(args: {
 
 const NEVER_ASK = ['-c', 'approval_policy="never"'] as const
 
+/** A TOML basic string: JSON's escapes for `\`, `"` and control characters are TOML's. */
+function tomlString(s: string): string {
+  return JSON.stringify(s)
+}
+
+/** A project-relative folder as a path under `cwd`; null when it is absolute, climbs out of the project, or is the project itself. */
+function folderUnder(cwd: string, folder: string): string | null {
+  if (/^([/\\]|[A-Za-z]:)/.test(folder)) return null
+  const parts: string[] = []
+  for (const part of folder.split(/[/\\]+/)) {
+    if (part === '..') {
+      if (!parts.pop()) return null
+    } else if (part !== '' && part !== '.') parts.push(part)
+  }
+  return parts.length ? `${cwd}/${parts.join('/')}` : null
+}
+
+/** What `codexFsScope: project` adds: the project is the only place Codex reads, and writes only under workspace-write. */
+type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[] }
+
+/**
+ * The two `-c` overrides that make a `duet` permission profile the default (SPEC, Change 0.2.6): Codex's
+ * built-in minimal set and the project are readable, nothing else is, and `/tmp` and files outside
+ * are not mounted. Under workspace-write the project is writable, or only the `writePaths` folders
+ * inside it when any are given; a folder outside the project is dropped. Codex's install folder is
+ * read-only because the sandbox needs it to re-run `codex`.
+ */
+function profileArgs(o: { sandbox: Sandbox; cwd: string; home?: string; writePaths?: string[] }): string[] {
+  const isWritable = o.sandbox === 'workspace-write'
+  const named = o.writePaths ?? []
+  const isWhole = isWritable && named.length === 0
+  const entries: [string, 'read' | 'write'][] = [[':minimal', 'read'], [o.cwd, isWhole ? 'write' : 'read']]
+  if (isWritable && !isWhole) {
+    const folders = new Set(named.flatMap(f => folderUnder(o.cwd, f) ?? []))
+    entries.push(...[...folders].map((f): [string, 'write'] => [f, 'write']))
+  }
+  if (o.home) entries.push([`${o.home}/.codex/packages`, 'read'])
+  return ['-c', 'default_permissions="duet"', '-c', `permissions.duet.filesystem={${entries.map(([path, access]) => `${tomlString(path)}="${access}"`).join(',')}}`]
+}
+
 /** `codex exec` for a routed subagent; the prompt goes on stdin (`-`). */
-export function codexArgv(o: { sandbox: Sandbox; model: string; cwd: string }): string[] {
+export function codexArgv(o: { sandbox: Sandbox; model: string; cwd: string } & FsProfile): string[] {
   const sandbox: Sandbox = o.sandbox === 'workspace-write' ? 'workspace-write' : 'read-only'
-  return ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', sandbox, ...NEVER_ASK, '-C', o.cwd, ...(o.model ? ['-m', o.model] : []), '-']
+  const profile = o.fsScope === 'project' ? profileArgs({ sandbox, cwd: o.cwd, home: o.home, writePaths: o.writePaths }) : []
+  return ['codex', 'exec', '--json', '--skip-git-repo-check', '-s', sandbox, ...NEVER_ASK, ...profile, '-C', o.cwd, ...(o.model ? ['-m', o.model] : []), '-']
 }
 
 export type ReviewTarget = { kind: 'uncommitted' } | { kind: 'base'; ref: string } | { kind: 'commit'; ref: string }
@@ -601,9 +664,10 @@ export function parseReviewArgs(args: string): ReviewTarget | null {
  * (`--uncommitted`, `--base`, `--commit`) and a custom prompt can't be combined
  * (Codex exits 2), so the review runs on Codex's own review instructions.
  */
-export function reviewArgv(target: ReviewTarget, model: string): string[] {
+export function reviewArgv(target: ReviewTarget, model: string, scope?: { cwd: string } & FsProfile): string[] {
   const which = target.kind === 'uncommitted' ? ['--uncommitted'] : [`--${target.kind}`, target.ref]
-  return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...which, ...(model ? ['-m', model] : [])]
+  const profile = scope?.fsScope === 'project' ? profileArgs({ sandbox: 'read-only', cwd: scope.cwd, home: scope.home }) : []
+  return ['codex', 'exec', 'review', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', ...NEVER_ASK, ...profile, ...which, ...(model ? ['-m', model] : [])]
 }
 
 /**
