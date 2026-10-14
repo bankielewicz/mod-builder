@@ -805,3 +805,10 @@ describe('the footer names the model', () => {
     expect(footerOf(base)).toContain('[duet x1 · codex · sandbox read-only')
   })
 })
+
+describe('PR #39 review round 2: the scope help says what macOS allows', () => {
+  test('on macOS, /tmp is readable and writable under the profile, not just reachable (Codex 0.162.1 seatbelt_scratch.rs adds it as a write root)', () => {
+    const help = findConfigField('scope')!.help
+    expect(help).toMatch(/macOS[^.;]*\/tmp[^.;]*writable/)
+  })
+})
