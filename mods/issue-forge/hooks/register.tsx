@@ -295,7 +295,7 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   if (!parsed.profile) return { profile: null, errors: parsed.errors }
   const p = parsed.profile
   const outside = outsideChecks(p, root)
-  const isLcovIgnored = outside.lcovInside === null ? null : (await git($, root, ['check-ignore', '-q', outside.lcovInside])).exitCode === 0
+  const isLcovIgnored = outside.lcovInside === null ? null : (await git($, root, ['check-ignore', '-q', '--', outside.lcovInside])).exitCode === 0
   const missing: string[] = []
   for (const c of outside.commands) {
     const found =
@@ -337,7 +337,7 @@ async function whereToWork($: EngineInterface, issue: number, root: string, base
   // Everything a worktree needs is checked before anyone is asked for one.
   const routed = routedRedBlock(options.redAgentType, true)
   if (routed) return block(routed.reason, routed.next)
-  if ((await git($, root, ['check-ignore', '-q', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
+  if ((await git($, root, ['check-ignore', '-q', '--', `${worktreeDir}/`])).exitCode !== 0) return block(`${worktreeDir} isn't gitignored`, `add ${worktreeDir}/ to .gitignore`)
   if (plan.kind === 'ask' && !(await chooseWorktree($, issue, root, state.why, worktreeDir))) {
     return block(`${root} is busy (${state.why}) and no new worktree was chosen`, `answer New worktree in an interactive session, set "workspace" to "worktree" in ${PROFILE_FILE}, or clean the checkout`)
   }
