@@ -54,6 +54,17 @@ type World = {
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
   baseProfile?: Record<string, unknown>
   switched?: boolean
+  /** Linked worktrees that exist (`git worktree add` adds one); HEAD there is `wtHead`. */
+  worktrees: string[]
+  wtHead: string
+  /** `git check-ignore -q <worktreeDir>/`: false when the folder isn't ignored. */
+  worktreeIgnored?: boolean
+  /** `git merge-tree` at ready; absent, a clean merge. */
+  mergeTree?: { exitCode: number; stdout: string; stderr?: string }
+  /** Every process.run with the folder it ran in. */
+  calls: { argv: string[]; cwd?: string }[]
+  /** The command each Bash call reached beneath the mod with. */
+  bash: string[]
   argv: string[][]
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
@@ -86,6 +97,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     issueBody: ISSUE.body,
     spawnHold: null,
     testHold: null,
+    worktrees: [],
+    wtHead: BRANCH,
+    calls: [],
+    bash: [],
     argv: [],
     commits: [],
     spawned: [],
@@ -110,7 +125,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('ui.toast', ($: any, e: any) => (world.toasts.push(e.text ?? String(e)), { value: undefined }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
-  on('tool.call', { tool: 'Bash' }, ($: any, e: any) => (world.beneath.push(e.agentId ?? 'main'), { result: 'ran' }))
+  on('tool.call', { tool: 'Bash' }, ($: any, e: any) => (world.beneath.push(e.agentId ?? 'main'), world.bash.push(e.command), { result: 'ran' }))
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     const q = e.questions[0].question
     world.asked.push(q)
@@ -124,9 +139,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     return world.spawnHold ? world.spawnHold.then(() => answer) : answer
   })
   const profilePath = `${ROOT}/.issue-forge.json`
-  on('fs.exists', ($: any, e: any) => ({ value: (e.path === profilePath && world.hasProfile) || e.path in world.files }))
+  const isWorktreeProfile = (path: string) => world.worktrees.some(wt => path === `${wt}/.issue-forge.json`)
+  on('fs.exists', ($: any, e: any) => ({ value: ((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : PROFILE) }
+    if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.baseProfile ?? PROFILE) }
     if (e.path === LCOV_PATH) return { value: LCOV }
     return { deny: 'ENOENT' }
   })
@@ -135,6 +152,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     world.argv.push(argv)
+    world.calls.push({ argv, cwd: e.init?.cwd })
+    const inWorktree = world.worktrees.includes(e.init?.cwd)
     const [cmd, ...a] = argv
     const s = a.join(' ')
     const testResult = () => (world.testsExit === 0 ? ok('all pass') : fail('1 failing: expected 2, got undefined', world.testsExit))
@@ -148,6 +167,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
+    if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
+    if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
+    if (a[0] === 'worktree' && a[1] === 'add') return world.worktrees.push(a[5] ?? ''), ok()
+    if (a[0] === 'check-ignore' && world.worktreeIgnored === false) return fail('', 1)
+    if (a[0] === 'merge-tree') return world.mergeTree ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.mergeTree } } : ok('tree0\n')
     if (s === 'rev-parse --abbrev-ref HEAD') return ok(`${world.heads && world.heads.length > 0 ? (world.heads.length > 1 ? world.heads.shift() : world.heads[0]) : world.head}\n`)
     if (s === 'rev-parse HEAD') return ok(`c${world.commits.length}\n`)
     if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
@@ -657,5 +681,114 @@ describe('reloads, resume and stop', () => {
     expect((await run($, 'stop')).text).toContain('its agents are refused further tool calls')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-green' } as never)) as any).deny).toContain('issue-forge:')
+  })
+})
+
+describe('workspace: where a run works (Change 0.2.0)', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const WRITES = ['add', 'commit', 'switch', 'stash', 'merge', 'reset', 'checkout']
+  const writesIn = (w: World, cwd: string) => w.calls.filter(c => c.cwd === cwd && c.argv[0] === 'git' && WRITES.includes(c.argv[1] ?? ''))
+
+  test("here: a busy checkout blocks naming why, and origin/main's profile decides, not the checkout's", async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain('#16 blocked: the checkout is busy (1 changed file)')
+    expect(w.argv).toContainEqual(['git', 'show', 'origin/main:.issue-forge.json'])
+    expect(w.asked.length).toBe(0)
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+    expect((await run($, 'status')).text).toContain('next: set "workspace" to "worktree" or "ask" in .issue-forge.json, or clean the checkout')
+    await run($, 'stop')
+    w.isDirty = false
+    w.head = 'feature'
+    w.toasts.length = 0
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the second block')
+    expect(w.toasts).toContain('#16 blocked: the checkout is busy (on feature)')
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+  })
+
+  test('ask: a busy checkout is offered a new worktree; yes forks origin/main there and never writes to the checkout', async ($, on) => {
+    const w = engine(on, { isDirty: true, head: 'issue-3-duet', answer: 'New worktree' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.asked[0]).toBe(`${ROOT} is busy (1 changed file, on issue-3-duet). Run #16 in a new worktree under scratch/issue-forge?`)
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'])
+    expect(w.argv.some(a => a[1] === 'switch')).toBe(false)
+    expect(writesIn(w, ROOT)).toEqual([])
+    expect(w.calls.find(c => c.argv[0] === 't')?.cwd).toBe(WT)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:red', cwd: WT })
+    expect(w.spawned[0]!.prompt).toContain(`Repository root: ${WT}. Work only inside it`)
+    expect((await run($, 'status')).text).toContain(`worktree: ${WT} (once the PR merges: git worktree remove ${WT})`)
+  })
+
+  test('ask with nobody to answer blocks before any branch or worktree is made', async ($, on) => {
+    const w = engine(on, { isDirty: true, answer: null })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain(`#16 blocked: ${ROOT} is busy (1 changed file) and no new worktree was chosen`)
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+  })
+
+  test('worktree: an un-ignored worktreeDir blocks first; then even a clean checkout on main gets a worktree, never a switch', async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, worktreeIgnored: false })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.toasts).toContain("#16 blocked: scratch/issue-forge isn't gitignored")
+    expect(w.argv.some(a => a[1] === 'switch' || a[1] === 'worktree')).toBe(false)
+    await run($, 'stop')
+    w.worktreeIgnored = true
+    await run($, '17')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', 'issue-17-fix-the-thing', `${ROOT}/scratch/issue-forge/issue-17-fix-the-thing`, 'origin/main'])
+    expect(w.argv.some(a => a[1] === 'switch')).toBe(false)
+    expect(writesIn(w, ROOT)).toEqual([])
+  })
+
+  test("a worktree run's gate stages and commits in the worktree, and resume checks HEAD there", async ($, on) => {
+    const w = engine(on, { head: 'issue-3-duet', worktrees: [WT], testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { workRoot: WT, redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateR.')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(w.commits.length).toBe(1)
+    expect(writesIn(w, WT).map(c => c.argv[1])).toEqual(['add', 'commit'])
+    expect(writesIn(w, ROOT)).toEqual([])
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', cwd: WT })
+  })
+
+  test('a run stored before 0.2.0 (no workRoot) still works in its root', async ($, on) => {
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(writesIn(w, ROOT).map(c => c.argv[1])).toEqual(['add', 'commit'])
+  })
+
+  test('ready: the merge check against a fresh origin/main names conflicting files in the question and the pane', async ($, on) => {
+    const w = engine(on, { head: BRANCH, mergeTree: { exitCode: 1, stdout: 'tree0\n.claude-plugin/marketplace.json\n' } }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    expect(w.asked[0]).toBe(`Push ${BRANCH} and open a pull request against main? It conflicts with origin/main in: .claude-plugin/marketplace.json.`)
+    const mergeAt = w.argv.findIndex(a => a[1] === 'merge-tree')
+    expect(w.argv[mergeAt]).toEqual(['git', 'merge-tree', '--write-tree', '--name-only', '--no-messages', 'c0', 'origin/main'])
+    expect(w.argv.slice(0, mergeAt).some(a => a[1] === 'fetch' && a[3] === 'main')).toBe(true)
+    await w.clock.settle()
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /conflicts with origin\/main: \.claude-plugin\/marketplace\.json/ })).toBeDefined()
+    expect(w.argv.some(a => a[1] === 'push')).toBe(false)
+  })
+
+  test("the guard in a worktree run leaves the main loop's and other agents' calls as they were; retired agents stay refused", async ($, on) => {
+    const w = engine(on, { worktrees: [WT] }, { [`issue-forge:run:${ROOT}`]: storedRun('green', { workRoot: WT }) })
+    await start($)
+    expect((await $.tool.call({ tool: 'Bash', command: 'ls' } as never)) as any).toMatchObject({ result: 'ran' })
+    expect((await $.tool.call({ tool: 'Bash', command: 'git status', agentId: 'someone-else' } as never)) as any).toMatchObject({ result: 'ran' })
+    expect(w.bash).toEqual(['ls', 'git status'])
+    expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-red' } as never)) as any).deny).toContain('issue-forge:')
   })
 })

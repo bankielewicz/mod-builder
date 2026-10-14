@@ -4,9 +4,9 @@
  * Section numbers like §4 refer to docs/specs/issue-forge.md.
  */
 
-import type { Activity, AgentRef, Baseline, Check, Coverage, Gate, Pct, Phase, Profile, Run, StashRef, Step } from '../types'
+import type { Activity, AgentRef, Baseline, Check, Coverage, Gate, MergeCheck, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
 
-export type { Activity, AgentRef, Baseline, Check, Coverage, Gate, Pct, Phase, Profile, Run, StashRef, Step }
+export type { Activity, AgentRef, Baseline, Check, Coverage, Gate, MergeCheck, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
 
 export const NAME = 'issue-forge'
 export const PROFILE_FILE = '.issue-forge.json'
@@ -123,6 +123,8 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
     commandTimeoutMinutes: (o.commandTimeoutMinutes as number | undefined) ?? DEFAULTS.commandTimeoutMinutes,
     notes: (o.notes as string | undefined) ?? DEFAULTS.notes,
     commitTrailers: (o.commitTrailers as string[] | undefined) ?? DEFAULTS.commitTrailers,
+    workspace: 'ask',
+    worktreeDir: 'scratch/issue-forge',
   }
   return { profile, errors: [] }
 }
@@ -625,7 +627,7 @@ export function failuresOf(g: Gate): string[] {
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
 export type RunEvent =
-  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile }
+  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
@@ -770,6 +772,63 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
     default:
       return run
   }
+}
+
+// ── Workspace (Change 0.2.0) ─────────────────────────────────────────────
+
+export type CheckoutFacts = { gitDir: string; commonDir: string; porcelain: string; head: string; base: string }
+export type CheckoutState = { isLinkedWorktree: boolean; isBusy: boolean; why: string }
+export type WorkspacePlan = { kind: 'here' } | { kind: 'worktree' } | { kind: 'ask' } | { kind: 'block'; reason: string; next: string }
+
+export function checkoutState(_f: CheckoutFacts): CheckoutState {
+  return { isLinkedWorktree: false, isBusy: false, why: '' }
+}
+
+export function workspacePlan(_mode: Workspace, _s: CheckoutState): WorkspacePlan {
+  return { kind: 'here' }
+}
+
+export function worktreePath(root: string, _dir: string, _branch: string): string {
+  return root
+}
+
+export function parseMergeTree(_r: { exitCode: number; stdout: string; stderr: string }): MergeCheck {
+  return { isClean: true, files: [] }
+}
+
+export function workOf(run: Run): string {
+  return run.root
+}
+
+export function outsideWorkRoot(_path: string, _workRoot: string): boolean {
+  return false
+}
+
+export function steerBash(command: string, _dir: string): string {
+  return command
+}
+
+export type GuardContext = { liveAgent: string | null; known: ReadonlySet<string>; workRoot: string | null; root: string | null }
+export type GuardAction = { kind: 'pass' } | { kind: 'deny'; reason: string } | { kind: 'rewrite'; patch: Record<string, string> }
+
+export function guardAction(_e: { tool: string; agentId?: string; [key: string]: unknown }, _ctx: GuardContext): GuardAction {
+  return { kind: 'pass' }
+}
+
+export function branchLine(run: Run): string {
+  return `${run.branch} → ${run.base}`
+}
+
+export function cleanupCommand(_run: Run): string | null {
+  return null
+}
+
+export function mergeLine(_run: Run): string | null {
+  return null
+}
+
+export function publishQuestion(run: Run): string {
+  return `Push ${run.branch} and open a pull request against ${run.base}?`
 }
 
 // ── Prompts and messages (§6) ─────────────────────────────────────────────
@@ -1122,6 +1181,8 @@ export function nextDemoState(state: DemoState): DemoState {
 }
 
 const DEMO_PROFILE: Profile = {
+  workspace: 'ask',
+  worktreeDir: 'scratch/issue-forge',
   ...DEFAULTS,
   testCommand: ['npm', 'test'],
   coverageCommand: ['npm', 'run', 'coverage'],
