@@ -166,10 +166,6 @@ export function profileProblems(p: Profile, facts: { isLcovIgnored: boolean | nu
 }
 
 /**
- * §2: the issue's first `Base branch: x` line, else the profile's. The name reaches git, and anyone who
- * can file an issue writes it, so a name `isSafeBranch` refuses is ignored (the profile's base stands).
- */
-/**
  * The base the starting checkout's profile names. That copy only picks the base: the run checks
  * origin/<base>'s, so a stale, broken or missing one here reads as the default, and an unsafe name too.
  */
@@ -183,6 +179,10 @@ export function checkoutBaseOf(text: string | null): string {
   }
 }
 
+/**
+ * §2: the issue's first `Base branch: x` line, else the profile's. The name reaches git, and anyone who
+ * can file an issue writes it, so a name `isSafeBranch` refuses is ignored (the profile's base stands).
+ */
 export function baseOf(p: Pick<Profile, 'baseBranch'>, issueBody: string): string {
   for (const line of issueBody.split(/\r?\n/)) {
     const m = line.match(/^Base branch: (\S+)$/)
@@ -651,13 +651,16 @@ export function failuresOf(g: Gate): string[] {
 
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
+/** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
+export type Kept = { branch: string; workRoot: string; base: string }
+
 export type RunEvent =
   | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string; keep?: { branch: string; workRoot: string; base: string } }
+  | { type: 'block'; reason: string; next: string; keep?: Kept }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'resume' }
   | { type: 'stop' }

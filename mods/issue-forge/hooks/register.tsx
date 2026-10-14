@@ -66,7 +66,7 @@ import {
   workspacePlan,
   worktreePath,
 } from './issue-forge-logic'
-import type { CommandResult, DemoState, Gate, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
+import type { CommandResult, DemoState, Gate, Kept, MergeCheck, Phase, Profile, Run, RunEvent, StashRef, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -163,7 +163,7 @@ async function saveRun($: EngineInterface, run: Run): Promise<Run> {
  * The branch and folder preflight just made, written onto the stored run at once, even over a stop, so a
  * Stop pressed before preflight returns never loses them (Codex, PR #41 round 3).
  */
-async function recordMade($: EngineInterface, run: Run, made: Made): Promise<void> {
+async function recordMade($: EngineInterface, run: Run, made: Kept): Promise<void> {
   const stored = await loadRun($, run.root)
   if (!stored || stored.id !== run.id) return
   const next: Run = { ...stored, branch: made.branch, workRoot: made.workRoot, base: made.base }
@@ -287,9 +287,7 @@ async function stashAll($: EngineInterface, run: Run, message: string): Promise<
 
 // ── Steps ─────────────────────────────────────────────────────────────────
 
-/** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
-type Made = { branch: string; workRoot: string; base: string }
-type Blocked = { type: 'block'; reason: string; next: string; keep?: Made }
+type Blocked = Extract<RunEvent, { type: 'block' }>
 const block = (reason: string, next: string): Blocked => ({ type: 'block', reason, next })
 
 async function issueCheck($: EngineInterface, run: Run): Promise<Blocked | { title: string; body: string; url: string }> {
@@ -370,7 +368,7 @@ async function whereToWork($: EngineInterface, issue: number, root: string, base
 }
 
 /** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree. */
-async function makeBranch($: EngineInterface, run: Run, issueBody: string): Promise<Blocked | Made> {
+async function makeBranch($: EngineInterface, run: Run, issueBody: string): Promise<Blocked | Kept> {
   const root = run.root
   // This checkout's profile only names the base; the profile that is checked and runs is origin/<base>'s.
   await setActivity($, `reading ${PROFILE_FILE}`)
@@ -424,7 +422,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   await setActivity($, 'checking gh and the issue')
   const issue = await issueCheck($, run)
   if ('type' in issue) return issue
-  let made: Made
+  let made: Kept
   if (run.branch) {
     made = { branch: run.branch, workRoot: workOf(run), base: run.base }
     // A kept worktree that is gone (removed by hand, or never filled) is made again for the kept branch.
