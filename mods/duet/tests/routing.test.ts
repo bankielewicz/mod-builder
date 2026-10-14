@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; links?: string[] } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[] } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -62,6 +62,13 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     if (real === null) return { deny: 'ENOENT: no such file' }
     const kind = o.kinds?.[e.path] ?? (/\/codex(\.js)?$/.test(real) ? 'file' : 'dir')
     return { value: { kind, size: 0, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) } }
+  })
+  // A folder holds `.git` when `gitAt` names it, else when it is the repository root `top` (`/w`; none for `top: null`).
+  // Any other path exists when the map holds it or something below it.
+  on('fs.exists', ($: any, e: any) => {
+    const path = String(e.path).replace(/\/+$/, '')
+    if (path.endsWith('/.git')) return { value: (o.gitAt ?? (o.top === null ? [] : [o.top ?? '/w'])).includes(path.slice(0, -'/.git'.length)) }
+    return { value: Object.keys(seen.files).some(p => p === path || p.startsWith(`${path}/`)) }
   })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
@@ -640,6 +647,26 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     await asks($, 'editor')
     expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
     expect(seen.stdin[0]).toContain('Far up.')
+  })
+
+  test('a folder holding .git ends the search even when git can\'t read it, as it ends Claude\'s', { options }, async ($, on) => {
+    // Probed on 2.1.299: an empty .git folder, or an empty .git file, stops Claude's walk although `git rev-parse` fails there.
+    const deep = '/w/pkg/sub'
+    const seen = engine(on, { cwd: deep, top: null, gitAt: ['/w/pkg'], agents: { '/w/.claude/agents/outsider.md': agent('outsider', EDITS, 'Above the root.') } })
+    await start($, deep)
+    await asks($, 'outsider')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).not.toContain('Above the root.')
+  })
+
+  test('a session folder spelled otherwise than git\'s answer is still searched up to the repository root', { options }, async ($, on) => {
+    // git answers with the real path; the session reached the checkout through a link.
+    const cwd = '/home/u/link/pkg'
+    const seen = engine(on, { cwd, top: '/data/proj', gitAt: ['/home/u/link'], agents: { '/home/u/link/.claude/agents/general-purpose.md': agent('general-purpose', READS, 'Only reads.') } })
+    await start($, cwd)
+    await asks($, 'general-purpose')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(seen.stdin[0]).toContain('Only reads.')
   })
 
   test('a symbolic link is not followed, so what lies beyond it does not shadow the real definition', { options }, async ($, on) => {
