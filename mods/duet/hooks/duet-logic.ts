@@ -278,7 +278,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: 'a Codex run past this is stopped' },
   { field: 'codexConsent', alias: 'consent', kind: 'text', choices: ['ask', 'allow'], fallback: 'ask', help: 'ask once per session before the first handoff, or pre-approve' },
   { field: 'codexRunMode', alias: 'mode', kind: 'text', fallback: 'background', help: 'wait or background for codexAgents types, then overrides: advisor=background, Explore=wait (editing runs always wait)' },
-  { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked through `codex exec` on Codex 0.162.1, Linux only (on macOS /tmp stays reachable), re-check after upgrading' },
+  { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked through `codex exec` on Codex 0.162.1, Linux only (on macOS, the Codex source makes /tmp readable and writable, even under read-only), re-check after upgrading' },
   { field: 'codexWritePaths', alias: 'paths', kind: 'text', fallback: '', help: 'with scope project and workspace-write: red-test-writer=tests;test, impl=src limits a named agent to those project folders; empty = whole project' },
 ]
 
