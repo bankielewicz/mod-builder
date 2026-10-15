@@ -907,6 +907,42 @@ describe('a scan that read the generations before an edit began', () => {
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
   })
+  test('an edit whose plugin.json cannot be read while a scan is held starts from the version the last finished scan read', OPTIONS, async ($, on) => {
+    const manifest = `${MODS}/git-branch/.claude-plugin/plugin.json`
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edit below.
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, { ms: Date.parse('2027-01-01T00:00:00Z') })
+    await start($)
+    await clock.advance(10)
+
+    // git-branch is green, listed at 0.1.0.
+    await recheck($, clock)
+    // A scan has started over the mods folder and waits at git-branch's folder.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'done' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Meanwhile git-branch's edit begins, and its plugin.json can't be read just then.
+    seen.failReads.push(manifest)
+    await reportSpec($, 'git-branch', 'running')
+    seen.failReads.splice(seen.failReads.indexOf(manifest), 1)
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(10)
+    // Checked again, but not bumped past 0.1.0: Share is what the edit still needs.
+    await recheck($, clock)
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
+  })
 })
 
 describe('command', () => {
