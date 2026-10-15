@@ -361,6 +361,11 @@ async function refreshStatus($: Engine): Promise<void> {
 
 // ── The clock: runs only while something is live ─────────────────────────
 
+/** A reload cancels the clock but keeps the runs atom: tick while rows remain, so an orphan is dropped once it ages out. */
+async function resumeClock($: Engine): Promise<void> {
+  if ((await read($, runs)).length) startClock($)
+}
+
 function startClock($: Engine): void {
   if (clock) return
   clock = $.clock.every(FRAME_MS, () => void tick($).catch((error: unknown) => logCaught($, 'tick', error)))
@@ -384,8 +389,16 @@ async function tick($: Engine): Promise<void> {
   }
   await refreshStatus($)
 
+  // An orphan that aged out is dropped and the mods rescanned, so its stage stops reading running.
+  const all = await read($, runs)
+  const live = Lab.liveRuns(all, now, runLimitMs())
+  if (live.length < all.length) {
+    await update($, runs, rows => Lab.liveRuns(rows, now, runLimitMs()))
+    void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
+  }
+
   const isLive =
-    (await liveRunsOf($)).length > 0 ||
+    live.length > 0 ||
     (await read($, demoStartedAt)) !== null ||
     Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
   if (!isLive) {
@@ -711,6 +724,7 @@ export const register: Register = (on, options) => {
       .catch((error: unknown) => logCaught($, 'session.start.tool', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
+    void resumeClock($).catch((error: unknown) => logCaught($, 'session.start.clock', error))
     return next(e)
   })
 
