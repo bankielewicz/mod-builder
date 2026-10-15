@@ -232,16 +232,22 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   const at = `${modsDir}/${name}`
   const top = await list($, at)
   const has = (entry: string): boolean => top.some(one => one.name === entry)
-  const [manifestDir, hooks, tests, types] = await Promise.all([
+  const [manifestDir, hooks, tests, types, agents, commands, skills] = await Promise.all([
     has('.claude-plugin') ? list($, `${at}/.claude-plugin`) : Promise.resolve([]),
     has('hooks') ? list($, `${at}/hooks`) : Promise.resolve([]),
     has('tests') ? list($, `${at}/tests`) : Promise.resolve([]),
     has('types') ? list($, `${at}/types`) : Promise.resolve([]),
+    has('agents') ? list($, `${at}/agents`) : Promise.resolve([]),
+    has('commands') ? list($, `${at}/commands`) : Promise.resolve([]),
+    has('skills') ? list($, `${at}/skills`) : Promise.resolve([]),
   ])
   const nested = await Promise.all([
     nestedFiles($, at, 'hooks', hooks),
     nestedFiles($, at, 'tests', tests),
     nestedFiles($, at, 'types', types),
+    nestedFiles($, at, 'agents', agents),
+    nestedFiles($, at, 'commands', commands),
+    nestedFiles($, at, 'skills', skills),
   ])
   return Lab.factsOf({
     name,
@@ -250,6 +256,9 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
     hooks,
     tests,
     types,
+    agents,
+    commands,
+    skills,
     nested: nested.flat(),
     spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
     readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
