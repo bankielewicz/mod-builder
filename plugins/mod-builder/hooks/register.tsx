@@ -22,8 +22,6 @@ const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
 const GENERATIONS_KEY = 'modlab:generations'
 const FRAME_MS = 250
-/** How often a streamed Test looks at its time limit. */
-const RUN_WATCH_MS = 5000
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
 const NARROW_TOAST = '◆ Mod Lab needs a wider window. Widen it, or watch the status line.'
@@ -58,6 +56,7 @@ type StoredResults = Record<string, Lab.Results>
 let configuredDir = ''
 let autoOpen = false
 let autoRerun = true
+/** A check's time limit in ms, from `testTimeoutMinutes`. */
 let runLimit = Lab.runLimitMsOf(undefined)
 let clock: Timer | null = null
 let lastTickMs = 0
@@ -426,9 +425,9 @@ async function tick($: Engine): Promise<void> {
 
   // An orphan that aged out is dropped and the mods rescanned, so its stage stops reading running.
   const all = await read($, runs)
-  const live = Lab.liveRuns(all, now, runLimitMs())
+  const live = Lab.liveRuns(all, now, runLimit)
   if (live.length < all.length) {
-    await update($, runs, rows => Lab.liveRuns(rows, now, runLimitMs()))
+    await update($, runs, rows => Lab.liveRuns(rows, now, runLimit))
     void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
   }
 
@@ -455,23 +454,20 @@ async function noteProgress($: Engine, entry: Run, counts: { passed: number; fai
 /** A check ended at its time limit; the message is its summary. */
 class RunTimeout extends Error {}
 
-/** The time limit of a check, from `testTimeoutMinutes`. */
-const runLimitMs = (): number => runLimit
-
 /** The error a check ends with at its time limit: "timed out after 3 minutes". */
 const timeoutOf = (): RunTimeout => new RunTimeout(Lab.timeoutText(runLimit))
 
 /** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
 async function liveRunsOf($: Engine): Promise<Run[]> {
-  return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimitMs())
+  return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimit)
 }
 
 /** Runs a check to the end. `$.process.run` kills one still going at the time limit and rejects: that is a RunTimeout. */
 async function runToEnd($: Engine, argv: readonly string[], dir: string): Promise<{ exitCode: number; output: string }> {
   const startedAt = await $.clock.now()
-  const out = await $.process.run(argv, { cwd: dir, timeoutMs: runLimitMs() }).catch(async (error: unknown) => {
+  const out = await $.process.run(argv, { cwd: dir, timeoutMs: runLimit }).catch(async (error: unknown) => {
     // It also rejects when the command cannot start, which happens at once.
-    throw Lab.isOverLimit((await $.clock.now()) - startedAt, runLimitMs()) ? timeoutOf() : error
+    throw Lab.isOverLimit((await $.clock.now()) - startedAt, runLimit) ? timeoutOf() : error
   })
   const output = `${out.stdout}\n${out.stderr}`
   logProcess($, argv, out.exitCode, (await $.clock.now()) - startedAt, output)
@@ -501,9 +497,8 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   const startedAt = Date.now()
   try {
     const stream = $.process.spawn({ argv, cwd: dir })
-    // The wall clock, not a count of ticks: a late or merged tick must not stretch the limit.
-    timer = $.clock.every(RUN_WATCH_MS, () => {
-      if (isTimedOut || !Lab.isOverLimit(Date.now() - startedAt, runLimitMs())) return
+    // One shot at the limit: a poll overshoots any limit that isn't a multiple of its period.
+    timer = $.clock.after(runLimit, () => {
       isTimedOut = true
       // A stream closed before its end rejects its result (claude-code.d.ts, HookStream); nothing reads it then.
       stream.result.catch(() => undefined)
