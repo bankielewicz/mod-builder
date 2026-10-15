@@ -45,6 +45,7 @@ const judged = atom({ plugin: 'mod-builder', key: 'judged' } as const, { modsDir
 const selected = atom({ plugin: 'mod-builder', key: 'selected' } as const, null)
 const runs = atom({ plugin: 'mod-builder', key: 'runs' } as const, [])
 const reported = atom({ plugin: 'mod-builder', key: 'reported' } as const, {})
+const building = atom({ plugin: 'mod-builder', key: 'building' } as const, {})
 const frame = atom({ plugin: 'mod-builder', key: 'frame' } as const, { n: 0, now: 0 })
 const demoStartedAt = atom({ plugin: 'mod-builder', key: 'demoStartedAt' } as const, null)
 const readme = atom({ plugin: 'mod-builder', key: 'readme' } as const, null)
@@ -388,7 +389,8 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
   const freshIdOf = (name: string): string => `${dir}/${name}`
   // A build that reported a mod before writing its folder gets a row of its own until the folder is found (#19).
-  const placeholders = Lab.placeholderNames(reports, [...found.keys()], dir)
+  const builds = Lab.liveReports((await read($, building))[dir] ?? {}, await $.clock.now())
+  const placeholders = Lab.placeholderNames(builds, [...found.keys()], dir)
   const judge = (freshIds: readonly string[]): ModView[] => [
     ...[...factsByMod.values()].map(facts =>
       Lab.viewOf(
@@ -407,7 +409,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         Lab.placeholderFacts(name),
         {},
         inFlight.filter(one => one.mod === name),
-        reports[name] ?? null,
+        builds[name] ?? null,
         false,
         null,
         null,
@@ -532,8 +534,10 @@ async function tick($: Engine): Promise<void> {
   }
 
   // A placeholder whose running report expired has no folder for a later scan to correct, so rescan now (#19).
-  const liveNow = Lab.liveReports(await read($, reported), now)
-  if ((await read($, judged)).views.some(view => view.isPlaceholder && liveNow[view.name]?.status !== 'running')) {
+  const allBuilds = await read($, building)
+  const shown = await read($, judged)
+  const builds = Lab.liveReports(allBuilds[shown.modsDir ?? ''] ?? {}, now)
+  if (shown.views.some(view => view.isPlaceholder && builds[view.name]?.status !== 'running')) {
     void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
   }
 
@@ -566,7 +570,8 @@ const timeoutOf = (): RunTimeout => new RunTimeout(Lab.timeoutText(runLimit))
 /** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
 /** Whether any build still has a live running report, read now rather than from an earlier copy. */
 async function hasRunningReport($: Engine, now: number): Promise<boolean> {
-  return Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
+  const reports = [Lab.liveReports(await read($, reported), now), ...Object.values(await read($, building)).map(builds => Lab.liveReports(builds, now))]
+  return reports.some(all => Object.values(all).some(report => report.status === 'running'))
 }
 
 async function liveRunsOf($: Engine): Promise<Run[]> {
@@ -983,6 +988,7 @@ export const register: Register = (on, options) => {
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: { ...report, dir: modsDir } }))
+    await update($, building, all => Lab.withBuilding(all, modsDir, mod, { ...report, dir: modsDir }, now))
     if (report.status === 'running') {
       // Follow the active build, unless a README is open in the pane.
       if (!(await read($, readme))) await update($, selected, () => mod)

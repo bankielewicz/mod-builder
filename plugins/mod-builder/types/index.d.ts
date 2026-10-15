@@ -80,6 +80,8 @@ declare module 'claude-code' {
       selected: string | null
       runs: Run[]
       reported: Record<string, Reported>
+      /** Builds still running, per mods folder then mod name, for placeholder rows (see `withBuilding`). */
+      building: Record<string, Record<string, Reported>>
       /** The animation clock: frame count and the time it last ticked. */
       frame: { n: number; now: number }
       /** When the demo started, or null when none runs. */

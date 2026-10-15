@@ -1063,6 +1063,28 @@ export function placeholderNames(reports: Readonly<Record<string, Reported>>, fa
     .map(([name]) => name)
 }
 
+/**
+ * The builds still running, per mods folder and mod name (#19): `reported` keeps one report per name,
+ * so same-named new mods in two folders need a record of their own. A running report sets its entry,
+ * a finished one removes it, and expired entries (and folders left empty) are dropped.
+ */
+export function withBuilding(
+  all: Readonly<Record<string, Readonly<Record<string, Reported>>>>,
+  dir: string,
+  mod: string,
+  report: Reported,
+  now: number,
+): Record<string, Record<string, Reported>> {
+  const next: Record<string, Record<string, Reported>> = {}
+  for (const [folder, reports] of Object.entries(all)) {
+    const live = liveReports(reports, now)
+    if (folder === dir) delete live[mod]
+    if (Object.keys(live).length) next[folder] = live
+  }
+  if (report.status === 'running') next[dir] = { ...next[dir], [mod]: report }
+  return next
+}
+
 // ── Runs ──────────────────────────────────────────────────────────────────
 
 /** The command line for a run. */
