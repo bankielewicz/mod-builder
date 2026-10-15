@@ -1145,19 +1145,20 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
  */
 async function startRun($: EngineInterface, at: Repo | null, issue: number, named?: string): Promise<string> {
   if (!at) return 'not in a git repository. Start Claude Code inside the repository the issue belongs to.'
-  const runs = await runsOf($, at.repo)
-  const same = runs.find(r => r.issue === issue && isActive(r))
-  if (same) {
-    await setFocus($, same)
-    return `#${issue} has a run already.\n${await statusFor($, same, runs)}`
-  }
-  // An issue URL must name the repository gh resolves here (#25); the run is pinned to the name gh gives it.
+  // An issue URL must name the repository gh resolves here (#25), before this checkout's runs answer for its number (PR #68
+  // review); the run is pinned to the name gh gives it.
   let ghRepo: string | undefined
   if (named) {
     const resolved = await ghRepoOf($, at.root)
     if ('type' in resolved) return resolved.reason
     if (!isSameRepo(named, resolved.repo)) return `${repoLabel(named)}#${issue} is in another repository: this checkout's GitHub repository is ${repoLabel(resolved.repo)}. Start Claude Code in a clone of ${repoLabel(named)}.`
     ghRepo = resolved.repo
+  }
+  const runs = await runsOf($, at.repo)
+  const same = runs.find(r => r.issue === issue && isActive(r))
+  if (same) {
+    await setFocus($, same)
+    return `#${issue} has a run already.\n${await statusFor($, same, runs)}`
   }
   const d = drivingNow()
   const drivingRun = d ? (runs.find(r => r.id === d.runId) ?? null) : null
