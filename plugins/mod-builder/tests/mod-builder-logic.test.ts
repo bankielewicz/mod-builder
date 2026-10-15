@@ -405,6 +405,37 @@ describe('mod-builder-logic', () => {
     ])
   })
 
+  test('marketplaceCandidatesOf: a Windows drive is walked down to its root, as the drive (PR #57 review)', () => {
+    expect(marketplaceCandidatesOf('C:\\repo\\wt')).toEqual([
+      'C:/repo/wt/.claude-plugin/marketplace.json',
+      'C:/repo/.claude-plugin/marketplace.json',
+      'C:/.claude-plugin/marketplace.json',
+    ])
+  })
+
+  test('marketplaceCandidatesOf: a UNC path is walked down to its share, keeping the // root (PR #57 review)', () => {
+    const expected = ['//server/share/x/.claude-plugin/marketplace.json', '//server/share/.claude-plugin/marketplace.json']
+    expect(marketplaceCandidatesOf('\\\\server\\share\\x')).toEqual(expected)
+    expect(marketplaceCandidatesOf('//server/share/x')).toEqual(expected)
+  })
+
+  test('marketplaceCandidatesOf: a relative working directory names no folder to walk, so there are no candidates (PR #57 review)', () => {
+    expect(marketplaceCandidatesOf('a/b')).toEqual([])
+  })
+
+  test('modsDirFor: a marketplace on a Windows drive or a UNC share gives its mods/ there (PR #57 review)', () => {
+    expect(modsDirFor('', 'C:\\repo\\wt', ['C:/repo/wt/.claude-plugin/marketplace.json'], '/p/mods')).toBe('C:/repo/wt/mods')
+    expect(modsDirFor('', 'C:\\repo\\wt', ['C:/.claude-plugin/marketplace.json'], '/p/mods')).toBe('C:/mods')
+    expect(modsDirFor('', '\\\\server\\share\\x', ['//server/share/.claude-plugin/marketplace.json'], '/p/mods')).toBe('//server/share/mods')
+  })
+
+  test('normalizePath and displayPathOf keep a UNC root and stop ".." at a drive (PR #57 review)', () => {
+    expect(normalizePath('\\\\server\\share\\x\\..\\y')).toBe('//server/share/y')
+    expect(normalizePath('//server/share/x')).toBe('//server/share/x')
+    expect(normalizePath('C:\\..\\x')).toBe('C:/x')
+    expect(displayPathOf('//server/share/x/mods/foo', '\\\\server\\share\\x')).toBe('mods/foo')
+  })
+
   test('modsDirFor: the mods/ of the nearest folder above the working directory that holds a marketplace', () => {
     const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
     expect(modsDirFor('', '/w/wt/plugins/x', marketplace, '/main/mods')).toBe('/w/wt/mods')
