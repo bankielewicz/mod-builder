@@ -9,7 +9,7 @@
       "name": "mod-builder",
       "source": "./plugins/mod-builder",
       "description": "Spec-first Claude Code mod builder skill plus Mod Lab, a pane/band/status showcase that tracks each mod's build pipeline.",
-      "version": "0.2.7"
+      "version": "0.2.8"
     },
     {
       "name": "git-branch",
