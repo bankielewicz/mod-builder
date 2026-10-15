@@ -771,3 +771,244 @@ Known limits, not fixed:
   `chooseWorktree`'s "Stop" only blocks; a `here` run judges relative edits against the root, not the
   session's folder; `block.keep` repeats `recordMade`; `liveAgent` and `liveWork` change in pairs by hand.
 
+
+## Change 0.3.0 (2026-10-14)
+
+> determine why issue-forge cannot be run parallel in different sessions. generate an enhancement that
+> allows multiple issue-forge sessions to run in a single repository in parallel. for example, i ran
+> /issue-forge 40 and received the following message: 'issue-forge+devforgeai: a run is already active
+> here. #44 duet: agent discovery follow-ups from PR #43's review · issue-44-… → main / blocked at
+> gateG: HEAD is on main, not issue-44-… / …'. since we are using separate working folders aka
+> worktrees, this is common practice in a development environment with AI agents running parallel.
+
+**Why it refused.** A run is stored under the checkout the session started in
+(`issue-forge:run:<git top level>`), one run per checkout, and `/issue-forge <N>` refuses while that
+run is active. Active means anything but done or stopped, so `blocked` counts. Run #44 was started from
+the main folder under 0.1.0, which branched in place, and was later finished by hand (PR #48). Its
+blocked run still holds the main folder's slot (the installed store file had exactly that one key).
+Sessions started inside different worktrees already got separate slots. What stops parallel runs is
+the shared slot, and the module is built for one run at a time (`driving`, `liveAgent`,
+`stopCommand`, the `run` atom).
+
+Parallel runs have four more hazards, found while reading the code. None of them shows today, because
+only one run is ever active per checkout:
+
+1. Every session sees the same store. A run driven by session A reads as "interrupted" in session B
+   (B's module isn't driving it), and B's Resume would start a second driver on it.
+2. Two runs in one repository share git's refs: concurrent `git fetch origin main` can fail on the
+   `refs/remotes/origin/main` lock, and `refs/stash` is one ref for every worktree.
+3. An absolute `lcovPath` is one file for every run, so one run's gate could read another run's
+   coverage. This repository's profile is already relative (`coverage/issue-forge.lcov`, per
+   worktree); another repository's might not be.
+4. Nothing stops two runs of the same issue.
+
+**Probes (2026-10-14, Claude Code 2.1.300, `scratch` mod `storeprobe`):**
+
+- S1 `[probe]`: `$.store` reads come from disk on each `get`. Process A read a key, waited 6 s while
+  process B set key `b`, then read `b` (B's value) and set `a`. Both keys survived.
+- S2 `[probe]`: two processes started at the same millisecond each set 200 distinct keys in a loop
+  over the same 0.7 s, and all 400 were there afterwards. Writes to different keys from different
+  sessions don't lose each other. Two writes to the **same** key: the last one wins.
+- `$.session.id()` and a `session.end` event exist. Nothing lists the person's live sessions, so a
+  crashed session can't be told apart from a live one without a heartbeat (not used: see 5).
+
+- **What changes:**
+  1. **Runs belong to the repository, one per issue.** The repository is git's common folder:
+     `git rev-parse --git-common-dir`, run in the top level, and resolved against it when it's
+     relative. That avoids `--path-format`, so the git floor stays where 0.2.0 left it. Every
+     worktree of a repository gives the same answer. Keys:
+     `issue-forge:run:<common dir>#<N>` and `issue-forge:agents:<common dir>#<N>`. Runs are found
+     with `$.store.keys()` filtered on that prefix. No index key exists for two sessions to rewrite
+     (S2). `Run` gains `repo`.
+  2. **Old keys move.** At session start, each 0.1/0.2 key `issue-forge:run:<checkout>` whose
+     checkout `git worktree list --porcelain` lists for this repository (main included) moves to
+     its new key when that key is free, or holds a finished run that is older. Its agents list
+     merges into the run's new agents key, and the old keys are deleted. Two sessions migrating at
+     once write the same value. A legacy key for a folder git no longer lists is left alone; it
+     is never read.
+  3. **Starting, and the menu** (decided 2026-10-14: one run per session; ask when another run is
+     active; with no answer, start what was typed when that is safe). `/issue-forge <N>`:
+     - #N already has an active run in the repository: `#40 has a run already.` and its status, as
+       today. No menu.
+     - No other run in the repository is active, and this session drives none: it starts with no
+       question, as today.
+     - **Another run is active, and this session drives none:** one `$.ui.ask` (2–4 options, built by
+       pure `startChoices`) about the newest other active run. Any others are named in the question.
+       ```
+       #44 is active in this repository: green 2/3, driven by another session since
+       14:02 (also #52, blocked). What should this session do?
+        1. Start #40 in a new worktree from origin/main (Recommended)
+        2. Take over #44 here (its session stops it, or has crashed)
+        3. Cancel
+       ```
+       If the other run has no driver (blocked, or interrupted), option 2 is `Resume #44 here (blocked
+       at gateG)` and a third option is `Stop #44, then start #40`. Option 1 names where the profile
+       puts the run (`in a new worktree from origin/<base>`, or `here` under `"here"`). Under `ask`,
+       choosing it is the answer to the worktree question, so the person is asked once, not twice.
+       No answer possible (`claude -p`, dismissed) or free text under Other: option 1, since that is
+       what was typed.
+     - **This session drives a run** (one drive per session; parallel runs are parallel sessions):
+       ```
+       This session is driving #44 (green 2/3). What should it do with #40?
+        1. Keep #44 here; start #40 from another session (Recommended)
+        2. Hand #44 off and start #40 here (any session can resume #44)
+        3. Cancel
+       ```
+       Option 1 answers `Open another Claude Code session in this repository and run /issue-forge 40
+       there; it gets its own worktree.` No answer possible, or Other: the same text, and nothing
+       starts.
+     - **Hand off** (new, also `/issue-forge handoff [N]` and a pane button `[ Hand off ]`, hotkey
+       `h`, while running or ready): this session's drive ends at once, as a Stop's does. The command
+       is ended and the agent refused, but the run keeps its step and its driver is cleared, so every
+       session reads it as *interrupted* and `/issue-forge resume 44` picks it up anywhere. Work the
+       phase agent left uncommitted stays in the run's worktree, as after a reload. (A *stopped* run
+       can't be resumed; a handed-off one can.)
+
+     The new run is written only if its key is still free at the write. After that, a run's writes
+     land only on the same run id (`saveRun` checks `stored.id`). So when two sessions start #N in
+     the same instant, the one whose run was replaced stops at its next step.
+  4. **Where it works.** The checkout facts gain "another active run of the repository works here"
+     (its `workRoot` is this checkout). That makes the checkout busy (`#44's run works here`):
+     `ask` asks, `worktree` makes one as before, and `here` blocks. A run that branched in place
+     already reads as busy (HEAD on its branch). This covers the one whose checkout was switched
+     back to the base, as #44's was.
+  5. **Who drives a run.** `Run.driver?: { session, since }` is the `$.session.id()` of the session
+     whose drive is under way. It is set when a drive starts (start, resume, publish, take-over).
+     It is cleared in the drive's `finally`, and in `session.end` for the run this session drives.
+     It has no heartbeat, so no store write per tick.
+     - A run whose driver is another session, at a working step or ready, has a new view,
+       *elsewhere*: `◌ #40 runs in another session (since 14:02)`.
+     - Resume, Publish or Stop of such a run asks `#40 is driven by another session (since 14:02). If
+       that session has ended, take it over?` [Take over] [Cancel]. No answer possible (`claude -p`)
+       counts as Cancel: `#40 runs in another session; use that session, or answer Take over in an
+       interactive one.` Take over writes this session as the driver.
+     - The driving session reads its run's stored `step` and `driver` every 5 s on the ticker it
+       already has; a read only. If the run is stopped, or another session took it over, it stops
+       as a local Stop does (ends its command, refuses its agent's tools) and writes nothing. It
+       reads once more before each commit and stash.
+     - `saveRun` drops a write when the stored driver is another session, so a drive that was taken
+       over can't write over its new owner.
+  6. **Which run a command means.** `status|resume|publish|stop [N]` (`44` or `#44`). With N, it
+     means that issue's run. Without N, it means the pane's run: the one this session last started,
+     resumed, published, stopped or asked the status of (the `focus` atom). Failing that, the
+     repository's only active run (so one blocked run behaves as today), and failing that, none.
+     With several active runs and no focus:
+     `3 runs in this repository: #44 blocked at gateG · #40 green 2/3 · #52 in another session.
+     Name one: /issue-forge resume 44`. `status` with no N and no focus lists every run, one line each.
+  7. **Pane.** It shows the focused run, else the only active one. Under the branch line it adds a
+     dim `also` line listing the repository's other active runs. The `others` atom holds that
+     list. It is refreshed at each command and button, at session start, and every 5 s while this
+     session drives. The buttons act on the shown run.
+
+     ```
+      I S S U E   F O R G E      #40 issue-forge: an agent kept editing and runn…
+      ──────────────────────────────────────────────────────────────────────────
+      ✓ red       2 tests, all failing for the right reason              1m40s
+      ● green     attempt 1/3 · agent working                            3m02s
+      · refactor
+      · publish
+      ──────────────────────────────────────────────────────────────────────────
+      coverage   changed lines 100.00% · branches 100.00% · total 97.47% / 92.70%
+      branch     issue-40-issue-forge-an-agent-kept-editing-and → main
+      also       #44 blocked at gateG · #52 refactor (another session)
+      [ Hand off ]  [ Stop ]  [ Status ]       h hand off · s stop · t status
+     ```
+
+     *Elsewhere* (the shown run is driven by another session): the phase rows as stored, then
+     `◌ runs in another session (since 14:02); /issue-forge resume 40 takes it over`, with
+     [ Resume ] [ Stop ] (both ask first). *Empty* with other runs: the empty lines, then the
+     `also` line. Narrow layouts: medium keeps the `also` line, and compact drops it. New demo
+     state `elsewhere` (between interrupted and ready), with the `also` line in the demo's running
+     states.
+  8. **Hardening for parallel runs.**
+     - `git fetch`, `git stash push` and `git commit` retry up to twice, at once, when git reports
+       a lock another process holds (`cannot lock ref`, `Unable to create '….lock': File exists`;
+       pure `isLockError`). A fetch spends seconds on the network before its ref update, so a
+       retry finds the other process's update done.
+     - An `lcovPath` outside the run's folder (absolute, or `~`) while another run of the
+       repository is at a working step: preflight blocks with `lcovPath <path> is shared by every
+       run and #44 is running; make it relative to the repository (gitignored), as
+       coverage/issue-forge.lcov`.
+     - When a run starts, finished runs (done, stopped) beyond the repository's 20 newest are
+       deleted with their agents keys, which keeps the store under its 4 MiB.
+  9. **Commands.** `argumentHint` and `USAGE`: `<issue> · status [N] · resume [N] · publish [N] ·
+     handoff [N] · stop [N] · demo`.
+  10. **Contract** (`types/index.d.ts`): `Run.repo?`, `Run.driver?`; `PluginState` gains
+      `focus: number | null` and `others: OtherRun[]`
+      (`{ issue, step, blockedAt?, badge, isElsewhere }`). Both additions are optional or new, and
+      runs stored before 0.3.0 still load.
+- **What gets touched:**
+  - **Store:** new keys `issue-forge:run:<common dir>#<N>` and `issue-forge:agents:<common dir>#<N>`.
+    At session start, the old per-checkout keys of this repository are moved and deleted. Finished
+    runs beyond 20 per repository are deleted. The installed plugin's store holds one old key
+    (#44, blocked); it moves.
+  - **Processes:** `git rev-parse --git-common-dir` with each command; `git worktree list
+    --porcelain` at session start, only when old keys exist; retries of fetch, stash and commit
+    after a lock error. Nothing new leaves the machine.
+  - **Hooks:** a new `session.end` hook (clears this session's driver; one store write).
+    `$.session.id()` read at session start.
+  - **Files:** none new; `pr.md` stays in `~/.claude/issue-forge-data/<run id>/`.
+  - **Repository:** `mods/issue-forge` (logic, register, contract, tests, SPEC, README), the
+    marketplace entry, and `gotchas.md` (S1, S2), so mod-builder goes to 0.2.7.
+  - **Not changed:** gates, coverage rules, phases, the guard's rules, `.issue-forge.json`.
+- **Tests:**
+  - Logic (`issue-forge-logic.test.ts`):
+    - `runKey`/`agentsKey`/`parseRunKey` (new form, legacy form, neither)
+    - `commonDirOf` (relative `.git`, absolute from a linked worktree)
+    - `repoRunKeys` (only this repository's prefix)
+    - `migrationPlan` (listed checkout moves; unlisted stays; new key held by an active or newer
+      run keeps it; agents merge)
+    - `startChoices` (no other run → none; another run driven elsewhere → start, take over, cancel;
+      a blocked or interrupted one → start, resume, stop-then-start, cancel; driving here → keep,
+      hand off, cancel; never more than 4; others named in the question; option 1's place follows
+      the workspace mode)
+    - `startAnswer` (each label → its action; no answer or Other → start in A, refuse in B)
+    - same issue active (blocked counts) answers its status; a done or stopped one is replaced
+    - `advance` with `handoff` (step kept, driver cleared, reads interrupted everywhere)
+    - `checkoutState` with a run working there (busy, named)
+    - `viewOf` `elsewhere` (another driver at a working step or ready; own driver with no drive is
+      interrupted; a blocked run with a stale driver is blocked)
+    - `pickRun` (N; focus; the only active run; several → the list text)
+    - `parseCommand` (`stop 44`, `resume #44`, `status`, `publish 7`)
+    - `isLockError`
+    - `sharedLcovBlock` (absolute with another run working; relative; absolute alone)
+    - `pruneKeys` (keeps the 20 newest finished; never an active one)
+    - `othersLine`, and `statusText` with others
+    - `foreignChange` (stopped, or taken over, from the stored run)
+  - UI (`ui.test.tsx`):
+    - **the reported case:** #44 blocked under the main folder's legacy key; session start moves
+      it; `/issue-forge 40` from the same folder answers `starting #40` and the store holds both runs
+    - `/issue-forge 44` while #44 is blocked answers its status
+    - with #44 driven by another session, `/issue-forge 40` asks; Start → #40 starts in a new
+      worktree; Take over → #44 resumes here with this session as driver, nothing new starts;
+      Cancel → nothing written; no answer → #40 starts
+    - with #44 blocked: Resume #44 here; Stop #44, then start #40
+    - while this session drives #44: Keep → the text, nothing starts; Hand off → #44's drive ends,
+      #44 reads interrupted, #40 starts; no answer → the text, nothing starts
+    - `/issue-forge handoff` and the `[ Hand off ]` button
+    - `stop` with two active runs and no N names them; `stop 44` stops only #44
+    - resume of a run driven by another session: Cancel → refused, nothing written; Take over →
+      resumed with this session as driver
+    - the pane draws the `also` line, and the `elsewhere` view on terminal and desktop
+    - `session.end` clears this session's driver and leaves another's
+    - a lock error on `git fetch` is retried and the run goes on
+- **Done means:**
+  - **Today, before this change:** `/issue-forge stop` in the main folder frees its slot (#44's
+    branch and commits stay; its fix is PR #48). A session started inside its own worktree already
+    has a slot of its own.
+  - With 0.3.0, from one folder: `/issue-forge 40` while #44 is blocked there offers Start #40 in a
+    new worktree, Resume #44, or Stop #44 then start #40; after Start, `/issue-forge status` lists
+    both.
+  - In the session driving #44, `/issue-forge 40` offers to keep #44 (and says how to start #40 in
+    another session) or to hand #44 off and start #40 here; a handed-off run resumes in any session.
+  - Two or more sessions in the same repository each run an issue at once, each in its own
+    worktree, and no gate reads another run's coverage.
+  - `/issue-forge stop 44` stops #44 and nothing else.
+  - A run another session drives can't be resumed here by accident, and a crashed session's run
+    can be taken over after a yes.
+  - Upgrading keeps the stored runs (moved to the new keys).
+  - Live check: two `claude --plugin-dir mods/issue-forge` sessions in this repository. Session A
+    starts an issue, and session B sees it in `also` and gets refused a resume without Take over;
+    B starts another issue; both pass preflight in separate worktrees and run baseline (tests and
+    coverage) at the same time. Then both are stopped before any agent is spawned, and their
+    worktrees are kept.
