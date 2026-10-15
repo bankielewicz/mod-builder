@@ -275,7 +275,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 - **New:** `/mod-builder:edit`; build generations for edits; `autoRerun`; the selection follows the active build; the numbered `MODS 1–8` header and numbered track; rows follow streamed test progress; a keyboard hint line.
 - **Fixes:**
-  - `scan()` waits for a scan in progress, so an edit's start is never missed.
+  - `scan()` waits for a scan in progress, so an edit's start is never missed. (Not so when the hook had already read state: corrected in Change 0.2.12.)
   - A Validate that fails on current code blocks a stale Test instead of re-running every turn.
   - A run that can't start shows as failed, with Fix.
   - During an edit, Share needs a version different from the one the edit started from.
@@ -508,3 +508,15 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Live check (2.1.300):** a throwaway mod whose test prints 100,000 lines (7.8 MB) then passes, T in Mod Lab in an interactive `--plugin-dir` session: "2 tests passed in 1.0s", the process ending after 1.5 s. Before the per-stream fix it read "0 tests passed".
 - **Not changed:** nothing re-runs the probe (#69). It holds for the builds named, and Claude Code changes between builds; gotchas.md says to re-run it after an update.
 - **Version:** 0.2.11 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.12 (2026-10-15)
+
+> For issue #10: an edit's start was missed when `lab_report` reported `Spec running` while a scan that hadn't listed the mod was under way. Codex's comment on PR #1 (discussion_r4252575075).
+
+- **Cause:** the 0.2.0 claim above ("an edit's start is never missed") held only when the hook had read no state before it waited. Every `$.state.get` of one dispatch reads one moment `[d.ts]`, fixed at the dispatch's first `get` `[probe]`. The handler's first read (the folder `judged`) came before the wait, so the re-read after `await scan()` returned the same list, without the mod: no generation was stored, and the results from before the edit stayed green.
+- **Fixed:** a `Spec` report for a mod that the last finished scan (`factsByMod`) hasn't listed waits for the scan before it reads any state. A mod already listed doesn't wait, as before: its row in the last scan is enough to start the edit, and the scan the hook waits for may be held a long time (the tests "a scan that read the generations before an edit began" report while a scan is held).
+- **Why not scan on every `Spec` report:** that was tried first (the issue's fix). Five tests in "a scan that read the generations before an edit began" failed: a report on a listed mod blocked on the scan they hold, and where `plugin.json` can't be read as the edit begins, the new scan dropped the version the last scan had read, so `fromVersion` came out empty.
+- **Tests:** `tests/ui.test.tsx`, "edit: Spec running arrives while another hook's scan is listing (#10)": a mod checked in an earlier session appears on disk after the startup scan; a scan is held at the mods folder; `Spec running` waits for it, then `Spec passed` shows "edit · update Spec for this change". The store is seeded through a new `world()` parameter.
+- **Known gap:** a scan sets `factsByMod` before it writes the judged rows (a few awaits later), so a report in that gap finds the mod listed in the facts and not yet in the rows, and does not wait. The window is the scan's own announce step.
+- **Live check (2.1.300):** a throwaway mod in `claude -p --plugin-dir` shows the moment is fixed at the first `get` of any atom; see gotchas.md ("Modules"). Mod Lab itself was not driven live with a held scan.
+- **Version:** 0.2.12 in `plugin.json` and the marketplace entry.

@@ -916,15 +916,15 @@ export const register: Register = (on, options) => {
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
-    // The model reports on the folder the session is in now; judge it first if a /cd moved it.
+    // The model reports on the folder the session is in now; judge it first if a /cd moved it. A Spec
+    // report for a mod no finished scan has listed waits for the scan under way before it reads any
+    // state: every `get` of one dispatch reads one moment, so a read made before that scan ended would
+    // not see what it wrote (#10). A mod already listed doesn't wait; its stale rows are enough.
     const modsDir = await currentModsDir($)
+    if (report.stage === 'Spec' && !factsByMod.has(mod)) await scan($, false)
     if ((await read($, judged)).modsDir !== modsDir) await scan($, false)
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
-    let known = (await read($, judged)).views.find(view => view.name === mod)
-    if (!known && report.stage === 'Spec') {
-      await scan($, false)
-      known = (await read($, judged)).views.find(view => view.name === mod)
-    }
+    const known = (await read($, judged)).views.find(view => view.name === mod)
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
       // The version on disk as the edit begins: a bump may land after the last scan.
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)

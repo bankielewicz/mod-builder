@@ -114,6 +114,17 @@ Re-check [field] items against the d.ts after a Claude Code update.
   different keys over the same 0.7 s, and all 400 were there afterwards. Writes to the same key: the
   last one wins. So give each session's records their own key (issue-forge: one per repository and
   issue) rather than a list that two sessions would both rewrite.
+- **[d.ts]** Every `$.state.get` of one dispatch reads one moment, "whatever is written meanwhile". A
+  hook that awaits another hook's write (a scan it waits for) and then reads the atom again gets the
+  old value, not the write.
+- **[probe]** The moment is fixed at the dispatch's first `get`, of any atom, not at its start and not per
+  atom. In `claude plugin test` (2.1.300, Change 0.2.12's held test) a `lab_report` hook whose first read
+  came before the scan it then awaited re-read the same empty list. Live, on 2.1.300 with a throwaway
+  `claude -p --plugin-dir` mod whose command awaits a nested `$.tool.call` that another hook answers with
+  a state write: a re-read of an atom that hook had written read the old value (0, written to 1); an atom
+  written before the dispatch's first `get` read the new value on that first `get`; an atom first read
+  after another atom's `get` and its own write read the old value. So decide whether to wait for a scan
+  before the first read: from module state, or from what the hook itself holds.
 - **[d.ts]** `session.end` also fires on `/clear` and `/resume` (`e.reason` `clear`, `resume`), and
   the process goes on under a new `$.session.id()`. A mod that lets go of something at session end
   checks the reason; its background work keeps running.
