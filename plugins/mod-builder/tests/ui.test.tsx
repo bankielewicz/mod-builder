@@ -569,6 +569,65 @@ describe('a run that does not end', () => {
     expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
   })
 
+  test('a fresh load clears the rows its module before left: T starts at once', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    // A reload fires session.start for the fresh module; the old module's continuations went with it.
+    await start($)
+    await clock.advance(10)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a run whose row was replaced while its scan stalled starts no process', SHORT, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdList.isReached).toBe(true)
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    release()
+    await clock.advance(500)
+    expect(seen.argv.length).toBe(1)
+  })
+
+  test('a run whose row was replaced while its process ran neither saves nor toasts its result', SHORT, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+    release()
+    await clock.advance(500)
+    expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
+  })
+
   test('an orphan row does not hold back the auto re-run', SHORT, async ($, on) => {
     const mtime = { ms: 1000 }
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)

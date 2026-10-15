@@ -721,6 +721,15 @@ describe('a run that does not end well (PR #55 review)', () => {
     expect(Logic.toastOfRunError('m', 'Test', 'x'.repeat(300))).toBe(`✕ m: Test stopped before its result was saved (${'x'.repeat(119)}…)`)
   })
 
+  test('a run still has its row only while one with its mod, kind and start is in runs', () => {
+    expect(typeof Logic.hasRun).toBe('function')
+    const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+    expect(Logic.hasRun([row(5), row(9)], row(5))).toBe(true)
+    expect(Logic.hasRun([row(9)], row(5))).toBe(false)
+    expect(Logic.hasRun([{ ...row(5), kind: 'Validate' }], row(5))).toBe(false)
+    expect(Logic.hasRun([{ ...row(5), mod: 'n' }], row(5))).toBe(false)
+  })
+
   test('streamed progress lands on its own run, not on a newer run of the same check', () => {
     expect(typeof Logic.withProgress).toBe('function')
     const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
