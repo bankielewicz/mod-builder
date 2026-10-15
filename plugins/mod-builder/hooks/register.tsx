@@ -587,6 +587,9 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
       () => logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind }),
       (error: unknown) => logCaught($, 'store.set', error, 'normal', { key: RESULTS_KEY, mod, kind }),
     )
+    // A newer run may have taken the row while the write waited its turn. Its later write wins the
+    // store, since the writes are chained, so this result is not the one to announce.
+    if (await isSuperseded($, entry)) return
     toast = Lab.toastOfRun(mod, result)
   } catch (error) {
     // No result came of it (a scan threw): say so, and rescan below so the stage stops reading running.
