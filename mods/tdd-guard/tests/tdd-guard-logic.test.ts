@@ -208,6 +208,12 @@ describe('reportOf', () => {
     )
     expect(reportOf('green-developer', [])).toBeNull()
   })
+
+  test('names at most 20 changes and counts the rest, so a formatter run over many tests stays one short line', () => {
+    const changes = Array.from({ length: 25 }, (_, i) => `tests/t${String(i).padStart(2, '0')}.ts (modified)`)
+    expect(reportOf('green-developer', changes)).toBe(`tdd-guard: green-developer changed protected test files: ${changes.slice(0, 20).join(', ')}, and 5 more`)
+    expect(reportOf('green-developer', changes.slice(0, 20))).toBe(`tdd-guard: green-developer changed protected test files: ${changes.slice(0, 20).join(', ')}`)
+  })
 })
 
 describe('launchedId', () => {
