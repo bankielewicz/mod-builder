@@ -51,6 +51,8 @@ const demoStartedAt = atom({ plugin: 'mod-builder', key: 'demoStartedAt' } as co
 const readme = atom({ plugin: 'mod-builder', key: 'readme' } as const, null)
 const fresh = atom({ plugin: 'mod-builder', key: 'fresh' } as const, [])
 const hasWarnedNarrow = atom({ plugin: 'mod-builder', key: 'hasWarnedNarrow' } as const, false)
+// A copy of `pin` below, for a reload: written with `$.state.set` only, and read once at session start.
+const pinned = atom({ plugin: 'mod-builder', key: 'pinned' } as const, null)
 
 type Engine = EngineInterface
 type StoredResults = Record<string, Lab.Results>
@@ -67,6 +69,10 @@ let lastTickMs = 0
 let scanning: Promise<void> | null = null
 let isScanQueued = false
 let isQueuedAnnounced = false
+// The folder a build reported with `path`, and the root it was reported under (#92). Module state, so the
+// lab_report hook sets it before its scan without a state read: a dispatch's first `get` fixes what all its
+// reads see (gotchas.md), and the #10 scan has to come first.
+let pin: Lab.Pin | null = null
 // Writes to the results and generations in $.store, in order (Change 0.2.8).
 let storeChain: Promise<void> = Promise.resolve()
 // What the last finished scan read; a scan swaps in its own once it has read every folder (Change 0.2.8).
@@ -199,27 +205,53 @@ const exists = ($: Engine, path: string): Promise<boolean> =>
 /** The mods folder of the plugin's own marketplace: `modsDir`'s default when nothing is found from the working directory. */
 const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
 
-/**
- * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the working
- * directory (the one /mod-builder:build writes to, a worktree's own in a worktree), else the
- * plugin's own. The working directory is read now, so a `/cd` is followed. Candidates are probed
- * nearest first and the first one found ends the walk (each probe is slow on /mnt/c).
- */
-async function defaultModsDir($: Engine): Promise<string> {
-  const cwd = await cwdOf($)
-  const candidates = cwd === null ? [] : Lab.marketplaceCandidatesOf(cwd)
-  let nearest: string[] = []
-  for (const path of candidates) {
-    if (!(await exists($, path))) continue
-    nearest = [path]
-    break
-  }
-  return Lab.modsDirFor('', cwd, nearest, pluginModsDirOf($))
+/** The session's project root, which `/cd` and a worktree move change and a Bash `cd` doesn't (#92); null when it can't be read. */
+const rootOf = ($: Engine): Promise<string | null> =>
+  $.session.root().catch((error: unknown) => (logCaught($, 'session.root', error, 'debug'), null))
+
+/** Sets or clears the pin, with its copy in state for a reload: a write, never a read (see `pin`). */
+async function setPin($: Engine, next: Lab.Pin | null): Promise<void> {
+  pin = next
+  await $.state.set({ plugin: 'mod-builder', key: 'pinned' }, next).catch((error: unknown) => logCaught($, 'state.set', error, 'normal', { key: 'pinned' }))
 }
 
-/** The mods folder the working directory leads to now. A set `modsDir` wins, so nothing is walked. */
+/**
+ * The marketplace file nearest `start`, the folder the walk starts in: candidates are probed
+ * nearest first and the first one found ends the walk (each probe is slow on /mnt/c).
+ */
+async function nearestMarketplace($: Engine, start: string | null): Promise<string[]> {
+  for (const path of start === null ? [] : Lab.marketplaceCandidatesOf(start)) {
+    if (await exists($, path)) return [path]
+  }
+  return []
+}
+
+/**
+ * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the project root
+ * (the one /mod-builder:build writes to, a worktree's own in a worktree), else the plugin's own.
+ * The root is read now, so a `/cd` is followed and a Bash `cd` isn't (#92); when it can't be read,
+ * the walk starts from the working directory.
+ */
+async function defaultModsDir($: Engine): Promise<string> {
+  const root = await rootOf($)
+  const start = Lab.walkStartOf(root, root === null ? await cwdOf($) : null)
+  return Lab.modsDirFor('', start, await nearestMarketplace($, start), pluginModsDirOf($))
+}
+
+/**
+ * The mods folder to watch now (#92): a build's pinned folder while the project root is the one it
+ * was pinned under, else a set `modsDir` (nothing is walked), else the walk `defaultModsDir` takes.
+ */
 async function currentModsDir($: Engine): Promise<string> {
-  return configuredDir ? Lab.normalizePath(configuredDir) : defaultModsDir($)
+  const held = pin
+  const root = await rootOf($)
+  const isWalked = !configuredDir && !Lab.keptPinOf(held, root)
+  const cwd = isWalked && root === null ? await cwdOf($) : null
+  const existing = isWalked ? await nearestMarketplace($, Lab.walkStartOf(root, cwd)) : []
+  const watched = Lab.watchedDirOf(held, root, configuredDir, cwd, existing, pluginModsDirOf($))
+  // A changed root dropped the pin, unless a report has pinned another folder meanwhile.
+  if (held && !watched.pin && pin === held) await setPin($, null)
+  return watched.dir
 }
 
 /**
@@ -888,10 +920,12 @@ export const register: Register = (on, options) => {
       .register({
         name: TOOL,
         description:
-          'Report mod-builder progress to Mod Lab. Call with status "running" when you start a stage of building a mod, and "passed" or "failed" when it ends. Stages: Spec, Scaffold, Logic, Register, Validate, Test, README, Share. Mod Lab re-runs Validate and Test itself; the disk decides.',
+          'Report mod-builder progress to Mod Lab. Call with status "running" when you start a stage of building a mod, and "passed" or "failed" when it ends. Stages: Spec, Scaffold, Logic, Register, Validate, Test, README, Share. Pass path, the mod folder\'s absolute path, so Mod Lab watches the folder you are working in. Mod Lab re-runs Validate and Test itself; the disk decides.',
         inputSchema: Lab.REPORT_SCHEMA,
       })
       .catch((error: unknown) => logCaught($, 'session.start.tool', error))
+    // A pin from before a reload (#92), before the first scan reads the folder.
+    pin = await read($, pinned).catch((error: unknown) => (logCaught($, 'session.start.pin', error), null))
     await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
@@ -963,6 +997,8 @@ export const register: Register = (on, options) => {
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
+    // A report with `path` pins its folder for the session (#92), before anything reads the folder.
+    if (checked.dir !== undefined) await setPin($, { modsDir: checked.dir, root: await rootOf($) })
     const modsDir = await currentModsDir($)
     // A Spec report on a mod the last written rows of this folder don't list waits for a scan before it reads
     // any state: the first `get` fixes the moment every read of this dispatch sees (#10, #79). A listed mod's rows are enough.

@@ -6,9 +6,9 @@
  * the engine, so every rule is unit-tested in tests/mod-builder-logic.test.ts.
  */
 
-import type { Gate, Light, ModView, Reach, Reported, Run, RunKind, Stage, Tone } from '../types'
+import type { Gate, Light, ModView, Pin, Reach, Reported, Run, RunKind, Stage, Tone } from '../types'
 
-export type { Gate, Light, ModView, Reach, Reported, Run, RunKind, Stage, Tone }
+export type { Gate, Light, ModView, Pin, Reach, Reported, Run, RunKind, Stage, Tone }
 
 export const STAGES = [
   'Spec',
@@ -898,6 +898,34 @@ export function modsDirFor(configured: string, cwd: string | null, existing: rea
   return found === undefined ? normalizePath(fallback) : `${found.slice(0, -MARKETPLACE_FILE.length)}/mods`
 }
 
+/** Where the marketplace walk starts (#92): the session's project root when known, which a Bash `cd` doesn't move, else `cwd`. */
+export function walkStartOf(root: string | null, cwd: string | null): string | null {
+  return root ?? cwd
+}
+
+/** A build's pinned folder, while the project root is the one it was pinned under or either root is unknown; else null (#92). */
+export function keptPinOf(pin: Pin | null, root: string | null): Pin | null {
+  if (!pin) return null
+  return pin.root === null || root === null || normalizePath(pin.root) === normalizePath(root) ? pin : null
+}
+
+/**
+ * The folder Mod Lab watches (#92): the pin `keptPinOf` keeps, else `modsDirFor` walking from
+ * `walkStartOf`. `pin` is the pin to keep: null when there was none or a changed root dropped it.
+ */
+export function watchedDirOf(
+  pin: Pin | null,
+  root: string | null,
+  configured: string,
+  cwd: string | null,
+  existing: readonly string[],
+  fallback: string,
+): { dir: string; pin: Pin | null } {
+  const kept = keptPinOf(pin, root)
+  if (kept) return { dir: kept.modsDir, pin: kept }
+  return { dir: modsDirFor(configured, walkStartOf(root, cwd), existing, fallback), pin: null }
+}
+
 /**
  * "Ready to share" marks as `<modsDir>/<name>`. Before 0.2.9 a mark was the bare name, of a mod
  * in the one folder Mod Lab watched (`legacyDir`), so a bare one is read as that folder's.
@@ -1247,16 +1275,20 @@ export const REPORT_SCHEMA = {
     stage: { type: 'string', enum: [...STAGES] },
     status: { type: 'string', enum: ['running', 'passed', 'failed'] },
     note: { type: 'string', description: 'A few words on what is happening, e.g. "writing tests".' },
+    path: {
+      type: 'string',
+      description: 'The absolute path of the mod folder, e.g. "/home/me/repo/mods/git-branch". Pass it on every report, so Mod Lab watches the folder you are working in.',
+    },
   },
   required: ['mod', 'stage', 'status'],
   additionalProperties: false,
 } as const
 
-/** A `lab_report` call's arguments → a checked report, or the reason it was refused. */
+/** A `lab_report` call's arguments → a checked report, with the mods folder its `path` names (#92), or the reason it was refused. */
 export function reportOf(
   input: Record<string, unknown>,
   now: number,
-): { mod: string; report: Reported } | { error: string } {
+): { mod: string; report: Reported; dir?: string } | { error: string } {
   const mod = typeof input.mod === 'string' ? input.mod.trim() : ''
   const stage = STAGES.find(one => one === input.stage)
   const status = (['running', 'passed', 'failed'] as const).find(one => one === input.status)
@@ -1264,7 +1296,14 @@ export function reportOf(
   if (!stage) return { error: `stage must be one of ${STAGES.join(', ')}.` }
   if (!status) return { error: 'status must be running, passed or failed.' }
   const note = typeof input.note === 'string' && input.note.trim() ? input.note.trim().slice(0, 60) : undefined
-  return { mod, report: note ? { stage, status, note, since: now } : { stage, status, since: now } }
+  const report: Reported = note ? { stage, status, note, since: now } : { stage, status, since: now }
+  if (input.path === undefined) return { mod, report }
+  const path = typeof input.path === 'string' ? normalizePath(input.path.trim()) : ''
+  const root = rootOf(path)
+  if (!root) return { error: "path must be the absolute path of the mod's folder." }
+  const cut = path.lastIndexOf('/')
+  if (path.slice(cut + 1) !== mod) return { error: `path must end with the mod's folder name, ${mod}.` }
+  return { mod, report, dir: cut < root.length ? root : path.slice(0, cut) }
 }
 
 // ── Band ──────────────────────────────────────────────────────────────────
