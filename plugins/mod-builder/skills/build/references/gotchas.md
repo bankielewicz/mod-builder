@@ -95,6 +95,18 @@ Re-check [field] items against the d.ts after a Claude Code update.
   replaced on update. Use `~/.claude/<name>-data/`.
 - **[field]** A floating promise fails tests at teardown. Write `void p.catch(() => undefined)`.
 
+- **[probe]** `$.store` reads the plugin's JSON file on each `get`, so it is shared live between
+  sessions (2.1.300). One process saw a key another had set 6 s before. Two processes each set 200
+  different keys over the same 0.7 s, and all 400 were there afterwards. Writes to the same key: the
+  last one wins. So give each session's records their own key (issue-forge: one per repository and
+  issue) rather than a list that two sessions would both rewrite.
+- **[d.ts]** `session.end` also fires on `/clear` and `/resume` (`e.reason` `clear`, `resume`), and
+  the process goes on under a new `$.session.id()`. A mod that lets go of something at session end
+  checks the reason; its background work keeps running.
+- **[probe]** Under `claude plugin test`, nothing beneath the plugin answers `session.end`: a test that
+  fires it needs `on('session.end', ($, e) => ({ sessionId: e.sessionId }))`, as `session.start` needs
+  its stub.
+
 ## Subagents a mod spawns
 
 - **[probe]** A mod's `$.agent.spawn` reaches other plugins as a `tool.call` of `Agent` (with

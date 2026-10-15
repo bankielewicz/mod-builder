@@ -1012,3 +1012,27 @@ only one run is ever active per checkout:
     B starts another issue; both pass preflight in separate worktrees and run baseline (tests and
     coverage) at the same time. Then both are stopped before any agent is spawned, and their
     worktrees are kept.
+
+### Built (2026-10-14, Claude Code 2.1.300)
+
+Where the build differs from the approved text above, and why:
+
+- **"since 14:02" reads "for 2m05s".** It is elapsed time, as the badge's is. A clock time would make the
+  pure rules depend on the host's time zone.
+- **The pane draws *elsewhere* on two lines:** `◌ runs in another session (for 2m05s)`, then a dim
+  `/issue-forge resume 40 takes it over`. The one line is 75 characters and a 76-column pane's body
+  holds 74. `/issue-forge status` keeps the one line.
+- **`session.end` lets go only when the process ends.** After `/clear` or `/resume` the process goes
+  on under a new session id ([d.ts] `SessionEndInput`), and so does the drive (`releasesOnEnd`).
+- **Contract:** `OtherRun` is `{ issue, step, line, isElsewhere }`. `Run.chosenWorktree` records a
+  Start chosen in the menu under `ask`, so the worktree question isn't asked twice.
+- **Same issue:** the text is `#44 has a run already.` and the run's status; it no longer says
+  `a run is already active here.`
+- **Tests changed on purpose:** `f5a6a6c` updates three existing tests whose behaviour this change
+  replaces (a second start asks instead of refusing; the demo's `elsewhere` state). `6ca5316` fixes
+  four of this change's own red tests (a line wider than the pane, the demo counter, a missing
+  `session.end` stub, a seed on the wrong branch).
+- **Checks:** `claude plugin test mods/issue-forge` 203 pass. `tsc` is clean. `claude plugin validate`
+  passes, with `.catch` on every gating hook and on `session.end`. Logic coverage: `issue-forge-logic.ts`
+  lines 100%, branches 99.54% (origin/main 99.46%), with every changed line and branch covered. All
+  logic files together: 97.79% / 93.79% (origin/main 97.63% / 93.29%).
