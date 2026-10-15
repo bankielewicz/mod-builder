@@ -1108,8 +1108,8 @@ request's number too, so an open pull request passed as an issue. The evidence (
 2. **Each run is pinned to one repository.** `Run.ghRepo` (`host/owner/repo`; `Run.repo` is already git's
    common folder, so the issue's name for the field could not be used). A URL start runs `gh repo view --json
    nameWithOwner,url` in the checkout and refuses when the URL names another repository, before anything is
-   saved; the run then stores the name gh gives. A number start sets `ghRepo` at preflight (the `preflighted`
-   event carries `repo`).
+   saved; the run then stores the name gh gives. A number start sets `ghRepo` at preflight, as soon as origin
+   agrees with it (a `pinned` event, review round 2), and the `preflighted` event carries `repo` too.
 3. **Preflight order:** `gh auth status`; the repository (`run.ghRepo`, else `gh repo view`); origin; the
    issue; then the base fetch, as before. Origin is checked for its fetch URL and each of its push URLs
    (`git remote get-url origin`, `git remote get-url --push --all origin`; a push URL that is the fetch URL
@@ -1173,8 +1173,8 @@ gh resolves the fork, and the run is pinned to it); an unused test helper is gon
 can't be told from a host without resolving it; `ssh -G <host>` prints the resolved `hostname` without connecting
 [ran: OpenSSH 10.2p1]); GitHub Enterprise Server on a non-default port is unsupported: `repoOfView` keeps the port
 and `repoOfRemoteUrl` drops it, so that repository's own https origin blocks [ran], and whether gh accepts
-`--repo host:port/o/r` is unverified. A number start that blocks at preflight isn't pinned yet, so its masthead
-shows `#68`, not `o/r#68` [ran, live check below].
+`--repo host:port/o/r` is unverified. A number start that blocked at preflight wasn't pinned, so its masthead
+showed `#68`, not `o/r#68` [ran, live check below]; review round 2 pins it once origin agrees.
 
 **Live check** (Claude Code 2.1.300, gh 2.102.0; an interactive session in a fresh clone of the repository with
 `--plugin-dir` on this branch at f78ed98 and the installed issue-forge disabled):
@@ -1188,3 +1188,33 @@ shows `#68`, not `o/r#68` [ran, live check below].
   `/issue-forge 69`: blocked at preflight: `origin pushes to ghe.example.com/bankielewicz/mod-builder, but gh sends
   issues and pull requests to bankielewicz/mod-builder`. Each run was stopped; the clone kept only `main`, no
   worktree, and a clean tree.
+
+### Review round 2 (PR #68, 2026-10-15)
+
+Codex reviewed f78ed98. Two findings were fixed, each with a test that failed first; one is in #71; one was not
+reproduced:
+1. **Origin is checked in the folder that fetches and pushes** (Codex P1 4285606169). With
+   `extensions.worktreeConfig`, a linked worktree's `config.worktree` can give origin another `pushurl` than the
+   checkout's [ran: git 2.53.0, the checkout listed `o/r` and the worktree `me/other`]. Publish now checks origin in
+   `workOf(run)`, and preflight of a kept worktree checks it there too, before `git fetch`. A new worktree has no
+   `config.worktree` yet, so the checkout's check covers it.
+2. **A number start is pinned once origin agrees** (Codex P2 4285606180). `ghRepo` came only with `preflighted`, so
+   a run that blocked later in preflight (a closed issue, a pull request's number, an invalid profile, a kept
+   branch) was unpinned, and a resume after the remotes changed adopted whatever gh named next. A `pinned` event
+   (logic; `advance` sets `ghRepo` only when the run has none) is written onto the stored run as soon as origin
+   passes, the way `recordMade` writes the branch. A run that origin itself blocks stays unpinned on purpose: in a
+   fork clone with an `upstream` remote gh names the parent, and pinning it would make the block permanent where
+   `gh repo set-default <fork>` or a fix of the remotes and a resume recover it today.
+3. **GHE ports** (Codex P2 4285606189): the same limit as round 1's, in #71.
+4. **Not reproduced: an alias-only remote** (Codex P2 4285606202). gh translates an SSH host alias through ssh
+   [ran: gh 2.102.0, OpenSSH 10.2p1, an `ssh` wrapper on PATH using a scratch config with `Host github-work` /
+   `HostName github.com`: `gh repo view` printed `bankielewicz/mod-builder`; without the wrapper it printed `none of
+   the git remotes configured for this repository point to a known GitHub host`]. An alias ssh can't resolve
+   can't fetch or push either.
+
+**Live check** (the same clone and session settings, this branch at f114fd1): `/issue-forge 68` blocked at
+preflight (`#68 is a pull request, not an issue`) with the masthead and `/issue-forge status 68` naming
+`bankielewicz/mod-builder#68`; with the second push URL on `ghe.example.com` added, `/issue-forge 69` blocked on
+origin and its masthead still read `#69`. Both runs were stopped; the clone kept only `main`, no worktree, and a
+clean tree. Fix 1 needs a run driven to `ready` in a worktree with its own config, so it is shown by the UI tests
+(the `cwd` of `git remote get-url --push --all origin`), not live.

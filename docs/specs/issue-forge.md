@@ -78,7 +78,9 @@ the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own c
    repository (`git remote get-url origin` and every line of `git remote get-url --push --all origin`).
    An https or http remote must name the repository's host; an ssh remote may name an alias of it, so the
    same owner and repository is enough there. Another owner or repository on that host is matched through
-   `gh repo view` (a rename); `gh` is never asked about another host.
+   `gh repo view` (a rename); `gh` is never asked about another host. A kept worktree is checked there too,
+   before its fetch, and publish checks origin in the run's folder before it pushes (a worktree's own config can
+   differ). A number start is pinned to the repository as soon as origin agrees with it.
    `gh issue view <N> --repo <host/owner/repo> --json number,title,body,state,url` shows `state: OPEN`
    and a url that isn't a pull request's.
 2. The profile exists and validates (§4.2).

@@ -94,10 +94,12 @@ branch, so a run must never switch it.
 A run works in the clone your session started in. Its issue and its pull request go to the repository
 `gh repo view` shows there, and every `gh` call of the run names it with `--repo`, so a stray `GH_REPO`
 or a second remote can't send the run elsewhere. The masthead and `/issue-forge status` name it
-(`o/r#16`; `host/o/r#16` on GitHub Enterprise).
+(`o/r#16`; `host/o/r#16` on GitHub Enterprise). A run started with a number is pinned to it as soon as
+`origin` agrees, so a later block keeps it across a resume; a run that `origin` blocks is pinned once
+the remotes are fixed and it resumes.
 
-- `origin` must be that repository, for fetching and for every push URL (`git push` sends to all of them).
-  It is read from an `https://`, `http://` or ssh remote (`ssh://…` or `[user@]host:owner/repo`); any
+- `origin` must be that repository, for fetching and for every push URL (`git push` sends to all of them),
+  as the folder that fetches and pushes reads it (a run's worktree can have its own config). It is read from an `https://`, `http://` or ssh remote (`ssh://…` or `[user@]host:owner/repo`); any
   other form (`git://`, `file://`, a path) blocks the run. An https or http remote must name the
   repository's host. An ssh remote may name an alias of it from `~/.ssh/config`, so the same owner and
   repository is enough there (an ssh remote on another real host with the same owner and repository
