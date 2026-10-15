@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { decide, matchGlob, parseRules } from './tdd-guard-logic'
-import type { Rules } from './tdd-guard-logic'
+import { changesOf, decide, folderOf, hashOf, launchedId, matchGlob, parseRules, relativeTo, reportOf, withoutId } from './tdd-guard-logic'
+import type { Files, Rules } from './tdd-guard-logic'
 
 /**
  * Tdd Guard: limits which paths each subagent type may write. Archetype: guard.
@@ -10,16 +10,10 @@ import type { Rules } from './tdd-guard-logic'
  * with a reason addressed to Claude. A shell can still write files, so an Agent call of a type with `-` rules is
  * wrapped: the files under those globs are hashed before it starts and again when it finishes, and a difference is
  * reported to the model and the person. That check detects; it does not prevent.
- *
- * The helpers below (hash, diff, report line) are pure but live here, not in tdd-guard-logic.ts: the coverage
- * command runs the logic tests alone, which reach only parseRules, matchGlob and decide, and ui.test.tsx covers these.
  */
 
 /** Guarded background runs still going, by agent id: what lets a reload that lost their snapshot be said out loud. */
 const pending = atom({ plugin: 'tdd-guard', key: 'pending' } as const, {} as Record<string, string>)
-
-/** Content hash by project-relative path. */
-type Files = Map<string, string>
 
 /** The `rules` option, read at each load. A malformed one leaves no rules and its message in `rulesError`. */
 let rules: Rules = {}
@@ -28,7 +22,6 @@ let rulesError: string | null = null
 const snapshots = new Map<string, { type: string; files: Files }>()
 
 const SKIPPED = new Set(['.git', 'node_modules'])
-const LAUNCHED = new Set(['async_launched', 'teammate_spawned'])
 /** What a subagent's write gets when the check itself broke: a guard fails closed. */
 const HELD = 'tdd-guard: the write check failed, so the write was held. Ask the person before retrying.'
 
@@ -54,12 +47,6 @@ async function placed($: EngineInterface, path: string): Promise<string | undefi
   return dir?.realPath === undefined ? undefined : `${dir.realPath.replace(/[\\/]$/, '')}/${name}`
 }
 
-/** The path relative to the root; one outside it starts with `../`. */
-function relativeTo(root: string, real: string): string {
-  const path = real.replace(/\\/g, '/')
-  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : `../${path.replace(/^\/+/, '')}`
-}
-
 /** Why this subagent may not write `path`, or null when it may. The main loop and agents the engine does not list are never guarded. */
 async function refusalOf($: EngineInterface, agentId: string | undefined, path: string): Promise<string | null> {
   if (agentId === undefined) return null
@@ -75,28 +62,9 @@ async function refusalOf($: EngineInterface, agentId: string | undefined, path: 
 
 // ── Test-file integrity ──────────────────────────────────────────────────
 
-/** A short hash of a file's text and its length, to tell a changed file from an unchanged one. */
-function hashOf(text: string): string {
-  let a = 0x811c9dc5
-  let b = 0x9e3779b9
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i)
-    a = Math.imul(a ^ code, 0x01000193) >>> 0
-    b = Math.imul((b + code) ^ (b >>> 15), 0x85ebca6b) >>> 0
-  }
-  return `${text.length}.${a.toString(16)}.${b.toString(16)}`
-}
-
 /** The `-` globs of a type: what a run of it must leave alone. None when the type is not guarded or the rules do not parse. */
 function protectedGlobs(type: string): string[] {
   return Object.hasOwn(rules, type) ? rules[type]!.deny : []
-}
-
-/** The folder a glob's matches sit under: its segments before the first wildcard (a glob with none: its folder). */
-function folderOf(glob: string): string {
-  const segments = glob.split('/')
-  const wild = segments.findIndex(segment => segment.includes('*'))
-  return segments.slice(0, wild < 0 ? -1 : wild).join('/')
 }
 
 /** Hashes the files below `dir` that a glob matches. A file already hashed is skipped: globs like `tests/**` and `tests/sub/**` walk the same folder twice. */
@@ -118,34 +86,6 @@ async function snapshotOf($: EngineInterface, globs: string[]): Promise<Files> {
   const files: Files = new Map()
   for (const dir of new Set(globs.map(folderOf))) await walk($, root, dir, globs, files)
   return files
-}
-
-/** What a run did to the files: `path (modified | deleted | new)`, in path order. */
-function changesOf(before: Files, after: Files): string[] {
-  const changes: [string, string][] = []
-  for (const [path, hash] of before) {
-    const now = after.get(path)
-    if (now === undefined) changes.push([path, 'deleted'])
-    else if (now !== hash) changes.push([path, 'modified'])
-  }
-  for (const path of after.keys()) if (!before.has(path)) changes.push([path, 'new'])
-  return changes.sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, kind]) => `${path} (${kind})`)
-}
-
-/** The line the model reads, or null when nothing changed. */
-function reportOf(type: string, changes: string[]): string | null {
-  return changes.length === 0 ? null : `tdd-guard: ${type} changed protected test files: ${changes.join(', ')}`
-}
-
-/** The id of a subagent that answers later (background or teammate), else null. */
-function launchedId(result: unknown): string | null {
-  const launched = result as { status?: string; agentId?: string } | undefined
-  return launched && LAUNCHED.has(launched.status ?? '') && launched.agentId ? launched.agentId : null
-}
-
-/** The pending records without one agent's. */
-function withoutId(all: Record<string, string>, agentId: string): Record<string, string> {
-  return Object.fromEntries(Object.entries(all).filter(([id]) => id !== agentId))
 }
 
 /** A background run's first turn ended: say what it changed, or that it could not be checked. */
