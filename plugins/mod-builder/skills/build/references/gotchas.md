@@ -14,6 +14,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `await $.process.run(['/bin/sleep','1'])` ×12 survives; `await $.clock.sleep(1000)` ×12 times
   out. To wait inside a hook (for example, holding a tool call until a slot frees), wait on a `$`
   call that isn't the clock, or return and do the work in the background.
+- **[probe]** Awaiting a promise that other hooks' work settles counts as the hook's own time. On
+  2.1.300, Mod Lab's `lab_report` hook awaited a scan that another hook had started (single flight)
+  plus the pass it queued, a wait that would have lasted about 18 s. It failed 10.0 s after it began with
+  `{"kind":"timeout"}`, and its `.catch` answered. So a hook that joins shared background work
+  needs that work to end well inside its 10 s, or must return first (PR #74's SPEC, Change 0.2.13).
 - **[d.ts]** A `.catch` handler gets a fresh 1 s. Keep it trivial.
 - **[d.ts]** After an abort (Esc, a hook above settling first), a hook may linger 5 s before it's
   reported. Pass `next.signal` to `$.clock.sleep` so the wait ends with the dispatch. `$.ui.ask` takes
