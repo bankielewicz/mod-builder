@@ -778,6 +778,8 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   const routed = routedRedBlock(subagentType, isWorktreeRun(run))
   if (routed) return block(routed.reason, routed.next)
   const name = isOwn ? agentName(run, which) : undefined
+  // Known before the spawn returns, so an agent that stops sooner still has its hand-back taken.
+  if (name) knownRefs.add(name)
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })

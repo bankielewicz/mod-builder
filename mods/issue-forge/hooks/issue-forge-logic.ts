@@ -1231,9 +1231,10 @@ export function agentName(run: Run, phase: Phase): string {
   return `issue-forge-${run.issue}-${phase}-${run.agents.filter(a => a.phase === phase).length + 1}`
 }
 
-/** What a spawned agent is known by: its id and the name the mod asked for. */
+/** What a spawned agent is known by: its id, the name the mod asked for, and the name its team gave it (`<name>@<team>`). */
 export function spawnRefs(agentId: string, name: string | undefined, teammateId: string | undefined): string[] {
-  return name ? [agentId, name] : [agentId]
+  const given = teammateId?.split('@')[0]
+  return [...new Set([agentId, name, given].filter((ref): ref is string => !!ref))]
 }
 
 /** Whether a prompt is the hand-back of one of these agents (`<agent-message from="…">`). */
