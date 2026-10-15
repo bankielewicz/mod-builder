@@ -63,7 +63,8 @@ let isScanQueued = false
 let isQueuedAnnounced = false
 // Writes to the results and generations in $.store, in order (Change 0.2.8).
 let storeChain: Promise<void> = Promise.resolve()
-const factsByMod = new Map<string, Lab.FileFacts>()
+// What the last finished scan read; a scan swaps in its own once it has read every folder (Change 0.2.8).
+let factsByMod = new Map<string, Lab.FileFacts>()
 // Logging (Change 0.2.2): the level, this session's lines, its file once known, and writes in order.
 let logLevel: Lab.LogLevel = 'normal'
 let logBuffer: Lab.LogBuffer = Lab.EMPTY_LOG
@@ -278,7 +279,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const cwd = await cwdOf($)
   const inFlight = await read($, runs)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
-  factsByMod.clear()
+  const found = new Map<string, Lab.FileFacts>()
   for (const folder of folders) {
     const at = `${dir}/${folder.name}`
     const top = await list($, at)
@@ -309,8 +310,9 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         : null,
       marketplace,
     })
-    if (facts) factsByMod.set(facts.name, facts)
+    if (facts) found.set(facts.name, facts)
   }
+  factsByMod = found
   const judge = (freshNames: readonly string[]): ModView[] =>
     [...factsByMod.values()].map(facts =>
       Lab.viewOf(
