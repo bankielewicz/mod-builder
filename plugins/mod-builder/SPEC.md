@@ -467,3 +467,4 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **A set `modsDir` is never walked:** now tested, by counting `marketplace.json` probes. Making `currentModsDir` walk anyway fails the test.
   - **Deferred:** see "Left for later" (the `lab_report` double cwd read, the old records read by a later `modsDir`, and the cost items, #62).
   - **Tests:** logic: the UNC floor, drive case, `freshIdsOf`. UI: no marketplace probes with `modsDir` set.
+  - **Live check (round 2, 2.1.300, `--plugin-dir`, installed copy off):** with the single `judged` value, the pane showed `…/ClaudeMod/mods`. After `/cd` into the worktree with no scan since, V on `duet` gave only `modlab:results:/mnt/c/Projects/ClaudeMod/mods` a new Validate time. Then the run's scan moved the pane to the worktree.
