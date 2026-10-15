@@ -50,6 +50,7 @@ import {
   kindOf,
   layoutOf,
   lcovFileOf,
+  legacyAgentsKey,
   lineOf,
   matchesAny,
   mergeLine,
@@ -1192,6 +1193,11 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(parseRunKey('issue-forge:run:/work/project#2')).toEqual({ kind: 'legacyRun', root: '/work/project#2' })
     expect(parseRunKey('issue-forge:agents:/work/project#2')).toEqual({ kind: 'legacyAgents', root: '/work/project#2' })
     expect(parseRunKey('other:thing')).toBeNull()
+  })
+
+  test("legacyAgentsKey: a 0.2 checkout's agents list, which parses back as legacy", () => {
+    expect(legacyAgentsKey('/work/project#2')).toBe('issue-forge:agents:/work/project#2')
+    expect(parseRunKey(legacyAgentsKey('/work/project#2'))).toEqual({ kind: 'legacyAgents', root: '/work/project#2' })
   })
 
   test("commonDirOf: git's common folder, a relative answer resolved against the top level; nothing printed is no repository", () => {
