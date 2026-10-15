@@ -683,6 +683,9 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
       const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes)
       if (again.exit !== 0) return { ...block(worktreeAddFailure(again, minutes), `check ${made.workRoot}`), keep: made }
     }
+    // A kept worktree's own config can give origin other URLs (extensions.worktreeConfig): it is checked where it fetches.
+    const strayThere = made.workRoot !== run.root ? await originCheck($, made.workRoot, repo) : null
+    if (strayThere) return { ...strayThere, keep: made }
     const unfetched = await fetchBase($, made.workRoot, made.base)
     if (unfetched) return { ...unfetched, keep: made }
     // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
@@ -897,8 +900,8 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
     const tip = (await gitOut($, workOf(run), ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
-  // A run pinned to a repository pushes only to an origin that is it (#25).
-  const stray = run.ghRepo ? await originCheck($, run.root, run.ghRepo) : null
+  // A run pinned to a repository pushes only to an origin that is it (#25), as the folder that pushes reads it (PR #68 review 2).
+  const stray = run.ghRepo ? await originCheck($, workOf(run), run.ghRepo) : null
   if (stray) return stray
   // The PR body says what was true when it was pushed: the merge is checked again here.
   const merge = await mergeCheck($, run)
