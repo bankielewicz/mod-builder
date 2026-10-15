@@ -1261,7 +1261,7 @@ export function rowText(t: Task, now: number, columns: number): string {
   return text.length > columns ? `${text.slice(0, Math.max(0, columns - 1))}…` : text
 }
 
-const FAILED_MARK: Record<string, string | undefined> = { error: '✕ ', refused: '✕ ' }
+const FAILED_MARK: Partial<Record<TaskStatus, string>> = { error: '✕ ', refused: '✕ ' }
 
 /** The dim line under a row: error or refusal, a review's verdict, a running row's note, else the description. */
 export function subText(t: Task, columns: number): string {
