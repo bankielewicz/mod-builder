@@ -5,6 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   DEMO_STATES,
   KEEP_FINISHED,
+  RULES,
   USAGE,
   advance,
   agentsKey,
@@ -1673,5 +1674,169 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
 
   test('the demo run is pinned to bankielewicz/mod-builder', () => {
     expect((demoRun('ready', 0).run as Run & { ghRepo?: string }).ghRepo).toBe('github.com/bankielewicz/mod-builder')
+  })
+})
+
+// Change 0.5.0: a new Claude Code plugin is mod-builder's job. A start refuses an issue that asks to build it with
+// /mod-builder:build; gates R, G and F block a new manifest as a final block with next steps.
+describe('new plugins are built with mod-builder, not issue-forge (Change 0.5.0)', () => {
+  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  // Each from its issue's body (gh issue view, 2026-10-15): #18 is the one new mod; #19, #20 and #23 are Mod Lab fixes.
+  const ISSUE_18 = '- **Build it with `/mod-builder:build`** (SPEC first, one approval), from the `guard` archetype (`plugins/mod-builder/skills/build/templates/archetypes/guard/`), into `mods/tdd-guard/`. Version 0.1.0 in `mods/tdd-guard/.claude-plugin/plugin.json`, plus a `tdd-guard` entry in `.claude-plugin/marketplace.json`. Generate the README\'s "What it reaches" table from `claude plugin validate`.'
+  const BODY_18 = ['Intro.', '', '## Before you start', '', ISSUE_18, '- **Base branch:** `main` if PR #1 has merged.', '- **Rules:**', '  - one hook per event + matcher;', '', '## Design'].join('\n')
+  const FIXES = [
+    '**Merit: small UX fix.** While `/mod-builder:build` is on its Spec stage, the band shows the new mod (for example "◆ issue-forge  Spec ░░░  1:02 · filling SPEC from docs/specs/issue-forge.md") but Mod Lab\'s list doesn\'t. The list only knows mods that have a folder with `SPEC.md` or `.claude-plugin/plugin.json`, and the build skill reports "Spec running" before it writes the SPEC.',
+    'Origin: observed on 2026-10-13 with `mods/issue-forge/SPEC.md` while `/mod-builder:build` wrote it. Mod Lab showed issue-forge at `next: Spec` after "Spec passed" was reported.',
+    "**Merit: fix.** In a git worktree, Mod Lab watches the main checkout's `mods/`, while `/mod-builder:build` writes to the worktree's. A build in a worktree never shows up in Mod Lab's list.",
+    "- `/mod-builder:build` finds its mods folder by walking up from the session's working directory to the nearest `.claude-plugin/marketplace.json` (`plugins/mod-builder/skills/build/SKILL.md`, step 0.2), which is the worktree's.",
+  ]
+
+  test('newModGuidance: a line asking to build it with /mod-builder:build is quoted, as far as its own list item goes', () => {
+    const guidance = helper<[string], string[] | null>('newModGuidance')
+    expect(guidance(BODY_18)).toEqual([ISSUE_18])
+    expect(guidance('Please build the new plugin with /mod-builder:build:\n- a guard\n- 0.1.0\n\nThen open a PR.')).toEqual(['Please build the new plugin with /mod-builder:build:', '- a guard', '- 0.1.0'])
+    expect(guidance('- Build it with `/mod-builder:build`, and\n  keep it small.\n  - one nested note\n- next item')).toEqual(['- Build it with `/mod-builder:build`, and', '  keep it small.', '  - one nested note'])
+    expect(guidance('Build it with `/mod-builder:build`.\n## Next\nmore')).toEqual(['Build it with `/mod-builder:build`.'])
+    expect(guidance('BUILD IT WITH /MOD-BUILDER:BUILD\r\nsecond line')).toEqual(['BUILD IT WITH /MOD-BUILDER:BUILD', 'second line'])
+  })
+
+  test('newModGuidance: the fixes that name the skill in passing, a built mod, and no mention at all are not new plugins', () => {
+    const guidance = helper<[string], string[] | null>('newModGuidance')
+    for (const line of FIXES) expect(guidance(`Intro.\n\n${line}\n\nMore.`)).toBeNull()
+    expect(guidance('I built it with `/mod-builder:build` and the README was wrong.')).toBeNull()
+    expect(guidance('Fix the build step; it fails with exit 1.')).toBeNull()
+    expect(guidance('')).toBeNull()
+    // The rule's known misread, pinned so a sharper rule shows up here: a fix that says this would be refused.
+    expect(guidance('the build skill works with `/mod-builder:build` and /mod-builder:edit')).toEqual(['the build skill works with `/mod-builder:build` and /mod-builder:edit'])
+  })
+
+  test('newModGuidance: the quote stops at 12 lines and 1,200 characters, marked with …', () => {
+    const guidance = helper<[string], string[] | null>('newModGuidance')
+    const long = ['Build it with /mod-builder:build', ...Array.from({ length: 20 }, (_, i) => `line ${i}`)].join('\n')
+    const byLines = guidance(long) ?? []
+    expect(byLines).toHaveLength(12)
+    expect(byLines[11]).toBe('line 10…')
+    const wide = guidance(`Build it with /mod-builder:build ${'x'.repeat(1300)}`) ?? []
+    expect(wide).toHaveLength(1)
+    expect(wide[0]).toHaveLength(1201)
+    expect(wide[0]?.endsWith('…')).toBe(true)
+  })
+
+  test('newModReply: names the issue, says nothing started, and lists the steps with the issue\'s guidance quoted', () => {
+    const reply = helper<[{ issue: number; title: string; url: string; ghRepo?: string }, string[]], string>('newModReply')
+    const text = reply({ issue: 18, title: 'New mod tdd-guard', url: 'https://github.com/o/r/issues/18' }, [ISSUE_18])
+    expect(text).toBe(
+      [
+        "#18 asks for a new Claude Code plugin. issue-forge doesn't build new plugins: it takes an issue to a fix, test-first. New plugins are built with mod-builder, whose SPEC is the one approval. Nothing was started.",
+        '',
+        'Next steps:',
+        '1. Run /mod-builder:build and ask for the plugin #18 describes: "New mod tdd-guard" (https://github.com/o/r/issues/18). Read it first with gh issue view 18.',
+        "2. Follow the issue's own guidance (quoted from #18 as its author wrote it):",
+        `   > ${ISSUE_18}`,
+        '3. Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
+        '4. Open a pull request that closes #18.',
+      ].join('\n'),
+    )
+    expect(reply({ issue: 18, title: 't', url: 'u', ghRepo: 'github.com/o/r' }, ['x'])).toContain('Read it first with gh issue view 18 --repo github.com/o/r.')
+    expect(text).not.toContain('mods/tdd-guard/tests')
+  })
+
+  test('isPluginManifest: a plugin.json in a .claude-plugin folder, at any depth and with either slash', () => {
+    const isManifest = helper<[string], boolean>('isPluginManifest')
+    for (const path of ['.claude-plugin/plugin.json', 'mods/x/.claude-plugin/plugin.json', 'C:\\w\\mods\\x\\.claude-plugin\\plugin.json', '/w/x/.claude-plugin/plugin.json']) expect(isManifest(path)).toBe(true)
+    for (const path of ['plugin.json', '.claude-plugin/marketplace.json', 'x.claude-plugin/plugin.json', 'mods/x/.claude-plugin/plugin.json.bak', 'mods/x/claude-plugin/plugin.json']) expect(isManifest(path)).toBe(false)
+  })
+
+  test('newPluginOf: an added manifest was created; failing that, one the guard refused was tried; else none', () => {
+    const of = helper<[string[], string?], { path: string; isCreated: boolean } | null>('newPluginOf')
+    expect(of(['mods/x/tests/a.test.ts', 'mods/x/.claude-plugin/plugin.json'])).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+    expect(of(['mods/x/.claude-plugin/plugin.json'], 'mods/y/.claude-plugin/plugin.json')).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+    expect(of(['mods/x/hooks/a.ts'], 'mods/y/.claude-plugin/plugin.json')).toEqual({ path: 'mods/y/.claude-plugin/plugin.json', isCreated: false })
+    expect(of(['mods/x/hooks/a.ts', 'mods/x/README.md'])).toBeNull()
+  })
+
+  test('newPluginGate: R4 at gate R and G8 at gates G and F, failed, carrying the plugin', () => {
+    const gateOf = helper<['R' | 'G' | 'F', { path: string; isCreated: boolean }], Run['gates']['G']>('newPluginGate')
+    const np = { path: 'mods/x/.claude-plugin/plugin.json', isCreated: true }
+    expect(gateOf('R', np)).toEqual({ gate: 'R', passed: false, checks: [{ id: 'R4', passed: false, detail: 'a new Claude Code plugin: mods/x/.claude-plugin/plugin.json' }], newPlugin: np })
+    expect(gateOf('F', { ...np, isCreated: false })).toEqual({ gate: 'F', passed: false, checks: [{ id: 'G8', passed: false, detail: 'a refused Claude Code plugin: mods/x/.claude-plugin/plugin.json' }], newPlugin: { ...np, isCreated: false } })
+  })
+
+  const WT16 = '/repo/.claude/issue-forge-worktrees/issue-16-fix-it'
+  const NP = { path: 'mods/x/.claude-plugin/plugin.json', isCreated: true }
+  const npGate = (gate: 'R' | 'G' | 'F') => ({ gate, passed: false, checks: [{ id: gate === 'R' ? 'R4' : 'G8', passed: false, detail: 'd' }], newPlugin: NP })
+
+  test('a new plugin at gate G blocks final at once, with no retry, and the steps say what is left and what to do', () => {
+    const r = run({ step: 'gateG', branch: 'issue-16-fix-it', base: 'main', workRoot: WT16, redCommit: 'abcdef1234', used: { red: 1, green: 1, refactor: 0 } })
+    const b = advance(r, { type: 'gated', gate: npGate('G') }, 5) as Run & { blocked: { steps?: string[]; isFinal?: boolean } }
+    expect(b.step).toBe('blocked')
+    expect(b.blocked).toEqual({
+      at: 'gateG',
+      reason: "a phase agent created a new Claude Code plugin (mods/x/.claude-plugin/plugin.json); issue-forge doesn't build new plugins",
+      next: 'build it with /mod-builder:build',
+      isFinal: true,
+      steps: [
+        `Nothing past red's commit was committed, and nothing was pushed. This run's worktree ${WT16} holds red's tests at abcdef1 and the phase's uncommitted files.`,
+        'Stop this run: /issue-forge stop 16',
+        "Build the plugin with /mod-builder:build in a clean checkout of main or a new worktree from it, not in this run's worktree, whose files would be in the way (mod-builder's scaffold refuses a plugin folder that already holds files).",
+        "Red's tests can serve the build's logic-first step as reference: git show abcdef1",
+        `When you no longer need this run's worktree, remove it from a plain shell: git worktree remove ${WT16}`,
+        'Open a pull request that closes #16.',
+      ],
+    })
+  })
+
+  test('the final block at gate R, at gate F, for a refusal, and in the checkout; the issue\'s guidance is quoted when it has one', () => {
+    const atR = advance(run({ step: 'gateR', branch: 'issue-16-fix-it', base: 'main', workRoot: WT16, used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: { ...npGate('R'), newPlugin: { ...NP, isCreated: false } } }, 5) as Run & { blocked: { steps: string[]; isFinal?: boolean; reason: string } }
+    expect(atR.step).toBe('blocked')
+    expect(atR.blocked.reason).toBe("a phase agent tried to create a new Claude Code plugin (mods/x/.claude-plugin/plugin.json); issue-forge doesn't build new plugins")
+    expect(atR.blocked.steps[0]).toBe(`Nothing was committed, and nothing was pushed. This run's worktree ${WT16} holds red's uncommitted files.`)
+    expect(atR.blocked.steps.some(s => s.startsWith("Red's tests can serve"))).toBe(false)
+    const atF = advance(run({ step: 'gateF', branch: 'b', base: 'main', redCommit: 'abcdef1234', used: { red: 1, green: 1, refactor: 1 } }), { type: 'gated', gate: npGate('F') }, 5) as Run & { blocked: { at: string; steps: string[]; isFinal?: boolean } }
+    expect(atF.step).toBe('blocked')
+    expect(atF.blocked.at).toBe('gateF')
+    expect(atF.blocked.isFinal).toBe(true)
+    expect(atF.blocked.steps[0]).toBe("Nothing past red's commit was committed, and nothing was pushed. This run's branch b holds red's tests at abcdef1, and the checkout's uncommitted files (git status lists them) are the phase's.")
+    expect(atF.blocked.steps.some(s => s.includes('git worktree remove'))).toBe(false)
+    expect(atF.blocked.steps[2]).toContain("not in this run's branch, whose files")
+    const quoted = advance(run({ step: 'gateG', body: `Build it with /mod-builder:build\nas a guard.`, branch: 'b', base: 'main', redCommit: 'abcdef1234' }), { type: 'gated', gate: npGate('G') }, 5) as Run & { blocked: { steps: string[] } }
+    expect(quoted.blocked.steps).toContain("Follow the issue's own guidance (quoted from #16 as its author wrote it):\n   > Build it with /mod-builder:build\n   > as a guard.")
+  })
+
+  test('a final block is not resumed; its status says to stop it and lists the steps; a plain block still says resume', () => {
+    const r = run({ step: 'gateG', branch: 'b', base: 'main', redCommit: 'abcdef1234' })
+    const b = advance(r, { type: 'gated', gate: npGate('G') }, 5)
+    expect(advance(b, { type: 'resume' }, 6)).toEqual(b)
+    const status = statusText(b, false, 6)
+    expect(status).toContain("blocked at gateG: a phase agent created a new Claude Code plugin")
+    expect(status).toContain('next: build it with /mod-builder:build, then /issue-forge stop 16')
+    expect(status).toContain('\n1. Nothing past red')
+    expect(status).toContain('\n2. Stop this run: /issue-forge stop 16')
+    const plain = advance(run({ step: 'gateG' }), { type: 'block', reason: 'r', next: 'n' }, 5)
+    expect(statusText(plain, false, 6)).toContain('next: n, then /issue-forge resume')
+    const final = advance(run({ step: 'preflight' }), { type: 'block', reason: '#16 is a pull request, not an issue', next: 'pick another issue', isFinal: true } as never, 5)
+    expect((final as Run & { blocked: { isFinal?: boolean } }).blocked.isFinal).toBe(true)
+    expect(statusText(final, false, 6)).toContain('next: pick another issue, then /issue-forge stop 16')
+    expect(advance(final, { type: 'resume' }, 6)).toEqual(final)
+  })
+
+  test('the guard\'s refusal is recorded on an active run, and says to end the turn', () => {
+    const r = advance(run({ step: 'green' }), { type: 'newPlugin', path: 'mods/x/.claude-plugin/plugin.json' } as never, 5) as Run & { newPlugin?: string }
+    expect(r.newPlugin).toBe('mods/x/.claude-plugin/plugin.json')
+    expect((advance(run({ step: 'stopped' }), { type: 'newPlugin', path: 'p' } as never, 5) as Run & { newPlugin?: string }).newPlugin).toBeUndefined()
+    const refusal = helper<[string], string>('newPluginRefusal')
+    expect(refusal('mods/x/.claude-plugin/plugin.json')).toBe("issue-forge: creating a new Claude Code plugin (mods/x/.claude-plugin/plugin.json) is mod-builder's job, not this run's. End your turn now; the run stops with next steps for the person.")
+  })
+
+  test('every phase is told not to create a new plugin', () => {
+    for (const phase of ['red', 'green', 'refactor'] as const) {
+      expect(RULES[phase]).toContain('Never create a new Claude Code plugin (a new .claude-plugin/plugin.json): if the issue needs one, stop and say so.')
+      expect(agentPrompt(phase)).toContain('Never create a new Claude Code plugin')
+    }
   })
 })
