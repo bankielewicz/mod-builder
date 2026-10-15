@@ -535,6 +535,24 @@ describe('a run that does not end', () => {
     expect(seen.argv.length).toBe(2)
   })
 
+  test('an orphan row is dropped by the clock and the stage stops reading running, with nothing else happening', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    const during = await mountPane($)
+    expect(await during.find({ type: 'Text', text: /running tests/ })).toBeDefined()
+    await during.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
+  })
+
   test('an orphan row does not hold back the auto re-run', SHORT, async ($, on) => {
     const mtime = { ms: 1000 }
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
