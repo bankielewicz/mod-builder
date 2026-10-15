@@ -398,7 +398,7 @@ async function tick($: Engine): Promise<void> {
 
 /** Records streamed test progress on the run in flight, which redraws the row and band. */
 async function noteProgress($: Engine, entry: Run, counts: { passed: number; failed: number }): Promise<void> {
-  await update($, runs, all => all.map(one => (one.mod === entry.mod && one.kind === entry.kind ? { ...one, ...counts } : one)))
+  await update($, runs, all => Lab.withProgress(all, entry, counts))
 }
 
 /** A check ended at its time limit; the message is its summary. */
@@ -530,6 +530,10 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
     await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
     logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind })
     toast = Lab.toastOfRun(mod, result)
+  } catch (error) {
+    // No result was stored (a scan or the store write threw): say so, and rescan below so the stage stops reading running.
+    logCaught($, 'run', error, 'normal', { mod, kind })
+    toast = Lab.toastOfRunError(mod, kind, error)
   } finally {
     await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind && one.startedAt === startedAt)))
   }

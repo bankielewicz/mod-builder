@@ -988,6 +988,16 @@ export function toastOfRun(mod: string, result: RunResult): string {
   return result.ok ? `✓ ${mod}: ${result.summary}` : `✕ ${mod}: ${result.summary}. Press F in Mod Lab to fix`
 }
 
+/** The toast of a run that threw before its result was stored (a scan or the store write failed). */
+export function toastOfRunError(mod: string, kind: RunKind, error: unknown): string {
+  return `✕ ${mod}: ${kind === 'Typecheck' ? 'Type-check' : kind} stopped before its result was saved (${cut(errorText(error), 120)})`
+}
+
+/** The runs once streamed `counts` land on `entry`'s own row: same mod, kind and start. */
+export function withProgress(all: readonly Run[], entry: Run, counts: { passed: number; failed: number }): Run[] {
+  return all.map(one => (one.mod === entry.mod && one.kind === entry.kind && one.startedAt === entry.startedAt ? { ...one, ...counts } : one))
+}
+
 /** Test lines streamed so far → the counts: bun prints one `(pass)` or `(fail)` line per test. */
 export function countStreamed(text: string): { passed: number; failed: number } {
   let passed = 0
