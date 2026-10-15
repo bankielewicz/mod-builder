@@ -954,6 +954,32 @@ describe('a mod reported before its folder exists (#19)', () => {
     expect(await after.find({ type: 'Text', text: /^1 building$/ })).toBeUndefined()
   })
 
+  test('same-named new mods built in two mods folders each keep their placeholder (Codex P2, PR #80 round 4)', async ($, on) => {
+    const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    seen.cwd = '/w/one/plugins/x'
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const one = await mountPane($)
+    expect(await rowsOf(one)).toBe(1)
+    expect(await one.find({ type: 'Text', text: /folder not written yet: .*one\/mods\/new-mod\// })).toBeDefined()
+  })
+
   test('a repeated Spec running for a placeholder starts no edit, so the SPEC written next is not stale', OPTIONS, async ($, on) => {
     const disk: Disk = modFiles('git-branch')
     const { clock } = world(on, disk)

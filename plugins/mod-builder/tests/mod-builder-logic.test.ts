@@ -110,6 +110,9 @@ const modsDirFor = (configured: string, cwd: string | null, existing: readonly s
 type ReportedByMod = Parameters<typeof liveReports>[0]
 const placeholderFacts = (name: string): FileFacts | undefined =>
   (Logic as unknown as { placeholderFacts?: (name: string) => FileFacts }).placeholderFacts?.(name)
+type BuildingByDir = Record<string, ReportedByMod>
+const withBuilding = (all: BuildingByDir, dir: string, mod: string, report: ReportedByMod[string], now: number): BuildingByDir | undefined =>
+  (Logic as unknown as { withBuilding?: (all: BuildingByDir, dir: string, mod: string, report: ReportedByMod[string], now: number) => BuildingByDir }).withBuilding?.(all, dir, mod, report, now)
 const placeholderNames = (reports: ReportedByMod, factsNames: readonly string[], dir?: string): string[] | undefined =>
   (Logic as unknown as { placeholderNames?: (reports: ReportedByMod, factsNames: readonly string[], dir?: string) => string[] }).placeholderNames?.(reports, factsNames, dir)
 
@@ -825,6 +828,17 @@ describe('a mod is listed as soon as a build reports it, before its folder exist
     expect(placeholderNames({ 'new-mod': inOne }, [], '/w/one/mods')).toEqual(['new-mod'])
     expect(placeholderNames({ 'new-mod': inOne }, [], '/w/two/mods')).toEqual([])
     expect(placeholderNames({ 'new-mod': running('Spec') }, [], '/w/two/mods')).toEqual([])
+  })
+
+  test('withBuilding: running reports are kept per mods folder and name, so a same-named build elsewhere leaves this one (Codex P2, PR #80 round 4)', () => {
+    const one = withBuilding({}, '/w/one/mods', 'new-mod', running('Spec', 100), 100)
+    expect(one).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) } })
+    const both = withBuilding(one ?? {}, '/w/two/mods', 'new-mod', running('Spec', 200), 200)
+    expect(both).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) }, '/w/two/mods': { 'new-mod': running('Spec', 200) } })
+    // A finished report ends only its own folder's build.
+    expect(withBuilding(both ?? {}, '/w/two/mods', 'new-mod', { ...finished('passed'), since: 300 }, 300)).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) } })
+    // Expired running entries are dropped on the way in, with any folder left empty.
+    expect(withBuilding(both ?? {}, '/w/two/mods', 'other', running('Logic', 100 + REPORT_TTL_MS), 100 + REPORT_TTL_MS)).toEqual({ '/w/two/mods': { 'new-mod': running('Spec', 200), other: running('Logic', 100 + REPORT_TTL_MS) } })
   })
 
   test('placeholderFacts: the facts of a folder with nothing in it, under the reported name', () => {
