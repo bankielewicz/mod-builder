@@ -1512,7 +1512,8 @@ export function parseRunKey(key: string): ParsedKey | null {
     if (!key.startsWith(prefix)) continue
     const rest = key.slice(prefix.length)
     const m = rest.match(/^(.*)#(\d+)$/)
-    return m ? { kind, repo: m[1] ?? '', issue: Number(m[2]) } : { kind: legacy, root: rest }
+    // Both groups always take part in a match.
+    return m ? { kind, repo: m[1] as string, issue: Number(m[2]) } : { kind: legacy, root: rest }
   }
   return null
 }
@@ -1690,8 +1691,10 @@ export function lineOf(run: Run, ctx: LineContext): string {
   return `#${run.issue} interrupted at ${run.step}`
 }
 
+/** Two or more active runs (pickRun's `several`), and which to name. */
 export function severalText(runs: readonly Run[], verb: string, ctx: LineContext): string {
-  return `${runs.length} runs in this repository: ${runs.map(r => lineOf(r, ctx)).join(' · ')}. Name one: /issue-forge ${verb} ${runs[0]?.issue ?? ''}`
+  const first = runs[0] as Run
+  return `${runs.length} runs in this repository: ${runs.map(r => lineOf(r, ctx)).join(' · ')}. Name one: /issue-forge ${verb} ${first.issue}`
 }
 
 /** The repository's other active runs, newest first, for the also line. */

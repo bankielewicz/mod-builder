@@ -1408,6 +1408,14 @@ describe('parallel runs (Change 0.3.0)', () => {
     for (const reason of ['clear', 'resume']) expect(releasesOnEnd(reason)).toBe(false)
   })
 
+  test('edges: a run with no recorded block or driver, and the short states the menu names the rest by', () => {
+    const bare = at(9, 'blocked')
+    expect(lineOf(bare, { me: ME, drivingId: null, now: 0 })).toBe('#9 blocked at an unknown step')
+    const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving: null, others: [at(9, 'blocked', { startedAt: 9 }), at(7, 'ready', { startedAt: 3 }), at(8, 'green', { startedAt: 2 }), at(6, 'red', { ...foreign, startedAt: 1 })], me: ME, now: 0 })
+    expect(menu?.question).toBe('#9 is active in this repository: blocked at an unknown step (also #7 ready, #8 interrupted, #6 in another session). What should this session do?')
+    expect(takeOverQuestion(at(9, 'green'), 5_000)).toBe('#9 is driven by another session (for 0s). If that session has ended, take it over?')
+  })
+
   test('the demo shows a run driven elsewhere, and the also line while running', () => {
     const d = demoRun('elsewhere', 0)
     expect(viewOf(d.run, d.isDriving, d.me)).toBe('elsewhere')
