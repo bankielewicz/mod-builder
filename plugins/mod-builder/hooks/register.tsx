@@ -746,6 +746,8 @@ function runInBackground($: Engine, mod: string | null, kind: RunKind, modsDir: 
 // ── The pane ──────────────────────────────────────────────────────────────
 
 const isPaneOpen = async ($: Engine): Promise<boolean> => (await $.ui.panes()).some(pane => pane.id === PANE)
+/** Open and drawn: an unasked open on a narrow terminal is open but waits undrawn, and the person's open seats it. */
+const isPaneShown = async ($: Engine): Promise<boolean> => (await $.ui.panes()).some(pane => pane.id === PANE && pane.isPlaced)
 
 async function openPane($: Engine): Promise<void> {
   const opened = await $.ui.open({ id: PANE, title: 'Mod Lab', columns: 80 })
@@ -765,7 +767,7 @@ async function showPane($: Engine): Promise<void> {
 /** Opens the pane for a typed build or edit skill, unless it is open; a failure is logged and never stops the skill. */
 async function openForSkill($: Engine, command: string): Promise<void> {
   try {
-    if (!(await isPaneOpen($))) await showPane($)
+    if (!(await isPaneShown($))) await showPane($)
   } catch (error) {
     logCaught($, 'command.skill', error, 'normal', { command })
   }
@@ -958,7 +960,7 @@ export const register: Register = (on, options) => {
         })().catch((error: unknown) => logCaught($, 'modlab.select', error, 'normal', { mod: name }))
         return { text: `Mod Lab: ${name}.` }
       }
-      if (await isPaneOpen($)) {
+      if (await isPaneShown($)) {
         void $.ui.close({ id: PANE }).catch((error: unknown) => logCaught($, 'modlab.toggle', error))
         return { text: 'Mod Lab folded to the status line. /modlab to reopen.' }
       }

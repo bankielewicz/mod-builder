@@ -71,8 +71,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     timeouts: [] as (number | undefined)[],
     /** While set, a test run never ends, as a Test that hangs does. */
     stallTests: false,
-    /** The ids `$.ui.panes()` lists as open. */
+    /** The ids `$.ui.panes()` lists as open and drawn. */
     panes: [] as string[],
+    /** The ids `$.ui.panes()` lists as open but waiting undrawn (an unasked open on a narrow terminal). */
+    waiting: [] as string[],
+    /** Every id `$.ui.close` was asked to close. */
+    closed: [] as string[],
     /** While set, `$.ui.open` is refused with this reason. */
     denyOpen: '',
   }
@@ -160,7 +164,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.status', ($, e) => (seen.status.push((e as { text?: string }).text), { value: undefined }) as never)
   on('ui.notify', ($, e) => (seen.notified.push((e as { text: string }).text), { value: { isSent: true, channel: 'terminal' } }) as never)
   on('ui.open', ($, e) => (seen.denyOpen ? { deny: seen.denyOpen } : (seen.opened.push(e.id), { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } })) as never)
-  on('ui.panes', () => ({ value: seen.panes.map(id => ({ id, title: id, isPlaced: true })) }) as never)
+  on('ui.panes', () => ({ value: [...seen.panes.map(id => ({ id, title: id, isPlaced: true })), ...seen.waiting.map(id => ({ id, title: id, isPlaced: false }))] }) as never)
+  on('ui.close', ($, e) => (seen.closed.push((e as { id: string }).id), { value: undefined }) as never)
   on('prompt.fill', ($, e) => (seen.filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }) as never)
   return { seen, clock }
 }
@@ -1815,6 +1820,35 @@ describe('the pane opens from the command itself (#90)', () => {
     seen.panes = ['modlab']
     expect((await typed($, 'mod-builder:edit', 'git-branch')).text).toBe('ran mod-builder:edit git-branch')
     expect(seen.opened).toEqual([])
+  })
+
+  test('/modlab on a drawn pane folds it (guard)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    seen.panes = ['modlab']
+    expect((await command($, '')).text).toBe('Mod Lab folded to the status line. /modlab to reopen.')
+    await clock.advance(10)
+    expect(seen.closed).toEqual(['modlab'])
+    expect(seen.opened).toEqual([])
+  })
+
+  test('/modlab on a pane waiting undrawn opens it rather than folding it (PR #93 review)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    seen.waiting = ['modlab']
+    expect((await command($, '')).text).toBe('Mod Lab opened.')
+    await clock.advance(10)
+    expect(seen.opened).toEqual(['modlab'])
+    expect(seen.closed).toEqual([])
+  })
+
+  test('a typed /mod-builder:edit opens a pane waiting undrawn (PR #93 review)', OPTIONS, async ($, on) => {
+    const { seen } = world(on, modFiles('git-branch'))
+    on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+    await start($)
+    seen.waiting = ['modlab']
+    expect((await typed($, 'mod-builder:edit', 'git-branch')).text).toBe('ran mod-builder:edit git-branch')
+    expect(seen.opened).toEqual(['modlab'])
   })
 
   test('a refused open still runs the skill (guard: passes before #90)', OPTIONS, async ($, on) => {
