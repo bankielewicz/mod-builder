@@ -279,14 +279,24 @@ async function nestedFiles($: Engine, at: string, folder: string, entries: reado
  */
 const keyOf = (base: string, modsDir: string): string => `${base}:${modsDir}`
 
+/**
+ * One folder's records under `base`. Before 0.2.9 one unkeyed set described the one folder Mod Lab
+ * watched (a set `modsDir`, else the plugin's own), so that folder reads it until it has its own.
+ */
+async function storedOf($: Engine, base: string, modsDir: string): Promise<unknown> {
+  const own = await $.store.get(keyOf(base, modsDir))
+  if (own !== undefined || modsDir !== Lab.normalizePath(configuredDir || pluginModsDirOf($))) return own
+  return $.store.get(base)
+}
+
 const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
-  ((await $.store.get(keyOf(RESULTS_KEY, modsDir))) ?? {}) as StoredResults
+  ((await storedOf($, RESULTS_KEY, modsDir)) ?? {}) as StoredResults
 
 /** When each mod's current edit started (a build generation), for mods being edited. */
 type Generation = { since: number; fromVersion: string | null }
 const generationsOf = async ($: Engine, modsDir: string): Promise<Record<string, Generation>> =>
   Object.fromEntries(
-    Object.entries(((await $.store.get(keyOf(GENERATIONS_KEY, modsDir))) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
+    Object.entries(((await storedOf($, GENERATIONS_KEY, modsDir)) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
       mod,
       typeof gen === 'number' ? { since: gen, fromVersion: null } : gen,
     ]),
@@ -381,7 +391,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
  */
 async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean, modsDir: string): Promise<string[]> {
   const doneKey = keyOf(DONE_KEY, modsDir)
-  const done = ((await $.store.get(doneKey)) ?? {}) as Record<string, number | string>
+  const done = ((await storedOf($, DONE_KEY, modsDir)) ?? {}) as Record<string, number | string>
   const newly: string[] = []
   let isChanged = false
   for (const view of judged) {
