@@ -1,6 +1,8 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { resultOf, signatureOf } from '../hooks/mod-builder-logic'
+
 import { testFail } from './fixtures/test-fail'
 import { testNone } from './fixtures/test-none'
 import { testPass } from './fixtures/test-pass'
@@ -39,7 +41,7 @@ const modFiles = (name: string, folder = MODS): Disk => ({
 /** Every file's mtime is `ms`, unless `byPath` names its own. */
 type Mtimes = { ms: number; byPath?: Record<string, number> }
 
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[]) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[], seeded: Readonly<Record<string, unknown>> = {}) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -53,6 +55,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     sessionId: 's1-session',
     cwd: '/m' as string | null,
     failReads: [] as string[],
+    /** Every path `$.fs.exists` was asked about. */
+    probed: [] as string[],
     denySet: '',
     /** A store key whose writes are refused. */
     denyStoreSet: '',
@@ -68,7 +72,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   // The store in memory, as mock.store keeps it (values read back as JSON), with reads and writes that can be refused.
-  const stored = new Map<string, string>()
+  const stored = new Map<string, string>(Object.entries(seeded).map(([key, value]) => [key, JSON.stringify(value)]))
   on('store.get', ($, e) => {
     const key = (e as { key: string }).key
     if (seen.denyStoreGet === key) return { deny: 'EIO: store read failed' }
@@ -115,7 +119,11 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     if (seen.failReads.includes(path)) return { deny: 'EIO: read failed' }
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
   })
-  on('fs.exists', ($, e) => ({ value: (e as { path: string }).path in disk }) as never)
+  on('fs.exists', ($, e) => {
+    const path = (e as { path: string }).path
+    seen.probed.push(path)
+    return { value: path in disk } as never
+  })
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
@@ -502,7 +510,7 @@ describe('a run that does not end', () => {
     await ui.press({ key: 'test' })
     await clock.advance(10)
     expect(seen.argv.length).toBe(1)
-    seen.denyStoreSet = 'modlab:results'
+    seen.denyStoreSet = `modlab:results:${MODS}`
     release()
     await clock.advance(500)
     seen.denyStoreSet = ''
@@ -620,7 +628,7 @@ describe('a run that does not end', () => {
     await start($)
     await clock.advance(10)
     let release = () => {}
-    seen.holdStoreSet = { key: 'modlab:results', until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    seen.holdStoreSet = { key: `modlab:results:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
     const ui = await mountPane($)
     await ui.press({ key: 'test' })
     await clock.advance(10)
@@ -691,7 +699,7 @@ describe('a run that does not end', () => {
     await clock.advance(10)
     await ui.unmount()
     expect(seen.holdList.isReached).toBe(true)
-    seen.denyStoreGet = 'modlab:done'
+    seen.denyStoreGet = `modlab:done:${MODS}`
     release()
     await clock.advance(10)
     seen.denyStoreGet = ''
@@ -985,7 +993,7 @@ describe('a results write that fails', () => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean } })
     await start($)
     await clock.advance(10)
-    seen.denyStoreSet = 'modlab:results'
+    seen.denyStoreSet = `modlab:results:${MODS}`
     const ui = await mountPane($)
     await ui.press({ key: 'validate' })
     await clock.advance(500)
@@ -1430,5 +1438,434 @@ describe('testTimeoutMinutes in /mod-builder config (PR #55 review)', () => {
     expect(changed).toStartWith('testTimeoutMinutes is now default.')
     expect(changed).toContain('testTimeoutMinutes 3 minutes')
     expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: '' }])
+  })
+})
+
+describe('modsDir set', () => {
+  test('a set modsDir is never walked: no marketplace is looked for at start, at a scan or in /mod-builder config (PR #57 review round 2)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), ['/m/.claude-plugin/marketplace.json']: '{ "plugins": [] }' })
+    seen.cwd = '/m/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })
+    await $.turn.complete({ answer: 'done' } as never)
+    await clock.advance(1000)
+    expect(seen.probed.filter(path => path.endsWith('/.claude-plugin/marketplace.json'))).toEqual([])
+  })
+})
+
+describe('modsDir not set: the mods folder follows the working directory', () => {
+  const WT = '/w/wt'
+  const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+  const startedLine = (seen: { logs: string[] }) => seen.logs.find(line => line.includes('Mod Lab started')) ?? ''
+
+  test('a session in a worktree lists that worktree\'s mods', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /…\/wt\/mods/ })).toBeDefined()
+  })
+
+  test('Validate runs against the worktree\'s mod folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'validate' })).toBeDefined()
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    expect(seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${WT}/mods/alpha`]])
+  })
+
+  test('a worktree inside the main checkout lists the worktree\'s mods, not the main checkout\'s', async ($, on) => {
+    const inner = '/w/main/scratch/wt'
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/main'),
+      ...modFiles('alpha', '/w/main/mods'),
+      ...marketplaceAt(inner),
+      ...modFiles('beta', `${inner}/mods`),
+    })
+    seen.cwd = `${inner}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+  })
+
+  test('a /cd into another worktree takes effect at the next scan', async ($, on) => {
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await before.find({ type: 'Text', text: /beta/ })).toBeUndefined()
+    await before.unmount()
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await after.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+  })
+
+  test('a /cd out of every marketplace goes back to the plugin\'s own mods folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const inside = await mountPane($)
+    expect(await inside.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    await inside.unmount()
+    seen.cwd = '/elsewhere'
+    await command($, 'alpha')
+    await clock.advance(10)
+    const outside = await mountPane($)
+    expect(await outside.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+    expect(await outside.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeDefined()
+  })
+
+  test('the session-start log line names the worktree\'s mods folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    expect(startedLine(seen)).toContain(`"modsDir":"${WT}/mods"`)
+  })
+
+  test('the session-start log line names the main checkout\'s mods folder when the session starts there', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt('/w/main'), ...modFiles('alpha', '/w/main/mods') })
+    seen.cwd = '/w/main'
+    await start($)
+    await clock.advance(10)
+    expect(startedLine(seen)).toContain('"modsDir":"/w/main/mods"')
+  })
+
+  test('/mod-builder config lists the worktree\'s mods folder as the default', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const listed = ((await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }).text ?? ''
+    expect(listed).toContain('modsDir            default (…/wt/mods)')
+  })
+})
+
+describe('modsDir not set: each mods folder keeps its own results', () => {
+  // Two worktrees, each with a mod named alpha whose files are alike.
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const alphaIn = (folder: string): Disk => ({
+    ...modFiles('alpha', `${folder}/mods`),
+    [`${folder}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'alpha', source: './mods/alpha', version: '0.1.0' }] }),
+  })
+  const passing = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+
+  async function cdTo($: Engine, w: ReturnType<typeof world>, folder: string) {
+    w.seen.cwd = `${folder}/plugins/x`
+    await command($, 'alpha')
+    await w.clock.advance(10)
+  }
+
+  async function validateAndTest($: Engine, w: ReturnType<typeof world>) {
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.press({ key: 'test' })
+    await w.clock.advance(500)
+    await ui.unmount()
+  }
+
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('the same-named mod in another worktree starts unchecked, and going back finds the first one\'s results', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+    await cdTo($, w, TWO)
+    expect(await shows($, /^ready to share$/)).toBe(false)
+    expect(await shows($, /next: Validate/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a mod turning green is announced in each worktree, though one of the same name already was', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    await cdTo($, w, TWO)
+    await validateAndTest($, w)
+    expect(w.seen.notified).toEqual(['alpha is ready to share', 'alpha is ready to share'])
+  })
+
+  test('an edit started in one worktree leaves the same-named mod in another as it was', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    await cdTo($, w, ONE)
+    await validateAndTest($, w)
+    await w.clock.advance(5000)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'passed' } as never)
+    await w.clock.advance(10)
+    expect(await shows($, /^edit · update Spec for this change$/)).toBe(true)
+    await cdTo($, w, TWO)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a run keeps its result with the folder it ran in, after a /cd while it runs', async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing, true, hold)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(10)
+    await ui.unmount()
+    await cdTo($, w, TWO)
+    release()
+    await w.clock.advance(500)
+    expect(w.seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${ONE}/mods/alpha`]])
+    expect(await shows($, /next: Validate/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /next: Test/)).toBe(true)
+  })
+})
+
+describe('modsDir not set: what the pane does acts on the folder it shows (PR #57 review)', () => {
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const marketplaceOf = (folder: string, plugins: object[]): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins }) })
+  const ALPHA_ENTRY = { name: 'alpha', source: './mods/alpha', version: '0.1.0' }
+  const alphaIn = (folder: string): Disk => ({
+    ...modFiles('alpha', `${folder}/mods`),
+    [`${folder}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    ...marketplaceOf(folder, [ALPHA_ENTRY]),
+  })
+  const passing = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+
+  async function cdTo($: Engine, w: ReturnType<typeof world>, folder: string) {
+    w.seen.cwd = `${folder}/plugins/x`
+    await command($, 'alpha')
+    await w.clock.advance(10)
+  }
+
+  async function press($: Engine, w: ReturnType<typeof world>, ...keys: string[]) {
+    const ui = await mountPane($)
+    for (const key of keys) {
+      await ui.press({ key })
+      await w.clock.advance(500)
+    }
+    await ui.unmount()
+  }
+
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('V after a /cd with no scan since runs the folder the pane shows, and stamps the result from that folder', async ($, on) => {
+    const one = alphaIn(ONE)
+    const mtime: Mtimes = { ms: 1000, byPath: Object.fromEntries(Object.keys(one).map(path => [path, 2000])) }
+    const w = world(on, { ...one, ...alphaIn(TWO) }, passing, true, undefined, mtime)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.unmount()
+    expect(w.seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${ONE}/mods/alpha`]])
+    await cdTo($, w, ONE)
+    expect(await shows($, /next: Test/)).toBe(true)
+  })
+
+  test('the end-of-turn re-run checks the folder it judged, though a /cd lands during its first run', async ($, on) => {
+    const mtime: Mtimes = { ms: 1000 }
+    const box: { w?: ReturnType<typeof world>; moveOnRun: boolean } = { moveOnRun: false }
+    // Awaited by every process.run: the first one after arming moves the session to TWO.
+    const moving = {
+      then(resolve: () => void) {
+        if (box.moveOnRun && box.w) {
+          box.moveOnRun = false
+          box.w.seen.cwd = `${TWO}/plugins/x`
+        }
+        resolve()
+      },
+    } as unknown as Promise<void>
+    const w = world(on, { ...alphaIn(ONE), ...modFiles('beta', `${ONE}/mods`), ...alphaIn(TWO) }, passing, true, moving, mtime)
+    box.w = w
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    for (const name of ['alpha', 'beta']) {
+      await command($, name)
+      await w.clock.advance(10)
+      await press($, w, 'validate')
+    }
+    expect(w.seen.argv.map(argv => argv[4])).toEqual([`${ONE}/mods/alpha`, `${ONE}/mods/beta`])
+    mtime.ms = 5000
+    box.moveOnRun = true
+    await $.turn.complete({ answer: 'edited' } as never)
+    await w.clock.advance(1000)
+    expect(w.seen.argv.slice(2).map(argv => argv[4])).toEqual([`${ONE}/mods/alpha`, `${ONE}/mods/beta`])
+  })
+
+  test('a lab_report after a /cd with no scan since records the edit in the folder the session is in', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'validate', 'test')
+    await cdTo($, w, ONE)
+    await press($, w, 'validate', 'test')
+    await w.clock.advance(5000)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'passed' } as never)
+    await w.clock.advance(10)
+    expect(await shows($, /^edit · update Spec for this change$/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a README open in one folder closes when a scan moves to another', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    const isReadmeOpen = async () => {
+      const ui = await mountPane($)
+      const back = await ui.find({ key: 'back' })
+      await ui.unmount()
+      return back !== undefined
+    }
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'readme')
+    expect(await isReadmeOpen()).toBe(true)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await $.turn.complete({ answer: 'moved' } as never)
+    await w.clock.advance(1000)
+    expect(await isReadmeOpen()).toBe(false)
+  })
+
+  test('"ready to share" stays with the folder a mod turned green in: a same-named mod already green elsewhere reads clean', async ($, on) => {
+    const disk = { ...alphaIn(ONE), ...alphaIn(TWO), ...marketplaceOf(TWO, []) }
+    const w = world(on, disk, passing)
+    // In TWO, alpha passes Validate and Test but isn't listed for sharing yet, so it isn't green.
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'validate', 'test')
+    expect(await shows($, /^ready to share$/)).toBe(false)
+    Object.assign(disk, marketplaceOf(TWO, [ALPHA_ENTRY]))
+    await cdTo($, w, ONE)
+    await press($, w, 'validate', 'test')
+    expect(await shows($, /^ready to share$/)).toBe(true)
+    // Back in TWO, alpha is now green from a quiet scan, never announced there.
+    await cdTo($, w, TWO)
+    expect(await shows($, /next: /)).toBe(false)
+    expect(await shows($, /^ready to share$/)).toBe(false)
+  })
+})
+
+describe('upgrade: records kept before 0.2.9, under one key for every folder (PR #57 review)', () => {
+  const codeSig = signatureOf(['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'hooks/git-branch-logic.ts', 'tests/git-branch-logic.test.ts'].map(name => `${name}@1000`))
+  // What 0.2.8 and earlier stored after V and T, for a mod that was announced.
+  const legacy = {
+    'modlab:results': {
+      'git-branch': {
+        Validate: { ...resultOf('Validate', 0, validateClean, 1000, 100, 2000), codeSig },
+        Test: { ...resultOf('Test', 0, testPass, 1000, 100, 2000), codeSig },
+      },
+    },
+    'modlab:done': { 'git-branch': codeSig },
+  }
+  const sharedIn = (folder: string): Disk => ({
+    ...modFiles('git-branch', `${folder}/mods`),
+    [`${folder}/mods/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+    [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+  })
+
+  test('the folder they described (here a pinned modsDir) reads them: its mods stay checked, nothing re-runs or is announced again', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, sharedIn('/m'), {}, true, undefined, { ms: 1000 }, undefined, undefined, legacy)
+    await start($)
+    await clock.advance(10)
+    await $.turn.complete({ answer: 'upgraded' } as never)
+    await clock.advance(1000)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /next: / })).toBeUndefined()
+    expect(seen.argv).toEqual([])
+    expect(seen.notified).toEqual([])
+  })
+
+  test('a session in another folder does not read them', async ($, on) => {
+    const { seen, clock } = world(on, sharedIn('/w/one'), {}, true, undefined, { ms: 1000 }, undefined, undefined, legacy)
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /next: Validate/ })).toBeDefined()
+  })
+})
+
+describe('the scan publishes its folder and its mods together (PR #57 review round 2)', () => {
+  test('every state write that carries mods carries the folder they were judged in, across a /cd', async ($, on) => {
+    const disk: Disk = {
+      ['/w/one/.claude-plugin/marketplace.json']: '{ "plugins": [] }',
+      ...modFiles('alpha', '/w/one/mods'),
+      ['/w/two/.claude-plugin/marketplace.json']: '{ "plugins": [] }',
+      ...modFiles('beta', '/w/two/mods'),
+    }
+    const { seen, clock } = world(on, disk)
+    // Watches Mod Lab's writes on their way to the kit's state, which answers beneath.
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($, e, next) => {
+      const { plugin, key, value } = e as unknown as { plugin: string; key: string; value: unknown }
+      if (plugin === 'mod-builder') writes.push({ key, value })
+      return next(e)
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const carryingMods = writes.filter(({ value }) => Array.isArray(value) ? value.some(one => (one as { lights?: unknown }).lights) : Array.isArray((value as { views?: unknown } | null)?.views))
+    expect(carryingMods.length).toBeGreaterThan(1)
+    const expected: Record<string, string[]> = { '/w/one/mods': ['alpha'], '/w/two/mods': ['beta'] }
+    for (const { value } of carryingMods) {
+      const verdict = value as { modsDir?: unknown; views?: { name: string }[] }
+      expect(typeof verdict.modsDir).toBe('string')
+      expect((verdict.views ?? []).map(view => view.name)).toEqual(expected[verdict.modsDir as string] ?? ['?'])
+    }
   })
 })

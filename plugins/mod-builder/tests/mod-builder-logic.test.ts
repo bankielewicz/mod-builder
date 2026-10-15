@@ -89,6 +89,19 @@ import { validateMissing } from './fixtures/validate-missing'
 const displayPathOf = (path: string, cwd: string | null): string | undefined =>
   (Logic as unknown as { displayPathOf?: (path: string, cwd: string | null) => string }).displayPathOf?.(path, cwd)
 
+/** The mods folder rules, read the same way: a missing rule fails its assertion, not the import. */
+const marketplaceCandidatesOf = (cwd: string): string[] | undefined =>
+  (Logic as unknown as { marketplaceCandidatesOf?: (cwd: string) => string[] }).marketplaceCandidatesOf?.(cwd)
+const freshIdsOf = (stored: readonly string[], legacyDir: string): string[] | undefined =>
+  (Logic as unknown as { freshIdsOf?: (stored: readonly string[], legacyDir: string) => string[] }).freshIdsOf?.(stored, legacyDir)
+const modsDirFor = (configured: string, cwd: string | null, existing: readonly string[], fallback: string): string | undefined =>
+  (Logic as unknown as { modsDirFor?: (configured: string, cwd: string | null, existing: readonly string[], fallback: string) => string }).modsDirFor?.(
+    configured,
+    cwd,
+    existing,
+    fallback,
+  )
+
 const EMPTY: FileFacts = {
   name: 'git-branch',
   hasSpec: false,
@@ -373,6 +386,110 @@ describe('mod-builder-logic', () => {
   test('displayPathOf: with no working directory to compare, the path stays absolute', () => {
     expect(displayPathOf('/m/mods/foo', null)).toBe('/m/mods/foo')
     expect(displayPathOf('/m/./mods//foo', null)).toBe('/m/mods/foo')
+  })
+
+  test('marketplaceCandidatesOf: the marketplace file of the working directory and of every folder above it, nearest first, down to the root', () => {
+    expect(marketplaceCandidatesOf('/w/wt/plugins/x')).toEqual([
+      '/w/wt/plugins/x/.claude-plugin/marketplace.json',
+      '/w/wt/plugins/.claude-plugin/marketplace.json',
+      '/w/wt/.claude-plugin/marketplace.json',
+      '/w/.claude-plugin/marketplace.json',
+      '/.claude-plugin/marketplace.json',
+    ])
+    expect(marketplaceCandidatesOf('/')).toEqual(['/.claude-plugin/marketplace.json'])
+  })
+
+  test('marketplaceCandidatesOf: a working directory written with ".", "..", "//" or a trailing slash is read as the folder it names', () => {
+    expect(marketplaceCandidatesOf('/w//wt/./plugins/../')).toEqual([
+      '/w/wt/.claude-plugin/marketplace.json',
+      '/w/.claude-plugin/marketplace.json',
+      '/.claude-plugin/marketplace.json',
+    ])
+  })
+
+  test('marketplaceCandidatesOf: a Windows drive is walked down to its root, as the drive (PR #57 review)', () => {
+    expect(marketplaceCandidatesOf('C:\\repo\\wt')).toEqual([
+      'C:/repo/wt/.claude-plugin/marketplace.json',
+      'C:/repo/.claude-plugin/marketplace.json',
+      'C:/.claude-plugin/marketplace.json',
+    ])
+  })
+
+  test('marketplaceCandidatesOf: a UNC path is walked down to its share, keeping the // root (PR #57 review)', () => {
+    const expected = ['//server/share/x/.claude-plugin/marketplace.json', '//server/share/.claude-plugin/marketplace.json']
+    expect(marketplaceCandidatesOf('\\\\server\\share\\x')).toEqual(expected)
+    expect(marketplaceCandidatesOf('//server/share/x')).toEqual(expected)
+  })
+
+  test('marketplaceCandidatesOf: a relative working directory names no folder to walk, so there are no candidates (PR #57 review)', () => {
+    expect(marketplaceCandidatesOf('a/b')).toEqual([])
+  })
+
+  test('modsDirFor: a marketplace on a Windows drive or a UNC share gives its mods/ there (PR #57 review)', () => {
+    expect(modsDirFor('', 'C:\\repo\\wt', ['C:/repo/wt/.claude-plugin/marketplace.json'], '/p/mods')).toBe('C:/repo/wt/mods')
+    expect(modsDirFor('', 'C:\\repo\\wt', ['C:/.claude-plugin/marketplace.json'], '/p/mods')).toBe('C:/mods')
+    expect(modsDirFor('', '\\\\server\\share\\x', ['//server/share/.claude-plugin/marketplace.json'], '/p/mods')).toBe('//server/share/mods')
+  })
+
+  test('normalizePath and displayPathOf keep a UNC root and stop ".." at a drive (PR #57 review)', () => {
+    expect(normalizePath('\\\\server\\share\\x\\..\\y')).toBe('//server/share/y')
+    expect(normalizePath('//server/share/x')).toBe('//server/share/x')
+    expect(normalizePath('C:\\..\\x')).toBe('C:/x')
+    expect(displayPathOf('//server/share/x/mods/foo', '\\\\server\\share\\x')).toBe('mods/foo')
+  })
+
+  test('freshIdsOf: "ready to share" marks kept before 0.2.9 as bare names belong to the folder the old records described (PR #57 review round 2)', () => {
+    expect(freshIdsOf(['alpha', '/w/one/mods/beta'], '/p/mods')).toEqual(['/p/mods/alpha', '/w/one/mods/beta'])
+    expect(freshIdsOf(['C:/w/mods/gamma'], '/p/mods')).toEqual(['C:/w/mods/gamma'])
+    expect(freshIdsOf([], '/p/mods')).toEqual([])
+  })
+
+  test('normalizePath: ".." stops at a UNC share, as at any root (PR #57 review round 2)', () => {
+    expect(normalizePath('\\\\server\\share\\repo\\..\\..\\mods')).toBe('//server/share/mods')
+    expect(normalizePath('\\\\server\\share\\..\\..\\..\\mods')).toBe('//server/share/mods')
+  })
+
+  test('normalizePath: a drive letter is written upper case, so one folder has one spelling (PR #57 review round 2)', () => {
+    expect(normalizePath('c:/repo')).toBe('C:/repo')
+    expect(normalizePath('c:\\repo\\..\\..')).toBe('C:/')
+    expect(marketplaceCandidatesOf('c:\\repo')).toEqual(['C:/repo/.claude-plugin/marketplace.json', 'C:/.claude-plugin/marketplace.json'])
+  })
+
+  test('modsDirFor: the mods/ of the nearest folder above the working directory that holds a marketplace', () => {
+    const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/wt/plugins/x', marketplace, '/main/mods')).toBe('/w/wt/mods')
+    expect(modsDirFor('', '/w/wt', marketplace, '/main/mods')).toBe('/w/wt/mods')
+  })
+
+  test('modsDirFor: a worktree inside the main checkout uses the worktree, the nearer marketplace', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/main/scratch/wt/plugins/x', both, '/p/mods')).toBe('/w/main/scratch/wt/mods')
+    expect(modsDirFor('', '/w/main/plugins/x', both, '/p/mods')).toBe('/w/main/mods')
+  })
+
+  test('modsDirFor: the order of the existing list does not matter, only how near the folder is', () => {
+    const farFirst = ['/w/.claude-plugin/marketplace.json', '/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/wt/plugins/x', farFirst, '/p/mods')).toBe('/w/wt/mods')
+  })
+
+  test('modsDirFor: with no marketplace above the working directory it is the fallback, normalized', () => {
+    expect(modsDirFor('', '/w/wt/plugins/x', [], '/p/plugins/mod-builder/../../mods')).toBe('/p/mods')
+    expect(modsDirFor('', '/w/wt/plugins/x', ['/other/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/p/mods')
+  })
+
+  test('modsDirFor: with no working directory to walk from it is the fallback, even if a marketplace exists', () => {
+    expect(modsDirFor('', null, ['/w/wt/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/p/mods')
+  })
+
+  test('modsDirFor: a marketplace at the filesystem root gives /mods', () => {
+    expect(modsDirFor('', '/w/x', ['/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/mods')
+  })
+
+  test('modsDirFor: a set modsDir always wins, normalized', () => {
+    const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('/chosen/mods', '/w/wt/plugins/x', marketplace, '/p/mods')).toBe('/chosen/mods')
+    expect(modsDirFor('/chosen/./sub/../mods/', '/w/wt/plugins/x', marketplace, '/p/mods')).toBe('/chosen/mods')
+    expect(modsDirFor('/chosen/mods', null, [], '/p/mods')).toBe('/chosen/mods')
   })
 
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {

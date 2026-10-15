@@ -95,7 +95,7 @@ Set them on the install options screen, or in `/config`.
 
 | Option | Default | What it does |
 |---|---|---|
-| Mods folder (`modsDir`) | the `mods/` next to the plugin's marketplace | The folder Mod Lab tracks. Set it to your project's `mods/`. |
+| Mods folder (`modsDir`) | the `mods/` of the marketplace nearest your working directory (a git worktree's own), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow your working directory, or set it to pin one folder. |
 | `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide) |
 | `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |
 | `testTimeoutMinutes` | 3 | Minutes a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10). Checks a reload left shown as running are cleared when Mod Lab loads, and one still shown as running 30 s past this stops counting, so neither blocks the next one |
