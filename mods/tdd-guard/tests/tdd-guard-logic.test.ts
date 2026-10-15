@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { changesOf, decide, folderOf, hashOf, launchedId, matchGlob, parseRules, relativeTo, reportOf, withoutId } from '../hooks/tdd-guard-logic'
+import { changesOf, decide, folderOf, hashOf, launchedId, matchGlob, mayMatchBelow, parseRules, relativeTo, reportOf, withoutId } from '../hooks/tdd-guard-logic'
 
 type Rules = Parameters<typeof decide>[0]
 type Refusal = { allow: false; reason: string }
@@ -231,5 +231,34 @@ describe('withoutId', () => {
   test("drops one agent's record and keeps the rest", () => {
     expect(withoutId({ a7: 'green-developer', a8: 'refactorer' }, 'a7')).toEqual({ a8: 'refactorer' })
     expect(withoutId({ a8: 'refactorer' }, 'a7')).toEqual({ a8: 'refactorer' })
+  })
+})
+
+describe('mayMatchBelow', () => {
+  test("a folder on the way to the glob's matches can hold one; a folder off its path cannot", () => {
+    expect(mayMatchBelow('tests/unit/*.test.ts', '')).toBe(true)
+    expect(mayMatchBelow('tests/unit/*.test.ts', 'tests')).toBe(true)
+    expect(mayMatchBelow('tests/unit/*.test.ts', 'tests/unit')).toBe(true)
+    expect(mayMatchBelow('tests/unit/*.test.ts', 'src')).toBe(false)
+    expect(mayMatchBelow('tests/unit/*.test.ts', 'tests/e2e')).toBe(false)
+  })
+
+  test('a folder as deep as the glob, or deeper, holds no match', () => {
+    expect(mayMatchBelow('tests/*.test.ts', 'tests/sub')).toBe(false)
+    expect(mayMatchBelow('package.json', 'src')).toBe(false)
+    expect(mayMatchBelow('tests/*/a.ts', 'tests/x/y')).toBe(false)
+    expect(mayMatchBelow('tests/*', 'tests/a/b')).toBe(false)
+  })
+
+  test('* stands for one folder name', () => {
+    expect(mayMatchBelow('mods/*/tests/*.ts', 'mods/duet')).toBe(true)
+    expect(mayMatchBelow('mods/*/tests/*.ts', 'mods/duet/tests')).toBe(true)
+    expect(mayMatchBelow('mods/*/tests/*.ts', 'mods/duet/hooks')).toBe(false)
+  })
+
+  test('a ** reaches any depth, wherever it sits', () => {
+    expect(mayMatchBelow('tests/**', 'tests/a/b/c')).toBe(true)
+    expect(mayMatchBelow('**/tests/**', 'mods/duet')).toBe(true)
+    expect(mayMatchBelow('tests/**', 'src')).toBe(false)
   })
 })
