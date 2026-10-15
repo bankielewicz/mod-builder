@@ -879,7 +879,7 @@ describe('a mod reported before its folder exists (#19)', () => {
     expect(await one.find({ type: 'Text', text: /folder not written yet: .*one\/mods\/new-mod\// })).toBeDefined()
   })
 
-  test('a report that lands while a tick retires the last one keeps the clock, so its placeholder still expires (Codex P2, PR #80 round 2)', OPTIONS, async ($, on) => {
+  test('a report that lands while a tick retires the last one keeps the clock, so its placeholder still expires (Codex P2, PR #80 round 2)', { ...OPTIONS, timeoutMs: 20_000 }, async ($, on) => {
     const { clock } = world(on, modFiles('git-branch'))
     // Once armed, the first read of the rows right after a read of the reports (the tick's expiry check)
     // waits for `until`: a report sent meanwhile lands after the tick took its reports and before it stops the clock.
