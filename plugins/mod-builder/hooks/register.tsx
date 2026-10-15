@@ -314,6 +314,9 @@ const generationsFrom = (stored: StoredGenerations): Record<string, Generation> 
   )
 const generationsOf = async ($: Engine, modsDir: string): Promise<Record<string, Generation>> =>
   generationsFrom(((await storedOf($, GENERATIONS_KEY, modsDir)) ?? {}) as StoredGenerations)
+/** Whether `latest` is still the generation `read` was: the same start, and no Spec running reported on it since. */
+const isSameGeneration = (latest: Generation | undefined, read: Generation | undefined): boolean =>
+  latest?.since === read?.since && latest?.repeatedAt === read?.repeatedAt
 
 /**
  * Sets one folder's records under `base` to `change` of their current value. Updates run one at
@@ -408,8 +411,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
     // Drop only the generations this scan judged: one begun or reported on since stays.
     await updateGenerations($, dir, remaining => {
       for (const view of finished) {
-        const [latest, judgedAt] = [remaining[view.name], generations[view.name]]
-        if (latest?.since === judgedAt?.since && latest?.repeatedAt === judgedAt?.repeatedAt) delete remaining[view.name]
+        if (isSameGeneration(remaining[view.name], generations[view.name])) delete remaining[view.name]
       }
       return remaining
     })
@@ -930,7 +932,7 @@ export const register: Register = (on, options) => {
       known = (await read($, judged)).views.find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      // The version on disk as the edit begins: a bump may land after the last scan.
+      // The version on disk as the edit begins (a bump may land after the last scan); a repeat keeps its own.
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
       // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
@@ -938,9 +940,8 @@ export const register: Register = (on, options) => {
       let isStarted = false
       await updateGenerations($, modsDir, all => {
         const current = all[mod]
-        if (current !== undefined) return { ...all, [mod]: { ...current, repeatedAt: now } }
-        isStarted = true
-        return { ...all, [mod]: { since: now, fromVersion } }
+        isStarted = current === undefined
+        return { ...all, [mod]: current ? { ...current, repeatedAt: now } : { since: now, fromVersion } }
       })
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
