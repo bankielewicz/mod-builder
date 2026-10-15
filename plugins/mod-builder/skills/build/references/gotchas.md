@@ -252,4 +252,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   templates in a skill folder. Template files are named `*.tpl`.
 - **[probe]** A host security hook that greps written files for `exec(` blocks source that uses
   `RegExp.prototype.exec`. Write `str.match(re)` instead: same result, no false alarm.
+- **[d.ts]** The header of `claude-code.d.ts` (re-read on 2.1.300) says `claude plugin test`
+  runs each test file "in an environment like the one a plugin's hooks run in (no fs, network or
+  process)". It does not say whether a plugin's non-module parts (command hooks in `hooks/hooks.json`,
+  a `.mcp.json` server) are started by `claude plugin test` or `claude plugin validate`. That is
+  still untested with a control: the probe needs a live `claude -p --plugin-dir` run (the positive
+  control, which runs those commands with full access) and the owner has not approved it. Until it
+  is run, "no marker" from `test` or `validate` alone proves nothing, and Mod Lab's `autoRerun` is
+  off by default (0.2.11, #9).
 - **[field]** Run in-session tests that touch config with `CLAUDE_CONFIG_DIR=$(mktemp -d)`.

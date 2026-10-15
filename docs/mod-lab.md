@@ -54,7 +54,7 @@ the pane lights up live.
 
 ## Checks re-run themselves
 
-With `autoRerun` on (the default), Mod Lab rescans every mod at the end of each of Claude's turns.
+With `autoRerun` on (it is off by default), Mod Lab rescans every mod at the end of each of Claude's turns.
 Edits from any tool count, Bash included. A mod whose Validate or Test went stale gets Validate
 re-run, then Test if Validate passes. Nothing runs mid-turn or on a timer.
 
@@ -97,7 +97,7 @@ Set them on the install options screen, or in `/config`.
 |---|---|---|
 | Mods folder (`modsDir`) | the `mods/` of the marketplace nearest your working directory (a git worktree's own), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow your working directory, or set it to pin one folder. |
 | `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide) |
-| `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |
+| `autoRerun` | off | Re-run stale Validate and Test at the end of each turn. Off by default, because the re-run starts `claude plugin test` on the changed code without asking |
 | `testTimeoutMinutes` | 3 | Minutes a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10). Checks a reload left shown as running are cleared when Mod Lab loads, and one still shown as running 30 s past this stops counting, so neither blocks the next one |
 | `logging` | normal | `off` · `normal` (errors, session start, check results) · `verbose` (+ reports, scans, processes, commands) · `debug` (+ expected misses, lights, process output). Log: `~/.claude/mod-builder-data/logs/` |
 

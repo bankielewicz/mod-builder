@@ -27,7 +27,7 @@
 | states drawn | REQUIRED | empty · idle · live · done · error · folded · too-narrow · demo | ui-states.md |
 | done means | REQUIRED | see below | |
 | state lifetime | ARCH | atoms (session) for view state; `$.store` `modlab:results` for last validate/test result per mod, keyed by mod + newest file mtime | decided |
-| external reach | ARCH | **processes:** `claude plugin validate <dir>`, `claude plugin test <dir>`, `tsc -p <dir>`, on button press, on `lab_report`, or (option `autoRerun`, on by default) at the end of a main-loop turn for a mod whose Validate or Test went stale; never on a timer. **Files:** read-only under `modsDir`. No network, no model calls. | decided |
+| external reach | ARCH | **processes:** `claude plugin validate <dir>`, `claude plugin test <dir>`, `tsc -p <dir>`, on button press, on `lab_report`, or (option `autoRerun`, off by default since 0.2.11) at the end of a main-loop turn for a mod whose Validate or Test went stale; never on a timer. **Files:** read-only under `modsDir`. No network, no model calls. | decided |
 | depends on | ARCH | none (the skill calls its tool; works without it) | |
 | options | ARCH | `modsDir: directory` (empty means the `mods/` of the marketplace nearest the session's working directory, else `<plugin root>/../../mods`; Change 0.2.9), `autoOpen: boolean = false` | decided |
 | home / tsconfig / state API / logic split / tests / demo | HOUSE | per conventions.md: `hooks/mod-builder-logic.ts` (`$`-free), `hooks/register.tsx`, `tests/mod-builder-logic.test.ts`, `tests/ui.test.tsx` | conventions.md |
@@ -493,3 +493,16 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   3. Config: `/mod-builder config testTimeoutMinutes 5` (a number) and `/mod-builder config testTimeoutMinutes default` (`''`) both go through `$.config.set`, and the listing shows them.
   The streamed timeout, the clearing after a real reload and the tick's restart have no automated test: the kit can't stub `$.process.spawn`, make a reload, or interleave a press inside a tick.
 - **Version:** 0.2.10 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.11 (2026-10-15)
+
+> For issue #9: `autoRerun` ran `claude plugin test` on changed mod code at the end of a turn with no confirmation.
+> 0.2.10 is #55, merged first.
+
+- **Decision:** `autoRerun` is opt-in. `plugin.json` sets `"default": false`, `register.tsx` starts with `let autoRerun = false` and reads `config.autoRerun === true`. The issue's rule was to do this only if a marker appeared in probe step 1; the red tests for this change already require the opt-in, so it is taken as the cautious choice while the question is open.
+- **Probe status (not settled):** whether a plugin's non-module parts (settings-style command hooks in `hooks/hooks.json`, a `.mcp.json` server) run under `claude plugin test` or `claude plugin validate` is still untested with a control. Step 2, the positive control (`claude -p --plugin-dir` on a throwaway plugin, which runs those commands with full access in a live session), has not been approved by the owner, so step 1's "no marker" is not evidence. The d.ts header's statement and what is known are in gotchas.md (`[d.ts]`). If the control later shows the commands do not run under `validate` and `test`, the default can go back to on, with `docs/safety.md` rewritten to cite the probes.
+- **On upgrade:** `autoRerun` is off for everyone on the default. A user who had it on by default now sets it in `/config` (or `/mod-builder config autoRerun on`); V, T and K still run a check on press, and stale lights stay `◌` until then. An explicitly stored value is kept.
+- **Docs:** `plugins/mod-builder/README.md`, `docs/mod-lab.md`, `docs/troubleshooting.md` and `docs/safety.md` say it is off by default and why. The "What it reaches" and "Processes" text name `autoRerun` as the only automatic trigger.
+- **Not done:** the optional narrower automatic Test (count only this session's own `Edit`, `Write` and `NotebookEdit` calls, with a `path@mtime` list in `RunResult`) is not built; it needs the owner's word.
+- **Tests:** `tests/ui.test.tsx`, "auto re-run": the end-of-turn re-run tests pass `autoRerun: true`; a new test shows that with the option unset a stale mod starts no `process.run` and still reads "files changed".
+- **Version:** 0.2.11 in `plugin.json` and the marketplace entry.

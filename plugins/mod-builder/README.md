@@ -86,7 +86,7 @@ An edit starts a **build generation** with its first report. Everything that pas
 `◌` and turns green again as the change redoes it. The generation ends, and "ready to share"
 fires again, when all eight are green.
 
-**Checks re-run themselves.** With `autoRerun` on (the default), at the end of each of Claude's
+**Checks re-run themselves.** With `autoRerun` on (it is off by default), at the end of each of Claude's
 turns Mod Lab rescans every mod. Edits made by any tool count, Bash included. Any mod whose
 Validate or Test went stale gets Validate re-run, then Test if Validate passes. Nothing runs
 mid-turn or on a timer.
@@ -142,7 +142,7 @@ or a `/cd` into another worktree), Validate and Test show `○` until you press 
 | --- | --- | --- |
 | `modsDir` | empty: the `mods/` of the marketplace nearest the session's working directory, else the one next to this plugin | The folder whose child folders Mod Lab tracks. Empty, it is found the way `/mod-builder:build` finds where to write, so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan. In another repository with a `.claude-plugin/marketplace.json`, that is its `mods/`, and the pane says `No mods yet.` if it keeps its plugins elsewhere. Set it to pin one folder. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
-| `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
+| `autoRerun` | `false` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale. Off by default, because the re-run starts `claude plugin test` on the changed code without asking |
 | `testTimeoutMinutes` | `3` | How long a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10; fractions are fine). When Mod Lab loads, it clears checks a reload left shown as running. One still shown as running 30 s past this stops counting: V, T and K light again and the auto re-run goes on |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
 
@@ -156,7 +156,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
-| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (its child is killed) and shown as timed out. |
+| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`, off by default) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (its child is killed) and shown as timed out. |
 | Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. With `modsDir` empty, checks whether `.claude-plugin/marketplace.json` exists in the working directory and then each folder above it, stopping at the first found, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |

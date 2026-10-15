@@ -58,7 +58,7 @@ type StoredResults = Record<string, Lab.Results>
 // A reload starts it afresh; what must survive lives in atoms and $.store.
 let configuredDir = ''
 let autoOpen = false
-let autoRerun = true
+let autoRerun = false
 /** A check's time limit in ms, from `testTimeoutMinutes`. */
 let runLimit = Lab.runLimitMsOf(undefined)
 let clock: Timer | null = null
@@ -824,7 +824,7 @@ export const register: Register = (on, options) => {
   const config = (options ?? {}) as Record<string, unknown>
   configuredDir = String(config.modsDir ?? '').trim()
   autoOpen = config.autoOpen === true
-  autoRerun = config.autoRerun !== false
+  autoRerun = config.autoRerun === true
   runLimit = Lab.runLimitMsOf(config.testTimeoutMinutes)
   logLevel = Lab.logLevelOf(config.logging)
 

@@ -10,5 +10,5 @@
 | <kbd>K</kbd> says type-check needs the engine's types | Claude Code writes `.claude-plugin/types/` only when an interactive session loads the mod. Load it once with `claude --plugin-dir mods/<name>`. |
 | A new mod doesn't load after `/reload-plugins` | `/reload-plugins` re-reads installed plugins only. Install it once, or use `--plugin-dir`. |
 | Validate and Test show `○` after switching between `--plugin-dir` and an installed copy, or after a `/cd` into another worktree | Each way of loading the plugin keeps its own store, and each mods folder its own results. Press <kbd>V</kbd> and <kbd>T</kbd> once. |
-| A stage shows `◌` | Its evidence is older than the code (or than an edit). It re-runs at the end of the turn with `autoRerun`, or press <kbd>V</kbd> / <kbd>T</kbd>. |
+| A stage shows `◌` | Its evidence is older than the code (or than an edit). It re-runs at the end of the turn if `autoRerun` is on (it is off by default), or press <kbd>V</kbd> / <kbd>T</kbd>. |
 | A hook seems to do nothing | Start Claude Code with `--debug`: every failing hook, and every tree that doesn't validate, gets a line there. |
