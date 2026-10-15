@@ -1218,3 +1218,53 @@ preflight (`#68 is a pull request, not an issue`) with the masthead and `/issue-
 origin and its masthead still read `#69`. Both runs were stopped; the clone kept only `main`, no worktree, and a
 clean tree. Fix 1 needs a run driven to `ready` in a worktree with its own config, so it is shown by the UI tests
 (the `cwd` of `git remote get-url --push --all origin`), not live.
+
+## Change 0.4.1 (2026-10-15)
+
+> issue-forge: a held .git/index.lock blocks the run with "unexpected" instead of retrying (#28)
+
+**Why.** Another process holding `.git/index.lock` makes every index-writing git call fail at once: `add -A`,
+`commit`, `switch` (when it must write the index), `merge --ff-only` (when a fast-forward is due), and `stash push`
+and `stash apply`, which print nothing. A plain `git status` takes the lock too, to refresh the index. Run #2 of
+2026-10-13 blocked at gate R with `unexpected: git commit failed: fatal: Unable to create '…/index.lock': File
+exists.` and the next step `see /issue-forge status`. The evidence (git 2.43.0, Claude Code 2.1.296) is in issue #28.
+
+**What changes.**
+1. **`gitWrite`** (`register.tsx`) runs an index-writing call and, when a held lock caused its failure, waits a second
+   and tries again, five attempts in all (4 s of waiting). `commit` (`commitAll`), `stash push` (`stashAll`),
+   `stash apply` (gate R's restore), `switch` (preflight) and `merge --ff-only` (the catch-up) use it; `gitWriteOut`
+   wraps it for `add -A` (gates R, G and F), throwing as `gitOut` does. The stash and commit calls no longer use
+   `gitRetry`, whose two immediate retries a second-long lock would outlast; the two fetches keep it.
+2. **A lock failure** is a non-zero exit with `isIndexLockError(stderr)` (the pure rule in `issue-forge-logic.ts`:
+   `Unable to create '…index.lock': File exists`), or with the lock file present (`$.fs.exists` of the path
+   `git rev-parse --path-format=absolute --git-path index.lock` prints, asked once per call after its first failure;
+   in a linked worktree that is under the main `.git/worktrees/<name>/`). The file check catches the stash calls. A
+   lock released between the failure and the check is missed, and the call fails as it did. Any other failure comes
+   back as it is: `commit`'s is still `unexpected: git commit failed: …`, `stash apply`'s still names where
+   green's work is.
+3. **The wait** is a promise around `$.clock.after(1000, …)`, as `runLong`'s timer is, not `$.clock.sleep`, which
+   counts against a hook's 10 s budget. `stillDriving(run)` is checked after each wait, so a Stop or takeover ends
+   the retries.
+4. **After the fifth failure** `gitWrite` throws `IndexLocked`; the drive's catch makes it a block, not
+   `unexpected`: reason `another git process is using <lock path> (5 attempts over 4 s)`, next `wait for the other
+   git process to finish, or delete <lock path> if none is running`. The pane adds `, then /issue-forge resume`.
+5. **`git()` sets `GIT_OPTIONAL_LOCKS=0`** (`ProcessRunInit.env`, [d.ts]), so the run's own `git status` doesn't
+   refresh the index, and doesn't hold the lock that an agent's or the user's git needs. It skips optional locks
+   only: with a lock held, `commit` and `add` still fail. The one git call outside `git()`, `rev-parse
+   --show-toplevel`, takes no lock.
+6. **README**, "Limits worth knowing": the run uses the session's checkout; a git command there between steps can
+   collide with its writes (it retries for 4 s, then blocks, and `/issue-forge resume` continues); a lock in the
+   main checkout doesn't affect a linked worktree; start issue-forge in a dedicated worktree when sessions share the
+   checkout.
+
+**What gets touched.** No new processes, files, store keys or hooks: `git rev-parse --git-path` is read-only, and
+`$.fs.exists` is already used. Nothing is pushed.
+
+**Not changed:** gates, coverage rules, phases, the guard, the store, and `resume` re-running gate R from the staged
+tests without a new red agent (the SPEC intends it).
+
+**Tests** (`issue-forge-logic.test.ts`, `ui.test.tsx`): `isIndexLockError`; a commit that meets the lock once and five
+times; a commit that fails for another reason after a retry; `add -A` at gates R and G; `stash apply` with and
+without the lock file; `switch` five times at preflight; `merge --ff-only` once at the catch-up; the env on every git
+call. The live check (an interactive session in a worktree, a lock held while red works, then through `resume`) is
+run before the PR merges.

@@ -41,6 +41,7 @@ import {
   isAbsolutePath,
   isActive,
   isDrivenElsewhere,
+  isIndexLockError,
   isLockError,
   isOwnHandback,
   isPrunable,
@@ -188,13 +189,14 @@ function refsOf(run: Run | null): string[] {
 
 // ── Outside world ─────────────────────────────────────────────────────────
 
+/** git takes no optional locks, so the run's own `git status` doesn't refresh the index while an agent's or the user's git needs it (#28). */
 async function git($: EngineInterface, root: string, args: string[], stdin?: string) {
-  return $.process.run(['git', ...args], { cwd: root, timeoutMs: GIT_TIMEOUT, ...(stdin === undefined ? {} : { stdin }) })
+  return $.process.run(['git', ...args], { cwd: root, timeoutMs: GIT_TIMEOUT, env: { GIT_OPTIONAL_LOCKS: '0' }, ...(stdin === undefined ? {} : { stdin }) })
 }
 
 /**
- * git that another process may hold a lock against (a parallel run's fetch, the shared stash, the index):
- * retried twice at once (Change 0.3.0). A fetch spends seconds on the network first, so the other is done.
+ * git that another process may hold a lock against (a parallel run's fetch): retried twice at once (Change 0.3.0).
+ * A fetch spends seconds on the network first, so the other is done. The index has gitWrite (#28).
  */
 async function gitRetry($: EngineInterface, root: string, args: string[], stdin?: string) {
   let r = await git($, root, args, stdin)
@@ -204,6 +206,45 @@ async function gitRetry($: EngineInterface, root: string, args: string[], stdin?
 
 async function gitOut($: EngineInterface, root: string, args: string[]): Promise<string> {
   const r = await git($, root, args)
+  if (r.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${firstLine(r.stderr || r.stdout)}`)
+  return r.stdout
+}
+
+/** The attempts a git call that writes the index makes against a held lock, a second apart (#28). */
+const INDEX_ATTEMPTS = 5
+const INDEX_WAIT_MS = 1000
+
+/** Thrown when the index lock is still held after the last attempt: the drive blocks naming it. */
+class IndexLocked extends Error {
+  readonly lockPath: string
+  constructor(lockPath: string) {
+    super(`another git process is using ${lockPath} (${INDEX_ATTEMPTS} attempts over ${((INDEX_ATTEMPTS - 1) * INDEX_WAIT_MS) / 1000} s)`)
+    this.lockPath = lockPath
+  }
+}
+
+/**
+ * git that writes the index (add, commit, stash, switch, merge): another process holding .git/index.lock fails it at
+ * once, so a failure caused by the lock waits a second and tries again, five attempts in all (#28). Stash prints
+ * nothing when it meets the lock, so the lock file is looked for too. Any other failure comes back as it is.
+ */
+async function gitWrite($: EngineInterface, run: Run, root: string, args: string[], stdin?: string) {
+  let lockPath: string | undefined
+  for (let attempt = 1; ; attempt++) {
+    const r = await git($, root, args, stdin)
+    if (r.exitCode === 0) return r
+    // A linked worktree's lock is under the main .git folder: git says where, once.
+    lockPath ??= (await git($, root, ['rev-parse', '--path-format=absolute', '--git-path', 'index.lock'])).stdout.trim() || 'index.lock'
+    if (!isIndexLockError(r.stderr) && !(await $.fs.exists(lockPath))) return r
+    if (attempt === INDEX_ATTEMPTS) throw new IndexLocked(lockPath)
+    await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
+    stillDriving(run)
+  }
+}
+
+/** gitWrite for a call whose output is wanted: a failure throws, as gitOut's does. */
+async function gitWriteOut($: EngineInterface, run: Run, root: string, args: string[]): Promise<string> {
+  const r = await gitWrite($, run, root, args)
   if (r.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${firstLine(r.stderr || r.stdout)}`)
   return r.stdout
 }
@@ -437,7 +478,7 @@ async function commitAll($: EngineInterface, run: Run, message: string): Promise
   const root = workOf(run)
   const staged = await git($, root, ['diff', '--cached', '--quiet'])
   if (staged.exitCode === 0) return undefined
-  const r = await gitRetry($, root, ['commit', '-q', '-F', '-'], message)
+  const r = await gitWrite($, run, root, ['commit', '-q', '-F', '-'], message)
   if (r.exitCode !== 0) throw new Error(`git commit failed: ${firstLine(r.stderr || r.stdout)}`)
   return (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
 }
@@ -446,7 +487,7 @@ async function commitAll($: EngineInterface, run: Run, message: string): Promise
 async function stashAll($: EngineInterface, run: Run, message: string): Promise<StashRef | undefined> {
   await stillOwned($, run)
   const root = workOf(run)
-  const pushed = await gitRetry($, root, ['stash', 'push', '--include-untracked', '-m', message])
+  const pushed = await gitWrite($, run, root, ['stash', 'push', '--include-untracked', '-m', message])
   if (pushed.exitCode !== 0) throw new Error(`git stash failed: ${firstLine(pushed.stderr || pushed.stdout)}`)
   const sha = findStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), message)
   return sha ? { sha, message } : undefined
@@ -549,7 +590,7 @@ async function catchUp($: EngineInterface, run: Run, cwd: string, base: string):
   if (!hasNoOwnCommits) return null
   stillDriving(run)
   await setActivity($, `catching up with origin/${base}`)
-  const ff = await git($, cwd, ['merge', '--ff-only', '-q', `origin/${base}`])
+  const ff = await gitWrite($, run, cwd, ['merge', '--ff-only', '-q', `origin/${base}`])
   return ff.exitCode === 0 ? null : block(`could not fast-forward to origin/${base}: ${firstLine(ff.stderr)}`, 'check the branch')
 }
 
@@ -615,7 +656,7 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
   stillDriving(run)
   if (where.kind === 'here') {
     await setActivity($, `git switch -c ${branch}`)
-    const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
+    const switched = await gitWrite($, run, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
     if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
     await recordMade($, run, { branch, workRoot: root, base })
     return { branch, workRoot: root, base }
@@ -830,7 +871,7 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   if (away) return away
   stillDriving(run)
   await setActivity($, 'staging')
-  await gitOut($, root, ['add', '-A'])
+  await gitWriteOut($, run, root, ['add', '-A'])
   // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
   const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase)
   await setActivity($, 'running tests')
@@ -845,7 +886,7 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
     stillDriving(run)
     const restore = (reason: string) => ({ type: 'gated' as const, gate, commit, testTail: tests.tail, blockAfter: { reason, next: `restore green's work by hand (git stash apply ${stash.sha.slice(0, 7)})` } })
     if (!hasStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), stash.sha)) return restore(`stash ${stash.sha.slice(0, 7)} "${stash.message}" is gone`)
-    const applied = await git($, root, stashApplyArgv(stash).slice(1))
+    const applied = await gitWrite($, run, root, stashApplyArgv(stash).slice(1))
     if (applied.exitCode !== 0) return restore(`could not restore green's work; it is in stash ${stash.sha.slice(0, 7)} "${stash.message}"`)
   }
   return { type: 'gated', gate, commit, testTail: tests.tail }
@@ -861,7 +902,7 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   if (away) return away
   stillDriving(run)
   await setActivity($, 'staging')
-  await gitOut($, root, ['add', '-A'])
+  await gitWriteOut($, run, root, ['add', '-A'])
   const staged = await stagedSince($, root, run.mergeBase)
   const changedSinceRed = await stagedSince($, root, redCommit)
   const redPaths = splitZ(await gitOut($, root, ['diff', '--name-only', '-z', run.mergeBase, redCommit]))
@@ -1037,7 +1078,10 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
         const stamped: Stamped = { ...run, driveGen: me.gen }
         ev = await doStep($, stamped)
       } catch (err) {
-        ev = block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
+        ev =
+          err instanceof IndexLocked
+            ? block(err.message, `wait for the other git process to finish, or delete ${err.lockPath} if none is running`)
+            : block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
       }
       if (!ev || !isMine()) return
       const latest = (await loadRun($, key)) ?? run
