@@ -879,6 +879,54 @@ describe('a mod reported before its folder exists (#19)', () => {
     expect(await one.find({ type: 'Text', text: /folder not written yet: .*one\/mods\/new-mod\// })).toBeDefined()
   })
 
+  test('a report that lands while a tick retires the last one keeps the clock, so its placeholder still expires (Codex P2, PR #80 round 2)', OPTIONS, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    // Once armed, the first read of the rows right after a read of the reports (the tick's expiry check)
+    // waits for `until`: a report sent meanwhile lands after the tick took its reports and before it stops the clock.
+    const hold = { isArmed: false, isReached: false, until: Promise.resolve() }
+    let lastKey = ''
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder') {
+        if (hold.isArmed && key === 'judged' && lastKey === 'reported') {
+          hold.isArmed = false
+          hold.isReached = true
+          await hold.until
+        }
+        lastKey = key
+      }
+      return next(e)
+    })
+    const lateRows = async () => {
+      const ui = await mountPane($)
+      const count = (await ui.findAll({ type: 'Text', text: /^ late-mod ?$/ })).length
+      await ui.unmount()
+      return count
+    }
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    // Ticks come every 250 ms from the report; the one at REPORT_TTL_MS is the first that finds it expired.
+    await clock.advance(REPORT_TTL_MS - 600)
+    await clock.advance(500)
+    let release = () => {}
+    Object.assign(hold, { isArmed: true, until: new Promise<void>(resolve => (release = resolve)) })
+    await clock.advance(250)
+    expect(hold.isReached).toBe(true)
+    await report($, 'late-mod')
+    release()
+    await clock.advance(10)
+    await clock.settle()
+    const between = await mountPane($)
+    expect(await rowsOf(between)).toBe(0)
+    await between.unmount()
+    expect(await lateRows()).toBe(1)
+    await clock.advance(REPORT_TTL_MS + 1000)
+    await clock.settle()
+    expect(await lateRows()).toBe(0)
+  })
+
   test('a repeated Spec running for a placeholder starts no edit, so the SPEC written next is not stale', OPTIONS, async ($, on) => {
     const disk: Disk = modFiles('git-branch')
     const { clock } = world(on, disk)
