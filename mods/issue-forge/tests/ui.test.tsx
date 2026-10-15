@@ -1368,6 +1368,26 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect((store[key(40)] as any).driver.session).toBe(OTHER)
   })
 
+  for (const [what, change, toast] of [
+    ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 0 } }), '#16 was taken over by another session; this session stopped driving it.'],
+    ['stops', (r: any) => ({ ...r, step: 'stopped' }), '#16 was stopped in another session; this session stopped driving it.'],
+  ] as const) {
+    test(`the driving session ends its own drive within 5 s when another session ${what} its run`, async ($, on) => {
+      const store: Record<string, unknown> = {}
+      const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), answer: 'Cancel', storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      await start($)
+      await run($, '16')
+      await until(w, () => w.spawned.length === 1, "#16's red agent")
+      // Another session writes the run (the store is shared live between sessions).
+      store[key(16)] = change(store[key(16)])
+      await w.clock.advance(5_000)
+      await until(w, () => w.toasts.includes(toast), 'the toast')
+      // This session drives nothing now: a new start doesn't offer to keep or hand off #16.
+      await run($, '17')
+      expect(w.asked.at(-1) ?? '').not.toContain('This session is driving')
+    })
+  }
+
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
     await start($)
