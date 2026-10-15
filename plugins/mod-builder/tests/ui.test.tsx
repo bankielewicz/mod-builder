@@ -11,6 +11,8 @@ import { validateMissing } from './fixtures/validate-missing'
 
 const MODS = '/m/mods'
 const OPTIONS = { options: { modsDir: MODS } }
+/** autoRerun is opt-in: the tests that exercise the end-of-turn re-run turn it on. */
+const AUTO_RERUN = { options: { modsDir: MODS, autoRerun: true } }
 
 const paneProps = (bodyColumns = 80) =>
   ({ title: 'Mod Lab', isFocused: true, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows: 34 }, view: {} }) as const
@@ -664,7 +666,7 @@ describe('a run that does not end', () => {
     expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
   })
 
-  test('an orphan row does not hold back the auto re-run', SHORT, async ($, on) => {
+  test('an orphan row does not hold back the auto re-run', { options: { ...SHORT.options, autoRerun: true } }, async ($, on) => {
     const mtime = { ms: 1000 }
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
     await start($)
@@ -766,7 +768,7 @@ describe('selection', () => {
 })
 
 describe('auto re-run', () => {
-  test('code changed after a pass: the end of the turn re-runs Validate, then Test', OPTIONS, async ($, on) => {
+  test('code changed after a pass: the end of the turn re-runs Validate, then Test', AUTO_RERUN, async ($, on) => {
     const mtime = { ms: 1000 }
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
     await start($)
@@ -786,7 +788,7 @@ describe('auto re-run', () => {
     expect(await after.find({ type: 'Text', text: /files changed/ })).toBeUndefined()
   })
 
-  test('a file in a subfolder edited after a pass: the end of the turn re-runs Validate, then Test', OPTIONS, async ($, on) => {
+  test('a file in a subfolder edited after a pass: the end of the turn re-runs Validate, then Test', AUTO_RERUN, async ($, on) => {
     const mtime: Mtimes = { ms: 1000 }
     const disk = { ...modFiles('git-branch'), [`${MODS}/git-branch/hooks/lib/parser.ts`]: '' }
     const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
@@ -805,6 +807,26 @@ describe('auto re-run', () => {
     await $.turn.complete({ answer: 'edited' } as never)
     await clock.advance(1000)
     expect(seen.argv.slice(2).map(argv => argv[2])).toEqual(['validate', 'test'])
+  })
+
+  test('autoRerun is opt-in: with the option unset, code changed after a pass is not re-run at the end of the turn', OPTIONS, async ($, on) => {
+    const mtime = { ms: 1000 }
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    await ui.unmount()
+    expect(seen.argv).toHaveLength(2)
+    mtime.ms = 5000
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.slice(2).map(argv => argv[2])).toEqual([])
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /files changed/ })).toBeDefined()
   })
 
   test('nothing changed: the end of the turn runs nothing', OPTIONS, async ($, on) => {
@@ -1709,7 +1731,7 @@ describe('modsDir not set: what the pane does acts on the folder it shows (PR #5
     expect(await shows($, /next: Test/)).toBe(true)
   })
 
-  test('the end-of-turn re-run checks the folder it judged, though a /cd lands during its first run', async ($, on) => {
+  test('the end-of-turn re-run checks the folder it judged, though a /cd lands during its first run', { options: { autoRerun: true } }, async ($, on) => {
     const mtime: Mtimes = { ms: 1000 }
     const box: { w?: ReturnType<typeof world>; moveOnRun: boolean } = { moveOnRun: false }
     // Awaited by every process.run: the first one after arming moves the session to TWO.
