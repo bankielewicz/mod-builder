@@ -854,6 +854,32 @@ describe('a scan that read the generations before an edit began', () => {
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Spec for this change$/)
   })
+  test('an edit that begins before any scan has read a bump starts from the bumped version', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edit below.
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, { ms: Date.parse('2027-01-01T00:00:00Z') })
+    await start($)
+    await clock.advance(10)
+
+    // git-branch is green, listed at 0.1.0.
+    await recheck($, clock)
+    // A bump to 0.1.1 and its listing land on disk, and the next edit begins before any scan reads them.
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifestOf('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = listing('0.1.1')
+    await reportSpec($, 'git-branch', 'running')
+    await clock.advance(10)
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(10)
+    // Checked again, but not bumped past 0.1.1: Share is what the edit still needs.
+    await recheck($, clock)
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
+  })
 })
 
 describe('command', () => {
