@@ -58,6 +58,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denyStoreSet: '',
     /** A store key whose reads are refused. */
     denyStoreGet: '',
+    /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
+    holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
     holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
     timeouts: [] as (number | undefined)[],
@@ -73,9 +75,14 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     const text = stored.get(key)
     return { value: text === undefined ? undefined : JSON.parse(text) } as never
   })
-  on('store.set', ($, e) => {
+  on('store.set', async ($, e) => {
     const { key, value } = e as { key: string; value: unknown }
     if (seen.denyStoreSet === key) return { deny: 'EIO: store write failed' }
+    const held = seen.holdStoreSet
+    if (held?.key === key && !held.isReached) {
+      held.isReached = true
+      await held.until
+    }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
@@ -606,6 +613,27 @@ describe('a run that does not end', () => {
     release()
     await clock.advance(500)
     expect(seen.argv.length).toBe(1)
+  })
+
+  test('a run whose row was replaced while its result was being saved toasts nothing', SHORT, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    let release = () => {}
+    seen.holdStoreSet = { key: 'modlab:results', until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdStoreSet.isReached).toBe(true)
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+    release()
+    await clock.advance(500)
+    expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
   })
 
   test('a run whose row was replaced while its process ran neither saves nor toasts its result', SHORT, async ($, on) => {
