@@ -65,19 +65,25 @@ on('session.start', async ($, e, next) => {
 on('command.run', { command: NAME }, async ($, e) => {
   try {
     const arg = e.args.trim().toLowerCase()
-    void (async () => { /* open panes, start work */ })().catch(() => undefined)
-    return { text: '…' }                       // answer at once; never await your own pane
+    void openPane($).catch(() => undefined)    // $.ui.open before the hook returns, ahead of any await
+    void work($).catch(() => undefined)        // slow work (a scan, a fetch) after the open
+    return { text: '…' }
   } catch { return { text: `${NAME}: something went wrong; see claude --debug.` } }
 })
 ```
 
 - Every mod has a `demo` subcommand that shows every state.
-- Toggling a pane checks `(await $.ui.panes()).some(p => p.id === NAME)` rather than a saved flag.
+- Toggling a pane checks `(await $.ui.panes()).some(p => p.id === NAME && p.isPlaced)` rather than a
+  saved flag. A pane that waits undrawn (an unasked open on a narrow terminal) is open but not placed:
+  the person's command seats it with `$.ui.open`, so open it rather than fold it.
 
 ## Panes, bands, status
 
-- **Pane id = name.** Open it only from a command, a button or a prompt. An unasked open (from a
-  timer or a hook) is only placed from 144 columns. If `isPlaced` is false, toast how to see it.
+- **Pane id = name.** Open it only from a command, a button or a prompt, and call `$.ui.open` before
+  that hook returns. An open after an `await` on other work (in `void (async () => …)()`) runs after
+  the hook and is unasked, as is one from a timer or a `tool.call` hook. An unasked open is only placed
+  from 144 columns (110 for an id the person opened before). If `isPlaced` is false, toast how to see
+  it.
 - **Band:** `const rest = await next(e)`. Return `rest` alone when `e.props.hasSurvey` is set, when
   there's nothing to show, or when the hook throws. Size to `e.props.bodyColumns` and stay within
   `e.props.maxRows`.

@@ -49,13 +49,23 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `claude -p --plugin-dir`, `/mod-builder config` reached the command and both skills were still
   listed (2026-10-13, 2.1.296).
 - **[field]** A `command.run` hook that awaits its own pane can deadlock or time out, with the
-  message "registered /x but no command.run hook answered it". Return `{ text }` at once, and open
-  the pane in `void (async () => …)().catch(…)`.
+  message "registered /x but no command.run hook answered it". **[probe]** Not reproduced on
+  2.1.296 or 2.1.301 (2026-10-15, #90): `await $.ui.open(…)` in a `command.run` hook answered at
+  once and the pane drew. Either way, call `$.ui.open` before the hook returns, awaited or as
+  `void openPane($)` with no `await` ahead of it. Put slow work (a scan) after the open, in
+  `void (async () => …)().catch(…)`. An open made after such work runs after the hook and counts
+  as unasked.
 - **[field]** Track whether the pane is open with `$.ui.panes()`, not a module flag. Reloads and
   Esc-closes desync flags.
 - **[d.ts]** A pane opened unasked (from a timer or hook, with no command, press or prompt behind
   it) is placed only from 144 columns (110 once asked before). Otherwise it waits undrawn with
   `isPlaced: false`. Open from a command or button, and toast when it isn't placed.
+- **[probe]** A `tool.call` hook is never asked (2.1.301, #90). Opened from the `Skill` tool's
+  call (Claude starting `/mod-builder:build` from a plain-words request), `$.ui.open` resolved
+  `isPlaced: false`, reason "unasked below 110 columns (97 now, an id the person opened before)".
+  A skill the person types (`/plugin:skill args`) reaches `command.run` as
+  `{ command: 'plugin:skill', args, origin: { kind: 'composer' } }`, and an open from that hook is
+  asked. Return `next(e)` to run the skill.
 - **[d.ts]** `ui.render` runs once per input. A repaint reuses the answer. To redraw on a timer,
   update an atom the render reads, or call `$.ui.invalidate('ui.render')`.
 - **[d.ts]** A tree that doesn't validate draws the engine's own. Under `--plugin-dir`, a dim
@@ -236,7 +246,7 @@ Re-check [field] items against the d.ts after a Claude Code update.
   the project reset it to the project root. `$.session.root()` stayed at the project root throughout
   (`/cd` and a worktree move change it, per the d.ts). Probed headless with a throwaway mod whose tool
   returned both values (#92). So a mod that must not follow Claude's shell walks from the root; Mod Lab
-  does, from 0.2.18. 2.1.296's binary also defines `$.session.root` (`root:()=>t("session.root",{})`).
+  does, from 0.2.20. 2.1.296's binary also defines `$.session.root` (`root:()=>t("session.root",{})`).
 - **[probe]** With a relative `--plugin-dir` (`claude --plugin-dir plugins/mod-builder`), after `/cd`
   the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
   installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
