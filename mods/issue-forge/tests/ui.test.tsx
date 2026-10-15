@@ -3,6 +3,11 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 // Behaviour tests for register.tsx: every `$` call is answered by a scripted repository below.
 
 const ROOT = '/w'
+/** This session's id; another session's runs carry OTHER (0.3.0). */
+const SESSION = 'session-me'
+const OTHER = 'session-other'
+/** The run keys of 0.3.0: git's common folder of /w, and the issue. */
+const key = (issue: number) => `issue-forge:repo-run:${ROOT}/.git#${issue}`
 const LCOV_PATH = '/cov/lcov.info'
 const BRANCH = 'issue-16-fix-the-thing'
 const PANE = { title: 'Issue Forge', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
@@ -50,6 +55,12 @@ type World = {
   /** When set, git push stays running until this settles. */
   pushHold?: Promise<void>
   fetchFails?: boolean
+  /** When set, the next `git status --porcelain -z` (a gate's last look before it commits) waits for it (once). */
+  statusHold?: Promise<void>
+  /** Runs when `gh issue view` is called: another session acting while resume checks the run (PR #51 review). */
+  beforeIssueView?: () => void
+  /** `git fetch` fails this many times on a ref lock another process holds, then succeeds (0.3.0). */
+  fetchLocks?: number
   /** `merge-base --is-ancestor HEAD origin/<base>`: true when the branch has no commits of its own. */
   isAncestor?: boolean
   /** `git status --porcelain -z` after staging. */
@@ -80,6 +91,8 @@ type World = {
   fsBlind?: string[]
   /** `git worktree list` fails. */
   worktreeListFails?: boolean
+  /** `git worktree list` throws, as a timed-out process.run does. */
+  worktreeListThrows?: boolean
   /** When set, a store stub that can hold one write stands in for mock.store. */
   storeHold?: StoreHold
   /** When set, the next `git merge-tree` waits for it (once). */
@@ -88,6 +101,8 @@ type World = {
   mergeThrows?: boolean
   /** Where the coverage command last ran: a real reporter names files under that folder. */
   lcovRoot?: string
+  /** What $.command.register was given. */
+  registered: { name: string; argumentHint?: string }[]
   /** Every process.run with the folder it ran in. */
   calls: { argv: string[]; cwd?: string; timeoutMs?: number }[]
   /** The command each Bash call reached beneath the mod with. */
@@ -127,6 +142,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     worktrees: [],
     wtHead: BRANCH,
     wtProfiles: {},
+    registered: [],
     calls: [],
     bash: [],
     argv: [],
@@ -150,10 +166,14 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       hold.isHeld = true
       return hold.until.then(land)
     })
+    on('store.keys', () => ({ value: Object.keys(store) }))
+    on('store.delete', ($: any, e: any) => (delete store[e.key], { value: undefined }))
   } else mock.store(on, store)
+  on('session.id', () => ({ value: SESSION }))
   mock.env(on, { HOME: '/home/u' })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
-  on('command.register', () => ({ value: undefined }))
+  on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
+  on('command.register', ($: any, e: any) => (world.registered.push(e), { value: undefined }))
   on('agent.register', ($: any, e: any) => ({ value: { agent: `issue-forge:${e.name}` } }))
   on('ui.open', ($: any, e: any) => (world.opened.push(e.id), { value: { isPlaced: world.isPlaced } }))
   on('ui.panes', () => ({ value: [] }))
@@ -203,10 +223,15 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
-      if (a[0] === 'issue') return ok(JSON.stringify({ ...ISSUE, body: world.issueBody }))
+      if (a[0] === 'issue') {
+        world.beforeIssueView?.()
+        return ok(JSON.stringify({ ...ISSUE, body: world.issueBody }))
+      }
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
+    // git's common folder: the main checkout answers relative, as git does there.
+    if (s === 'rev-parse --git-common-dir') return ok('.git\n')
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
     if (a[0] === 'show' && a[1]?.endsWith(':.issue-forge.json')) return world.hasProfile ? ok(JSON.stringify(world.baseProfile ?? PROFILE)) : fail(`fatal: path '.issue-forge.json' does not exist in '${a[1]}'`, 128)
@@ -221,6 +246,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       return hold ? hold.then(add) : add()
     }
     if (s === 'worktree list --porcelain') {
+      if (world.worktreeListThrows) return { deny: 'process timed out after 60000 ms' }
       if (world.worktreeListFails) return fail('fatal: unable to read the worktree list', 128)
       // As git 2.53 prints it: the main checkout first; a registered folder that is gone is `prunable`.
       const entry = (path: string) => `worktree ${path}\nHEAD c0\nbranch refs/heads/x\n${world.staleWorktrees?.includes(path) ? 'prunable gitdir file points to non-existent location\n' : ''}`
@@ -247,9 +273,14 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
     if (s === 'status --porcelain') return ok(world.isDirty ? ' M src/a.ts\n' : '')
     if (a[0] === 'switch') return (world.head = a[3] ?? ''), (world.switched = true), ok()
+    if (a[0] === 'fetch' && (world.fetchLocks ?? 0) > 0) return (world.fetchLocks = (world.fetchLocks ?? 0) - 1), fail("error: cannot lock ref 'refs/remotes/origin/main': is at 1a but expected 2b", 1)
     if (a[0] === 'fetch') return world.fetchFails ? fail('fatal: unable to access origin', 128) : ok()
     if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return world.isAncestor === false ? fail('', 1) : ok()
-    if (a[0] === 'status' && a.includes('-z')) return ok(world.porcelainZ ?? '')
+    if (a[0] === 'status' && a.includes('-z')) {
+      const hold = world.statusHold
+      world.statusHold = undefined
+      return hold ? hold.then(() => ok(world.porcelainZ ?? '')) : ok(world.porcelainZ ?? '')
+    }
     if (a[0] === 'push') return world.pushHold ? world.pushHold.then(() => ok()) : ok()
     if (a[0] === 'merge-base') {
       const hold = world.mergeBaseHold
@@ -268,8 +299,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   return world
 }
 
-async function start($: any) {
-  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+async function start($: any, isInteractive = true) {
+  await $.session.start({ surface: 'terminal', isInteractive, cwd: ROOT })
 }
 
 const run = ($: any, args: string) => $.command.run({ command: 'issue-forge', args, origin: COMPOSER, presentation: PRESENTATION })
@@ -318,7 +349,7 @@ describe('demo and drawing', () => {
     const w = engine(on)
     await start($)
     const { text } = await run($, 'demo')
-    expect(text).toContain('[ Next state ] steps through empty, running, gate, failed, blocked, interrupted, ready, done')
+    expect(text).toContain('[ Next state ] steps through empty, running, gate, failed, blocked, interrupted, elsewhere, ready, done')
     const copy: [string, RegExp][] = [
       ['empty', /No run here\. \/issue-forge <issue number> starts one/],
       ['running', /attempt 1\/3 · agent working/],
@@ -326,6 +357,7 @@ describe('demo and drawing', () => {
       ['failed', /gate G: diff branch 91\.30% < 95/],
       ['blocked', /blocked at baseline: tests fail before any change/],
       ['interrupted', /interrupted during green; \/issue-forge resume restarts it/],
+      ['elsewhere', /◌ runs in another session \(for 2m05s\)/],
       ['ready', /Push issue-16-mod-lab-fix-prompt-and-path-header-hardc/],
       ['done', /pull request opened/],
     ]
@@ -351,7 +383,7 @@ describe('demo and drawing', () => {
     await ui.press({ key: 'next' })
     await ui.unmount()
     ui = await pane($)
-    expect(await ui.find({ type: 'Text', text: /demo · empty \(1\/8\)/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /demo · empty \(1\/9\)/ })).toBeDefined()
     await ui.press({ key: 'next' })
     await ui.unmount()
     ui = await pane($)
@@ -409,9 +441,11 @@ describe('starting a run', () => {
     expect(await ui.find({ type: 'Text', text: /✕ blocked at preflight: the checkout is busy \(1 changed file\)/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /next: set "workspace" to "worktree" or "ask"/ })).toBeDefined()
     await ui.unmount()
+    // 0.3.0: another run no longer refuses a start; the session is asked what to do (Cancel here).
+    w.answer = 'Cancel'
     const again = (await run($, '17')).text ?? ''
-    expect(again).toContain('a run is already active here.')
-    expect(again).toContain('blocked at preflight')
+    expect(w.asked.at(-1)).toBe('#16 is active in this repository: blocked at preflight. What should this session do?')
+    expect(again).toBe('cancelled; nothing started.')
     expect(w.argv.some(a => a.includes('17'))).toBe(false)
     expect((await run($, 'stop')).text).toContain('stopped #16')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
@@ -1194,5 +1228,333 @@ describe('review of PR #41, round 6', () => {
     engine(on, { worktreeListFails: true }, atGateG())
     await start($)
     expect((await run($, 'resume')).text).toBe('still blocked: git worktree list failed: fatal: unable to read the worktree list.')
+  })
+})
+
+describe('parallel runs (Change 0.3.0)', () => {
+  const START16 = 'Start #16 in a new worktree from origin/main (Recommended)'
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+  const WT16 = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const blocked44 = (extra: Record<string, unknown> = {}) =>
+    storedRun('blocked', { id: '44-1', issue: 44, title: 'duet follow-ups', branch: 'issue-44-duet', blocked: { at: 'gateG', reason: 'HEAD is on main, not issue-44-duet', next: 'git switch issue-44-duet' }, agents: [{ id: 'old-44', name: 'issue-forge-44-green-1', phase: 'green' }], ...extra })
+  /** Keeps $.agent.spawn pending, so the drive stays at red (under test a spawn never gets an agent id). */
+  const held = () => new Promise<void>(() => undefined)
+  const elsewhere40 = (extra: Record<string, unknown> = {}) => storedRun('green', { id: '40-1', issue: 40, branch: 'issue-40-x', repo: `${ROOT}/.git`, driver: { session: OTHER, since: 1_000_000 - 125_000 }, ...extra })
+
+  test('the reported case: #44 blocked under the old per-checkout key moves at session start, and /issue-forge 16 asks, then starts in a new worktree', async ($, on) => {
+    const w = engine(on, { answer: START16, localProfile: WORKTREE, baseProfile: WORKTREE, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: blocked44(), [`issue-forge:agents:${ROOT}`]: ['ghost-1'] })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    expect(w.asked).toEqual(['#44 is active in this repository: blocked at gateG. What should this session do?'])
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT16, 'origin/main'])
+    expect((await run($, 'status 44')).text).toContain('blocked at gateG: HEAD is on main, not issue-44-duet')
+    expect((await run($, 'status')).text).toContain('also: #16 red 1/2')
+    // The moved run's agents, and the old checkout's remembered ones, stay refused.
+    for (const id of ['old-44', 'ghost-1']) expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: id } as never)) as any).deny).toContain('issue-forge:')
+  })
+
+  test("under ask, Start is the answer to the worktree question; under here, a checkout #44's run works in is busy", async ($, on) => {
+    const w = engine(on, { answer: START16, localProfile: { ...PROFILE, workspace: 'ask' } }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(w.asked).toHaveLength(1)
+    expect(w.argv.some(a => a[1] === 'worktree' && a[2] === 'add')).toBe(true)
+    expect(w.argv.some(a => a[1] === 'switch')).toBe(false)
+  })
+
+  test("under here, a clean checkout on main that #44's run works in blocks the new run", async ($, on) => {
+    const HERE = { ...PROFILE, workspace: 'here' }
+    const w = engine(on, { answer: 'Start #16 here (Recommended)', localProfile: HERE, baseProfile: HERE }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), 'the block')
+    expect(w.toasts).toContain("#16 blocked: the checkout is busy (#44's run works here)")
+    expect(w.argv.some(a => a[1] === 'switch')).toBe(false)
+  })
+
+  test('the same issue answers its status, with no menu; Cancel and Stop-then-start do what they say', async ($, on) => {
+    const w = engine(on, { answer: 'Cancel', baseProfile: WORKTREE }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
+    await start($)
+    const same = (await run($, '44')).text ?? ''
+    expect(same).toContain('#44 has a run already.')
+    expect(same).toContain('blocked at gateG')
+    expect(w.asked).toEqual([])
+    expect((await run($, '16')).text).toBe('cancelled; nothing started.')
+    expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
+    w.answer = 'Stop #44, then start #16'
+    expect((await run($, '16')).text).toBe('stopped #44; starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    expect((await run($, 'status 44')).text).toContain('stopped; the branch and its commits are kept')
+  })
+
+  test('nobody to answer (claude -p): the typed issue starts', async ($, on) => {
+    const w = engine(on, { answer: null, baseProfile: WORKTREE }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
+    // A -p run: no person at the prompt (PR #51 review: only then does a missing answer start the run).
+    await start($, false)
+    expect((await run($, '16')).text).toContain('starting #16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+  })
+
+  test('the session driving #16: Keep explains, no answer explains, Hand off ends the drive and starts #17', async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.answer = 'Keep #16 here; start #17 from another session (Recommended)'
+    const keep = 'Open another Claude Code session in this repository and run /issue-forge 17 there; it gets its own worktree.'
+    expect((await run($, '17')).text).toBe(keep)
+    expect(w.asked.at(-1)).toBe('This session is driving #16 (red 1/2). What should it do with #17?')
+    // Esc on the menu in an interactive session cancels (PR #51 review).
+    w.answer = null
+    expect((await run($, '17')).text).toBe('cancelled; nothing started.')
+    w.answer = 'Hand #16 off and start #17 here (any session can resume #16)'
+    expect((await run($, '17')).text).toBe('handed off #16 at red; starting #17; the pane shows progress. Nothing is pushed until you say yes.')
+    expect((await run($, 'status 16')).text).toContain('interrupted during red; /issue-forge resume restarts it')
+  })
+
+  test('/issue-forge handoff and the Hand off button end this session\'s drive and keep the step', async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held() })
+    await start($)
+    expect((await run($, 'handoff')).text).toBe('this session is driving no run.')
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /h hand off/ })).toBeDefined()
+    await ui.press({ key: 'handoff' })
+    await until(w, () => w.toasts.some(t => t.startsWith('handed off #16')), 'the hand-off toast')
+    await ui.unmount()
+    expect(w.toasts).toContain('handed off #16 at red; /issue-forge resume 16 continues it in any session.')
+    expect((await run($, 'resume')).text).toBe('resuming #16 at red.')
+    await until(w, () => w.spawned.length === 2, 'red again')
+    expect((await run($, 'handoff 16')).text).toBe('handed off #16 at red; /issue-forge resume 16 continues it in any session.')
+  })
+
+  test('with two active runs, a command without a number names them; stop 44 stops only #44', async ($, on) => {
+    const w = engine(on, {}, { [key(44)]: blocked44({ repo: `${ROOT}/.git`, startedAt: 1 }), [key(52)]: blocked44({ id: '52-1', issue: 52, repo: `${ROOT}/.git`, startedAt: 2 }) })
+    await start($)
+    expect((await run($, 'stop')).text).toBe('2 runs in this repository: #52 blocked at gateG · #44 blocked at gateG. Name one: /issue-forge stop 52')
+    expect((await run($, 'resume')).text).toContain('Name one: /issue-forge resume 52')
+    expect((await run($, 'stop 44')).text).toContain('stopped #44')
+    expect((await run($, 'status 52')).text).toContain('blocked at gateG')
+    expect((await run($, 'status 7')).text).toBe('no run for #7 in this repository.')
+    expect(w.asked).toEqual([])
+  })
+
+  test('a run another session drives: Cancel or no answer refuses and writes nothing; Take over resumes it here', async ($, on) => {
+    const store: Record<string, unknown> = { [key(40)]: elsewhere40() }
+    const w = engine(on, { head: 'issue-40-x', answer: 'Cancel', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    const refused = '#40 runs in another session; use that session, or answer Take over in an interactive one.'
+    expect((await run($, 'resume')).text).toBe(refused)
+    expect(w.asked).toEqual(['#40 is driven by another session (for 2m05s). If that session has ended, take it over?'])
+    w.answer = null
+    expect((await run($, 'stop 40')).text).toBe(refused)
+    expect((store[key(40)] as any).step).toBe('green')
+    expect((store[key(40)] as any).driver).toEqual({ session: OTHER, since: 875_000 })
+    w.answer = 'Take over'
+    expect((await run($, 'resume 40')).text).toBe('resuming #40 at green.')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect((store[key(40)] as any).driver.session).toBe(SESSION)
+  })
+
+  test("the pane shows a run driven elsewhere, and the repository's other runs on an also line", async ($, on) => {
+    engine(on, {}, { [key(44)]: blocked44({ repo: `${ROOT}/.git`, startedAt: 1 }), [key(40)]: elsewhere40({ startedAt: 2 }) })
+    await start($)
+    await run($, 'status 40')
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await pane($, surface)
+      expect(await ui.find({ type: 'Text', text: /◌ runs in another session \(for 2m05s\)$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /\/issue-forge resume 40 takes it over/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /also {7}#44 blocked at gateG/ })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
+  test("session.end clears this session's driver, not another's, and not on /clear (the process goes on)", async ($, on) => {
+    // #40 is blocked with a driver left by another session: it isn't running, so it doesn't share the LCOV file.
+    const store: Record<string, unknown> = { [key(40)]: elsewhere40({ step: 'blocked', blocked: { at: 'green', reason: 'r', next: 'n' } }) }
+    // #40 is still active, so starting #16 asks: Start (Esc would now cancel).
+    const w = engine(on, { answer: START16, baseProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect((store[key(16)] as any).driver.session).toBe(SESSION)
+    await $.session.end({ reason: 'clear', sessionId: SESSION } as never)
+    expect((store[key(16)] as any).driver.session).toBe(SESSION)
+    await $.session.end({ reason: 'other', sessionId: SESSION } as never)
+    expect((store[key(16)] as any).driver).toBeUndefined()
+    expect((store[key(16)] as any).step).toBe('red')
+    expect((store[key(40)] as any).driver.session).toBe(OTHER)
+  })
+
+  for (const [what, change, toast] of [
+    ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 0 } }), '#16 was taken over by another session; this session stopped driving it.'],
+    ['stops', (r: any) => ({ ...r, step: 'stopped' }), '#16 was stopped in another session; this session stopped driving it.'],
+  ] as const) {
+    test(`the driving session ends its own drive within 5 s when another session ${what} its run`, async ($, on) => {
+      const store: Record<string, unknown> = {}
+      const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), answer: 'Cancel', storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      await start($)
+      await run($, '16')
+      await until(w, () => w.spawned.length === 1, "#16's red agent")
+      // Another session writes the run (the store is shared live between sessions).
+      store[key(16)] = change(store[key(16)])
+      await w.clock.advance(5_000)
+      await until(w, () => w.toasts.includes(toast), 'the toast')
+      // This session drives nothing now: a new start doesn't offer to keep or hand off #16.
+      await run($, '17')
+      expect(w.asked.at(-1) ?? '').not.toContain('This session is driving')
+    })
+  }
+
+  // PR #51 review (Codex 4278707565): resume spends seconds on gh and git before it writes; a run another
+  // session stopped or took in that time is left as that session wrote it.
+  for (const [what, head, change, stored] of [
+    ['stops it before resume drives it', BRANCH, (r: any) => ({ ...r, step: 'stopped' }), { step: 'stopped' }],
+    ['resumes it first', BRANCH, (r: any) => ({ ...r, step: 'green', driver: { session: OTHER, since: 1 } }), { driver: { session: OTHER, since: 1 } }],
+    ['stops it while resume finds it still blocked', 'main', (r: any) => ({ ...r, step: 'stopped' }), { step: 'stopped' }],
+  ] as const) {
+    test(`resume writes nothing when another session ${what}`, async ($, on) => {
+      const store: Record<string, unknown> = { [key(16)]: storedRun('blocked', { repo: `${ROOT}/.git`, blocked: { at: 'green', reason: 'r', next: 'n' } }) }
+      const w = engine(on, { head, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      w.beforeIssueView = () => (store[key(16)] = change(store[key(16)]))
+      await start($)
+      expect((await run($, 'resume')).text).toBe('#16 moved on before it could be resumed; /issue-forge status 16 says where it is.')
+      expect(store[key(16)]).toMatchObject(stored)
+      expect(w.spawned).toEqual([])
+    })
+  }
+
+  test('stop with no number means the run the pane shows: once it has stopped, a second stop leaves the other run alone', async ($, on) => {
+    engine(on, {}, { [key(44)]: blocked44({ repo: `${ROOT}/.git`, startedAt: 1 }), [key(40)]: blocked44({ id: '40-1', issue: 40, repo: `${ROOT}/.git`, startedAt: 2 }) })
+    await start($)
+    expect((await run($, 'stop 40')).text).toContain('stopped #40')
+    expect((await run($, 'stop')).text).toBe('no active run here.')
+    expect((await run($, 'status 44')).text).toContain('blocked at gateG')
+  })
+
+  // PR #51 review: push and gh pr create can't be undone, so they don't wait for the 5 s watch.
+  // The take-over variant came after green: before it, the drive re-ran the step forever and hung the suite
+  // instead of failing an assertion.
+  for (const [what, change] of [
+    ['stops', (r: any) => ({ ...r, step: 'stopped' })],
+    ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 1 } })],
+  ] as const) {
+    test(`publish pushes nothing when another session ${what} the run during the merge check`, async ($, on) => {
+      let release: () => void = () => undefined
+      const store: Record<string, unknown> = { [key(16)]: storedRun('ready', { repo: `${ROOT}/.git`, greenCommit: 'c2', gatedHead: 'c0' }) }
+      const w = engine(on, { head: BRANCH, mergeHold: new Promise<void>(r => (release = r)), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      await start($)
+      expect((await run($, 'publish')).text).toContain('publishing #16')
+      await until(w, () => w.argv.some(a => a[1] === 'merge-tree'), 'the merge check')
+      store[key(16)] = change(store[key(16)])
+      release()
+      // Bounded, not settle(): a drive that kept going after its write was dropped would never settle.
+      for (let i = 0; i < 20; i++) await w.clock.advance(5)
+      expect(w.argv.filter(a => a[1] === 'push')).toEqual([])
+      expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'pr')).toEqual([])
+      // The drive has ended: the step isn't run again.
+      expect(w.argv.filter(a => a[1] === 'merge-tree')).toHaveLength(1)
+    })
+  }
+
+  test('a resumed run checks the shared LCOV file again before its gate runs coverage (PR #51 review)', async ($, on) => {
+    const blocked16 = storedRun('blocked', { repo: `${ROOT}/.git`, blocked: { at: 'gateG', reason: 'r', next: 'n' } })
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }, { [key(16)]: blocked16, [key(40)]: elsewhere40() })
+    await start($)
+    expect((await run($, 'resume 16')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), 'the block')
+    expect((await run($, 'status 16')).text).toContain('blocked at gateG: lcovPath /cov/lcov.info is shared by every run and #40 is running')
+    expect(w.argv.some(a => a[0] === 'c')).toBe(false)
+    expect(w.commits).toEqual([])
+  })
+
+  test("the branch and worktree preflight made don't land on a run another session took over meanwhile (Codex 4278707576)", async ($, on) => {
+    let release: () => void = () => undefined
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddHold: new Promise<void>(r => (release = r)), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'worktree' && a[2] === 'add'), 'the worktree add')
+    store[key(16)] = { ...(store[key(16)] as any), driver: { session: OTHER, since: 1 } }
+    release()
+    for (let i = 0; i < 20; i++) await w.clock.advance(5)
+    expect(store[key(16)]).toMatchObject({ branch: '', driver: { session: OTHER, since: 1 } })
+    expect((store[key(16)] as any).workRoot).toBeUndefined()
+  })
+
+  test("pruning keeps a pruned run's agents list, so they stay refused after a restart (PR #51 review)", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:repo-agents:${ROOT}/.git#100`]: ['ghost-100'] }
+    for (let i = 0; i < 21; i++) store[key(100 + i)] = storedRun('done', { id: `${100 + i}-1`, issue: 100 + i, repo: `${ROOT}/.git`, startedAt: i, agents: [] })
+    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(store[key(100)]).toBeUndefined()
+    expect(store[key(101)]).toBeDefined()
+    // A restart of the module (a reload) rebuilds the known agents from the store.
+    await start($)
+    expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'ghost-100' } as never)) as any).deny).toContain('issue-forge:')
+  })
+
+  test("a step of a handed-off drive doesn't commit, even when the run is resumed at once in the same session (PR #51 review)", async ($, on) => {
+    let release: () => void = () => undefined
+    const gateG = storedRun('gateG', { repo: `${ROOT}/.git` })
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), statusHold: new Promise<void>(r => (release = r)) }, { [key(16)]: gateG })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.argv.some(a => a[1] === 'status' && a.includes('-z')), "the first drive's last look")
+    expect((await run($, 'handoff')).text).toBe('handed off #16 at gateG; /issue-forge resume 16 continues it in any session.')
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.commits.length === 1, "the second drive's commit")
+    release()
+    for (let i = 0; i < 20; i++) await w.clock.advance(5)
+    expect(w.commits).toHaveLength(1)
+  })
+
+  test('Esc on the start menu in an interactive session cancels; the run starts only where nobody can answer (PR #51 review)', async ($, on) => {
+    const w = engine(on, { answer: null, baseProfile: WORKTREE }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
+    await start($)
+    expect((await run($, '16')).text).toBe('cancelled; nothing started.')
+    expect(w.asked).toHaveLength(1)
+    expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
+  })
+
+  test('the session driving a run, under claude -p: no answer explains how to start the issue elsewhere', async ($, on) => {
+    const w = engine(on, { answer: null, baseProfile: WORKTREE, spawnHold: held() })
+    await start($, false)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect((await run($, '17')).text).toBe('Open another Claude Code session in this repository and run /issue-forge 17 there; it gets its own worktree.')
+  })
+
+  test("a migration that fails doesn't stop session start from loading the known agents (PR #51 review)", async ($, on) => {
+    engine(on, { worktreeListThrows: true }, { 'issue-forge:run:/elsewhere': storedRun('stopped', { id: 'x-1', root: '/elsewhere', issue: 9 }), [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) })
+    await start($)
+    expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-red' } as never)) as any).deny).toContain('issue-forge:')
+  })
+
+  test('the command offers handoff and the optional issue numbers in its hint (PR #51 review)', async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect(w.registered.map(r => r.argumentHint)).toEqual(['<issue> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo'])
+  })
+
+  test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
+    const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(w.toasts.some(t => t.includes('blocked'))).toBe(false)
+  })
+
+  test('an lcovPath outside the run folder blocks while another session drives a run', async ($, on) => {
+    const w = engine(on, { answer: START16, localProfile: WORKTREE, baseProfile: WORKTREE }, { [key(40)]: elsewhere40() })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), 'the block')
+    expect((await run($, 'status 16')).text).toContain('lcovPath /cov/lcov.info is shared by every run and #40 is running')
+    expect(w.spawned).toEqual([])
   })
 })

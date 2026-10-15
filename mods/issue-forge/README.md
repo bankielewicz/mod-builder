@@ -17,8 +17,11 @@ is pushed until you say yes.
  ──────────────────────────────────────────────────────────────────────────
  coverage   changed lines 100.00% · branches 91.30% · total 99.36% / 83.69%
  branch     issue-16-mod-lab-fix-prompt-and-path-header-hardc → main
- [ Stop ]  [ Status ]
+ also       #44 blocked at gateG · #52 refactor (another session)
+ [ Hand off ]  [ Stop ]  [ Status ]
 ```
+
+Several sessions can each run an issue in the same repository at once, each in its own worktree.
 
 ## Try it
 
@@ -26,16 +29,22 @@ is pushed until you say yes.
 /issue-forge demo
 ```
 
-- `/issue-forge <N>`: starts a run on issue N (one run per repository at a time)
-- `/issue-forge status`: where the run is (and its worktree); with no run, whether `.issue-forge.json` validates
-- `/issue-forge resume`: restarts a blocked or interrupted step
-- `/issue-forge publish`: pushes the run's branch and opens the pull request
-- `/issue-forge stop`: ends the run; its branch and commits are kept
+- `/issue-forge <N>`: starts a run on issue N. If another run in the repository is active, or this
+  session is driving one, it asks first ([Parallel runs](#parallel-runs))
+- `/issue-forge status [N]`: where the run is (and its worktree), and the repository's other runs;
+  with no run, whether `.issue-forge.json` validates
+- `/issue-forge resume [N]`: restarts a blocked or interrupted step
+- `/issue-forge publish [N]`: pushes the run's branch and opens the pull request
+- `/issue-forge handoff`: ends this session's drive but keeps the step, so any session can resume it
+- `/issue-forge stop [N]`: ends the run; its branch and commits are kept
 - `/issue-forge demo [state]`: every state of the pane, with nothing real running
 - `/issue-forge`: opens or closes the pane
 
-Give the pane the keyboard with `ctrl+x tab`. Its keys are `p` publish, `r` resume, `s` stop,
-`t` status, and in the demo `n` next and `e` end.
+Without `N`, a command means the run the pane shows, even a finished one. If the pane shows none, it
+means the repository's only active run; with several, it lists them and asks you to name one.
+
+Give the pane the keyboard with `ctrl+x tab`. Its keys are `p` publish, `r` resume, `h` hand off,
+`s` stop, `t` status, and in the demo `n` next and `e` end.
 
 ## Set up a repository
 
@@ -79,6 +88,47 @@ would conflict.
 This repository sets `"workspace": "worktree"`: the installed plugins load from the main folder's
 branch, so a run must never switch it.
 
+### Parallel runs
+
+Runs belong to the repository, not to the folder a session started in. Every worktree of a repository
+shares git's common folder, and that keys the runs. So every session in the repository sees every run:
+`/issue-forge status` lists them, and the pane's `also` line names the others. A session drives one run
+at a time. To work on two issues at once, open a second Claude Code session in the repository. With
+`"workspace": "worktree"`, each run gets a worktree of its own.
+
+`/issue-forge <N>` asks one question when it would meet another run:
+
+| Situation | Choices (the first is the default) |
+| --- | --- |
+| Another session drives #44 | Start #N in a new worktree · Take over #44 here · Cancel |
+| #44 is blocked, interrupted or ready, and no session drives it | Start #N in a new worktree · Resume #44 here · Stop #44, then start #N · Cancel |
+| This session drives #44 | Keep #44 (and start #N from another session) · Hand #44 off and start #N here · Cancel |
+
+Esc, or text typed under Other, cancels. Only where nobody can answer (`claude -p`) does a start go
+ahead with what you typed; in a session driving a run, it then explains how to start #N elsewhere and
+starts nothing. If #N has an active run already, you get
+its status instead.
+
+A run records which session drives it. In any other session, Resume, Publish and Stop on that run ask
+`If that session has ended, take it over?` before they act. The mod can't tell a crashed session from a
+live one, so it asks rather than assumes. The driving session checks every 5 seconds and stops its
+drive when another session stopped or took over its run; before a commit, a stash, the push and the pull
+request it checks at once. Resume writes only if the run is still as it read it. A session that ends lets go of its run, but
+`/clear` and `/resume` don't, because the process and the drive go on.
+
+Hand off (`/issue-forge handoff` or `h`) ends this session's drive at once, as Stop does, but keeps the
+step: the run reads *interrupted* everywhere, and `/issue-forge resume <N>` continues it in any session.
+A stopped run can't be resumed.
+
+Parallel runs share git's refs. A `git fetch`, `git stash` or `git commit` that finds another process
+holding a lock is retried twice. One coverage file can't serve two runs at once, so an absolute `lcovPath`
+(wherever it points) blocks a run's baseline and gates while another run is being driven: make it
+relative (and gitignored), as this repository's `coverage/issue-forge.lcov` is. When a run starts, finished runs beyond the
+repository's 20 newest are deleted from the store; their agents stay on the guard's list.
+
+Runs stored by 0.2 or earlier, keyed by the checkout, move to the repository's keys when a session
+first starts in that checkout or in another worktree git lists.
+
 A run needs an interactive session (`claude -p` exits before the agents finish), a checkout that
 isn't busy or a worktree run (above), `gh` signed in, and `<base>` on `origin`. If an issue names another base (a line
 `Base branch: <name>`), the run asks before using it, because the tests would run from that branch.
@@ -116,6 +166,9 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - Command lookup uses `sh -c 'command -v …'`, so `sh` must be on PATH (Git Bash on Windows).
 - The profile that runs is the one on `origin/<base>`, read after the switch; the checkout you start
   from only names the base.
+- If two sessions start the same issue at the same moment, the second write wins, and the other
+  session's run stops at its next step.
+- A crashed session leaves its run marked as driven until another session answers Take over.
 - Profile commands must leave the tree as they found it: a gate that sees files changed after staging
   (a formatter, a snapshot update) blocks rather than commit bytes it didn't test. The run's branch is cut from `origin/<base>`, so
 the profile and anything its commands use must already be there.
@@ -162,9 +215,9 @@ table lists everything this one can touch. It is generated from `claude plugin v
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
-| Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; the run in `$.store`; env reads `HOME`, `USERPROFILE` |
+| Hooks | `session.start`, `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
+| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, including `--git-common-dir` for each command, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
+| Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
@@ -182,4 +235,5 @@ claude plugin validate .
 claude plugin test .
 ```
 
-Built on Claude Code 2.1.296. Written spec-first with `/mod-builder:build`; see `SPEC.md`.
+Built on Claude Code 2.1.296; 0.3.0 (parallel runs) checked on 2.1.300. Written spec-first with
+`/mod-builder:build`; see `SPEC.md`.

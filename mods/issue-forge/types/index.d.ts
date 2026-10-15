@@ -81,9 +81,21 @@ export type StashRef = { sha: string; message: string }
 
 export type PhaseTime = { startedAt: number; endedAt?: number }
 
+/** The session whose drive is under way (Change 0.3.0): its `$.session.id()` at session start, and since when. */
+export type Driver = { session: string; since: number }
+
+/** One of the repository's other active runs, as the pane's `also` line shows it (Change 0.3.0). */
+export type OtherRun = { issue: number; step: Step; line: string; isElsewhere: boolean }
+
 export type Run = {
   id: string
-  /** The session's checkout: it keys the store. */
+  /** git's common folder: every worktree of the repository shares it, and it keys the store (Change 0.3.0). Absent in runs stored before. */
+  repo?: string
+  /** Set while a session drives the run; cleared when the drive ends (Change 0.3.0). */
+  driver?: Driver
+  /** Started from the menu's Start under `ask`: it works in a new worktree, asked once (Change 0.3.0). */
+  chosenWorktree?: boolean
+  /** The checkout the run was started from (it keyed the store before 0.3.0). */
   root: string
   /** Where git, the profile's commands and the agents work: a new worktree, or `root`. Absent in runs stored before 0.2.0. */
   workRoot?: string
@@ -132,6 +144,6 @@ export type Activity = { label: string; since: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'issue-forge': { run: Run | null; activity: Activity | null; now: number; demo: string | null }
+    'issue-forge': { run: Run | null; activity: Activity | null; now: number; demo: string | null; focus: number | null; others: OtherRun[] }
   }
 }

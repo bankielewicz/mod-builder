@@ -388,3 +388,16 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **New:** four `[probe]` entries under "Subagents a mod spawns", probed on 2.1.296 for issue-forge's P4. With agent teams on, a named `$.agent.spawn` starts a teammate, whose hand-back arrives as a `session.receive` (no `prompt.submit`), and `{ consumed }` keeps the main model idle. Inside tmux with the default teammate mode, a named spawn of a plugin-registered agent type is refused, and `teammateMode: "in-process"` lets it start. A variable in `settings.json`'s `env` overrides the shell's. `$.agent.spawn`'s `cwd` is ignored, and a `tool.call` rewrite of the Bash command moves the agent.
 - **Unchanged:** Mod Lab's code and tests.
 - **Version:** 0.2.6 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.7 (2026-10-14)
+
+> For issue-forge 0.3.0 (parallel runs in one repository).
+
+- **New:** three entries in `references/gotchas.md`, under "Modules":
+  - `[probe]` `$.store` is read from its file on each `get` and shared live between sessions; writes
+    to different keys from different processes don't lose each other (400 of 400 survived); the last
+    write to one key wins.
+  - `[d.ts]` `session.end` fires on `/clear` and `/resume` too, and the process goes on.
+  - `[probe]` Under `claude plugin test`, `session.end` needs a stub.
+- **Unchanged:** Mod Lab's code and tests.
+- **Version:** 0.2.7 in `plugin.json` and the marketplace entry.
