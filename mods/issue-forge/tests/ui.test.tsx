@@ -1910,6 +1910,21 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.spawned).toEqual([])
   })
 
+  test('resume of a run that blocked at preflight after making its branch reads the issue only with --repo (PR #68 review)', async ($, on) => {
+    // A number start that made its branch, then found no profile on origin/main: the block keeps the branch, and no repository is pinned yet.
+    const kept = storedRun('blocked', {
+      blocked: { at: 'preflight', reason: 'origin/main has no valid .issue-forge.json: missing', next: 'commit .issue-forge.json to main' },
+      mergeBase: '', profile: null, used: { red: 0, green: 0, refactor: 0 }, redCommit: undefined, baseline: null,
+    })
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: kept })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    const issueViews = w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue')
+    expect(issueViews.length).toBeGreaterThan(0)
+    expect(issueViews.filter(a => !a.includes('--repo'))).toEqual([])
+  })
+
   test("resume of a run stored by 0.1.0 at preflight (no branch, no repository) runs the whole new preflight and pins it", async ($, on) => {
     const early = storedRun('blocked', {
       blocked: { at: 'preflight', reason: 'gh is not signed in', next: 'run gh auth login' },
