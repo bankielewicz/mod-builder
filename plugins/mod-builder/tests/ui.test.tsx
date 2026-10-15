@@ -854,6 +854,55 @@ describe('edit', () => {
   })
 })
 
+describe('nested logic edit during a generation (#15, Codex 4254194992)', () => {
+  async function nested($: Engine, on: On, touchTopLevel: boolean) {
+    const mtime: Mtimes = { ms: 1000 }
+    const manifest = (v: string) => `{ "name": "git-branch", "version": "${v}", "description": "The git-branch mod." }`
+    const market = (v: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: v }] })
+    const logicPath = `${MODS}/git-branch/hooks/git-branch-logic.ts`
+    const testPath = `${MODS}/git-branch/tests/git-branch-logic.test.ts`
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/hooks/lib/parser.ts`]: '',
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status: 'running', note: 'editing: parser' } as never)
+    await adv(10)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status: 'passed' } as never)
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+    mtime.ms = t + 100
+    if (!touchTopLevel) mtime.byPath = { [logicPath]: 1000, [testPath]: 1000 }   // only SPEC, README, manifest and hooks/lib/parser.ts were saved
+    await adv(200)
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const ready = (await ui.find({ type: 'Text', text: /^ready to share$/ })) !== undefined
+    const lines = (await ui.findAll({ type: 'Text', text: /edit ·|ready to share|stale|in progress|update/ })).map((n: any) => String(n.text).trim()).join(' | ')
+    await ui.unmount()
+    return { ready, lines }
+  }
+
+  test('only hooks/lib/parser.ts (plus SPEC, README, manifest) saved -> ready to share', OPTIONS, async ($, on) => {
+    const r = await nested($, on, false)
+    expect(r.lines).not.toMatch(/update Logic/)
+    expect(r.ready).toBe(true)
+  })
+})
+
 describe('edit failures', () => {
   async function greenThenEdit($: Engine, on: On, outputs: { validate?: Output; test?: Output }) {
     const disk = {

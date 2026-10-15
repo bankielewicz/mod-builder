@@ -670,6 +670,68 @@ describe('mod-builder-logic', () => {
   })
 })
 
+describe('logicMtimeMs sees nested logic and test files (#15)', () => {
+  const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, mtimeMs })
+  const read = {
+    name: 'x',
+    top: [],
+    manifestDir: [file('plugin.json', 100)],
+    hooks: [file('register.tsx', 100), file('x-logic.ts', 200), { name: 'lib', kind: 'dir' as const, mtimeMs: 100 }],
+    tests: [file('x-logic.test.ts', 300)],
+    types: [],
+    nested: [file('hooks/lib/parser.ts', 100)],
+    spec: '# x',
+    readme: null,
+    manifest: null,
+    marketplace: '',
+  }
+
+  test('a nested hooks/ file newer than the top-level files raises logicMtimeMs and leaves hasLogic unchanged', () => {
+    const before = factsOf(read)!
+    expect(before.logicMtimeMs).toBe(300)
+    const edited = factsOf({ ...read, nested: [file('hooks/lib/parser.ts', 900)] })!
+    expect(edited.logicMtimeMs).toBe(900)
+    expect(edited.hasLogic).toBe(before.hasLogic)
+    const older = factsOf({ ...read, nested: [file('hooks/lib/parser.ts', 250)] })!
+    expect(older.logicMtimeMs).toBe(300)
+    const deeper = factsOf({ ...read, nested: [file('hooks/lib/deep/more/parser.ts', 950)] })!
+    expect(deeper.logicMtimeMs).toBe(950)
+    const onlyRegister = { ...read, hooks: [file('register.tsx', 100)], tests: [file('x.test.ts', 100)] }
+    const nestedOnly = factsOf({ ...onlyRegister, nested: [file('hooks/lib/x-logic.ts', 700)] })!
+    expect(nestedOnly.logicMtimeMs).toBe(700)
+    expect(nestedOnly.hasLogic).toBe(false)
+  })
+
+  test('a nested tests/ file named *.test.ts raises logicMtimeMs and leaves hasTests unchanged', () => {
+    const noTests = { ...read, tests: [] }
+    const before = factsOf(noTests)!
+    expect(before.logicMtimeMs).toBe(200)
+    const edited = factsOf({ ...noTests, nested: [file('tests/unit/parser.test.ts', 800)] })!
+    expect(edited.logicMtimeMs).toBe(800)
+    expect(edited.hasTests).toBe(false)
+    expect(factsOf({ ...noTests, nested: [file('tests/unit/ui.test.tsx', 850)] })!.logicMtimeMs).toBe(850)
+  })
+
+  test('only nested logic and test files count: not register.*, .d.ts, data files, types/, or helpers under tests/', () => {
+    const counted = file('hooks/lib/parser.ts', 500)
+    const ignored = [
+      file('hooks/lib/register.ts', 900),
+      file('hooks/lib/register.tsx', 900),
+      file('hooks/lib/types.d.ts', 900),
+      file('hooks/lib/data.json', 900),
+      file('hooks/lib/README.md', 900),
+      file('types/lib/api.ts', 900),
+      file('types/lib/api.d.ts', 900),
+      file('tests/fixtures/helper.ts', 900),
+      file('tests/fixtures/data.json', 900),
+      file('tests/fixtures/x-logic.ts', 900),
+    ]
+    const facts = factsOf({ ...read, nested: [counted, ...ignored] })!
+    expect(facts.logicMtimeMs).toBe(500)
+    expect(facts.codeMtimeMs).toBe(900)
+  })
+})
+
 describe('logging and /mod-builder config', () => {
   test('the logging option: four levels, anything else is normal; each level includes the ones above it', () => {
     expect(logLevelOf('verbose')).toBe('verbose')
