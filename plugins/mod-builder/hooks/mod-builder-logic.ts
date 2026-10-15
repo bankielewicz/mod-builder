@@ -807,15 +807,20 @@ export function demoViewAt(elapsedMs: number, beats: readonly Beat[] = demoTimel
 /** A directory entry as `$.fs.list` gives it, cut to what Mod Lab reads. */
 export type Entry = { name: string; kind: 'file' | 'dir' | 'other'; mtimeMs: number }
 
+/** How many parts of a UNC path (`//server/share`) are its root. */
+const UNC_ROOT_PARTS = 2
+
 /** Resolves `.` and `..` segments in a `/`-separated path. */
 export function normalizePath(path: string): string {
   const slashed = path.replace(/\\/g, '/')
   const root = rootOf(slashed)
+  // A UNC path's server and share are part of its root: '..' stops above them, as at `/`.
+  const floor = root === '//' ? UNC_ROOT_PARTS : 0
   const parts: string[] = []
   for (const part of slashed.slice(root.length).split('/')) {
     if (part === '' || part === '.') continue
     if (part === '..') {
-      if (parts.length && parts[parts.length - 1] !== '..') parts.pop()
+      if (parts.length > floor && parts[parts.length - 1] !== '..') parts.pop()
       else if (!root) parts.push('..')
     } else {
       parts.push(part)
@@ -824,11 +829,11 @@ export function normalizePath(path: string): string {
   return root + parts.join('/')
 }
 
-/** A `/`-separated path's root: `//` for a UNC path, `/`, a drive (`C:/`), or '' when it is relative. */
+/** A `/`-separated path's root: `//` for a UNC path, `/`, a drive (`C:/`, upper case), or '' when it is relative. */
 function rootOf(slashed: string): string {
   if (/^\/\/[^/]/.test(slashed)) return '//'
   if (slashed.startsWith('/')) return '/'
-  return /^[A-Za-z]:(\/|$)/.test(slashed) ? `${slashed.slice(0, 2)}/` : ''
+  return /^[A-Za-z]:(\/|$)/.test(slashed) ? `${slashed.charAt(0).toUpperCase()}:/` : ''
 }
 
 /**
@@ -860,7 +865,7 @@ export function marketplaceCandidatesOf(cwd: string): string[] {
   if (!root) return []
   const parts = path.slice(root.length).split('/').filter(Boolean)
   // A UNC path's server and share are its root folder; nothing sits above them.
-  const top = root === '//' ? Math.min(2, parts.length) : 0
+  const top = root === '//' ? Math.min(UNC_ROOT_PARTS, parts.length) : 0
   const candidates: string[] = []
   for (let depth = parts.length; depth >= top; depth--) {
     const folder = root + parts.slice(0, depth).join('/')
