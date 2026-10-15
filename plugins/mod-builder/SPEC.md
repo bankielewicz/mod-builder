@@ -577,7 +577,19 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 > For issue #20: a code span that wraps a line was read as an unfilled SPEC placeholder.
 
-- **Bug, fixed:** `hasPlaceholder` removed inline code with `` /`[^`\n]*`/g ``, which stops at a newline. A span that starts on one line and ends on the next (`` `it is in `` + newline + `` stash "<message>"` ``) was left in the prose, and the `<message>` inside it read as an unfilled placeholder, so the Spec stage stayed at "next: Spec" on a SPEC that was complete (seen with `mods/issue-forge/SPEC.md`).
-- **Rule:** an inline code span may hold one line ending and no more: `` /`[^`\n]*(?:\n[^`\n]*)?`/g ``. This is CommonMark: a code span can't cross a paragraph break, so a backtick left open before a blank line doesn't swallow the next paragraph. Fenced blocks and HTML comments are handled as before. A `<files>` in plain prose is still a placeholder.
-- **Tests:** logic: a span wrapping once, with the `<word>` on either line, is no placeholder; `<files>` in prose before or after such a span, and in plain prose, still is; a placeholder after a blank line that follows an unclosed backtick is found, with or without a later backtick pair. The wrap case fails on 0.2.15.
+- **Bug, fixed:** `hasPlaceholder` removed inline code with a pattern that stops at a newline. A span that starts on one line and ends on the next (`it is in` on one line, `stash "<message>"` on the next, inside one pair of backticks) was left in the prose, and the `<message>` inside it read as an unfilled placeholder, so the Spec stage stayed at "next: Spec" on a SPEC that was complete (seen with `mods/issue-forge/SPEC.md`).
+- **Rule:** an inline code span may hold any number of line endings, but no blank line. This follows CommonMark: a code span can't cross a paragraph break, so a backtick left open before a blank line doesn't swallow the next paragraph. Inside a paragraph, an unclosed backtick pairs with the next one, as in CommonMark. Fenced blocks and HTML comments are handled as before. A `<files>` in plain prose is still a placeholder. The pattern:
+
+  ```
+  /`(?:[^`\n]|\n(?![ \t\r]*\n))*`/g
+  ```
+
+- **Why not the issue's rule:** the issue prescribed one line ending at most, and the run's green step used it:
+
+  ```
+  /`[^`\n]*(?:\n[^`\n]*)?`/g
+  ```
+
+  The refactor step found that it fixes neither spot in the origin file and adds a false positive. A span over two line endings stays in the prose, and its opening backtick pairs with the next one, so every later span in the paragraph shifts. On `mods/issue-forge/SPEC.md` at 94ae284 the original rule finds 15 placeholders, the one-line-ending rule 2 (line 528, from the shift after the span over lines 519–521, and line 929, a span over two line endings), and this rule 0. The SPECs of duet, git-branch and turn-counter read the same under all three rules.
+- **Tests:** logic: a span wrapping once, with the `<word>` on either line, is no placeholder; `<files>` in prose before or after such a span, and in plain prose, still is; a placeholder after a blank line that follows an unclosed backtick is found, with or without a later backtick pair. A span over two line endings is no placeholder, and a placeholder after it still is; after such a span, a `<word>` in a later span of the same paragraph is no placeholder either. The wrap case fails on 0.2.15; the two-line-ending cases fail on the one-line-ending rule.
 - **Version:** 0.2.17 in `plugin.json` and the marketplace entry (0.2.16 is taken by #19, PR #80, still open).
