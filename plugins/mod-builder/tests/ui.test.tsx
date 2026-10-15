@@ -1869,3 +1869,68 @@ describe('the scan publishes its folder and its mods together (PR #57 review rou
     }
   })
 })
+
+describe('a repeated Spec running during an edit (#12)', () => {
+  const T0 = Date.parse('2026-10-12T10:00:00Z')
+  const manifest = (v: string) => `{ "name": "git-branch", "version": "${v}", "description": "The git-branch mod." }`
+  const market = (v: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: v }] })
+  const report = ($: Engine, status: string, note?: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status, ...(note ? { note } : {}) } as never)
+
+  /**
+   * A green git-branch is edited, and the Spec report is sent a second time after the file saves
+   * (and the bump, when `bump` is set: 0.1.0 to 0.2.0, listed) and before the turn that redoes
+   * Validate and Test.
+   */
+  async function scenario($: Engine, on: On, bump: boolean) {
+    const mtime = { ms: 1000 }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = T0
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+    await report($, 'running', 'editing: x')
+    await adv(10)
+    await report($, 'passed')
+    // the edit: files saved after it began, and the version bumped and listed
+    if (bump) {
+      disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifest('0.2.0')
+      disk['/m/.claude-plugin/marketplace.json'] = market('0.2.0')
+    }
+    mtime.ms = t + 100
+    await adv(200)
+    await report($, 'running', 'editing: x (retry)')
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const row = (await ui.find({ key: 'row-git-branch' }))?.text
+    await ui.unmount()
+    return { row }
+  }
+
+  test('a second Spec running after the bump keeps the original baseline version', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, true)
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('a second Spec running keeps the edit start time: SPEC.md saved after the first report is not stale', OPTIONS, async ($, on) => {
+    // No bump, so the one thing left for the edit is Share. The Spec stage is what the second report would break.
+    const r = await scenario($, on, false)
+    expect(r.row).toMatch(/ edit · bump the version and re-list it$/)
+  })
+})
