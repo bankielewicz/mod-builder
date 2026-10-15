@@ -55,6 +55,8 @@ type World = {
   /** When set, git push stays running until this settles. */
   pushHold?: Promise<void>
   fetchFails?: boolean
+  /** When set, the next `git status --porcelain -z` (a gate's last look before it commits) waits for it (once). */
+  statusHold?: Promise<void>
   /** Runs when `gh issue view` is called: another session acting while resume checks the run (PR #51 review). */
   beforeIssueView?: () => void
   /** `git fetch` fails this many times on a ref lock another process holds, then succeeds (0.3.0). */
@@ -268,7 +270,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'fetch' && (world.fetchLocks ?? 0) > 0) return (world.fetchLocks = (world.fetchLocks ?? 0) - 1), fail("error: cannot lock ref 'refs/remotes/origin/main': is at 1a but expected 2b", 1)
     if (a[0] === 'fetch') return world.fetchFails ? fail('fatal: unable to access origin', 128) : ok()
     if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return world.isAncestor === false ? fail('', 1) : ok()
-    if (a[0] === 'status' && a.includes('-z')) return ok(world.porcelainZ ?? '')
+    if (a[0] === 'status' && a.includes('-z')) {
+      const hold = world.statusHold
+      world.statusHold = undefined
+      return hold ? hold.then(() => ok(world.porcelainZ ?? '')) : ok(world.porcelainZ ?? '')
+    }
     if (a[0] === 'push') return world.pushHold ? world.pushHold.then(() => ok()) : ok()
     if (a[0] === 'merge-base') {
       const hold = world.mergeBaseHold
@@ -1481,6 +1487,21 @@ describe('parallel runs (Change 0.3.0)', () => {
     // A restart of the module (a reload) rebuilds the known agents from the store.
     await start($)
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'ghost-100' } as never)) as any).deny).toContain('issue-forge:')
+  })
+
+  test("a step of a handed-off drive doesn't commit, even when the run is resumed at once in the same session (PR #51 review)", async ($, on) => {
+    let release: () => void = () => undefined
+    const gateG = storedRun('gateG', { repo: `${ROOT}/.git` })
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), statusHold: new Promise<void>(r => (release = r)) }, { [key(16)]: gateG })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.argv.some(a => a[1] === 'status' && a.includes('-z')), "the first drive's last look")
+    expect((await run($, 'handoff')).text).toBe('handed off #16 at gateG; /issue-forge resume 16 continues it in any session.')
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.commits.length === 1, "the second drive's commit")
+    release()
+    for (let i = 0; i < 20; i++) await w.clock.advance(5)
+    expect(w.commits).toHaveLength(1)
   })
 
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
