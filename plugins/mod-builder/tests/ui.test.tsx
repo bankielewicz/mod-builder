@@ -1060,3 +1060,142 @@ describe('modsDir not set: each mods folder keeps its own results', () => {
     expect(await shows($, /next: Test/)).toBe(true)
   })
 })
+
+describe('modsDir not set: what the pane does acts on the folder it shows (PR #57 review)', () => {
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const marketplaceOf = (folder: string, plugins: object[]): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins }) })
+  const ALPHA_ENTRY = { name: 'alpha', source: './mods/alpha', version: '0.1.0' }
+  const alphaIn = (folder: string): Disk => ({
+    ...modFiles('alpha', `${folder}/mods`),
+    [`${folder}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    ...marketplaceOf(folder, [ALPHA_ENTRY]),
+  })
+  const passing = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+
+  async function cdTo($: Engine, w: ReturnType<typeof world>, folder: string) {
+    w.seen.cwd = `${folder}/plugins/x`
+    await command($, 'alpha')
+    await w.clock.advance(10)
+  }
+
+  async function press($: Engine, w: ReturnType<typeof world>, ...keys: string[]) {
+    const ui = await mountPane($)
+    for (const key of keys) {
+      await ui.press({ key })
+      await w.clock.advance(500)
+    }
+    await ui.unmount()
+  }
+
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('V after a /cd with no scan since runs the folder the pane shows, and stamps the result from that folder', async ($, on) => {
+    const one = alphaIn(ONE)
+    const mtime: Mtimes = { ms: 1000, byPath: Object.fromEntries(Object.keys(one).map(path => [path, 2000])) }
+    const w = world(on, { ...one, ...alphaIn(TWO) }, passing, true, undefined, mtime)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.unmount()
+    expect(w.seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${ONE}/mods/alpha`]])
+    await cdTo($, w, ONE)
+    expect(await shows($, /next: Test/)).toBe(true)
+  })
+
+  test('the end-of-turn re-run checks the folder it judged, though a /cd lands during its first run', async ($, on) => {
+    const mtime: Mtimes = { ms: 1000 }
+    const box: { w?: ReturnType<typeof world>; moveOnRun: boolean } = { moveOnRun: false }
+    // Awaited by every process.run: the first one after arming moves the session to TWO.
+    const moving = {
+      then(resolve: () => void) {
+        if (box.moveOnRun && box.w) {
+          box.moveOnRun = false
+          box.w.seen.cwd = `${TWO}/plugins/x`
+        }
+        resolve()
+      },
+    } as unknown as Promise<void>
+    const w = world(on, { ...alphaIn(ONE), ...modFiles('beta', `${ONE}/mods`), ...alphaIn(TWO) }, passing, true, moving, mtime)
+    box.w = w
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    for (const name of ['alpha', 'beta']) {
+      await command($, name)
+      await w.clock.advance(10)
+      await press($, w, 'validate')
+    }
+    expect(w.seen.argv.map(argv => argv[4])).toEqual([`${ONE}/mods/alpha`, `${ONE}/mods/beta`])
+    mtime.ms = 5000
+    box.moveOnRun = true
+    await $.turn.complete({ answer: 'edited' } as never)
+    await w.clock.advance(1000)
+    expect(w.seen.argv.slice(2).map(argv => argv[4])).toEqual([`${ONE}/mods/alpha`, `${ONE}/mods/beta`])
+  })
+
+  test('a lab_report after a /cd with no scan since records the edit in the folder the session is in', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'validate', 'test')
+    await cdTo($, w, ONE)
+    await press($, w, 'validate', 'test')
+    await w.clock.advance(5000)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'passed' } as never)
+    await w.clock.advance(10)
+    expect(await shows($, /^edit · update Spec for this change$/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a README open in one folder closes when a scan moves to another', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    const isReadmeOpen = async () => {
+      const ui = await mountPane($)
+      const back = await ui.find({ key: 'back' })
+      await ui.unmount()
+      return back !== undefined
+    }
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'readme')
+    expect(await isReadmeOpen()).toBe(true)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await $.turn.complete({ answer: 'moved' } as never)
+    await w.clock.advance(1000)
+    expect(await isReadmeOpen()).toBe(false)
+  })
+
+  test('"ready to share" stays with the folder a mod turned green in: a same-named mod already green elsewhere reads clean', async ($, on) => {
+    const disk = { ...alphaIn(ONE), ...alphaIn(TWO), ...marketplaceOf(TWO, []) }
+    const w = world(on, disk, passing)
+    // In TWO, alpha passes Validate and Test but isn't listed for sharing yet, so it isn't green.
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'validate', 'test')
+    expect(await shows($, /^ready to share$/)).toBe(false)
+    Object.assign(disk, marketplaceOf(TWO, [ALPHA_ENTRY]))
+    await cdTo($, w, ONE)
+    await press($, w, 'validate', 'test')
+    expect(await shows($, /^ready to share$/)).toBe(true)
+    // Back in TWO, alpha is now green from a quiet scan, never announced there.
+    await cdTo($, w, TWO)
+    expect(await shows($, /next: /)).toBe(false)
+    expect(await shows($, /^ready to share$/)).toBe(false)
+  })
+})
