@@ -22,9 +22,10 @@ const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
 const GENERATIONS_KEY = 'modlab:generations'
 const FRAME_MS = 250
-/** How long a check may run, in minutes: the default, and the most `$.process.run` allows. */
+/** A check's time limit in minutes (`testTimeoutMinutes`): the default, and the most `$.process.run` allows. */
 const RUN_MINUTES = 3
 const RUN_MINUTES_MAX = 10
+/** How often a streamed Test looks at its time limit. */
 const RUN_WATCH_MS = 5000
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
@@ -409,6 +410,7 @@ class RunTimeout extends Error {}
 /** The time limit of a check, from `testTimeoutMinutes`. */
 const runLimitMs = (): number => runMinutes * 60_000
 
+/** The error a check ends with at its time limit: "timed out after 3 minutes". */
 const timeoutOf = (): RunTimeout => new RunTimeout(`timed out after ${runMinutes} minute${runMinutes === 1 ? '' : 's'}`)
 
 async function runToEnd($: Engine, argv: readonly string[], dir: string): Promise<{ exitCode: number; output: string }> {
@@ -473,6 +475,22 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   }
 }
 
+/** Runs a check and judges it. One that throws fails: as timed out at its time limit, else as "could not run". */
+async function resultOfRun($: Engine, entry: Run, dir: string, stamp: number): Promise<Lab.RunResult> {
+  const { mod, kind, startedAt } = entry
+  try {
+    const { exitCode, output } = await execute($, entry, dir)
+    const endedAt = await $.clock.now()
+    return Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
+  } catch (error) {
+    const endedAt = await $.clock.now()
+    const summary = error instanceof RunTimeout ? error.message : 'could not run'
+    const result: Lab.RunResult = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary, errors: [String(error).slice(0, 200)] }
+    logCaught($, 'run', error, 'normal', { mod, kind })
+    return result
+  }
+}
+
 async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   // A row older than the time limit is an orphan (its run died with a reload), so it blocks nothing.
   const now = await $.clock.now()
@@ -501,17 +519,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
 
     const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
     const codeSig = factsByMod.get(mod)?.codeSig
-    let result: Lab.RunResult
-    try {
-      const { exitCode, output } = await execute($, entry, dir)
-      const endedAt = await $.clock.now()
-      result = Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
-    } catch (error) {
-      const endedAt = await $.clock.now()
-      const summary = error instanceof RunTimeout ? error.message : 'could not run'
-      result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary, errors: [String(error).slice(0, 200)] }
-      logCaught($, 'run', error, 'normal', { mod, kind })
-    }
+    let result = await resultOfRun($, entry, dir, stamp)
     if (codeSig !== undefined) result = { ...result, codeSig }
     logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
     const results = await resultsOf($)
