@@ -261,9 +261,10 @@ function isTakenOver(stored: Run): boolean {
   return !!stored.driver && stored.driver.session !== sessionId
 }
 
-async function saveRun($: EngineInterface, run: Run): Promise<void> {
+/** Resolves to the run written, or null when the write was dropped: the drive then has nothing left to drive. */
+async function saveRun($: EngineInterface, run: Run): Promise<Run | null> {
   // A stop wins every race, a write lands only on the same run, and never on one another session took over (Change 0.3.0).
-  await updateRun($, keyOf(run), stored => (!stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) ? null : run))
+  return updateRun($, keyOf(run), stored => (!stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) ? null : run))
 }
 
 /**
@@ -809,11 +810,12 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   // The PR body says what was true when it was pushed: the merge is checked again here.
   const merge = await mergeCheck($, run)
   await $.fs.write(body, prBody({ ...run, merge }))
-  stillDriving(run)
+  // Nothing irreversible waits for the 5 s watch: a stop or take-over from another session is read here (PR #51 review).
+  await stillOwned($, run)
   await setActivity($, `git push origin ${run.branch}`)
   const pushed = await git($, workOf(run), ['push', 'origin', run.gatedHead ? `${run.gatedHead}:refs/heads/${run.branch}` : run.branch])
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
-  stillDriving(run)
+  await stillOwned($, run)
   await setActivity($, 'gh pr create')
   const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
@@ -922,7 +924,7 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, key)
         if (!now || now.id !== runId || now.step !== 'ready' || !isMine()) return
-        await saveRun($, advance(now, { type: 'publish' }, await $.clock.now()))
+        if (!(await saveRun($, advance(now, { type: 'publish' }, await $.clock.now())))) return
         continue
       }
       if (!isWorking(run.step)) return
@@ -935,7 +937,8 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
       if (!ev || !isMine()) return
       const latest = (await loadRun($, key)) ?? run
       if (latest.id !== runId || latest.step === 'stopped') return
-      await saveRun($, advance(latest, ev, await $.clock.now()))
+      // A write dropped (stopped, taken over or replaced elsewhere) ends the drive, or it would run the step again.
+      if (!(await saveRun($, advance(latest, ev, await $.clock.now())))) return
     }
   } finally {
     ticker.cancel()
