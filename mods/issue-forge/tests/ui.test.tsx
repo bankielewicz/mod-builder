@@ -1642,6 +1642,13 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.argv.some(a => (a[0] === 'gh' && a[1] === 'issue') || (a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch')))).toBe(false)
   })
 
+  test("a URL of another repository's issue is refused though this checkout has a run with the same number (PR #68 review)", async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', blocked: { at: 'green', reason: 'r', next: 'n' }, used: { red: 1, green: 1, refactor: 0 } })
+    engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'https://github.com/x/y/issues/16')).text).toBe("x/y#16 is in another repository: this checkout's GitHub repository is o/r. Start Claude Code in a clone of x/y.")
+  })
+
   test('a URL on another host is another repository, named with its host', async ($, on) => {
     const w = engine(on)
     await start($)
