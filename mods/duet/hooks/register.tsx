@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, consentRefusal, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -460,10 +460,8 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     // spawn could not start: try a one-shot run (also the path tests exercise)
     const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
     // The cap cuts a longer timeoutMinutes: say so on the row while it runs.
-    if (cap < options.timeoutMs) {
-      const note = `fallback: stops at ${Math.round(cap / 60_000)}m (timeoutMinutes ${Math.round(options.timeoutMs / 60_000)})`
-      await patchTask($, id, { detail: note }).catch(() => undefined)
-    }
+    const note = fallbackNote(options.timeoutMs)
+    if (note) await patchTask($, id, { detail: note }).catch(() => undefined)
     const fallbackAt = Date.now()
     try {
       const r = await $.process.run(launch.argv, { env: launch.env, ...(launch.input !== undefined ? { stdin: launch.input } : {}), timeoutMs: cap })

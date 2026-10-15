@@ -1114,6 +1114,12 @@ export function fallbackFailure(message: string, elapsedMs: number, capMs: numbe
   return `codex could not start: ${message.split('\n')[0]}`
 }
 
+/** A running row's note when the fallback's ceiling cuts a longer timeoutMinutes; '' when it changes nothing. */
+export function fallbackNote(timeoutMs: number): string {
+  if (timeoutMs <= FALLBACK_MAX_MS) return ''
+  return `fallback: stops at ${Math.round(FALLBACK_MAX_MS / 60_000)}m (timeoutMinutes ${Math.round(timeoutMs / 60_000)})`
+}
+
 /** Routed Codex agent runs still going (what the status line counts; reviews excluded). */
 export function liveCount(tasks: Task[]): number {
   return tasks.filter(t => t.provider === 'codex' && t.kind === 'agent' && t.status === 'running').length

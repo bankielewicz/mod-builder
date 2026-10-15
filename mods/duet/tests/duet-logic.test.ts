@@ -983,3 +983,16 @@ describe('issue 6: the fallback cap is documented in the config help and shown o
     expect(logic.subText(row({ detail: NOTE }), 20)).toBe(`${NOTE.slice(0, 19)}…`)
   })
 })
+
+describe('issue 6 review: the fallback note appears only when the cap cuts timeoutMinutes', () => {
+  const note = (timeoutMs: number) => ((logic as Record<string, unknown>).fallbackNote as ((t: number) => string) | undefined)?.(timeoutMs)
+
+  test('timeoutMinutes 20 gets the note the running row shows', () => {
+    expect(note(20 * 60_000)).toBe('fallback: stops at 10m (timeoutMinutes 20)')
+  })
+
+  test('timeoutMinutes 10 or less gets no note, since the cap changes nothing', () => {
+    expect(note(10 * 60_000)).toBe('')
+    expect(note(5 * 60_000)).toBe('')
+  })
+})
