@@ -955,7 +955,8 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
       if (!isWorking(run.step)) return
       let ev: RunEvent | null
       try {
-        ev = await doStep($, { ...run, driveGen: me.gen })
+        const stamped: Stamped = { ...run, driveGen: me.gen }
+        ev = await doStep($, stamped)
       } catch (err) {
         ev = block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
       }
