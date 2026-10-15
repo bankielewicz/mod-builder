@@ -1535,10 +1535,16 @@ export function commonDirOf(top: string, out: string): string | null {
   return normalizePath(isAbsolutePath(dir) ? dir : `${top}/${dir}`)
 }
 
+const keysUnder = (keys: readonly string[], prefix: string): string[] => keys.filter(key => key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length)))
+
 /** The store keys of this repository's runs. */
 export function repoRunKeys(keys: readonly string[], repo: string): string[] {
-  const prefix = `${RUN_PREFIX}${repo}#`
-  return keys.filter(key => key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length)))
+  return keysUnder(keys, `${RUN_PREFIX}${repo}#`)
+}
+
+/** Every agents list of this repository, a pruned run's included: its agents stay refused (PR #51 review). */
+export function repoAgentsKeys(keys: readonly string[], repo: string): string[] {
+  return keysUnder(keys, `${AGENTS_PREFIX}${repo}#`)
 }
 
 export type LegacyEntry = { key: string; root: string; run: Run }
@@ -1732,12 +1738,9 @@ export function sharedLcovBlock(p: Profile, others: readonly Run[]): { reason: s
   return running ? { reason: `lcovPath ${p.lcovPath} is shared by every run and #${running.issue} is running`, next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov' } : null
 }
 
+/** A run listed for pruning is deleted only if it is still the finished run under its key: another session may have restarted the issue (Codex 4278707561). */
 export function isPrunable(listed: Run, stored: Run | null): boolean {
-  return listed !== null && stored !== null
-}
-
-export function repoAgentsKeys(keys: readonly string[], repo: string): string[] {
-  return repo ? [] : [...keys]
+  return !!stored && stored.id === listed.id && !isActive(stored)
 }
 
 /** Finished runs beyond the newest `keep`, oldest first; active runs are never pruned. */

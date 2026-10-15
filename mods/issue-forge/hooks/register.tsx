@@ -43,6 +43,7 @@ import {
   isDrivenElsewhere,
   isLockError,
   isOwnHandback,
+  isPrunable,
   isWorking,
   isWorktreeRun,
   keepText,
@@ -74,6 +75,7 @@ import {
   publishQuestion,
   readdWorktreeCommand,
   releasesOnEnd,
+  repoAgentsKeys,
   repoRunKeys,
   routedRedBlock,
   runKey,
@@ -1100,19 +1102,28 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number): Pro
   }
 }
 
+/**
+ * Deletes finished runs beyond the repository's newest 20, once a new run is claimed. Each is read again first, and
+ * deleted only if it is still the finished run listed (Codex 4278707561); the window between that read and the
+ * delete is narrow, not closed, as the store has no compare-and-set. Agents lists are kept (PR #51 review).
+ */
+async function prune($: EngineInterface, repo: string): Promise<void> {
+  const entries = await listRuns($, repo)
+  for (const key of pruneKeys(entries)) {
+    const listed = entries.find(e => e.key === key)?.run
+    if (listed && isPrunable(listed, await loadRun($, key))) await $.store.delete(key)
+  }
+}
+
 /** Writes the new run, with this session as its driver, only if its key is still free; then drives it. */
 async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktree: boolean): Promise<string> {
   const now = await $.clock.now()
-  for (const key of pruneKeys(await listRuns($, at.repo))) {
-    await $.store.delete(key)
-    const parsed = parseRunKey(key)
-    if (parsed?.kind === 'run') await $.store.delete(agentsKey(parsed.repo, parsed.issue))
-  }
   const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
   const run = advance(fresh, { type: 'drive', session: sessionId }, now)
   await update($, focusAtom, () => issue)
   const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
+  await prune($, at.repo)
   await update($, demoAtom, () => null)
   void openPane($).catch(() => undefined)
   startDrive($, claimed)
@@ -1357,7 +1368,7 @@ async function restore($: EngineInterface): Promise<void> {
   await migrate($, at)
   const runs = await runsOf($, at.repo)
   const stored: string[] = []
-  for (const run of runs) stored.push(...(((await $.store.get(agentsKey(at.repo, run.issue))) as string[] | undefined) ?? []))
+  for (const key of repoAgentsKeys(await $.store.keys(), at.repo)) stored.push(...(((await $.store.get(key)) as string[] | undefined) ?? []))
   knownRefs = new Set([...stored, ...runs.flatMap(refsOf)])
   const pick = pickRun(runs, { issue: null, focus: await read($, focusAtom), root: at.root, needActive: false })
   await setFocus($, pick.kind === 'run' ? pick.run : null)
