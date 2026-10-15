@@ -110,6 +110,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from '../hooks/issue-forge-logic'
+import * as logic from '../hooks/issue-forge-logic'
 import type { CommandResult, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
 import { DIFF_REAL, LCOV_REAL, STASH_LIST_REAL } from './fixtures/real'
 
@@ -490,7 +491,7 @@ const failG = (gate: 'R' | 'G' | 'F', extra = {}) => ({ gate, passed: false, che
 describe('state (§7.4)', () => {
   test('the happy path walks every step to done', () => {
     let r = run()
-    r = advance(r, { type: 'preflighted', title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile() }, 1)
+    r = advance(r, { type: 'preflighted', title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), repo: 'github.com/o/r' }, 1)
     expect(r.step).toBe('baseline')
     expect(advance(r, { type: 'baselined', baseline: { lines: 90, branches: 80 }, mergeBase: 'm2' }, 2).mergeBase).toBe('m2')
     r = advance(r, { type: 'baselined', baseline: { lines: 90, branches: 80 } }, 2)
@@ -928,7 +929,7 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
   })
 
   test("a run's folder: preflight records it, the prompt names it, a stored run without one works in its root", () => {
-    const r = advance(run(), { type: 'preflighted', title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), workRoot: WT }, 1)
+    const r = advance(run(), { type: 'preflighted', title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), workRoot: WT, repo: 'github.com/o/r' }, 1)
     expect(r.workRoot).toBe(WT)
     expect(workOf(r)).toBe(WT)
     expect(workOf(run())).toBe(ROOT)
@@ -1371,7 +1372,7 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(parseCommand('handoff')).toEqual({ kind: 'handoff' })
     expect(parseCommand('Handoff 44')).toEqual({ kind: 'handoff', issue: 44 })
     expect(parseCommand('stop x')).toEqual({ kind: 'unknown', text: 'stop x' })
-    expect(USAGE).toBe('/issue-forge <issue number> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo')
+    expect(USAGE).toBe('/issue-forge <issue number or URL> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo')
   })
 
   test("isLockError: git's lock refusals, not other failures", () => {
@@ -1451,5 +1452,145 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(viewOf(d.run, d.isDriving, d.me)).toBe('elsewhere')
     expect(demoRun('running', 0).others.map(o => o.line)).toEqual(['#44 blocked at gateG', '#52 refactor (another session)'])
     expect(demoRun('empty', 0).others).toEqual([])
+  })
+})
+
+// Issue #25: an issue URL, and each run pinned to one GitHub repository. A run's pinned repository is `Run.ghRepo`
+// (`host/owner/repo`): `Run.repo` is already git's common folder, which keys the store (Change 0.3.0).
+describe('an issue URL and the repository a run is pinned to (#25)', () => {
+  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  const start = (issue: number, repo: string) => ({ kind: 'start', issue, repo })
+
+  test('parseCommand: an https issue URL starts a run pinned to its host/owner/repo (host lowercased, the rest kept); other shapes stay unknown', () => {
+    for (const tail of ['', '/', '?', '?x=1', '#issuecomment-1']) expect(parseCommand(`https://github.com/o/r/issues/2${tail}`)).toEqual(start(2, 'github.com/o/r'))
+    expect(parseCommand('https://GitHub.com/O/R/issues/2')).toEqual(start(2, 'github.com/O/R'))
+    expect(parseCommand('https://ghe.example.com/O/R/issues/7')).toEqual(start(7, 'ghe.example.com/O/R'))
+    expect(parseCommand('https://github.com/octo_acme/r/issues/3')).toEqual(start(3, 'github.com/octo_acme/r'))
+    expect(parseCommand('https://github.com/o/r.x_y-z/issues/12')).toEqual(start(12, 'github.com/o/r.x_y-z'))
+    // Accepted here; the repository check at start refuses them, as neither names the repository gh resolves.
+    expect(parseCommand('https://www.github.com/o/r/issues/2')).toEqual(start(2, 'www.github.com/o/r'))
+    expect(parseCommand('https://github.com/o/r.git/issues/2')).toEqual(start(2, 'github.com/o/r.git'))
+    // Only the first word is read, as for a number.
+    expect(parseCommand('  https://github.com/o/r/issues/2  extra ')).toEqual(start(2, 'github.com/o/r'))
+    // Every other shape stays unknown, and a bare number or #N carries no repository.
+    for (const url of [
+      'http://github.com/o/r/issues/2',
+      'HTTPS://github.com/o/r/issues/2',
+      'https://github.com/o/r/pull/2',
+      'https://github.com/o/r/issues/',
+      'https://github.com/o/r/issues/2x',
+      'https://github.com/o/r/issues/2/comments',
+      'https://github.com:443/o/r/issues/2',
+      'https://user@github.com/o/r/issues/2',
+    ]) {
+      expect(parseCommand(url)).toEqual({ kind: 'unknown', text: url })
+    }
+    expect(parseCommand('#16')).toEqual({ kind: 'start', issue: 16 })
+    expect('repo' in parseCommand('16')).toBe(false)
+    expect('repo' in parseCommand('#16')).toBe(false)
+    // A URL is an issue, not an argument of the commands that take an issue number.
+    expect(parseCommand('stop https://github.com/o/r/issues/2')).toEqual({ kind: 'unknown', text: 'stop https://github.com/o/r/issues/2' })
+  })
+
+  test('repoOfView: host from the url (lowercased), owner and repo from nameWithOwner; anything else is null', () => {
+    const repoOfView = helper<[string], string | null>('repoOfView')
+    expect(repoOfView('{"nameWithOwner":"o/r","url":"https://github.com/o/r"}')).toBe('github.com/o/r')
+    expect(repoOfView('{"nameWithOwner":"Org/Repo","url":"https://GHE.Example.com/Org/Repo"}')).toBe('ghe.example.com/Org/Repo')
+    expect(repoOfView('{"nameWithOwner":"ohmyzsh/ohmyzsh","url":"https://github.com/ohmyzsh/ohmyzsh"}\n')).toBe('github.com/ohmyzsh/ohmyzsh')
+    expect(repoOfView('not json')).toBeNull()
+    expect(repoOfView('')).toBeNull()
+    expect(repoOfView('{}')).toBeNull()
+    expect(repoOfView('{"nameWithOwner":"o/r"}')).toBeNull()
+    expect(repoOfView('{"url":"https://github.com/o/r"}')).toBeNull()
+  })
+
+  test('repoOfRemoteUrl: https, ssh:// and scp-like remotes name host/owner/repo; git://, file:// and paths are null', () => {
+    const repoOfRemoteUrl = helper<[string], string | null>('repoOfRemoteUrl')
+    for (const url of [
+      'https://github.com/O/R.git',
+      'https://github.com/O/R',
+      'https://github.com/O/R/',
+      'https://GitHub.com/O/R.git',
+      'https://x-access-token:abc@github.com/O/R.git',
+      'https://github.com:8443/O/R.git',
+      'ssh://git@github.com:22/O/R.git',
+      'ssh://git@github.com/O/R',
+      'git@github.com:O/R.git',
+      'github.com:O/R.git',
+    ]) {
+      expect(repoOfRemoteUrl(url)).toBe('github.com/O/R')
+    }
+    expect(repoOfRemoteUrl('git@github-work:o/r.git')).toBe('github-work/o/r')
+    expect(repoOfRemoteUrl('https://ghe.example.com/team/tool.git')).toBe('ghe.example.com/team/tool')
+    for (const url of ['git://github.com/O/R.git', 'file:///x', '/local/path', '../relative/path', '']) expect(repoOfRemoteUrl(url)).toBeNull()
+  })
+
+  test('isSameRepo compares host, owner and repo ignoring case; isSameOwnerRepo ignores the host as well; null never matches', () => {
+    const isSameRepo = helper<[string | null, string | null], boolean>('isSameRepo')
+    const isSameOwnerRepo = helper<[string | null, string | null], boolean>('isSameOwnerRepo')
+    expect(isSameRepo('github.com/O/R', 'github.com/o/r')).toBe(true)
+    expect(isSameRepo('github.com/o/r', 'github.com/o/r')).toBe(true)
+    expect(isSameRepo('github.com/o/r', 'github.com/x/r')).toBe(false)
+    expect(isSameRepo('github.com/o/r', 'github.com/o/x')).toBe(false)
+    expect(isSameRepo('github.com/o/r', 'ghe.example.com/o/r')).toBe(false)
+    expect(isSameRepo(null, 'github.com/o/r')).toBe(false)
+    expect(isSameRepo('github.com/o/r', null)).toBe(false)
+    expect(isSameRepo(null, null)).toBe(false)
+    expect(isSameOwnerRepo('github.com/O/R', 'github.com/o/r')).toBe(true)
+    expect(isSameOwnerRepo('github-work/o/r', 'github.com/o/r')).toBe(true)
+    expect(isSameOwnerRepo('github.com/o/r', 'github.com/x/r')).toBe(false)
+    expect(isSameOwnerRepo('github.com/o/r', 'github.com/o/x')).toBe(false)
+    expect(isSameOwnerRepo(null, 'github.com/o/r')).toBe(false)
+    expect(isSameOwnerRepo('github.com/o/r', null)).toBe(false)
+  })
+
+  test('isPullUrl is true for a /<owner>/<repo>/pull/<N> path on any host, and for no issue URL', () => {
+    const isPullUrl = helper<[string], boolean>('isPullUrl')
+    expect(isPullUrl('https://github.com/o/r/pull/16')).toBe(true)
+    expect(isPullUrl('https://ghe.example.com/o/r/pull/3')).toBe(true)
+    expect(isPullUrl('https://github.com/o/r/issues/16')).toBe(false)
+    expect(isPullUrl('https://github.com/o/r/pull/16/files')).toBe(false)
+    expect(isPullUrl('https://github.com/o/r/pull/x')).toBe(false)
+    expect(isPullUrl('')).toBe(false)
+  })
+
+  test('repoLabel drops the host for github.com and keeps it for any other', () => {
+    const repoLabel = helper<[string], string>('repoLabel')
+    expect(repoLabel('github.com/o/r')).toBe('o/r')
+    expect(repoLabel('github.com/O/R')).toBe('O/R')
+    expect(repoLabel('ghe.example.com/o/r')).toBe('ghe.example.com/o/r')
+  })
+
+  test('a run keeps the repository it was started or preflighted for; without one it has none', () => {
+    const pinned = newRun('16-1', ROOT, 16, 1000, 'github.com/o/r') as Run & { ghRepo?: string }
+    expect(pinned.ghRepo).toBe('github.com/o/r')
+    expect(pinned.repo).toBeUndefined()
+    expect('ghRepo' in newRun('16-1', ROOT, 16, 1000)).toBe(false)
+    const event = { type: 'preflighted' as const, title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), repo: 'github.com/o/r' }
+    const r = advance(run(), event, 1) as Run & { ghRepo?: string }
+    expect(r.ghRepo).toBe('github.com/o/r')
+    // git's common folder is a different thing and stays where it is.
+    expect(advance(run({ repo: '/repo/.git' }), event, 1).repo).toBe('/repo/.git')
+  })
+
+  test('statusText names the repository on its head line, and publishQuestion on the question, when the run has one', () => {
+    const pinned = (over: Partial<Run> = {}) => run({ ghRepo: 'github.com/o/r', step: 'ready', branch: 'issue-16-fix-it', base: 'main', ...over } as Partial<Run>)
+    expect(statusText(pinned(), false, 0).split('\n')[0]).toBe('o/r#16 Fix it · issue-16-fix-it → main')
+    expect(statusText(pinned({ ghRepo: 'ghe.example.com/o/r' } as Partial<Run>), false, 0).split('\n')[0]).toBe('ghe.example.com/o/r#16 Fix it · issue-16-fix-it → main')
+    expect(statusText(run({ step: 'ready', branch: 'issue-16-fix-it', base: 'main' }), false, 0).split('\n')[0]).toBe('#16 Fix it · issue-16-fix-it → main')
+    // The ready line of the status text stays as it was.
+    expect(statusText(pinned(), false, 0)).toContain('ready: /issue-forge publish pushes issue-16-fix-it and opens a pull request against main')
+    expect(publishQuestion(pinned())).toBe('Push issue-16-fix-it and open a pull request on o/r against main?')
+    expect(publishQuestion(pinned({ merge: { isClean: false, files: ['a.json'] } }))).toBe('Push issue-16-fix-it and open a pull request on o/r against main? It conflicts with origin/main in: a.json.')
+    expect(publishQuestion(run({ step: 'ready', branch: 'issue-16-fix-it', base: 'main' }))).toBe('Push issue-16-fix-it and open a pull request against main?')
+  })
+
+  test('the demo run is pinned to bankielewicz/mod-builder', () => {
+    expect((demoRun('ready', 0).run as Run & { ghRepo?: string }).ghRepo).toBe('github.com/bankielewicz/mod-builder')
   })
 })
