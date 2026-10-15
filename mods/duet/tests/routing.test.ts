@@ -15,11 +15,11 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
-type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; clock: any }
+type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number } = {}): Seen {
-  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, clock: null }
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; askHold?: Promise<void> } = {}): Seen {
+  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
   on('prompt.submit', ($: any, e: any) => (seen.submitted.push(e.text), { text: e.text }))
@@ -86,7 +86,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     return { value: Object.keys(seen.files).some(p => p === path || p.startsWith(`${path}/`)) }
   })
   on('ui.status', () => ({ value: undefined }))
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', ($: any, e: any) => (seen.toasts.push(e.text), { value: undefined }))
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     // `--git-dir --git-common-dir`: a plain repository's .git sits in the session folder unless `gitDirs` says otherwise.
@@ -101,10 +101,13 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     if (o.codex === 'fail') return { value: { exitCode: 1, stdout: '', stderr: 'Error: not logged in', isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: OK_JSONL, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
+  // `askDeny`: the question can't be asked (no UI, as under `claude -p`), so `$.ui.ask` rejects. `askHold`: the dialog stays
+  // open until that promise settles.
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     seen.asked++
     const q = e.questions[0].question
-    return { result: { questions: e.questions, answers: { [q]: o.answer ?? 'Yes, send to Codex' } } }
+    const answer = o.askDeny ? { deny: o.askDeny } : { result: { questions: e.questions, answers: { [q]: o.answer ?? 'Yes, send to Codex' } } }
+    return o.askHold ? o.askHold.then(() => answer) : answer
   })
   on('tool.call', { tool: 'Agent' }, () => {
     seen.beneath++
@@ -384,6 +387,67 @@ describe('review admission', () => {
     await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv.length).toBe(1)
+    expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+  })
+})
+
+describe('issue 5: /duet review answers for what happened', () => {
+  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+  test('at the concurrency limit the answer says not started and names the limit; Codex never runs and the refusal toast stays', { options: { maxConcurrent: 0, codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    const { text } = await review($)
+    await seen.clock.advance(1000)
+    expect(text).toMatch(/^Codex review not started: limit: 0 Codex runs already running \(maxConcurrent 0\)/)
+    expect(text).not.toMatch(/review started/)
+    expect(seen.argv).toEqual([])
+    expect(seen.toasts).toEqual(['d1 review refused: limit: 0 Codex runs already running (maxConcurrent 0)'])
+  })
+
+  test('a declined consent answers not started with the decline reason; Codex never runs and the refusal toast stays', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const seen = engine(on, { answer: 'No' })
+    await start($)
+    const { text } = await review($)
+    await seen.clock.advance(1000)
+    expect(text).toMatch(/^Codex review not started: you declined sending this repo to Codex this session/)
+    expect(text).not.toMatch(/review started/)
+    expect(seen.asked).toBe(1)
+    expect(seen.argv).toEqual([])
+    expect(seen.toasts).toEqual(['d1 review refused: you declined sending this repo to Codex this session'])
+  })
+
+  test('with nobody to ask (claude -p) the answer says not started and why; Codex never runs and the refusal toast stays', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const seen = engine(on, { askDeny: 'no UI' })
+    await start($)
+    const { text } = await review($)
+    await seen.clock.advance(1000)
+    expect(text).toMatch(/^Codex review not started: nobody could be asked to allow sending this repo to Codex \(set duet codexConsent to allow for headless runs\)/)
+    expect(text).not.toMatch(/review started/)
+    expect(seen.asked).toBe(1)
+    expect(seen.argv).toEqual([])
+    expect(seen.toasts).toHaveLength(1)
+    expect(seen.toasts[0]).toMatch(/^d1 review refused: nobody could be asked to allow sending this repo to Codex/)
+  })
+
+  test('the command answers only after the consent dialog does: it waits while the dialog is open, then says started and Codex runs', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => (release = resolve))
+    const seen = engine(on, { askHold: held })
+    await start($)
+    let answered = false
+    const running = review($).then((r: any) => ((answered = true), r))
+    try {
+      await seen.clock.advance(1000)
+      expect(seen.asked).toBe(1)
+      expect(answered).toBe(false)
+    } finally {
+      release()
+    }
+    const { text } = await running
+    expect(text).toMatch(/^Codex review started \(read-only\)/)
+    await seen.clock.advance(1000)
+    expect(seen.argv).toHaveLength(1)
     expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
   })
 })
