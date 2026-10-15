@@ -881,14 +881,14 @@ describe('a mod reported before its folder exists (#19)', () => {
 
   test('a report that lands while a tick retires the last one keeps the clock, so its placeholder still expires (Codex P2, PR #80 round 2)', { ...OPTIONS, timeoutMs: 20_000 }, async ($, on) => {
     const { clock } = world(on, modFiles('git-branch'))
-    // Once armed, the first read of the rows right after a read of the reports (the tick's expiry check)
-    // waits for `until`: a report sent meanwhile lands after the tick took its reports and before it stops the clock.
+    // Once armed, the first read of the rows right after a read of the builds (the tick's expiry check)
+    // waits for `until`: a report sent meanwhile lands after the tick took its builds and before it stops the clock.
     const hold = { isArmed: false, isReached: false, until: Promise.resolve() }
     let lastKey = ''
     on('state.get', async (_, e, next) => {
       const { plugin, key } = e as unknown as { plugin: string; key: string }
       if (plugin === 'mod-builder') {
-        if (hold.isArmed && key === 'judged' && lastKey === 'reported') {
+        if (hold.isArmed && key === 'judged' && lastKey === 'building') {
           hold.isArmed = false
           hold.isReached = true
           await hold.until
@@ -930,16 +930,17 @@ describe('a mod reported before its folder exists (#19)', () => {
   test('a live running report a fresh module finds at session start keeps a clock, so its placeholder still expires (Codex P2, PR #80 round 3)', { ...OPTIONS, timeoutMs: 20_000 }, async ($, on) => {
     const { clock } = world(on, modFiles('git-branch'))
     // As after a reload: state kept a running report from the module before, and this module has no clock.
-    const restored = { 'new-mod': { stage: 'Spec', status: 'running', since: Date.parse('2026-10-12T10:00:00Z'), dir: MODS } }
-    let isWritten = false
+    const report = { stage: 'Spec', status: 'running', since: Date.parse('2026-10-12T10:00:00Z'), dir: MODS }
+    const restored: Record<string, unknown> = { reported: { 'new-mod': report }, building: { [MODS]: { 'new-mod': report } } }
+    const written = new Set<string>()
     on('state.set', (_, e, next) => {
       const { plugin, key } = e as unknown as { plugin: string; key: string }
-      if (plugin === 'mod-builder' && key === 'reported') isWritten = true
+      if (plugin === 'mod-builder') written.add(key)
       return next(e)
     })
     on('state.get', async (_, e, next) => {
       const { plugin, key } = e as unknown as { plugin: string; key: string }
-      if (plugin === 'mod-builder' && key === 'reported' && !isWritten) return { value: { version: 1, value: restored } } as never
+      if (plugin === 'mod-builder' && key in restored && !written.has(key)) return { value: { version: 1, value: restored[key] } } as never
       return next(e)
     })
     await start($)
