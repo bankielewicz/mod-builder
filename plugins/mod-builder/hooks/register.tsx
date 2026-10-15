@@ -513,8 +513,11 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   }
   if (codeSig !== undefined) result = { ...result, codeSig }
   logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
-  await updateStore($, RESULTS_KEY, (stored: StoredResults) => ({ ...stored, [mod]: { ...stored[mod], [kind]: result } }))
-  logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind })
+  // A refused write loses this result, but the run still ends and says how it went.
+  await updateStore($, RESULTS_KEY, (stored: StoredResults) => ({ ...stored, [mod]: { ...stored[mod], [kind]: result } })).then(
+    () => logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind }),
+    (error: unknown) => logCaught($, 'store.set', error, 'normal', { key: RESULTS_KEY, mod, kind }),
+  )
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
   $.ui.toast(Lab.toastOfRun(mod, result))
   await scan($, true)
