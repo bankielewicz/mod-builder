@@ -450,11 +450,12 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   const startedAt = Date.now()
   try {
     const stream = $.process.spawn({ argv, cwd: dir })
-    let elapsed = 0
+    // The wall clock, not a count of ticks: a late or merged tick must not stretch the limit.
     timer = $.clock.every(RUN_WATCH_MS, () => {
-      elapsed += RUN_WATCH_MS
-      if (elapsed < runLimitMs()) return
+      if (isTimedOut || !Lab.isOverLimit(Date.now() - startedAt, runLimitMs())) return
       isTimedOut = true
+      // A stream closed before its end rejects its result (claude-code.d.ts, HookStream); nothing reads it then.
+      stream.result.catch(() => undefined)
       void stream.return?.(undefined as never)?.catch?.(() => undefined)
     })
     for await (const piece of stream) {
