@@ -925,8 +925,8 @@ export function keptPinOf(pin: Pin | null, root: string | null): Pin | null {
 }
 
 /**
- * The folder Mod Lab watches (#92): the pin `keptPinOf` keeps, else `modsDirFor` walking from
- * `walkStartOf`. `pin` is the pin to keep: null when there was none or a changed root dropped it.
+ * The folder Mod Lab watches (#92): a set `modsDir`, else the pin `keptPinOf` keeps, else `modsDirFor`
+ * walking from `walkStartOf`. `pin` is the pin to keep: null when there was none or a changed root dropped it.
  */
 export function watchedDirOf(
   pin: Pin | null,
@@ -937,8 +937,9 @@ export function watchedDirOf(
   fallback: string,
 ): { dir: string; pin: Pin | null } {
   const kept = keptPinOf(pin, root)
+  if (configured) return { dir: normalizePath(configured), pin: kept }
   if (kept) return { dir: kept.modsDir, pin: kept }
-  return { dir: modsDirFor(configured, walkStartOf(root, cwd), existing, fallback), pin: null }
+  return { dir: modsDirFor('', walkStartOf(root, cwd), existing, fallback), pin: null }
 }
 
 /**
@@ -1611,7 +1612,16 @@ export function valuesAfterSet(name: OptionName, value: string | boolean | numbe
 }
 
 /** Current values as `/mod-builder config` lists them. */
-export type OptionValues = { logging: LogLevel; autoRerun: boolean; autoOpen: boolean; modsDir: string; modsDirShown: string; testTimeoutMinutes: number }
+export type OptionValues = {
+  logging: LogLevel
+  autoRerun: boolean
+  autoOpen: boolean
+  modsDir: string
+  modsDirShown: string
+  testTimeoutMinutes: number
+  /** A build's kept folder (#92), shown in place of the default while `modsDir` is empty. */
+  pinnedShown?: string
+}
 
 /** The `/mod-builder config` listing: each option, its value and what it takes, then the log file. */
 export function configListText(values: OptionValues, logFile: string): string {
@@ -1619,7 +1629,7 @@ export function configListText(values: OptionValues, logFile: string): string {
     logging: values.logging,
     autoRerun: values.autoRerun ? 'on' : 'off',
     autoOpen: values.autoOpen ? 'on' : 'off',
-    modsDir: values.modsDir ? values.modsDirShown : `default (${values.modsDirShown})`,
+    modsDir: values.modsDir ? values.modsDirShown : values.pinnedShown ? `a build's folder (${values.pinnedShown})` : `default (${values.modsDirShown})`,
     testTimeoutMinutes: plural(values.testTimeoutMinutes, 'minute'),
   }
   const rows = OPTION_FIELDS.map(f => `  ${f.name.padEnd(OPTION_COLUMN)} ${shown[f.name].padEnd(28)} ${f.values}`)

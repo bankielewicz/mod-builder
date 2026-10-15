@@ -888,6 +888,8 @@ async function configure($: Engine, words: string[]): Promise<string> {
   // What `default` means is only needed while modsDir is empty, or when it is being set.
   const needsDefault = !configuredDir || (command.kind === 'set' && command.name === 'modsDir')
   const defaultDir = needsDefault ? await defaultModsDir($) : ''
+  // A build's kept folder is what an empty modsDir watches now (#92).
+  const kept = !configuredDir && pin ? Lab.keptPinOf(pin, await rootOf($)) : null
   const values: Lab.OptionValues = {
     logging: logLevel,
     autoRerun,
@@ -895,6 +897,7 @@ async function configure($: Engine, words: string[]): Promise<string> {
     modsDir: configuredDir,
     modsDirShown: Lab.shortPath(configuredDir ? Lab.normalizePath(configuredDir) : defaultDir),
     testTimeoutMinutes: Lab.limitMinutesOf(runLimit),
+    ...(kept ? { pinnedShown: Lab.shortPath(kept.modsDir) } : {}),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
   if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, defaultDir))
@@ -1045,9 +1048,12 @@ export const register: Register = (on, options) => {
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
     // A report with `path` pins its folder for the session (#92), before anything reads the folder. It is
-    // handled in its own folder: another report may move the pin while this one awaits the write.
-    if (checked.dir !== undefined) await setPin($, { modsDir: checked.dir, root: await rootOf($) })
-    const modsDir = checked.dir ?? (await currentModsDir($))
+    // handled in its own folder: another report may move the pin while this one awaits the write. A set
+    // `modsDir` wins over `path` (PR #95 review).
+    const pinDir = configuredDir ? undefined : checked.dir
+    const ignored = checked.dir !== undefined && pinDir === undefined ? ' path ignored: the modsDir option is set.' : ''
+    if (pinDir !== undefined) await setPin($, { modsDir: pinDir, root: await rootOf($) })
+    const modsDir = pinDir ?? (await currentModsDir($))
     // A Spec report on a mod the last written rows of this folder don't list waits for a scan before it reads
     // any state: the first `get` fixes the moment every read of this dispatch sees (#10, #79). A listed mod's rows are enough.
     if (report.stage === 'Spec' && !(published?.modsDir === modsDir && published.names.has(mod))) await scan($, false)
@@ -1084,7 +1090,7 @@ export const register: Register = (on, options) => {
     } else {
       void scan($, true).catch((error: unknown) => logCaught($, 'lab_report.scan', error))
     }
-    return { result: `Mod Lab: ${mod} ${report.stage} ${report.status}.` }
+    return { result: `Mod Lab: ${mod} ${report.stage} ${report.status}.${ignored}` }
   }).catch(($, e, next) => {
     logEvent($, 'normal', 'lab_report', 'hook failed', { error: next.error })
     return { result: 'Mod Lab: noted (the lab could not update just now).' }
