@@ -63,7 +63,7 @@ function relativeTo(root: string, real: string): string {
 /** Why this subagent may not write `path`, or null when it may. The main loop and agents the engine does not list are never guarded. */
 async function refusalOf($: EngineInterface, agentId: string | undefined, path: string): Promise<string | null> {
   if (agentId === undefined) return null
-  if (rulesError !== null) return `${rulesError}; subagent writes are held until the rules option is fixed`
+  if (rulesError !== null) return rulesError
   const type = (await $.agent.list()).find(agent => agent.id === agentId)?.type
   if (type === undefined || !Object.hasOwn(rules, type)) return null
   const real = await placed($, path)
@@ -161,7 +161,13 @@ async function finish($: EngineInterface, agentId: string): Promise<void> {
 export const register: Register = (on, raw) => {
   const option = parseRules(String((raw as { rules?: unknown } | undefined)?.rules ?? ''))
   rules = 'rules' in option ? option.rules : {}
-  rulesError = 'error' in option ? option.error : null
+  rulesError = 'error' in option ? `${option.error}; subagent writes are held until the rules option is fixed` : null
+
+  // A malformed option holds every subagent write: say so before the first one is refused.
+  on('session.start', async ($, e, next) => {
+    if (rulesError !== null) $.ui.toast(rulesError)
+    return next(e)
+  })
 
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const refusal = await refusalOf($, e.agentId, e.file_path)
