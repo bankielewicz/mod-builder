@@ -1419,6 +1419,28 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect((await run($, 'status 44')).text).toContain('blocked at gateG')
   })
 
+  // PR #51 review: push and gh pr create can't be undone, so they don't wait for the 5 s watch.
+  for (const [what, change] of [
+    ['stops', (r: any) => ({ ...r, step: 'stopped' })],
+  ] as const) {
+    test(`publish pushes nothing when another session ${what} the run during the merge check`, async ($, on) => {
+      let release: () => void = () => undefined
+      const store: Record<string, unknown> = { [key(16)]: storedRun('ready', { repo: `${ROOT}/.git`, greenCommit: 'c2', gatedHead: 'c0' }) }
+      const w = engine(on, { head: BRANCH, mergeHold: new Promise<void>(r => (release = r)), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      await start($)
+      expect((await run($, 'publish')).text).toContain('publishing #16')
+      await until(w, () => w.argv.some(a => a[1] === 'merge-tree'), 'the merge check')
+      store[key(16)] = change(store[key(16)])
+      release()
+      // Bounded, not settle(): a drive that kept going after its write was dropped would never settle.
+      for (let i = 0; i < 20; i++) await w.clock.advance(5)
+      expect(w.argv.filter(a => a[1] === 'push')).toEqual([])
+      expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'pr')).toEqual([])
+      // The drive has ended: the step isn't run again.
+      expect(w.argv.filter(a => a[1] === 'merge-tree')).toHaveLength(1)
+    })
+  }
+
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
     await start($)
