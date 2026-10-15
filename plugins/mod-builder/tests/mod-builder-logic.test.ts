@@ -211,6 +211,22 @@ describe('mod-builder-logic', () => {
     expect(manifestOf(null)).toEqual({ version: null, description: null })
   })
 
+  test('hasPlaceholder: a code span may wrap onto the next line, so <word> inside it is not a placeholder (#20)', () => {
+    // The span starts on one line and ends on the next; CommonMark allows one line ending in a span.
+    expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep the work.\n')).toBe(false)
+    // The `<word>` is on the first line of the wrapped span.
+    expect(hasPlaceholder('# x\nRun `git stash <message>\nand then pop` here.\n')).toBe(false)
+    // A real placeholder outside the span is still found, before or after it.
+    expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep <files>.\n')).toBe(true)
+    expect(hasPlaceholder('# x\nStage <files> with `git add\n-A` first.\n')).toBe(true)
+    // Unwrapped notation is unchanged: `<files>` in plain prose is a placeholder.
+    expect(hasPlaceholder('# x\nStage <files> first.\n')).toBe(true)
+    // A span does not cross a paragraph: an unclosed backtick before a blank line leaves the next paragraph's
+    // placeholder visible, even when a later backtick pair exists.
+    expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged.\n')).toBe(true)
+    expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged with `git add`.\n')).toBe(true)
+  })
+
   test('validate: a clean report from real output', () => {
     const report = parseValidate(validateClean, 0)
     expect(report.ok).toBe(true)
