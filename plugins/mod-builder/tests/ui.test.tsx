@@ -964,3 +964,99 @@ describe('modsDir not set: the mods folder follows the working directory', () =>
     expect(listed).toContain('modsDir    default (…/wt/mods)')
   })
 })
+
+describe('modsDir not set: each mods folder keeps its own results', () => {
+  // Two worktrees, each with a mod named alpha whose files are alike.
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const alphaIn = (folder: string): Disk => ({
+    ...modFiles('alpha', `${folder}/mods`),
+    [`${folder}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'alpha', source: './mods/alpha', version: '0.1.0' }] }),
+  })
+  const passing = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+
+  async function cdTo($: Engine, w: ReturnType<typeof world>, folder: string) {
+    w.seen.cwd = `${folder}/plugins/x`
+    await command($, 'alpha')
+    await w.clock.advance(10)
+  }
+
+  async function validateAndTest($: Engine, w: ReturnType<typeof world>) {
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.press({ key: 'test' })
+    await w.clock.advance(500)
+    await ui.unmount()
+  }
+
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('the same-named mod in another worktree starts unchecked, and going back finds the first one\'s results', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+    await cdTo($, w, TWO)
+    expect(await shows($, /^ready to share$/)).toBe(false)
+    expect(await shows($, /next: Validate/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a mod turning green is announced in each worktree, though one of the same name already was', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    await cdTo($, w, TWO)
+    await validateAndTest($, w)
+    expect(w.seen.notified).toEqual(['alpha is ready to share', 'alpha is ready to share'])
+  })
+
+  test('an edit started in one worktree leaves the same-named mod in another as it was', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    await cdTo($, w, ONE)
+    await validateAndTest($, w)
+    await w.clock.advance(5000)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'passed' } as never)
+    await w.clock.advance(10)
+    expect(await shows($, /^edit · update Spec for this change$/)).toBe(true)
+    await cdTo($, w, TWO)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a run keeps its result with the folder it ran in, after a /cd while it runs', async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing, true, hold)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(10)
+    await ui.unmount()
+    await cdTo($, w, TWO)
+    release()
+    await w.clock.advance(500)
+    expect(w.seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${ONE}/mods/alpha`]])
+    expect(await shows($, /next: Validate/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /next: Test/)).toBe(true)
+  })
+})
