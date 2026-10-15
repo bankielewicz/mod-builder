@@ -1399,7 +1399,7 @@ describe('issue 7: each session keeps its own run log', () => {
 })
 
 describe('issue 8: run-log appends within a session are serialized', () => {
-  test('two routed Codex runs that finish together both land in the session log (PR #1: 56c0832)', { options: { codexAgents: '*', codexConsent: 'allow', codexRunMode: 'wait' } }, async ($: any, on: any) => {
+  test('two routed Codex runs that finish together both land in the session log (PR #1: 56c0832)', { options: { codexAgents: '*', codexConsent: 'allow', codexRunMode: 'wait', maxConcurrent: 2 } }, async ($: any, on: any) => {
     // Reads of a run log wait at the gate until both runs have finished and settled. An append that doesn't wait for the one
     // before it is then reading the log too, so both read it empty and the second write drops the first run's line.
     let open!: () => void
