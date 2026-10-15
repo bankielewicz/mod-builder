@@ -292,6 +292,14 @@ describe('0.2.0 rules', () => {
     expect(deliveryText({ ...base, failure: 'timed out after 20m' })).toBe('Background agent duet-d3 (duet:codex-reviewer) failed on Codex: timed out after 20m. It did not run on Claude either.')
   })
 
+  test('deliveryText: a failure keeps the cut-short search note on its own line (PR #48 review); an empty note adds nothing', () => {
+    const note = 'duet: the search for the reader agent definition was cut short at 8 folders deep; a definition past that was not read, so Claude may use a different one.'
+    const failed = { id: 'd3', label: 'reader', model: '', sandbox: 'read-only' as const, durationMs: 0, tokens: 0, text: '', footer: '', failure: 'timed out after 20m', searchNote: note }
+    const plain = { ...failed, searchNote: '' }
+    expect(deliveryText(failed)).toBe(`Background agent duet-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.\n${note}`)
+    expect(deliveryText(plain)).toBe('Background agent duet-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.')
+  })
+
   test('lostOnReload marks only running Codex rows this module did not start; liveCount counts agent runs', () => {
     const t = (id: string, status: 'running' | 'done', kind: 'agent' | 'review' = 'agent', provider: 'codex' | 'claude' = 'codex') =>
       ({ id, provider, kind, subagentType: 'x', model: '', status, startedAt: 0, endedAt: null, tokens: 0, description: '', detail: '', envelope: null })
@@ -388,6 +396,13 @@ describe('third review round: tool lists in any YAML form', () => {
     expect(sandboxOf('tools:\n  - Read\n  - Edit')).toBe('workspace-write')
     expect(sandboxOf('tools:\n  - Read\n  - Grep')).toBe('read-only')
     expect(sandboxOf('tools:\n  - Read\n  - Edit\ndisallowedTools:\n  - Edit')).toBe('read-only')
+  })
+
+  test('an empty - item in a block list names no tool; the items around it are still read', () => {
+    expect(agent('tools:\n  -\n  - Read\n  - Edit')?.tools).toEqual(['Read', 'Edit'])
+    expect(sandboxOf('tools:\n  - Read\n  -\n  - Edit')).toBe('workspace-write')
+    expect(agent('disallowedTools:\n  -\n  - Edit')?.disallowed).toEqual(['Edit'])
+    expect(sandboxOf('tools:\n  - Read\n  - Edit\ndisallowedTools:\n  -\n  - Edit')).toBe('read-only')
   })
 
   test('comments and permission specifiers name the whole tool', () => {
@@ -820,126 +835,114 @@ describe('PR #39 review round 2: the scope help says what macOS allows', () => {
 })
 
 describe('issue 4: pickAgent resolves a custom agent by Claude\'s rules', () => {
-  // `pickAgent` is reached through the namespace and asserted to exist first, so a missing export fails by assertion.
+  // Issue #44: `pickAgent(texts, type)` takes the file texts of ONE `.claude/agents` folder; which folder wins is `agentDef`'s loop.
+  // It is reached through the namespace and a throw is caught and asserted away, so a missing export or the old
+  // `{ root, path, text }` call shape fails by assertion rather than by an error.
   type Picked = { body: string; tools: string[] | null } | null
-  type Found = { root: number; path: string; text: string }
-  const pick = (files: Found[], type: string): Picked => {
+  const pick = (texts: string[], type: string): Picked => {
+    let picked: Picked = null
+    let threw = ''
+    try {
+      picked = (logic as any).pickAgent(texts, type)
+    } catch (err) {
+      threw = String((err as Error)?.message ?? err)
+    }
     expect(typeof (logic as any).pickAgent).toBe('function')
-    return (logic as any).pickAgent(files, type)
+    expect(threw).toBe('')
+    return picked
   }
   const definition = (fields: string, body = 'Do the work.') => `---\n${fields}\n---\n${body}`
   const agent = (name: string, tools: string, body = 'Do the work.') => definition(`name: ${name}\ndescription: An agent.\ntools: ${tools}`, body)
-  const file = (root: number, path: string, text: string): Found => ({ root, path, text })
   const EDITS = 'Read, Write, Edit'
   const READS = 'Read, Grep'
   const sandboxOf = (def: Picked, type: string) => effectiveSandbox('workspace-write', def as never, type)
 
   test('a definition is matched by its name field, not by its file name', () => {
-    const def = pick([file(0, '/w/.claude/agents/ro.md', agent('reader', READS, 'Read only.')), file(0, '/w/.claude/agents/reader.md', agent('other', EDITS, 'Not the reader.'))], 'reader')
+    const def = pick([agent('reader', READS, 'Read only.'), agent('other', EDITS, 'Not the reader.')], 'reader')
     expect(def?.body).toBe('Read only.')
     expect(def?.tools).toEqual(['Read', 'Grep'])
   })
 
   test('a quoted name, and one with a trailing comment, still match', () => {
     for (const name of ['"reader"', "'reader'", 'reader # the reader', '"reader" # the reader', "'reader'   #x"]) {
-      const def = pick([file(0, '/w/.claude/agents/x.md', agent(name, READS, `Body of ${name}.`))], 'reader')
+      const def = pick([agent(name, READS, `Body of ${name}.`)], 'reader')
       expect([name, def?.body]).toEqual([name, `Body of ${name}.`])
     }
   })
 
   test('a file with no name is documentation, even when its file name is the type; so is one with no frontmatter', () => {
     const documentation = definition('description: Notes about the reader.\ntools: Read', 'Notes.')
-    expect(pick([file(0, '/w/.claude/agents/reader.md', documentation)], 'reader')).toBeNull()
-    expect(pick([file(0, '/w/.claude/agents/reader.md', 'Just notes, no frontmatter.')], 'reader')).toBeNull()
+    expect(pick([documentation], 'reader')).toBeNull()
+    expect(pick(['Just notes, no frontmatter.'], 'reader')).toBeNull()
   })
 
   test('a name or description whose value starts on the next indented line is read, as Claude reads it (PR #43 review)', () => {
     // Probed on 2.1.299 and 2.1.300: Claude loads these; duet read each value as empty and skipped the file.
     const nextLine = definition('name:\n  general-purpose\ndescription:\n  Reads things\ntools: Read', 'Only reads.')
-    const def = pick([file(0, '/w/.claude/agents/gp.md', nextLine)], 'general-purpose')
+    const def = pick([nextLine], 'general-purpose')
     expect(def?.body).toBe('Only reads.')
     expect(sandboxOf(def, 'general-purpose')).toBe('read-only')
     const continued = definition('name: reader\ndescription: starts here\n  and goes on\ntools: Read', 'Continued.')
-    expect(pick([file(0, '/w/.claude/agents/r.md', continued)], 'reader')?.body).toBe('Continued.')
+    expect(pick([continued], 'reader')?.body).toBe('Continued.')
     const folded = definition('name: reader\ndescription: >\n  folded text\ntools: Read', 'Folded.')
-    expect(pick([file(0, '/w/.claude/agents/r.md', folded)], 'reader')?.body).toBe('Folded.')
+    expect(pick([folded], 'reader')?.body).toBe('Folded.')
   })
 
-  test('a file with a name but no description is skipped, and a farther root\'s definition is used instead', () => {
+  test('a file with a name but no description is skipped, and a later text in the same folder is used instead', () => {
     const noDescription = definition('name: reader\ntools: Write', 'No description.')
-    expect(pick([file(0, '/w/.claude/agents/reader.md', noDescription)], 'reader')).toBeNull()
-    const def = pick([file(0, '/w/.claude/agents/reader.md', noDescription), file(1, '/h/.claude/agents/reader.md', agent('reader', READS, 'Farther.'))], 'reader')
-    expect(def?.body).toBe('Farther.')
+    expect(pick([noDescription], 'reader')).toBeNull()
+    const def = pick([noDescription, agent('reader', READS, 'Described.')], 'reader')
+    expect(def?.body).toBe('Described.')
   })
 
   test('a name that starts with -, contains a colon or is over 256 characters is skipped; 256 is fine', () => {
     for (const name of ['-reader', 'my:reader', 'a'.repeat(257)]) {
-      expect([name.slice(0, 12), pick([file(0, '/w/.claude/agents/x.md', agent(name, READS))], name)]).toEqual([name.slice(0, 12), null])
+      expect([name.slice(0, 12), pick([agent(name, READS)], name)]).toEqual([name.slice(0, 12), null])
     }
     const longest = 'a'.repeat(256)
-    expect(pick([file(0, '/w/.claude/agents/x.md', agent(longest, READS, 'Longest.'))], longest)?.body).toBe('Longest.')
+    expect(pick([agent(longest, READS, 'Longest.')], longest)?.body).toBe('Longest.')
   })
 
-  test('the nearer root wins, whatever order the files arrive in', () => {
-    const near = file(0, '/w/pkg/.claude/agents/reader.md', agent('reader', READS, 'Near.'))
-    const mid = file(1, '/w/.claude/agents/reader.md', agent('reader', EDITS, 'Middle.'))
-    const home = file(2, '/h/.claude/agents/reader.md', agent('reader', EDITS, 'Home.'))
-    expect(pick([home, mid, near], 'reader')?.body).toBe('Near.')
-    expect(pick([home, mid], 'reader')?.body).toBe('Middle.')
-    expect(pick([home], 'reader')?.body).toBe('Home.')
-  })
-
-  test('a definition in a nearer root that is skipped does not shadow a farther one', () => {
-    const skipped = file(0, '/w/pkg/.claude/agents/reader.md', definition('description: no name here\ntools: Read', 'Skipped.'))
-    const far = file(1, '/w/.claude/agents/reader.md', agent('reader', EDITS, 'Far.'))
-    expect(pick([skipped, far], 'reader')?.body).toBe('Far.')
-  })
-
-  test('two files with one name in one root, one editing and one not: read-only, never a miss, in either order', () => {
-    const writes = file(0, '/w/.claude/agents/a.md', agent('reader', EDITS, 'Writes.'))
-    const reads = file(0, '/w/.claude/agents/review/b.md', agent('reader', READS, 'Reads.'))
-    for (const files of [[writes, reads], [reads, writes]]) {
-      const def = pick(files, 'reader')
+  test('two files with one name in one folder, one editing and one not: read-only, never a miss, in either order', () => {
+    const writes = agent('reader', EDITS, 'Writes.')
+    const reads = agent('reader', READS, 'Reads.')
+    for (const texts of [[writes, reads], [reads, writes]]) {
+      const def = pick(texts, 'reader')
       expect(def ?? null).not.toBeNull()
       expect(sandboxOf(def, 'reader')).toBe('read-only')
     }
   })
 
   test('the same conflict under general-purpose is read-only, not the editing default of a miss', () => {
-    const files = [file(0, '/w/.claude/agents/a.md', agent('general-purpose', EDITS)), file(0, '/w/.claude/agents/b.md', agent('general-purpose', READS))]
-    const def = pick(files, 'general-purpose')
+    const def = pick([agent('general-purpose', EDITS), agent('general-purpose', READS)], 'general-purpose')
     expect(def ?? null).not.toBeNull()
     expect(sandboxOf(def, 'general-purpose')).toBe('read-only')
   })
 
   test('a general-purpose.md that cannot edit is read-only, not the editing default of a miss', () => {
-    const def = pick([file(1, '/w/.claude/agents/general-purpose.md', agent('general-purpose', 'Read'))], 'general-purpose')
+    const def = pick([agent('general-purpose', 'Read')], 'general-purpose')
     expect(def ?? null).not.toBeNull()
     expect(sandboxOf(def, 'general-purpose')).toBe('read-only')
   })
 
-  test('two files with one name in one root that can both edit: editing', () => {
-    const files = [file(0, '/w/.claude/agents/a.md', agent('reader', EDITS, 'One.')), file(0, '/w/.claude/agents/b.md', agent('reader', 'Read, Edit', 'Two.'))]
-    const def = pick(files, 'reader')
+  test('two files with one name in one folder that can both edit: editing', () => {
+    const def = pick([agent('reader', EDITS, 'One.'), agent('reader', 'Read, Edit', 'Two.')], 'reader')
     expect(def ?? null).not.toBeNull()
-    expect(sandboxOf(def, 'reader')).toBe('workspace-write')
-  })
-
-  test('a conflict in the winning root decides, even when a farther root has an editing definition; a conflict farther out does not matter', () => {
-    const writes = file(0, '/w/pkg/.claude/agents/a.md', agent('reader', EDITS, 'Writes.'))
-    const reads = file(0, '/w/pkg/.claude/agents/b.md', agent('reader', READS, 'Reads.'))
-    const farEdits = file(1, '/w/.claude/agents/reader.md', agent('reader', EDITS, 'Far.'))
-    expect(sandboxOf(pick([writes, reads, farEdits], 'reader'), 'reader')).toBe('read-only')
-    const nearEdits = file(0, '/w/pkg/.claude/agents/reader.md', agent('reader', EDITS, 'Near.'))
-    const farWrites = file(1, '/w/.claude/agents/a.md', agent('reader', EDITS))
-    const farReads = file(1, '/w/.claude/agents/b.md', agent('reader', READS))
-    const def = pick([farWrites, farReads, nearEdits], 'reader')
-    expect(def?.body).toBe('Near.')
     expect(sandboxOf(def, 'reader')).toBe('workspace-write')
   })
 
   test('no file with that name is null: none at all, or only other names', () => {
     expect(pick([], 'reader')).toBeNull()
-    expect(pick([file(0, '/w/.claude/agents/reader.md', agent('writer', EDITS)), file(1, '/h/.claude/agents/x.md', agent('readers', EDITS))], 'reader')).toBeNull()
+    expect(pick([agent('writer', EDITS), agent('readers', EDITS)], 'reader')).toBeNull()
+  })
+})
+
+describe('issue 44: a search cut short runs read-only (PR #48 review)', () => {
+  test('a cut-short search lowers workspace-write to read-only, for a miss under general-purpose and for an editing definition alike; an uncut one is unchanged', () => {
+    const editor = parseAgentFile('---\nname: e\ndescription: d\ntools: Read, Edit\n---\nx')
+    expect(effectiveSandbox('workspace-write', null, 'general-purpose', true)).toBe('read-only')
+    expect(effectiveSandbox('workspace-write', editor, 'e', true)).toBe('read-only')
+    expect(effectiveSandbox('workspace-write', null, 'general-purpose', false)).toBe('workspace-write')
+    expect(effectiveSandbox('workspace-write', editor, 'e')).toBe('workspace-write')
   })
 })

@@ -15,11 +15,11 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
-type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; clock: any }
+type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[] } = {}): Seen {
-  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], clock: null }
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number } = {}): Seen {
+  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
   on('prompt.submit', ($: any, e: any) => (seen.submitted.push(e.text), { text: e.text }))
@@ -31,13 +31,25 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('session.id', () => ({ value: 's1' }))
   // `denyEnv`, read at call time: that variable's lookup fails, as a broken engine call would.
   on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
+  // `hold`: a read stays in flight for that many promise turns, and `maxReads` counts the most in flight at once.
+  let reading = 0
+  const failedOnce = new Set<string>()
   on('fs.read', ($: any, e: any) => {
     seen.reads.push(e.path)
     const text = seen.files[e.path]
-    if (text === undefined) return { deny: 'ENOENT: no such file' }
-    // `unreadable` paths are listed but can't be read, as a file without read permission.
-    if (o.unreadable?.includes(e.path)) return { deny: 'EACCES: permission denied' }
-    return { value: text }
+    // `unreadable` paths are listed but can't be read, as a file without read permission; a `flaky` path's first read
+    // fails as one past the process's open-file limit does, and later reads succeed.
+    const isFlaky = o.flaky?.includes(e.path) && !failedOnce.has(e.path)
+    if (isFlaky) failedOnce.add(e.path)
+    const answer = text === undefined ? { deny: 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
+    if (!o.hold) return answer
+    reading++
+    seen.maxReads = Math.max(seen.maxReads, reading)
+    return (async () => {
+      for (let turn = 0; turn < o.hold!(e.path); turn++) await Promise.resolve()
+      reading--
+      return answer
+    })()
   })
   on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
   // A folder lists what the same path map holds below it: a file (its time from `mtimes`, else 1), or a folder for a deeper path;
@@ -720,7 +732,8 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     const seen = engine(on, { cwd: IN, agents: { [tooDeep]: agent('editor', READS, 'Too deep.'), '/home/u/.claude/agents/mine/ed.md': agent('editor', EDITS, 'User level.') } })
     await start($, IN)
     await asks($, 'editor')
-    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    // The read-only editor too deep to read may be Claude's pick, so the cut-short search runs read-only (PR #48 review).
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
     expect(seen.stdin[0]).toContain('User level.')
     expect(seen.stdin[0]).not.toContain('Too deep.')
   })
@@ -732,7 +745,8 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     await asks($, 'reader')
     await asks($, 'editor')
     expect(seen.stdin[0]).toContain('Eight deep.')
-    expect(sandboxOf(seen.argv[1])).toBe('workspace-write')
+    // The 9th folder cut the search short, and the read-only editor there may be Claude's pick: read-only (PR #48 review).
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
     expect(seen.stdin[1]).toContain('User level.')
     expect(seen.reads).not.toContain(`${eight}/9/editor.md`)
   })
@@ -761,7 +775,8 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     const seen = engine(on, { cwd: IN, agents })
     await start($, IN)
     await asks($, 'editor')
-    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    // The 500-file limit cut the search short, and the read-only editor past it may be Claude's pick: read-only (PR #48 review).
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
     expect(seen.stdin[0]).toContain('User level.')
     expect(seen.stdin[0]).not.toContain('Past the limit.')
   })
@@ -802,5 +817,223 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(reads()).toBe(3)
     expect(sandboxOf(seen.argv[3])).toBe('workspace-write')
     expect(seen.stdin[3]).toContain('Version three.')
+  })
+})
+
+describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
+  const IN = '/w/pkg'
+  const options = { codexAgents: 'editor, writer, reader, general-purpose, ghost', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'wait' }
+  const agent = (name: string, tools: string, body: string) => `---\nname: ${name}\ndescription: An agent.\ntools: ${tools}\n---\n\n${body}`
+  const EDITS = 'Read, Write, Edit'
+  const READS = 'Read, Grep'
+  const sandboxOf = (argv: string[] | undefined) => argv?.[argv.indexOf('-s') + 1]
+  const asks = ($: any, type: string) => $.tool.call(call({ subagent_type: type }) as never)
+  /** The text Claude reads from a foreground run: the answer and the footer. */
+  const resultText = async ($: any, type: string): Promise<string> => {
+    const r: any = await $.tool.call(call({ subagent_type: type }) as never)
+    return (r.result?.content ?? []).map((c: { text?: string }) => c.text ?? '').join('\n')
+  }
+
+  test('a folder past the 8-folder limit that holds no .md file, subfolder or link does not cut the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, { cwd: IN, agents: { [`${nine}/notes.txt`]: 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(text).not.toMatch(/cut short/i)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.reads).not.toContain(`${nine}/notes.txt`)
+  })
+
+  test('a folder met after the 500th file that holds no .md file, subfolder or link does not cut the search short (PR #48 review)', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/zz/notes.txt': 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    for (let i = 0; i < 500; i++) seen.files[`/w/pkg/.claude/agents/f${String(i).padStart(3, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(text).not.toMatch(/cut short/i)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+  })
+
+  test('a link past the limit that leads nowhere, to a file not named .md, or back into a searched folder does not cut the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, {
+      cwd: IN,
+      agents: { [`${nine}/gone`]: 'x', [`${nine}/readme.txt`]: 'x', [`${nine}/loop`]: 'x', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') },
+      links: [`${nine}/gone`, `${nine}/readme.txt`, `${nine}/loop`],
+      real: { [`${nine}/gone`]: null, [`${nine}/readme.txt`]: '/elsewhere/readme.txt', [`${nine}/loop`]: '/w/pkg/.claude/agents' },
+      kinds: { [`${nine}/readme.txt`]: 'file' },
+    })
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(text).not.toMatch(/cut short/i)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+  })
+
+  test('a link past the limit that leads to a folder not yet searched cuts the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, { cwd: IN, agents: { [`${nine}/more`]: 'x', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') }, links: [`${nine}/more`], real: { [`${nine}/more`]: '/elsewhere/agents' } })
+    await start($, IN)
+    expect(await resultText($, 'editor')).toMatch(/cut short at 8 folders deep/)
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
+  test('a link past the limit named .md that leads to a file cuts the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, { cwd: IN, agents: { [`${nine}/agent.md`]: 'x', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') }, links: [`${nine}/agent.md`], real: { [`${nine}/agent.md`]: '/elsewhere/agent.md' }, kinds: { [`${nine}/agent.md`]: 'file' } })
+    await start($, IN)
+    expect(await resultText($, 'editor')).toMatch(/cut short at 8 folders deep/)
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
+  test('a folder past the limit that holds only a subfolder still cuts the search short: what lies below it was not looked at (PR #48 review)', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/10/notes.txt': 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(text).toMatch(/cut short at 8 folders deep/)
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
+  test('an editing agent demoted to read-only by a cut-short search still waits in background mode, so Claude reads the note before it goes on (PR #48 review)', { options: { ...options, codexRunMode: 'background' } }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/other.md': agent('someone', READS, 'Nine deep.'), '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    const r: any = await $.tool.call(call({ subagent_type: 'editor' }) as never)
+    expect(r.result?.status).toBe('completed')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect((r.result?.content ?? []).map((c: { text?: string }) => c.text ?? '').join('\n')).toMatch(/cut short at 8 folders deep.*read-only/)
+    expect(seen.submitted.length).toBe(0)
+  })
+
+  test('a search cut short runs the agent read-only, since a definition past the limit may forbid edits, and the note says so (PR #48 review)', { options }, async ($, on) => {
+    // Claude reads this read-only general-purpose definition 9 folders down; duet stops at 8, and its fallback, the built-in, edits.
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/gp.md': agent('general-purpose', READS, 'Nine deep.') } })
+    await start($, IN)
+    const text = await resultText($, 'general-purpose')
+    expect(seen.stdin[0]).not.toContain('Nine deep.')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect(text.split('\n').find(line => line.startsWith('duet: the search'))).toMatch(/read-only/)
+  })
+
+  test('a search that the 8-folder limit cut short says so in the run\'s result, naming the limit; one that reached no limit does not', { options }, async ($, on) => {
+    const eight = '/w/pkg/.claude/agents/d1/d2/d3/d4/d5/d6/d7/d8'
+    const seen = engine(on, { cwd: IN, agents: { [`${eight}/reader.md`]: agent('reader', READS, 'Eight deep.'), '/home/u/.claude/agents/editor.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    // Nothing sits below the 8th folder: the whole tree was searched.
+    expect(await resultText($, 'reader')).not.toMatch(/cut short/i)
+    // A 9th folder holds a definition the search never reaches, and the lookup falls through to the user's.
+    seen.files[`${eight}/d9/editor.md`] = agent('editor', READS, 'Nine deep.')
+    const cut = await resultText($, 'editor')
+    expect(seen.stdin[1]).toContain('User level.')
+    expect(cut).toMatch(/cut short/i)
+    expect(cut).toMatch(/\b8 folders\b/)
+  })
+
+  test('a search that the 500-file limit cut short says so in the run\'s result, naming the limit; one that reached no limit does not', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/other.md': agent('someone', READS, 'Not it.'), '/home/u/.claude/agents/mine/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    expect(await resultText($, 'editor')).not.toMatch(/cut short/i)
+    // 600 more files in the nearest folder: the 500 first by name are read, and the definition past them never is.
+    for (let i = 0; i < 600; i++) seen.files[`/w/pkg/.claude/agents/f${String(i).padStart(3, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    seen.files['/w/pkg/.claude/agents/zz-editor.md'] = agent('editor', READS, 'Past the limit.')
+    const cut = await resultText($, 'editor')
+    expect(seen.stdin[1]).toContain('User level.')
+    expect(seen.stdin[1]).not.toContain('Past the limit.')
+    expect(cut).toMatch(/cut short/i)
+    expect(cut).toMatch(/\b500\b/)
+  })
+
+  test('the 500-file note counts a whole agents folder, subfolders included, and claims nothing about how far Claude reads', { options }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    // 300 files in each of two subfolders: neither holds 500, the agents folder does.
+    for (let i = 0; i < 600; i++) seen.files[`/w/pkg/.claude/agents/${i < 300 ? 'a' : 'b'}/f${String(i).padStart(3, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    seen.files['/w/pkg/.claude/agents/c/editor.md'] = agent('editor', READS, 'Past the limit.')
+    const cut = await resultText($, 'editor')
+    expect(seen.stdin[0]).toContain('User level.')
+    expect(cut).toMatch(/\b500 \.md files\b/)
+    expect(cut).not.toMatch(/per folder/)
+    expect(cut).not.toMatch(/deeper/)
+  })
+
+  test('a folder\'s files are read together, not one after the other, and the pick still follows the files\' name order', { options }, async ($, on) => {
+    const agents: Record<string, string> = {}
+    for (let i = 0; i < 5; i++) agents[`/w/.claude/agents/par-${i}.md`] = agent('editor', EDITS, `Body ${i}.`)
+    // The later a file's name, the sooner its read ends, so the reads finish in the reverse of their name order.
+    const seen = engine(on, { cwd: IN, agents, hold: path => 60 - 10 * Number(path.match(/par-(\d)/)?.[1] ?? 0) })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(seen.reads.filter(p => p.includes('/par-')).length).toBe(5)
+    expect(seen.maxReads).toBe(5)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+    expect(seen.stdin[0]).toContain('Body 0.')
+    expect(seen.stdin[0]).not.toContain('Body 4.')
+  })
+
+  test('a folder\'s files are read at most 16 at a time, so a large folder does not open hundreds of files at once (PR #48 review)', { options }, async ($, on) => {
+    const agents: Record<string, string> = {}
+    for (let i = 0; i < 40; i++) agents[`/w/.claude/agents/many-${String(i).padStart(2, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    agents['/w/.claude/agents/zz-editor.md'] = agent('editor', EDITS, 'Last by name.')
+    const seen = engine(on, { cwd: IN, agents, hold: () => 3 })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(seen.reads.filter(p => p.includes('/many-')).length).toBe(40)
+    expect(seen.maxReads).toBe(16)
+    expect(seen.stdin[0]).toContain('Last by name.')
+  })
+
+  test('a read that fails once is tried again on its own, so a passing error does not hide a definition and hand the pick to an editing one (PR #48 review)', { options }, async ($, on) => {
+    const near = '/w/pkg/.claude/agents/editor.md'
+    const seen = engine(on, { cwd: IN, flaky: [near], agents: { [near]: agent('editor', READS, 'Near.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Far.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(seen.reads.filter(p => p === near).length).toBe(2)
+    expect(seen.stdin[0]).toContain('Near.')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
+  test('a definition that dropped out of the folder listing is read again when it returns, even with the same size and time', { options }, async ($, on) => {
+    const path = '/w/.claude/agents/prune-me.md'
+    const seen = engine(on, { cwd: IN, agents: { [path]: agent('editor', EDITS, 'Version one.'), '/w/.claude/agents/other.md': agent('someone', READS, 'Not it.') } })
+    await start($, IN)
+    const reads = () => seen.reads.filter(p => p === path).length
+    await asks($, 'editor')
+    expect(reads()).toBe(1)
+    // Gone from the listing: its cached text is dropped with it.
+    delete seen.files[path]
+    await asks($, 'editor')
+    expect(sandboxOf(seen.argv[1])).toBe('read-only')
+    // Back with the same length and the same time, but other text.
+    seen.files[path] = agent('editor', EDITS, 'Version two.')
+    await asks($, 'editor')
+    expect(reads()).toBe(2)
+    expect(sandboxOf(seen.argv[2])).toBe('workspace-write')
+    expect(seen.stdin[2]).toContain('Version two.')
+  })
+
+  // PR #48 review (Codex, P2): the note was joined into the footer only, and no failure path carries the footer.
+  test('a run that fails after a cut-short search keeps the note: in the denial, the background delivery and the .out.md file', { options: { ...options, codexAgents: 'reader, bgreader', codexRunMode: 'background, reader=wait' } }, async ($, on) => {
+    const eight = '/w/pkg/.claude/agents/d1/d2/d3/d4/d5/d6/d7/d8'
+    const seen = engine(on, { cwd: IN, codex: 'missing', agents: { '/home/u/.claude/agents/reader.md': agent('reader', READS, 'User level.'), '/home/u/.claude/agents/bgreader.md': agent('bgreader', READS, 'User level.') } })
+    await start($, IN)
+    // Nothing is cut short: the failure says nothing about the search.
+    const plain: any = await asks($, 'reader')
+    expect(plain.deny).toMatch(/codex not found on PATH/)
+    expect(plain.deny).not.toMatch(/cut short/i)
+    // A 9th folder holds a file the search never reaches; the runs below fail on Codex all the same.
+    seen.files[`${eight}/d9/reader.md`] = agent('reader', READS, 'Nine deep.')
+    // Waited on: the denial Claude reads.
+    const denied: any = await asks($, 'reader')
+    expect(denied.deny).toMatch(/the Codex handoff failed \(codex not found on PATH/)
+    expect(denied.deny).toMatch(/the search for the reader agent definition was cut short at 8 folders deep/)
+    // In the background: the delivered message and the file the launch record points to.
+    const launched: any = await asks($, 'bgreader')
+    expect(launched.result.status).toBe('async_launched')
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(1)
+    expect(seen.submitted[0]).toMatch(/duet-d\d \(bgreader\) failed on Codex: codex not found on PATH/)
+    expect(seen.submitted[0]).toMatch(/the search for the bgreader agent definition was cut short at 8 folders deep/)
+    const outFile = seen.files[launched.result.outputFile]
+    expect(outFile).toMatch(/failed on Codex: codex not found on PATH/)
+    expect(outFile).toMatch(/the search for the bgreader agent definition was cut short at 8 folders deep/)
   })
 })

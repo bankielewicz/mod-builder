@@ -526,9 +526,6 @@ export function parseAgentFile(text: string): AgentDef | null {
   }
 }
 
-/** An agent file found under a `.claude/agents` folder; `root` counts the folders searched, nearest first. */
-export type AgentFile = { root: number; path: string; text: string }
-
 /** A frontmatter scalar as YAML reads it: without its ` # comment` and one pair of surrounding quotes. */
 function scalarOf(value: string): string {
   return uncommented(value).replace(/^(["'])(.*)\1$/, '$2').trim()
@@ -538,25 +535,22 @@ function scalarOf(value: string): string {
 const isSkippedName = (name: string): boolean => name.startsWith('-') || name.includes(':') || name.length > 256
 
 /**
- * The definition Claude would use for a subagent type, from the files found under the folders it scans.
- * Identity comes only from the `name` field; a file with no `name` or no `description`, or a `name` that
- * starts with `-`, holds a `:` or is over 256 characters, is skipped as Claude skips it. The nearest
- * folder holding a match wins; two matches there that disagree on editing (Claude's pick between them
- * isn't documented) give the one that can't edit. No match is null.
+ * The definition Claude would use for a subagent type, from the file texts of one `.claude/agents` folder.
+ * Which folder wins is the caller's search. Identity comes only from the `name` field; a file with no `name`
+ * or no `description`, or a `name` that starts with `-`, holds a `:` or is over 256 characters, is skipped as
+ * Claude skips it. Two matches that disagree on editing (Claude's pick between them isn't documented) give
+ * the one that can't edit. No match is null.
  */
-export function pickAgent(files: AgentFile[], type: string): AgentDef | null {
-  const found: { root: number; def: AgentDef }[] = []
-  for (const file of files) {
-    const def = parseAgentFile(file.text)
+export function pickAgent(texts: string[], type: string): AgentDef | null {
+  const defs: AgentDef[] = []
+  for (const text of texts) {
+    const def = parseAgentFile(text)
     if (!def) continue
     const name = scalarOf(def.name)
     if (name !== type || isSkippedName(name) || scalarOf(def.description) === '') continue
-    found.push({ root: file.root, def: { ...def, name } })
+    defs.push({ ...def, name })
   }
-  if (!found.length) return null
-  const nearest = Math.min(...found.map(f => f.root))
-  const defs = found.filter(f => f.root === nearest).map(f => f.def)
-  return defs.find(def => !canEdit(def, type)) ?? defs[0]!
+  return defs.find(def => !canEdit(def, type)) ?? defs[0] ?? null
 }
 
 /** A filesystem-safe folder name for a session id. */
@@ -579,9 +573,12 @@ export function canEdit(def: AgentDef | null, type: string = DEFAULT_TYPE): bool
   return allowed.some(t => !(def.disallowed ?? []).includes(t))
 }
 
-/** An agent can only lower the sandbox, never raise it. */
-export function effectiveSandbox(configured: Sandbox, def: AgentDef | null, type: string = DEFAULT_TYPE): Sandbox {
-  return configured === 'workspace-write' && canEdit(def, type) ? 'workspace-write' : 'read-only'
+/**
+ * An agent can only lower the sandbox, never raise it. A search cut short by duet's limits runs read-only:
+ * a definition past them, which Claude reads, may forbid the edits that duet's pick allows.
+ */
+export function effectiveSandbox(configured: Sandbox, def: AgentDef | null, type: string = DEFAULT_TYPE, isSearchCut = false): Sandbox {
+  return configured === 'workspace-write' && !isSearchCut && canEdit(def, type) ? 'workspace-write' : 'read-only'
 }
 
 // ── Handoff ──────────────────────────────────────────────────────────────
@@ -1002,9 +999,10 @@ export function launchedRecord(a: { id: string; description: string; prompt: str
 }
 
 /** The message a background run delivers to the main session when it ends. */
-export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string }): string {
+export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string; searchNote?: string }): string {
   const head = `Background agent duet-${a.id} (${a.label})`
-  if (a.failure) return `${head} failed on Codex: ${a.failure}. It did not run on Claude either.`
+  // A failure has no footer to carry the agent search's cut-short note, so it goes on a line of its own.
+  if (a.failure) return `${head} failed on Codex: ${a.failure}. It did not run on Claude either.${a.searchNote ? `\n${a.searchNote}` : ''}`
   return `${head} finished on Codex · ${a.model || 'default model'} · ${a.sandbox} · ${duration(a.durationMs)} · ${compact(a.tokens)} tok\n\n${a.text}\n\n${a.footer}`
 }
 
