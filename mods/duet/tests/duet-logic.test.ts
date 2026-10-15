@@ -9,6 +9,7 @@ import {
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
 } from '../hooks/duet-logic'
 import * as logic from '../hooks/duet-logic'
+import type { Task } from '../types'
 import { BLANKED, PASSED_THROUGH } from './env-names'
 
 // Captured from codex-cli 0.162.1: `codex exec --json -s read-only "Reply with the single word ok."`
@@ -960,5 +961,55 @@ describe('PR #52 review: a dismissed consent question is not "nobody could be as
     expect(refusal(new Error('no implementation for tool.call'))).toBe(NOBODY)
     expect(refusal('not an error')).toBe(NOBODY)
     expect(refusal(undefined)).toBe(NOBODY)
+  })
+})
+
+describe('issue 6: the fallback cap is documented in the config help and shown on a running row', () => {
+  const NOTE = 'fallback: stops at 10m (timeoutMinutes 20)'
+  const row = (over: Partial<Task> = {}): Task => ({ id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'Explore', model: '', status: 'running', startedAt: 0, endedAt: null, tokens: 0, description: 'Find callers', detail: '', envelope: null, ...over })
+
+  test('the timeoutMinutes help, shown by /duet config list and the config pane, says a one-shot fallback run stops at 10 minutes', () => {
+    const help = findConfigField('timeout')!.help
+    expect(help).toMatch(/one-shot/)
+    expect(help).toMatch(/10 minutes/)
+  })
+
+  test('a running row shows its non-empty detail under it, and shows the description when it has none', () => {
+    expect(logic.subText(row({ detail: NOTE }), 80)).toContain(NOTE)
+    expect(logic.subText(row(), 80)).toBe('"Find callers"')
+  })
+
+  test('the note on a running row is cut to the row width with an ellipsis, like any sub line', () => {
+    expect(logic.subText(row({ detail: NOTE }), 20)).toBe(`${NOTE.slice(0, 19)}…`)
+  })
+})
+
+describe('issue 6 review: the fallback note appears only when the cap cuts timeoutMinutes', () => {
+  const note = (timeoutMs: number) => ((logic as Record<string, unknown>).fallbackNote as ((t: number) => string) | undefined)?.(timeoutMs)
+
+  test('timeoutMinutes 20 gets the note the running row shows', () => {
+    expect(note(20 * 60_000)).toBe('fallback: stops at 10m (timeoutMinutes 20)')
+  })
+
+  test('timeoutMinutes 10 or less gets no note, since the cap changes nothing', () => {
+    expect(note(10 * 60_000)).toBe('')
+    expect(note(5 * 60_000)).toBe('')
+  })
+})
+
+describe('issue 6 review (Codex P2): the fallback cap is readable where the config shows it', () => {
+  const help = () => findConfigField('timeout')!.help
+  const timeoutRow = (raw: unknown) => logic.configText(raw).split('\n').find(l => l.includes('timeoutMinutes'))!
+
+  test('the help line fits the config pane uncut (opened at 76 columns, 74 for text) and says 10 minutes is a maximum', () => {
+    expect(('timeoutMinutes: ' + help()).length <= 74).toBe(true)
+    expect(help()).toMatch(/10 minutes (max|at most)/)
+  })
+
+  test('/duet config shows the cap on the timeoutMinutes row when the timeout is longer than it, and not otherwise', () => {
+    expect(timeoutRow(undefined)).toMatch(/one-shot fallback.*10 minutes/)
+    expect(timeoutRow({ timeoutMinutes: 20 })).toMatch(/one-shot fallback.*10 minutes/)
+    expect(timeoutRow({ timeoutMinutes: 10 })).not.toMatch(/one-shot/)
+    expect(timeoutRow({ timeoutMinutes: 5 })).not.toMatch(/one-shot/)
   })
 })

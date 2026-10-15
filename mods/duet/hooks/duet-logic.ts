@@ -275,7 +275,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'codexSandbox', alias: 'sandbox', kind: 'text', choices: ['read-only', 'workspace-write'], fallback: 'read-only', help: 'workspace-write lets Codex write in the session folder and /tmp; both modes read any file you can' },
   { field: 'codexModel', alias: 'model', kind: 'text', fallback: '', help: "passed to codex as -m; empty = Codex's own configured model" },
   { field: 'maxConcurrent', alias: 'max', kind: 'number', fallback: 2, help: 'live Codex runs at once; a call beyond this is refused' },
-  { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: 'a Codex run past this is stopped' },
+  { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: 'a run past this stops; one-shot fallback: 10 minutes max' },
   { field: 'codexConsent', alias: 'consent', kind: 'text', choices: ['ask', 'allow'], fallback: 'ask', help: 'ask once per session before the first handoff, or pre-approve' },
   { field: 'codexRunMode', alias: 'mode', kind: 'text', fallback: 'background', help: 'wait or background for codexAgents types, then overrides: advisor=background, Explore=wait (editing runs always wait)' },
   { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked through `codex exec` on Codex 0.162.1, Linux only (on macOS, the Codex source makes /tmp readable and writable, even under read-only), re-check after upgrading' },
@@ -316,7 +316,8 @@ export function configText(raw: unknown): string {
   const rows = CONFIG_FIELDS.map(f => {
     const v = o[f.field] ?? f.fallback
     const shown = v === '' ? '(empty)' : String(v)
-    return `  ${f.alias.padEnd(8)} ${f.field.padEnd(15)} ${shown}${f.choices ? `   [${f.choices.join(' | ')}]` : ''}`
+    const capped = f.field === 'timeoutMinutes' && Number(v) * 60_000 > FALLBACK_MAX_MS ? '   (a one-shot fallback run stops at 10 minutes)' : ''
+    return `  ${f.alias.padEnd(8)} ${f.field.padEnd(15)} ${shown}${f.choices ? `   [${f.choices.join(' | ')}]` : ''}${capped}`
   })
   return ['duet config', ...rows, CONFIG_USAGE].join('\n')
 }
@@ -1114,6 +1115,12 @@ export function fallbackFailure(message: string, elapsedMs: number, capMs: numbe
   return `codex could not start: ${message.split('\n')[0]}`
 }
 
+/** A running row's note when the fallback's ceiling cuts a longer timeoutMinutes; '' when it changes nothing. */
+export function fallbackNote(timeoutMs: number): string {
+  if (timeoutMs <= FALLBACK_MAX_MS) return ''
+  return `fallback: stops at ${Math.round(FALLBACK_MAX_MS / 60_000)}m (timeoutMinutes ${Math.round(timeoutMs / 60_000)})`
+}
+
 /** Routed Codex agent runs still going (what the status line counts; reviews excluded). */
 export function liveCount(tasks: Task[]): number {
   return tasks.filter(t => t.provider === 'codex' && t.kind === 'agent' && t.status === 'running').length
@@ -1261,9 +1268,13 @@ export function rowText(t: Task, now: number, columns: number): string {
   return text.length > columns ? `${text.slice(0, Math.max(0, columns - 1))}…` : text
 }
 
-/** The dim line under a row: verdict, error, or description. */
+const FAILED_MARK: Partial<Record<TaskStatus, string>> = { error: '✕ ', refused: '✕ ' }
+
+/** The dim line under a row: error or refusal, a review's verdict, a running row's note, else the description. */
 export function subText(t: Task, columns: number): string {
-  const s = t.status === 'error' || t.status === 'refused' ? `✕ ${t.detail}` : t.kind === 'review' && t.detail ? t.detail : `"${t.description}"`
+  const mark = FAILED_MARK[t.status] ?? ''
+  const showsDetail = mark !== '' || ((t.kind === 'review' || t.status === 'running') && t.detail !== '')
+  const s = showsDetail ? `${mark}${t.detail}` : `"${t.description}"`
   return s.length > columns ? `${s.slice(0, Math.max(0, columns - 1))}…` : s
 }
 
