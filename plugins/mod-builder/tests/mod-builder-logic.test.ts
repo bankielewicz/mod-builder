@@ -899,19 +899,19 @@ describe('a streamed test run keeps bounded output (#9, Codex P2 on PR #65)', ()
     expect(parseTest(streamOutput(s), 0)).toMatchObject({ ok: true, passed: 4, failed: 0 })
   })
 
-  test('stdout printing that arrives after the stderr summary keeps the summary (found live: "0 tests passed")', () => {
+  test('stderr printing that arrives after the stdout summary keeps the summary (found live: "0 tests passed")', () => {
     let s = EMPTY_STREAM
-    s = streamPiece(s, testPass, 'stderr')
-    for (let at = 0; at < noise.length; at += 16_384) s = streamPiece(s, noise.slice(at, at + 16_384), 'stdout')
+    s = streamPiece(s, testPass, 'stdout')
+    for (let at = 0; at < noise.length; at += 16_384) s = streamPiece(s, noise.slice(at, at + 16_384), 'stderr')
     expect(200_000).toBeGreaterThan(streamOutput(s).length)
     expect(parseTest(streamOutput(s), 0)).toEqual(parseTest(testPass, 0))
   })
 
-  test('a stdout piece cut mid-line does not join the stderr line after it', () => {
+  test('a stderr piece cut mid-line does not join the stdout line after it', () => {
     let s = EMPTY_STREAM
-    s = streamPiece(s, 'noise without its end', 'stdout')
-    s = streamPiece(s, '(pass) t > one [1.00ms]\n', 'stderr')
-    s = streamPiece(s, ' still noise\n', 'stdout')
+    s = streamPiece(s, 'noise without its end', 'stderr')
+    s = streamPiece(s, '(pass) t > one [1.00ms]\n', 'stdout')
+    s = streamPiece(s, ' still noise\n', 'stderr')
     expect({ passed: s.passed, failed: s.failed }).toEqual({ passed: 1, failed: 0 })
   })
 
