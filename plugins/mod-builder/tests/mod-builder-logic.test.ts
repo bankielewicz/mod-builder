@@ -436,6 +436,17 @@ describe('mod-builder-logic', () => {
     expect(displayPathOf('//server/share/x/mods/foo', '\\\\server\\share\\x')).toBe('mods/foo')
   })
 
+  test('normalizePath: ".." stops at a UNC share, as at any root (PR #57 review round 2)', () => {
+    expect(normalizePath('\\\\server\\share\\repo\\..\\..\\mods')).toBe('//server/share/mods')
+    expect(normalizePath('\\\\server\\share\\..\\..\\..\\mods')).toBe('//server/share/mods')
+  })
+
+  test('normalizePath: a drive letter is written upper case, so one folder has one spelling (PR #57 review round 2)', () => {
+    expect(normalizePath('c:/repo')).toBe('C:/repo')
+    expect(normalizePath('c:\\repo\\..\\..')).toBe('C:/')
+    expect(marketplaceCandidatesOf('c:\\repo')).toEqual(['C:/repo/.claude-plugin/marketplace.json', 'C:/.claude-plugin/marketplace.json'])
+  })
+
   test('modsDirFor: the mods/ of the nearest folder above the working directory that holds a marketplace', () => {
     const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
     expect(modsDirFor('', '/w/wt/plugins/x', marketplace, '/main/mods')).toBe('/w/wt/mods')
