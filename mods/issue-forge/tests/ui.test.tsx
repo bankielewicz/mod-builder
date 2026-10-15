@@ -1444,6 +1444,17 @@ describe('parallel runs (Change 0.3.0)', () => {
     })
   }
 
+  test('a resumed run checks the shared LCOV file again before its gate runs coverage (PR #51 review)', async ($, on) => {
+    const blocked16 = storedRun('blocked', { repo: `${ROOT}/.git`, blocked: { at: 'gateG', reason: 'r', next: 'n' } })
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }, { [key(16)]: blocked16, [key(40)]: elsewhere40() })
+    await start($)
+    expect((await run($, 'resume 16')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), 'the block')
+    expect((await run($, 'status 16')).text).toContain('blocked at gateG: lcovPath /cov/lcov.info is shared by every run and #40 is running')
+    expect(w.argv.some(a => a[0] === 'c')).toBe(false)
+    expect(w.commits).toEqual([])
+  })
+
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
     await start($)

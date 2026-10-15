@@ -620,7 +620,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     const trusted = await loadProfile($, made.workRoot)
     if (!trusted.profile) return { ...block(`origin/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
     // One LCOV file for every run can't serve two at once (Change 0.3.0).
-    const shared = sharedLcovBlock(trusted.profile, made.workRoot, (await runsOf($, run.repo ?? run.root)).filter(r => r.id !== run.id))
+    const shared = sharedLcovBlock(trusted.profile, (await runsOf($, run.repo ?? run.root)).filter(r => r.id !== run.id), made.workRoot)
     if (shared) return { ...block(shared.reason, shared.next), keep: made }
     return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot }
   } catch (err) {

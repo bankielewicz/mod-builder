@@ -1369,18 +1369,18 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(isLockError('')).toBe(false)
   })
 
-  test('sharedLcovBlock: an lcovPath outside the run folder blocks only while another run of the repository is being driven', () => {
+  test('sharedLcovBlock: an absolute lcovPath is one file for every run, so it blocks while another run of the repository is driven (Codex 4278707573)', () => {
     const abs = profile()
     const working = at(44, 'green', foreign)
-    expect(sharedLcovBlock(abs, '/repo/scratch/wt', [working])).toEqual({
-      reason: 'lcovPath /home/u/.claude/issue-forge-data/coverage.lcov is shared by every run and #44 is running',
-      next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov',
-    })
-    expect(sharedLcovBlock(profile({ lcovPath: 'coverage/x.lcov' }), '/repo/scratch/wt', [working])).toBeNull()
-    expect(sharedLcovBlock(profile({ lcovPath: '/repo/scratch/wt/cov.lcov' }), '/repo/scratch/wt', [working])).toBeNull()
-    expect(sharedLcovBlock(abs, '/repo', [])).toBeNull()
-    expect(sharedLcovBlock(abs, '/repo', [at(44, 'blocked', { ...foreign, blocked: BLOCKED })])).toBeNull()
-    expect(sharedLcovBlock(abs, '/repo', [at(44, 'green')])).toBeNull()
+    const block = (path: string) => ({ reason: `lcovPath ${path} is shared by every run and #44 is running`, next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov' })
+    expect(sharedLcovBlock(abs, [working])).toEqual(block('/home/u/.claude/issue-forge-data/coverage.lcov'))
+    // An absolute path inside one run's folder is still the same file for the other run: the start order doesn't matter.
+    expect(sharedLcovBlock(profile({ lcovPath: '/repo/scratch/wt/cov.lcov' }), [working])).toEqual(block('/repo/scratch/wt/cov.lcov'))
+    expect(sharedLcovBlock(profile({ lcovPath: '/repo/coverage/x.lcov' }), [working])).toEqual(block('/repo/coverage/x.lcov'))
+    expect(sharedLcovBlock(profile({ lcovPath: 'coverage/x.lcov' }), [working])).toBeNull()
+    expect(sharedLcovBlock(abs, [])).toBeNull()
+    expect(sharedLcovBlock(abs, [at(44, 'blocked', { ...foreign, blocked: BLOCKED })])).toBeNull()
+    expect(sharedLcovBlock(abs, [at(44, 'green')])).toBeNull()
   })
 
   test("pruneKeys: finished runs beyond the newest 20 go; active ones never do", () => {

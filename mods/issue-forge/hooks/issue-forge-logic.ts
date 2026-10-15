@@ -1723,7 +1723,7 @@ export function isLockError(text: string): boolean {
 }
 
 /** An LCOV file outside the run's folder is one file for every run: refused while another run is being driven. */
-export function sharedLcovBlock(p: Profile, workRoot: string, others: readonly Run[]): { reason: string; next: string } | null {
+export function sharedLcovBlock(p: Profile, others: readonly Run[], workRoot = ''): { reason: string; next: string } | null {
   if (!isAbsolutePath(p.lcovPath) || relativeTo(workRoot, p.lcovPath) !== null) return null
   const running = others.find(r => isWorking(r.step) && !!r.driver)
   return running ? { reason: `lcovPath ${p.lcovPath} is shared by every run and #${running.issue} is running`, next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov' } : null
