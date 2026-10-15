@@ -1054,11 +1054,12 @@ export function placeholderFacts(name: string): FileFacts {
 /**
  * The mods that get a placeholder row (#19): reported as running and found in no folder. `reports`
  * are the live ones (see `liveReports`), so a running report the skill abandoned has expired, and a
- * passed or failed one for a missing folder (a typo) never gets a row.
+ * passed or failed one for a missing folder (a typo) never gets a row. Given `dir`, only reports made
+ * in that mods folder count, so a /cd doesn't carry a placeholder into another folder.
  */
-export function placeholderNames(reports: Readonly<Record<string, Reported>>, factsNames: readonly string[]): string[] {
+export function placeholderNames(reports: Readonly<Record<string, Reported>>, factsNames: readonly string[], dir?: string): string[] {
   return Object.entries(reports)
-    .filter(([name, report]) => report.status === 'running' && !factsNames.includes(name))
+    .filter(([name, report]) => report.status === 'running' && !factsNames.includes(name) && (dir === undefined || report.dir === dir))
     .map(([name]) => name)
 }
 

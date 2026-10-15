@@ -22,6 +22,8 @@ export type Reported = {
   note?: string
   /** When this report arrived, for the band's timer. */
   since: number
+  /** The mods folder the session was in when it reported: a placeholder row shows only there (#19). */
+  dir?: string
 }
 
 /** One mod as the pane, band and status line draw it. */

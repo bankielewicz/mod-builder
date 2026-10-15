@@ -388,7 +388,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
   const freshIdOf = (name: string): string => `${dir}/${name}`
   // A build that reported a mod before writing its folder gets a row of its own until the folder is found (#19).
-  const placeholders = Lab.placeholderNames(reports, [...found.keys()])
+  const placeholders = Lab.placeholderNames(reports, [...found.keys()], dir)
   const judge = (freshIds: readonly string[]): ModView[] => [
     ...[...factsByMod.values()].map(facts =>
       Lab.viewOf(
@@ -975,7 +975,7 @@ export const register: Register = (on, options) => {
       })
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
-    await update($, reported, all => ({ ...all, [mod]: report }))
+    await update($, reported, all => ({ ...all, [mod]: { ...report, dir: modsDir } }))
     if (report.status === 'running') {
       // Follow the active build, unless a README is open in the pane.
       if (!(await read($, readme))) await update($, selected, () => mod)
