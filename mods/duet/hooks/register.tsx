@@ -282,11 +282,11 @@ function cutText(type: string, cut: AgentCut): string {
 
 /**
  * The custom agent's definition by Claude's discovery rules: the nearest `.claude/agents` folder with a file
- * named `type` in its `name` field, and a note when the search was cut short by its depth or file limit.
+ * named `type` in its `name` field; `isCut` when the search was cut short by its depth or file limit, and the note that says so.
  * Agents from managed settings, `--agents`, a plugin or `--add-dir` aren't reachable, so they are a miss.
  */
-async function agentDef($: EngineInterface, cwd: string, type: string): Promise<{ def: AgentDef | null; note: string }> {
-  if (!/^[\w.:-]+$/.test(type)) return { def: null, note: '' }
+async function agentDef($: EngineInterface, cwd: string, type: string): Promise<{ def: AgentDef | null; isCut: boolean; note: string }> {
+  if (!/^[\w.:-]+$/.test(type)) return { def: null, isCut: false, note: '' }
   // A folder is listed and read only when every nearer one had no match, so each pick sees that folder alone.
   const searched = new Set<string>()
   const cut: AgentCut = { depth: false, files: false }
@@ -299,7 +299,7 @@ async function agentDef($: EngineInterface, cwd: string, type: string): Promise<
     def = pickAgent(await agentTexts($, entries), type)
     if (def) break
   }
-  return { def, note: cutText(type, cut) }
+  return { def, isCut: cut.depth || cut.files, note: cutText(type, cut) }
 }
 
 /** Where a path really lands, or undefined when it leads nowhere. */
@@ -533,8 +533,8 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   mine.add(id)
   let handedOff = false
   try {
-    const { def, note: searchNote } = role ? { def: roleDef(role), note: '' } : await agentDef($, cwd, type)
-    const sandbox = effectiveSandbox(options.sandbox, def, type, searchNote !== '')
+    const { def, isCut, note: searchNote } = role ? { def: roleDef(role), isCut: false, note: '' } : await agentDef($, cwd, type)
+    const sandbox = effectiveSandbox(options.sandbox, def, type, isCut)
     // The run mode follows the sandbox the agent would have had: a demoted editing agent still waits, so Claude reads the note before going on.
     const uncut = effectiveSandbox(options.sandbox, def, type)
     const baseSha = await baseCommit($)
