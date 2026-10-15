@@ -162,37 +162,6 @@ async function writeLog($: Engine): Promise<void> {
   writtenSig = sig
 }
 
-/** The mods folder of the plugin's own marketplace: `modsDir`'s default when nothing is found from the working directory. */
-const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
-
-/** The mods folder in use: the one the last scan resolved, else `modsDir` or the plugin's own. */
-const modsDirOf = ($: Engine): string => resolvedDir ?? Lab.modsDirFor(configuredDir, null, [], pluginModsDirOf($))
-
-/**
- * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the working
- * directory (the one /mod-builder:build writes to, a worktree's own in a worktree), else the
- * plugin's own. The working directory is read now, so a `/cd` is followed.
- */
-async function defaultModsDir($: Engine): Promise<string> {
-  const cwd = await cwdOf($)
-  const candidates = cwd === null ? [] : Lab.marketplaceCandidatesOf(cwd)
-  const isThere = await Promise.all(
-    candidates.map(path =>
-      $.fs.exists(path).catch((error: unknown) => {
-        logCaught($, 'fs.exists', error, 'debug', { path })
-        return false
-      }),
-    ),
-  )
-  return Lab.modsDirFor('', cwd, candidates.filter((_, at) => isThere[at]), pluginModsDirOf($))
-}
-
-/** Resolves the mods folder once, for a scan or the session's first line; the rest of the pass uses `modsDirOf`. */
-async function resolveModsDir($: Engine): Promise<string> {
-  resolvedDir = configuredDir ? Lab.modsDirFor(configuredDir, null, [], pluginModsDirOf($)) : await defaultModsDir($)
-  return resolvedDir
-}
-
 /** The session's working directory, read at each use so a `/cd` is followed; null when it can't be read. */
 const cwdOf = ($: Engine): Promise<string | null> =>
   $.session.cwd().catch((error: unknown) => (logCaught($, 'session.cwd', error), null))
@@ -211,6 +180,40 @@ const readText = ($: Engine, path: string): Promise<string | null> =>
     logCaught($, 'fs.read', error, 'debug', { path })
     return null
   })
+
+const exists = ($: Engine, path: string): Promise<boolean> =>
+  $.fs.exists(path).catch((error: unknown) => {
+    logCaught($, 'fs.exists', error, 'debug', { path })
+    return false
+  })
+
+/** The mods folder of the plugin's own marketplace: `modsDir`'s default when nothing is found from the working directory. */
+const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
+
+/** A set `modsDir`, normalized, else `fallback`. */
+const configuredDirOr = (fallback: string): string => Lab.modsDirFor(configuredDir, null, [], fallback)
+
+/** The mods folder in use: the one the last scan resolved, else `modsDir` or the plugin's own. */
+const modsDirOf = ($: Engine): string => resolvedDir ?? configuredDirOr(pluginModsDirOf($))
+
+/**
+ * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the working
+ * directory (the one /mod-builder:build writes to, a worktree's own in a worktree), else the
+ * plugin's own. The working directory is read now, so a `/cd` is followed.
+ */
+async function defaultModsDir($: Engine): Promise<string> {
+  const cwd = await cwdOf($)
+  const candidates = cwd === null ? [] : Lab.marketplaceCandidatesOf(cwd)
+  const isThere = await Promise.all(candidates.map(path => exists($, path)))
+  return Lab.modsDirFor('', cwd, candidates.filter((_, at) => isThere[at]), pluginModsDirOf($))
+}
+
+/** Resolves the mods folder once, for a scan or the session's first line; the rest of the pass uses `modsDirOf`. */
+async function resolveModsDir($: Engine): Promise<string> {
+  // A set `modsDir` wins, so nothing is walked.
+  resolvedDir = configuredDir ? configuredDirOr(pluginModsDirOf($)) : await defaultModsDir($)
+  return resolvedDir
+}
 
 /**
  * The files in `folder`'s subfolders (from its `entries`), up to `depth` levels down, named by
@@ -481,12 +484,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind)) return
   const dir = `${modsDirOf($)}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
-  const hasTypes =
-    kind !== 'Typecheck' ||
-    (await $.fs.exists(typesPath).catch((error: unknown) => {
-      logCaught($, 'fs.exists', error, 'debug', { path: typesPath })
-      return false
-    }))
+  const hasTypes = kind !== 'Typecheck' || (await exists($, typesPath))
   if (!hasTypes) {
     $.ui.toast(`${mod}: type-check needs the engine's types. Load the mod once in a session (/reload-plugins), then press K`)
     return
@@ -625,7 +623,7 @@ async function configure($: Engine, words: string[]): Promise<string> {
     autoRerun,
     autoOpen,
     modsDir: configuredDir,
-    modsDirShown: Lab.shortPath(Lab.modsDirFor(configuredDir, null, [], defaultDir)),
+    modsDirShown: Lab.shortPath(configuredDirOr(defaultDir)),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
   if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, defaultDir))

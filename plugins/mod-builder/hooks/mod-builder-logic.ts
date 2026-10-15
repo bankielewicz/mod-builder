@@ -848,7 +848,10 @@ const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
 export function marketplaceCandidatesOf(cwd: string): string[] {
   const parts = normalizePath(cwd).split('/').filter(Boolean)
   const candidates: string[] = []
-  for (let depth = parts.length; depth >= 0; depth--) candidates.push(parts.slice(0, depth).map(part => `/${part}`).join('') + MARKETPLACE_FILE)
+  for (let depth = parts.length; depth >= 0; depth--) {
+    const folder = parts.slice(0, depth).map(part => `/${part}`).join('')
+    candidates.push(folder + MARKETPLACE_FILE)
+  }
   return candidates
 }
 
