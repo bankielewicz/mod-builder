@@ -70,7 +70,12 @@ export type Gate = {
   isBehaviourOnly?: boolean
   /** Unmeasured source files changed since the merge base. */
   unmeasured?: string[]
+  /** R4 or G8 failed: a phase agent created a plugin manifest, or the guard refused one (Change 0.5.0). */
+  newPlugin?: NewPlugin
 }
+
+/** A new Claude Code plugin's manifest a phase agent made (`isCreated`) or the guard refused it (Change 0.5.0). */
+export type NewPlugin = { path: string; isCreated: boolean }
 
 export type Baseline = { lines: Pct; branches: Pct }
 
@@ -138,7 +143,13 @@ export type Run = {
   /** HEAD when the run reached ready (after gate F): publish pushes exactly this commit, and refuses if HEAD moved. */
   gatedHead?: string
   merge?: MergeCheck
-  blocked?: { at: Step; reason: string; next: string }
+  /** The manifest the guard refused a phase agent, relative to the run's folder: the phase's gate blocks on it (Change 0.5.0). */
+  newPlugin?: string
+  /**
+   * `steps`: what the person does next, one item each; `isFinal`: resume can't clear it, so the hint says stop
+   * (Change 0.5.0). Both absent in runs stored before.
+   */
+  blocked?: { at: Step; reason: string; next: string; steps?: string[]; isFinal?: boolean }
 }
 
 /** What the module is doing right now inside a step: a label and since when. */

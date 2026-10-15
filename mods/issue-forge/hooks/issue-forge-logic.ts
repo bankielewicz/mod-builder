@@ -4,9 +4,9 @@
  * Section numbers like §4 refer to docs/specs/issue-forge.md.
  */
 
-import type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
+import type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, NewPlugin, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
 
-export type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
+export type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, NewPlugin, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
 
 export const NAME = 'issue-forge'
 export const PROFILE_FILE = '.issue-forge.json'
@@ -657,6 +657,133 @@ export function gateG(p: Profile, baseline: Baseline | null, f: GateGFacts, root
   }
 }
 
+// ── New plugins (Change 0.5.0) ──────────────────────────────────────────
+
+/** `build … with /mod-builder:build` on one line; not the `build` of `/mod-builder:build` itself. */
+const BUILD_WITH_MOD_BUILDER = /(?<![\w:/-])build\b.*?\bwith\b.*?\/mod-builder:build\b/i
+const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s/
+const QUOTE_LINES = 12
+const QUOTE_CHARS = 1200
+
+/** At most 12 lines and 1,200 characters, the cut marked with `…`. */
+function capQuote(lines: readonly string[]): string[] {
+  const out: string[] = []
+  let used = 0
+  for (const [i, line] of lines.entries()) {
+    if (i === QUOTE_LINES) {
+      out[out.length - 1] += '…'
+      break
+    }
+    if (used + line.length > QUOTE_CHARS) {
+      out.push(`${line.slice(0, QUOTE_CHARS - used)}…`)
+      break
+    }
+    out.push(line)
+    used += line.length
+  }
+  return out
+}
+
+/**
+ * The issue's own words asking for its plugin to be built with mod-builder: the first line that says so, and the
+ * lines after it up to a blank line, a heading or the next list item at its indent. Null when no line does.
+ */
+export function newModGuidance(body: string): string[] | null {
+  const lines = body.replace(/\r\n?/g, '\n').split('\n')
+  const at = lines.findIndex(line => BUILD_WITH_MOD_BUILDER.test(line))
+  if (at < 0) return null
+  const indent = LIST_ITEM.exec(lines[at] ?? '')?.[1]?.length ?? -1
+  const quote = [(lines[at] ?? '').trimEnd()]
+  for (const line of lines.slice(at + 1)) {
+    if (line.trim() === '' || /^\s{0,3}#/.test(line)) break
+    const item = LIST_ITEM.exec(line)
+    if (item && indent >= 0 && (item[1]?.length ?? 0) <= indent) break
+    quote.push(line.trimEnd())
+  }
+  return capQuote(quote)
+}
+
+/** A Claude Code plugin's manifest: `plugin.json` in a `.claude-plugin` folder, at any depth. */
+export function isPluginManifest(path: string): boolean {
+  return /(^|\/)\.claude-plugin\/plugin\.json$/.test(path.replace(/\\/g, '/'))
+}
+
+/** The new plugin a phase made: the first manifest added since the merge base, else the one the guard refused. */
+export function newPluginOf(added: readonly string[], refused?: string): NewPlugin | null {
+  const path = added.find(isPluginManifest)
+  if (path) return { path, isCreated: true }
+  return refused ? { path: refused, isCreated: false } : null
+}
+
+/** R4 (gate R) or G8 (gates G and F), checked first: a new plugin fails the gate before any test runs. */
+export function newPluginGate(which: 'R' | 'G' | 'F', np: NewPlugin): Gate {
+  const id = which === 'R' ? 'R4' : 'G8'
+  return { gate: which, passed: false, checks: [check(id, false, `${np.isCreated ? 'a new' : 'a refused'} Claude Code plugin: ${np.path}`)], newPlugin: np }
+}
+
+/** What the guard tells a phase agent that would create a manifest. */
+export function newPluginRefusal(path: string): string {
+  return `issue-forge: creating a new Claude Code plugin (${path}) is mod-builder's job, not this run's. End your turn now; the run stops with next steps for the person.`
+}
+
+export type StartIssue = { issue: number; title: string; url: string; ghRepo?: string }
+export type NewPluginCase = { kind: 'start'; issue: StartIssue; guidance: string[] } | { kind: 'gate'; run: Run; guidance: string[] | null }
+
+function guidanceStep(issue: number, guidance: readonly string[]): string {
+  return `Follow the issue's own guidance (quoted from #${issue} as its author wrote it):${guidance.map(line => `\n   > ${line}`).join('')}`
+}
+
+/** The next steps, one item each, for a start the issue refused or a run a gate blocked; no repository-specific path. */
+export function newPluginSteps(c: NewPluginCase): string[] {
+  if (c.kind === 'start') {
+    const { issue, title, url, ghRepo } = c.issue
+    return [
+      `Run /mod-builder:build and ask for the plugin #${issue} describes: "${title}" (${url}). Read it first with gh issue view ${issue}${ghRepo ? ` --repo ${ghRepo}` : ''}.`,
+      ...(c.guidance.length > 0 ? [guidanceStep(issue, c.guidance)] : []),
+      'Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
+      `Open a pull request that closes #${issue}.`,
+    ]
+  }
+  const run = c.run
+  const isWorktree = isWorktreeRun(run)
+  const red = run.step === 'gateR' ? undefined : run.redCommit?.slice(0, 7)
+  const left = red
+    ? `Nothing past red's commit was committed, and nothing was pushed. ${isWorktree ? `This run's worktree ${run.workRoot} holds red's tests at ${red} and the phase's uncommitted files.` : `This run's branch ${run.branch} holds red's tests at ${red}, and the checkout's uncommitted files (git status lists them) are the phase's.`}`
+    : `Nothing was committed, and nothing was pushed. ${isWorktree ? `This run's worktree ${run.workRoot} holds red's uncommitted files.` : "The checkout's uncommitted files (git status lists them) are red's."}`
+  const cleanup = cleanupCommand(run)
+  return [
+    left,
+    `Stop this run: /issue-forge stop ${run.issue}`,
+    `Build the plugin with /mod-builder:build in a clean checkout of ${run.base} or a new worktree from it, not in this run's ${isWorktree ? 'worktree' : 'branch'}, whose files would be in the way (mod-builder's scaffold refuses a plugin folder that already holds files).`,
+    ...(red ? [`Red's tests can serve the build's logic-first step as reference: git show ${red}`] : []),
+    ...(c.guidance ? [guidanceStep(run.issue, c.guidance)] : []),
+    ...(cleanup ? [`When you no longer need this run's worktree, remove it from a plain shell: ${cleanup}`] : []),
+    `Open a pull request that closes #${run.issue}.`,
+  ]
+}
+
+/** Steps as the person reads them: `1. …`, one per line (a step's own lines follow it). */
+export function numberedSteps(steps: readonly string[]): string {
+  return steps.map((step, i) => `${i + 1}. ${step}`).join('\n')
+}
+
+/** The answer to a start whose issue asks for a new plugin: nothing was started. */
+export function newModReply(issue: StartIssue, guidance: string[]): string {
+  return [
+    `#${issue.issue} asks for a new Claude Code plugin. issue-forge doesn't build new plugins: it takes an issue to a fix, test-first. New plugins are built with mod-builder, whose SPEC is the one approval. Nothing was started.`,
+    '',
+    'Next steps:',
+    numberedSteps(newPluginSteps({ kind: 'start', issue, guidance })),
+  ].join('\n')
+}
+
+/** A gate found a new plugin: the run blocks final, with the steps, and is never retried. */
+function newPluginBlocked(run: Run, at: Step, np: NewPlugin): Run {
+  const reason = `a phase agent ${np.isCreated ? 'created' : 'tried to create'} a new Claude Code plugin (${np.path}); issue-forge doesn't build new plugins`
+  const steps = newPluginSteps({ kind: 'gate', run: { ...run, step: at }, guidance: newModGuidance(run.body) })
+  return blockedAt(run, at, reason, 'build it with /mod-builder:build', { steps, isFinal: true })
+}
+
 /** The first failed check's detail, or '' when none failed. */
 export function firstFailure(g: Gate): string {
   return g.checks.find(c => !c.passed)?.detail ?? ''
@@ -754,7 +881,8 @@ export type RunEvent =
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string; keep?: Kept }
+  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean }
+  | { type: 'newPlugin'; path: string }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'made'; keep: Kept }
   | { type: 'pinned'; repo: string }
@@ -821,8 +949,8 @@ export function canRetry(run: Run, phase: Phase): boolean {
 const start = (run: Run, phase: Phase | 'publish', now: number): Run['times'] => ({ ...run.times, [phase]: { startedAt: now } })
 const end = (run: Run, phase: Phase | 'publish', now: number): Run['times'] => ({ ...run.times, [phase]: { startedAt: run.times[phase]?.startedAt ?? now, endedAt: now } })
 
-function blockedAt(run: Run, at: Step, reason: string, next: string): Run {
-  return { ...run, step: 'blocked', blocked: { at, reason, next } }
+function blockedAt(run: Run, at: Step, reason: string, next: string, more: { steps?: string[]; isFinal?: boolean } = {}): Run {
+  return { ...run, step: 'blocked', blocked: { at, reason, next, ...more } }
 }
 
 /** The single transition function: every step change goes through here. */
@@ -840,13 +968,15 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   // A number start's repository, once origin agrees with it: kept over a block, so resume can't move the run (PR #68 review 2).
   if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
-  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next) : run
+  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
+  // The guard refused a manifest: the phase's gate blocks on it (Change 0.5.0).
+  if (ev.type === 'newPlugin') return isActive(run) ? { ...run, newPlugin: ev.path } : run
   if (ev.type === 'resume') {
     if (isWorking(run.step)) {
       const phase = phaseOf(run.step)
       return phase === 'red' || phase === 'green' || phase === 'refactor' ? { ...run, used: { ...run.used, [phase]: 0 } } : run
     }
-    if (run.step !== 'blocked' || !run.blocked) return run
+    if (run.step !== 'blocked' || !run.blocked || run.blocked.isFinal) return run
     const at = run.blocked.at === 'publishing' ? 'ready' : run.blocked.at
     const phase = phaseOf(at)
     const used = phase === 'red' || phase === 'green' || phase === 'refactor' ? { ...run.used, [phase]: 0 } : run.used
@@ -873,6 +1003,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
     case 'gateR': {
       if (ev.type !== 'gated') return run
       const gated = { ...run, lastGate: ev.gate, gates: { ...run.gates, R: ev.gate }, lastTestTail: ev.testTail }
+      if (ev.gate.newPlugin) return newPluginBlocked(gated, 'gateR', ev.gate.newPlugin)
       if (ev.gate.passed) {
         if (run.behaviourFor) {
           const { behaviourFor: _, ...rest } = gated
@@ -891,6 +1022,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.type !== 'gated') return run
       const isF = run.step === 'gateF'
       const gated = { ...run, lastGate: ev.gate, gates: { ...run.gates, [isF ? 'F' : 'G']: ev.gate }, lastTestTail: ev.testTail }
+      if (ev.gate.newPlugin) return newPluginBlocked(gated, run.step, ev.gate.newPlugin)
       if (ev.gate.passed) {
         if (isF) return { ...gated, refactorCommit: ev.commit, gatedHead: ev.head, step: 'ready', times: end(gated, 'refactor', now) }
         const greenTimes = end(gated, 'green', now)
@@ -1114,18 +1246,23 @@ const TRUST =
 
 /** A message reaches the main conversation; the mod reads only the final answer (PR #86 review). */
 const REPORT = 'Report only in your final answer: never send a message to the lead or another agent. The issue-forge mod reads your final answer when you stop.'
+/** Every phase's rules end with this (Change 0.5.0): a new plugin is mod-builder's job. */
+const NO_NEW_PLUGIN = ' Never create a new Claude Code plugin (a new .claude-plugin/plugin.json): if the issue needs one, stop and say so.'
 
 export const RULES: Record<Phase, string> = {
   red:
     'You are the red phase of a test-first workflow. Write tests from the issue only. Touch only paths matching the test globs given. ' +
     "Every new test must fail now, by an assertion (never by a load, import or syntax error: the green phase can't edit tests to fix that), " +
-    'and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails.',
+    'and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails.' +
+    NO_NEW_PLUGIN,
   green:
     'You are the green phase of a test-first workflow. Make the failing tests pass. Never edit a path matching the test globs; edited tests fail the gate. ' +
-    'Follow the profile notes. End with the changed files.',
+    'Follow the profile notes. End with the changed files.' +
+    NO_NEW_PLUGIN,
   refactor:
     'You are the refactor phase of a test-first workflow. Improve the changed code without changing behaviour. Never edit tests. ' +
-    'Keep every test passing. End with what changed and why.',
+    'Keep every test passing. End with what changed and why.' +
+    NO_NEW_PLUGIN,
 }
 
 /** The registered agent's whole system prompt. */
@@ -1469,13 +1606,20 @@ export function badgeOf(run: Run, now: number): string {
 }
 
 /** `/issue-forge status` as text; `others` are the repository's other active runs (Change 0.3.0). */
+/** What follows a block's next step: resume, or for a block resume can't clear, stop (Change 0.5.0). */
+export function afterBlock(run: Run): string {
+  return run.blocked?.isFinal ? `/issue-forge stop ${run.issue}` : '/issue-forge resume'
+}
+
 export function statusText(run: Run | null, isDriving: boolean, now: number, me = '', others: readonly OtherRun[] = []): string {
   if (!run) return `No run in this repository. ${USAGE}`
   const view = viewOf(run, isDriving, me)
   const head = `${issueLabel(run)}${run.title ? ` ${run.title}` : ''}${run.branch ? ` · ${run.branch} → ${run.base}` : ''}`
   const lines = [head]
-  if (view === 'blocked' && run.blocked) lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then /issue-forge resume`)
-  else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
+  if (view === 'blocked' && run.blocked) {
+    lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then ${afterBlock(run)}`)
+    if (run.blocked.steps && run.blocked.steps.length > 0) lines.push(numberedSteps(run.blocked.steps))
+  } else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
   else if (view === 'elsewhere') lines.push(elsewhereLine(run, now))
   else if (view === 'stopped') lines.push('stopped; the branch and its commits are kept')
   else if (view === 'ready') {
