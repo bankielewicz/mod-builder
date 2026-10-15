@@ -564,7 +564,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Probed what validate reads (2.1.300):** the review noted that only `agents/` and `.mcp.json` had been probed. On 2.1.300, an empty file in `agents/`, `commands/`, `commands/sub/` or `skills/x/SKILL.md` makes validate "pass with warnings", so all three folders are read. An empty `skills/x/references/y.md` gives no warning. The issue's `name: [broken` frontmatter no longer warns on 2.1.300. Full table in gotchas.md ("Testing and checking").
   - **`autoRerun` and the shapes not yet probed:** validate and test ran no shell in a command or skill body and started no agent `mcpServers` (2.1.300, no live control). gotchas.md and docs/safety.md say so.
   - **"Ready to share" again on upgrade:** added to "On upgrade" above.
-  - **Known limits, unchanged by this change:**
+  - **Known limits, unchanged by this change (follow-up #82):**
     - A symbolic link lists as `other` (d.ts), so a linked file or folder is left out of the signature, in the new folders as in `hooks/` and `tests/`.
     - Validate follows a `plugin.json` `"mcpServers": "./file.json"` path (probed: a malformed one fails validate), and the signature doesn't cover it. Validate showed no sign of following a `"commands": "./cmds"` path.
     - Logic counts only `hooks/` and `tests/` files, so an edit confined to the new folders, or to the SPEC or README, leaves Logic stale and never reaches "ready to share", as on 0.2.14.
