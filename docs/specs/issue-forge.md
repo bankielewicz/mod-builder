@@ -24,7 +24,7 @@ Written 2026-10-13 against Claude Code 2.1.296, Node 24.21.0 and Codex CLI 0.162
 ## 1. Scope
 
 **MVP** (what `/mod-builder:build` builds):
-- one issue at a time, one run per repository at a time;
+- one issue at a time, one run per repository at a time (since 0.3.0: one run per session, several sessions per repository; see the mod's SPEC, Change 0.3.0);
 - GitHub only, through the `gh` CLI;
 - any language whose test command runs from a terminal and whose coverage tool writes LCOV;
 - the three phases on Claude subagents, each with its own model;

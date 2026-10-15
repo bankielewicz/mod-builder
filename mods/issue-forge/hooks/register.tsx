@@ -1413,7 +1413,7 @@ export const register: Register = (on, raw) => {
     sessionCwd = e.cwd
     isInteractive = e.isInteractive
     await $.command
-      .register({ name: 'issue-forge', description: 'Take a GitHub issue to a pull request, test-first, behind a coverage gate', argumentHint: '<issue> | status | resume | publish | stop | demo' })
+      .register({ name: 'issue-forge', description: 'Take a GitHub issue to a pull request, test-first, behind a coverage gate', argumentHint: '<issue> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo' })
       .catch(() => undefined)
     for (const which of PHASES) {
       await $.agent
