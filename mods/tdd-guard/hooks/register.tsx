@@ -143,13 +143,19 @@ function launchedId(result: unknown): string | null {
   return launched && LAUNCHED.has(launched.status ?? '') && launched.agentId ? launched.agentId : null
 }
 
+/** The pending records without one agent's. */
+function withoutId(all: Record<string, string>, agentId: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(all).filter(([id]) => id !== agentId))
+}
+
 /** A background run's first turn ended: say what it changed, or that it could not be checked. */
 async function finish($: EngineInterface, agentId: string): Promise<void> {
-  const type = (await read($, pending))[agentId]
-  if (type === undefined) return
-  await update($, pending, all => Object.fromEntries(Object.entries(all).filter(([id]) => id !== agentId)))
+  // The snapshot first: the pending record may still be on its way when the first turn ends.
   const kept = snapshots.get(agentId)
+  const type = kept?.type ?? (await read($, pending))[agentId]
+  if (type === undefined) return
   snapshots.delete(agentId)
+  await update($, pending, all => withoutId(all, agentId))
   const line = kept
     ? reportOf(type, changesOf(kept.files, await snapshotOf($, protectedGlobs(type))))
     : `tdd-guard: ${type} finished, but its test files could not be checked (reloaded)`
@@ -195,6 +201,8 @@ export const register: Register = (on, raw) => {
     if (later !== null) {
       snapshots.set(later, { type, files: before })
       await update($, pending, all => ({ ...all, [later]: type }))
+      // Its first turn ended while that write was in flight, so finish() has checked it already: drop the record again.
+      if (!snapshots.has(later)) await update($, pending, all => withoutId(all, later))
       return ran
     }
     const line = reportOf(type, changesOf(before, await snapshotOf($, globs)))
