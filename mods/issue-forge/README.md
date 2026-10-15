@@ -96,10 +96,18 @@ A run works in the clone your session started in. Its issue and its pull request
 or a second remote can't send the run elsewhere. The masthead and `/issue-forge status` name it
 (`o/r#16`; `host/o/r#16` on GitHub Enterprise).
 
-- `origin` must be that repository, for fetching and for pushing. A renamed or transferred repository
-  passes: when the URL's name differs, `gh` is asked what it calls it. A URL is never printed or passed on,
-  since it can hold a token. A fork clone, where `origin` is your fork, blocks the run before it fetches
-  or switches anything; forks are tracked in #26.
+- `origin` must be that repository, for fetching and for every push URL (`git push` sends to all of them).
+  It is read from an `https://`, `http://` or ssh remote (`ssh://…` or `[user@]host:owner/repo`); any
+  other form (`git://`, `file://`, a path) blocks the run. An https or http remote must name the
+  repository's host. An ssh remote may name an alias of it from `~/.ssh/config`, so the same owner and
+  repository is enough there (an ssh remote on another real host with the same owner and repository
+  passes too: #71). A renamed or transferred repository passes: when the name differs on the same host,
+  `gh` is asked what it calls it; `gh` is never asked about another host. A URL is never printed or
+  passed on, since it can hold a token. GitHub Enterprise Server on a non-default port isn't supported (#71).
+- A fork clone blocks the run before it fetches or switches anything when `gh repo view` names another
+  repository than `origin` does, as it does with an `upstream` remote and no `gh repo set-default`. With
+  the fork as the only remote, or after `gh repo set-default <fork>`, gh names the fork itself, so the run
+  is pinned to the fork: its issue is read there, and its pull request opens there. Forks are tracked in #26.
 - A pasted issue URL must name that same repository, or the command answers
   `x/y#16 is in another repository: this checkout's GitHub repository is o/r. …` and starts nothing.
   Only `https://<host>/<owner>/<repo>/issues/<N>` is read.
@@ -255,5 +263,6 @@ claude plugin validate .
 claude plugin test .
 ```
 
-Built on Claude Code 2.1.296; 0.3.0 (parallel runs) checked on 2.1.300. Written spec-first with
+Built on Claude Code 2.1.296; 0.3.0 (parallel runs) and 0.4.0 (issue URLs, one repository per run)
+checked on 2.1.300. Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.

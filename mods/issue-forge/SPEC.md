@@ -1111,15 +1111,17 @@ request's number too, so an open pull request passed as an issue. The evidence (
    saved; the run then stores the name gh gives. A number start sets `ghRepo` at preflight (the `preflighted`
    event carries `repo`).
 3. **Preflight order:** `gh auth status`; the repository (`run.ghRepo`, else `gh repo view`); origin; the
-   issue; then the base fetch, as before. Origin is checked for its fetch URL and its push URL
-   (`git remote get-url [--push] origin`): each must name the repository. `repoOfRemoteUrl` reads https, ssh
-   and scp-like URLs and compares owner and repository; when they differ, `gh repo view <host/owner/repo>`
-   gives the repository's current name (renames and transfers). No URL is passed on or shown, since one can
-   hold a token. Any other URL form is `an unrecognised URL`. Forks are #26.
+   issue; then the base fetch, as before. Origin is checked for its fetch URL and each of its push URLs
+   (`git remote get-url origin`, `git remote get-url --push --all origin`; a push URL that is the fetch URL
+   is checked once): each must name the repository. `remoteVerdict` decides from the URL (review round 1,
+   below); another owner or repository on the pinned host is asked of `gh repo view <host/owner/repo>`,
+   which gives the repository's current name (renames and transfers). No URL is passed on or shown, since
+   one can hold a token. Any other URL form is `an unrecognised URL`. Forks are #26.
 4. **The issue is read with `--repo`**, and a url of the form `/<owner>/<repo>/pull/<N>` blocks with
    `#<N> is a pull request, not an issue`. The not-found `next` reads `check the issue number or URL`.
 5. **Resume** runs `gh auth status`, then the issue check with `--repo` when the run has `ghRepo`. A run
-   stored at preflight with no branch runs the whole new preflight and gains `ghRepo`.
+   stored at preflight with no branch runs the whole new preflight and gains `ghRepo`; one stored at
+   preflight with a branch leaves the issue to preflight too (review round 1).
 6. **Publish** of a pinned run checks origin again before the push, and `gh pr create` ends
    `--repo <host/owner/repo>`.
 7. **Naming.** The masthead, `statusText`'s head line and the publish question name the repository
@@ -1143,4 +1145,46 @@ without `ghRepo`; the start, preflight, publish and resume cases (including a re
 the origin URL, a fork, a differing push URL, an unrecognised URL, a pull request's number, a run stored
 without `ghRepo`).
 
-**Live check:** not run by this change's green phase; see the pull request.
+### Review round 1 (PR #68, 2026-10-15)
+
+A `/code-review` of the PR at 33a64d5, with Codex's two P1 comments, found these. Each was fixed with a test that
+failed first:
+1. **An https origin must name the pinned host** (Codex 4285067310). The owner/repo shortcut ignored the host for every
+   form, so `https://ghe.example.com/o/r.git` passed for `github.com/o/r`. `remoteVerdict` (logic): https and http
+   compare host, owner and repository; an ssh remote (`ssh://` or scp-like: git hands either host to ssh, and
+   `~/.ssh/config` may alias it) passes on owner and repository; another owner or repository on the pinned host is
+   `ask` (a rename, asked of gh); any other host is `other` and blocks with no gh call, so gh is never sent to a host
+   taken from `.git/config`.
+2. **Every push URL is checked** (Codex 4285067299). `git remote get-url --push origin` prints only the first push
+   URL; `git push origin` pushes to all [ran: git 2.53.0, two `pushurl` entries]. `originCheck` reads
+   `--push --all` and checks each URL that isn't the fetch URL, so a renamed origin is asked of gh once, not twice.
+3. **A URL of another repository's issue is refused** even when this checkout has a run with that number: `startRun`
+   compares the URL's repository before the same-issue shortcut.
+4. **Resume at preflight** leaves the issue to preflight: a number start that blocked there after making its branch
+   has no `ghRepo`, so resume read the issue with no `--repo`.
+5. **http and any case of the scheme** are read; an origin that still can't be read says
+   `give origin an https, http or ssh URL for o/r` instead of telling the person to clone again.
+6. **A query or fragment** (`?x=1`, `#main`) never becomes part of the name passed to gh: such a URL is unread.
+
+Also: the README no longer says every fork clone blocks (issue #25's own table: with the fork as the only remote,
+gh resolves the fork, and the run is pinned to it); an unused test helper is gone.
+
+**Known limits, in #71:** an ssh remote on another real host with the same owner and repository passes (an alias
+can't be told from a host without resolving it; `ssh -G <host>` prints the resolved `hostname` without connecting
+[ran: OpenSSH 10.2p1]); GitHub Enterprise Server on a non-default port is unsupported: `repoOfView` keeps the port
+and `repoOfRemoteUrl` drops it, so that repository's own https origin blocks [ran], and whether gh accepts
+`--repo host:port/o/r` is unverified. A number start that blocks at preflight isn't pinned yet, so its masthead
+shows `#68`, not `o/r#68` [ran, live check below].
+
+**Live check** (Claude Code 2.1.300, gh 2.102.0; an interactive session in a fresh clone of the repository with
+`--plugin-dir` on this branch at f78ed98 and the installed issue-forge disabled):
+- `/issue-forge https://github.com/bankielewicz/mod-builder/issues/45` (a closed issue):
+  `starting bankielewicz/mod-builder#45; …`; the masthead named `bankielewicz/mod-builder#45`; blocked at preflight:
+  `issue #45 is closed`.
+- `/issue-forge https://github.com/cli/cli/issues/1`: `cli/cli#1 is in another repository: this checkout's GitHub
+  repository is bankielewicz/mod-builder. Start Claude Code in a clone of cli/cli.`; no run.
+- `/issue-forge 68` (this pull request): blocked at preflight: `#68 is a pull request, not an issue`.
+- With a second push URL `https://ghe.example.com/bankielewicz/mod-builder.git` added to the clone's origin,
+  `/issue-forge 69`: blocked at preflight: `origin pushes to ghe.example.com/bankielewicz/mod-builder, but gh sends
+  issues and pull requests to bankielewicz/mod-builder`. Each run was stopped; the clone kept only `main`, no
+  worktree, and a clean tree.

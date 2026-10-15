@@ -75,7 +75,10 @@ the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own c
 1. `gh auth status` exits 0. The repository is known: a run started from an issue URL is pinned to the
    repository the URL names, which must be the one `gh repo view --json nameWithOwner,url` shows in the
    checkout; any other run is pinned to what that command shows. `origin` fetches from and pushes to that
-   repository (`git remote get-url [--push] origin`; a renamed one is matched through `gh repo view`).
+   repository (`git remote get-url origin` and every line of `git remote get-url --push --all origin`).
+   An https or http remote must name the repository's host; an ssh remote may name an alias of it, so the
+   same owner and repository is enough there. Another owner or repository on that host is matched through
+   `gh repo view` (a rename); `gh` is never asked about another host.
    `gh issue view <N> --repo <host/owner/repo> --json number,title,body,state,url` shows `state: OPEN`
    and a url that isn't a pull request's.
 2. The profile exists and validates (§4.2).
