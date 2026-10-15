@@ -684,7 +684,7 @@ export function repoOfView(stdout: string): string | null {
 }
 
 // The scheme is group 1 and the host group 2 in a URL, the host group 3 in the scp-like form; then owner (4) and repository (5).
-const REMOTE_URL = /^(?:(https?|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i
+const REMOTE_URL = /^(?:(https?|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s?#]+)\/([^/\s?#]+?)(?:\.git)?\/?$/i
 
 /** A remote's `host/owner/repo`, and whether git reaches it over ssh (an ssh:// URL or the scp-like form). */
 function parseRemote(url: string): { repo: string; isSsh: boolean } | null {
