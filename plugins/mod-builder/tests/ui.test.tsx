@@ -462,6 +462,10 @@ describe('progress', () => {
 
 describe('a run that does not end', () => {
   const MINUTE = 60_000
+  /** testTimeoutMinutes 0.1: a 6 s limit keeps these tests quick (the clock ticks every 250 ms). */
+  const SHORT = { options: { modsDir: MODS, testTimeoutMinutes: 0.1 } }
+  const LIMIT = 6000
+  const GRACE = 30_000
   const reportTest = ($: Engine) =>
     $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Test', status: 'passed' } as never)
 
@@ -484,7 +488,7 @@ describe('a run that does not end', () => {
     expect(seen.argv.length).toBe(2)
   })
 
-  test('a row older than testTimeoutMinutes plus 30 s is an orphan: a new Test replaces it, a younger row still blocks', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
+  test('a row older than testTimeoutMinutes plus 30 s is an orphan: a new Test replaces it, a younger row still blocks', SHORT, async ($, on) => {
     const hold = new Promise<void>(() => undefined)
     const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
     await start($)
@@ -492,22 +496,22 @@ describe('a run that does not end', () => {
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(1)
-    await clock.advance(MINUTE / 2)
+    await clock.advance(LIMIT / 2)
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(1)
     // Past the time limit but inside the grace: the run may still be ending (its scan, its store write).
-    await clock.advance(MINUTE / 2 + 5000)
+    await clock.advance(LIMIT / 2 + 5000)
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(1)
-    await clock.advance(MINUTE / 2)
+    await clock.advance(GRACE)
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(2)
   })
 
-  test('an orphan row leaves the band and the pane: T starts a new Test', { options: { modsDir: MODS, testTimeoutMinutes: 0.5 } }, async ($, on) => {
+  test('an orphan row leaves the band and the pane: T starts a new Test', SHORT, async ($, on) => {
     const hold = new Promise<void>(() => undefined)
     const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
     on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'band below' }) as never)
@@ -521,7 +525,7 @@ describe('a run that does not end', () => {
     const during = await mountBand($)
     expect(await during.find({ type: 'Text', text: /^git-branch$/ })).toBeDefined()
     await during.unmount()
-    await clock.advance(MINUTE + 5000)
+    await clock.advance(LIMIT + GRACE + 5000)
     const after = await mountBand($)
     expect(await after.find({ type: 'Text', text: /^git-branch$/ })).toBeUndefined()
     await after.unmount()
@@ -531,7 +535,7 @@ describe('a run that does not end', () => {
     expect(seen.argv.length).toBe(2)
   })
 
-  test('an orphan row does not hold back the auto re-run', { options: { modsDir: MODS, testTimeoutMinutes: 0.5 } }, async ($, on) => {
+  test('an orphan row does not hold back the auto re-run', SHORT, async ($, on) => {
     const mtime = { ms: 1000 }
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
     await start($)
@@ -546,7 +550,7 @@ describe('a run that does not end', () => {
     await clock.advance(10)
     await ui.unmount()
     expect(seen.argv).toHaveLength(3)
-    await clock.advance(MINUTE + 5000)
+    await clock.advance(LIMIT + GRACE + 5000)
     seen.stallTests = false
     mtime.ms = 5000
     await $.turn.complete({ answer: 'edited' } as never)
@@ -573,7 +577,7 @@ describe('a run that does not end', () => {
     expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
   })
 
-  test('a Validate that process.run stops at the time limit reads as timed out; one refused sooner could not run', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
+  test('a Validate that process.run stops at the time limit reads as timed out; one refused sooner could not run', SHORT, async ($, on) => {
     let release = () => {}
     const hold = new Promise<void>(resolve => (release = resolve))
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } }, true, hold)
@@ -581,10 +585,10 @@ describe('a run that does not end', () => {
     await clock.advance(10)
     const ui = await mountPane($)
     await ui.press({ key: 'validate' })
-    await clock.advance(MINUTE + 1000)
+    await clock.advance(LIMIT + 1000)
     release()
     await clock.advance(10)
-    expect(seen.toasts).toContain('✕ git-branch: timed out after 1 minute. Press F in Mod Lab to fix')
+    expect(seen.toasts).toContain('✕ git-branch: timed out after 0.1 minutes. Press F in Mod Lab to fix')
     await ui.unmount()
     const again = await mountPane($)
     await again.press({ key: 'validate' })
