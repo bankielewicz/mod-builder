@@ -1256,3 +1256,36 @@ kept the main model idle with no re-delivery in 78 s, so fix (a) of the issue ap
 
 **Not covered here.** The re-delivery check was run once (78 s) in P4; green and refactor were not captured
 separately (the issue's `[field]` note), so they rest on the same origin and name.
+
+### PR #86 review round 1 (2026-10-15)
+
+Codex's P2 and the owner's `/code-review` (9 findings, each checked against the code and the 2.1.300 d.ts).
+The owner asked for an advisor consult on the hook's scope, and it recommended the narrow hook, which this
+round takes. It supersedes items 1 and 3 above.
+
+- **Only the idle notice is consumed** (Codex P2, review 1). `{ consumed }` keeps a delivery out of the
+  queue and the transcript, and leaves only a log line (d.ts). So the hook takes only the delivery the
+  pane already has a copy of: the idle notice, whose `result` is the final answer `turn.complete` gave
+  the mod. `isOwnMailboxHandback` (logic module, review 4) requires all of these:
+  - no `agentId`, so the delivery is for the main conversation (review 3);
+  - origin `peer`;
+  - a `teammate` that the run knows;
+  - text that parses as `{"type":"idle_notification",…}`.
+
+  A message the agent writes, a protocol reply, and anything that isn't the notice pass on to the model.
+  `isVerified` is still not required, since hiding a spoofed notice only hides it.
+- **Names** (reviews 2 and 6). The name the mod asks for joins `knownRefs` before `$.agent.spawn`, so a
+  notice that arrives before the spawn returns is still consumed. `spawnRefs` also records the name in
+  the spawn's `teammateId` (`<name>@<team>`): a team that already has the name gives a suffixed one
+  (`scout-2`, d.ts, not probed).
+- **Prompt rule.** Every phase prompt, both the registered agent's and the spawn task (so a custom red
+  type gets it), now says to report only in the final answer. In this PR's own run, refactor-1 sent its
+  report as a message as well as the idle notice. **Accepted leak:** an agent that still messages its
+  report wakes the main session once. The live check shows whether the rule stops it.
+- **Comment** (review 7): a `consumed` reason is logged, not shown; only `prompt.submit`'s drop is shown.
+- **Tests** (review 8): the duplicated mailbox tests are folded, and the new pass-through cases join them.
+- **Version** (review 9): open PR #87 takes issue-forge to 0.5.0. Whichever merges second re-bumps
+  plugin.json, marketplace.json and this heading to the next free number (the owner's merge-time rule).
+- **Not done:** withholding SendMessage through `disallowedTools`. The teammate had it although the
+  agent's `tools` list leaves it out, and whether `disallowedTools` removes it isn't probed.
+- **Live check** (review 5): still the merge gate.

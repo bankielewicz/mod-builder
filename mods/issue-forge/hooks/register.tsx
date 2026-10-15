@@ -118,7 +118,7 @@ import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, 
 const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
 const GIT_TIMEOUT = 60_000
-/** Shown when a phase agent's report is kept from the main model (prompt.submit's drop, session.receive's consumed). */
+/** Why a phase agent's report is kept from the main model: shown for prompt.submit's drop, only logged for session.receive's consumed (d.ts). */
 const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
 const COLORS: Record<Tone, string | undefined> = { success: '#7FB685', accent: '#D97757', warn: '#E0B15A', error: '#E06C6C', dim: undefined }
 
@@ -1553,7 +1553,8 @@ export const register: Register = (on, raw) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // With agent teams on, a named phase agent is a teammate: its report is a mailbox delivery from its name, and no prompt.submit fires (#27, P4).
+  // With agent teams on, a named phase agent is a teammate: its report is an idle notice from its name, and no prompt.submit fires (#27, P4).
+  // Only that notice is consumed; anything else the agent sends reaches the model (PR #86 review).
   on('session.receive', async ($, e, next) => {
     if (isOwnMailboxHandback(e, [...knownRefs])) return { consumed: HANDBACK_DROP }
     return next(e)

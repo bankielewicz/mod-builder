@@ -173,8 +173,9 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
   agents as teammates. Inside tmux they default to pane teammates, which can't run them: the red phase
   blocks with `a pane-based teammate cannot run it`, and `--settings '{"teammateMode":"in-process"}'`
   lets it start. An in-process teammate hands back through `session.receive`, and the mod consumes
-  the run's own, so the end of each phase leaves the main model idle (#27). With agent teams off,
-  neither applies.
+  the run's own idle notices, so the end of each phase leaves the main model idle (#27). Anything
+  else a phase agent sends, such as a message it writes, still reaches the main model. With agent
+  teams off, neither applies.
 - A new worktree has only what is committed: no `node_modules` or other untracked setup. Profile
   commands that need them fail in a worktree run (there's no setup command yet).
 - Agents ignore the folder they're spawned in, so in a worktree run the mod moves the live agent's
@@ -256,7 +257,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
 | Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, and publish (unless `confirmPublish` is off) |
-| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the hand-back of the run's own named agent, which is a teammate's mailbox delivery) |
+| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the idle notice the run's own named agent sends the main conversation when it stops, which repeats the answer the pane shows; passes everything else) |
 
 The agents read the issue body, which anyone who can file an issue writes. Run it only on
 repositories and issues you trust. The agents are told to treat the issue as requirements, never
