@@ -1227,6 +1227,13 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(reportOf({ mod: 'foo', ...running }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 } })
   })
 
+  test('the config listing names a build\'s kept folder while modsDir is empty (PR #95 review)', () => {
+    const values = { logging: 'normal' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/main/mods', testTimeoutMinutes: 3 }
+    expect(configListText({ ...values, pinnedShown: '…/wt/mods' }, '')).toContain("modsDir            a build's folder (…/wt/mods)")
+    expect(configListText({ ...values, modsDir: '/my/mods', modsDirShown: '…/my/mods', pinnedShown: '…/wt/mods' }, '')).toContain('modsDir            …/my/mods')
+    expect(configListText(values, '')).toContain('modsDir            default (…/main/mods)')
+  })
+
   test('REPORT_SCHEMA lists path, and is still closed to other keys', () => {
     expect((REPORT_SCHEMA.properties as Record<string, { type?: string }>).path?.type).toBe('string')
     expect(REPORT_SCHEMA.additionalProperties).toBe(false)

@@ -2884,6 +2884,29 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(seen.argv.filter(argv => argv.includes('validate')).map(argv => argv[4])).toEqual([`${WT}/mods/beta`])
   })
 
+  test('a set modsDir wins over a report\'s path, which the reply says it ignored (PR #95 review)', { options: { modsDir: '/w/main/mods' } }, async ($, on) => {
+    const { seen, clock } = world(on, { ...disk(), ...modFiles('alpha', `${WT}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Validate', status: 'passed', path: `${WT}/mods/alpha` })) as { result: string }
+    await clock.advance(1000)
+    await clock.settle()
+    expect(result).toContain('path ignored')
+    expect(seen.argv.filter(argv => argv.includes('validate')).map(argv => argv[4])).toEqual([`${MAIN}/mods/alpha`])
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('/mod-builder config names a build\'s kept folder while modsDir is empty (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const { text } = (await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }
+    expect(text).toContain("a build's folder (…/wt/mods)")
+  })
+
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN
