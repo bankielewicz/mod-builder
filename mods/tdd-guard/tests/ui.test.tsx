@@ -39,6 +39,8 @@ type Opts = {
   during?: (files: Record<string, string>) => void
   /** What the Agent tool answers; the default is a finished foreground run. */
   agentAnswer?: unknown
+  /** Whether the nth `$.session.root()` call (from 1) fails, as a broken check would. */
+  rootFails?: (call: number) => boolean
 }
 
 const DONE = { status: 'completed', agentId: 'a1', content: [{ type: 'text', text: 'done' }], prompt: 'p', totalToolUseCount: 1, totalDurationMs: 500, totalTokens: 900, usage: {} }
@@ -56,7 +58,8 @@ function engine(on: any, o: Opts = {}): Seen {
   }
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
-  on('session.root', () => ({ value: ROOT }))
+  let rootCalls = 0
+  on('session.root', () => (o.rootFails?.(++rootCalls) ? { deny: 'the root could not be read' } : { value: ROOT }))
   on('session.cwd', () => ({ value: o.cwd ?? ROOT }))
   on('agent.list', () => ({ value: (o.agents ?? []).map(a => ({ ...a, description: 'task', status: 'running' })) }))
   on('ui.toast', ($: any, e: any) => (seen.toasts.push(e.text), { value: undefined }))
@@ -239,6 +242,7 @@ const PLAIN_RUN = { tool: 'Agent', description: 'Make the tests pass', prompt: '
 const GREEN_RUN = { ...PLAIN_RUN, subagent_type: 'green-developer' }
 const LINE = 'tdd-guard: green-developer changed protected test files: tests/a.test.ts (modified), tests/b.test.ts (deleted), tests/c.test.ts (new)'
 const A_ONLY = 'tdd-guard: green-developer changed protected test files: tests/a.test.ts (modified)'
+const UNCHECKED = "tdd-guard: green-developer's test files could not be checked (the check failed)"
 const TURN = { answer: 'done', durationMs: 900, isAborted: false, turnId: 't1', reason: 'answer', usage: { input_tokens: 1, output_tokens: 1 } }
 
 /** What a subagent that edits tests the hooks never saw does: one changed, one deleted, one added, and a source file changed. */
@@ -335,6 +339,29 @@ describe('test-file integrity', () => {
     await seen.clock.settle()
     expect(seen.submitted.length).toBe(1)
     expect(seen.toasts.length).toBe(1)
+  })
+
+  test('a check that fails before the run lets the agent run once, adds nothing to its result, and tells the person', { options }, async ($, on) => {
+    let runs = 0
+    const seen = engine(on, { rootFails: () => true, during: files => (runs++, TAMPER(files)) })
+    await start($)
+    const r: any = await $.tool.call(GREEN_RUN as never)
+    await seen.clock.settle()
+    expect(r.result).toEqual(DONE)
+    expect(r.context ?? []).toEqual([])
+    expect(runs).toBe(1)
+    expect(seen.toasts).toEqual([UNCHECKED])
+  })
+
+  test('a check that fails after the run keeps the result the agent gave, without running it again, and tells the person', { options }, async ($, on) => {
+    let runs = 0
+    const seen = engine(on, { rootFails: call => call > 1, during: files => (runs++, TAMPER(files)) })
+    await start($)
+    const r: any = await $.tool.call(GREEN_RUN as never)
+    await seen.clock.settle()
+    expect(r.result).toEqual(DONE)
+    expect(runs).toBe(1)
+    expect(seen.toasts).toEqual([UNCHECKED])
   })
 
   test('a type with no - rules takes no snapshot: no folder is listed and no file read; a type with - rules does', { options }, async ($, on) => {
