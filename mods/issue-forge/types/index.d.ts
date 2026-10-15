@@ -93,6 +93,10 @@ export type Run = {
   repo?: string
   /** The GitHub repository (`host/owner/repo`) every gh call of the run names with `--repo` (#25). Absent in runs stored before. */
   ghRepo?: string
+  /** The remote the base is fetched from, in a fork clone where origin is the contributor's fork (#26). Absent: origin. */
+  baseRemote?: string
+  /** The fork origin pushes to (`host/owner/repo`), whose owner heads the pull request (#26). Absent: the branch alone. */
+  headRepo?: string
   /** Set while a session drives the run; cleared when the drive ends (Change 0.3.0). */
   driver?: Driver
   /** Started from the menu's Start under `ask`: it works in a new worktree, asked once (Change 0.3.0). */

@@ -27,7 +27,7 @@
       "name": "issue-forge",
       "source": "./mods/issue-forge",
       "description": "Takes one GitHub issue to a pull request test-first: red, green and refactor subagents, each phase checked by commands and a 95% diff-coverage gate; pushes only after you confirm.",
-      "version": "0.4.0"
+      "version": "0.5.0"
     }
   ]
 }

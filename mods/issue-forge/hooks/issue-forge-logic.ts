@@ -703,7 +703,7 @@ export function repoOfRemoteUrl(url: string): string | null {
 
 export type RemoteVerdict = { kind: 'match' } | { kind: 'unrecognised' } | { kind: 'ask'; repo: string } | { kind: 'other'; repo: string }
 
-const hostOf = (repo: string) => repo.slice(0, repo.indexOf('/')).toLowerCase()
+export const hostOf = (repo: string) => repo.slice(0, repo.indexOf('/')).toLowerCase()
 
 /**
  * Whether a remote URL names `repo` (PR #68 review). An https host is the host; git hands an ssh remote's host to ssh, and
@@ -743,13 +743,58 @@ export function issueLabel(run: Run): string {
   return `${run.ghRepo ? repoLabel(run.ghRepo) : ''}#${run.issue}`
 }
 
+// ── Fork clones (#26) ─────────────────────────────────────────────────────
+
+/** The remotes whose fetch URL names the project: none, one (the base remote), or several (a block). */
+export type BaseRemote = { kind: 'none' } | { kind: 'one'; remote: string } | { kind: 'several'; remotes: string[] }
+
+export function baseRemoteOf(matching: readonly string[]): BaseRemote {
+  const [first, ...rest] = matching
+  if (first === undefined) return { kind: 'none' }
+  return rest.length === 0 ? { kind: 'one', remote: first } : { kind: 'several', remotes: [...matching] }
+}
+
+/**
+ * Whether `gh repo view <fork> --json isFork,parent` says a fork of `repo`: the parent's owner login and name are
+ * `repo`'s, in any case. gh prints no host for the parent, so none is compared: it is the fork's own, which the caller
+ * has found to be `repo`'s.
+ */
+export function isForkOf(stdout: string, repo: string): boolean {
+  let view: { isFork?: unknown; parent?: { name?: unknown; owner?: { login?: unknown } | null } | null }
+  try {
+    view = JSON.parse(stdout) as typeof view
+  } catch {
+    return false
+  }
+  const login = view?.parent?.owner?.login
+  const name = view?.parent?.name
+  if (view?.isFork !== true || typeof login !== 'string' || typeof name !== 'string') return false
+  const [, owner, project] = repo.split('/')
+  return `${login}/${name}`.toLowerCase() === `${owner}/${project}`.toLowerCase()
+}
+
+/** The owner of a `host/owner/repo`. */
+export function ownerOf(repo: string): string {
+  return repo.split('/').slice(1, 2).join('')
+}
+
+/** `gh pr create --head`: `<owner>:<branch>` for a fork's branch (its owner is not the project's), the branch alone otherwise. */
+export function headArg(branch: string, headRepo?: string): string {
+  return headRepo === undefined ? branch : `${ownerOf(headRepo)}:${branch}`
+}
+
+/** The remote-tracking ref of the base: the project's remote in a fork clone, origin in every other run. */
+export function baseRefOf(run: { base: string; baseRemote?: string }): string {
+  return `${run.baseRemote ?? 'origin'}/${run.base}`
+}
+
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
 /** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
 export type Kept = { branch: string; workRoot: string; base: string }
 
 export type RunEvent =
-  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string }
+  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string; baseRemote?: string; headRepo?: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
@@ -856,7 +901,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   switch (run.step) {
     case 'preflight':
       if (ev.type !== 'preflighted') return run
-      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), ghRepo: ev.repo, step: 'baseline' }
+      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), ghRepo: ev.repo, ...(ev.baseRemote ? { baseRemote: ev.baseRemote } : {}), ...(ev.headRepo ? { headRepo: ev.headRepo } : {}), step: 'baseline' }
     case 'baseline':
       if (ev.type !== 'baselined') return run
       return { ...run, baseline: ev.baseline, mergeBase: ev.mergeBase ?? run.mergeBase, step: 'red', times: start(run, 'red', now) }
@@ -1091,7 +1136,7 @@ function mergeSaid(m: MergeCheck, say: MergeWords): string {
 }
 
 export function mergeLine(run: Run): string | null {
-  const base = `origin/${run.base}`
+  const base = baseRefOf(run)
   return run.merge ? mergeSaid(run.merge, { error: why => `merge check unavailable: ${why}`, clean: `merges cleanly with ${base}`, conflict: files => `conflicts with ${base}: ${files}` }) : null
 }
 
@@ -1102,7 +1147,7 @@ export function publishAsk(run: Run): string {
 
 export function publishQuestion(run: Run): string {
   const ask = publishAsk(run)
-  return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with origin/${run.base} in: ${files}.` }) : ask
+  return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with ${baseRefOf(run)} in: ${files}.` }) : ask
 }
 
 // ── Prompts and messages (§6) ─────────────────────────────────────────────
@@ -1278,8 +1323,8 @@ export function prBody(run: Run): string {
           '',
           mergeSaid(run.merge, {
             error: why => `At publish time the merge check couldn't run: ${why}`,
-            clean: `At publish time this merged cleanly with origin/${run.base}.`,
-            conflict: files => `At publish time this conflicted with origin/${run.base} in: ${files}.`,
+            clean: `At publish time this merged cleanly with ${baseRefOf(run)}.`,
+            conflict: files => `At publish time this conflicted with ${baseRefOf(run)} in: ${files}.`,
           }),
           '',
         ]

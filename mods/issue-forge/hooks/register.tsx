@@ -17,6 +17,8 @@ import {
   agentPrompt,
   badgeOf,
   baseOf,
+  baseRefOf,
+  baseRemoteOf,
   branchLine,
   branchName,
   canRetry,
@@ -38,9 +40,12 @@ import {
   guardAction,
   hasSourceRecord,
   hasStash,
+  headArg,
+  hostOf,
   isAbsolutePath,
   isActive,
   isDrivenElsewhere,
+  isForkOf,
   isLockError,
   isOwnHandback,
   isPrunable,
@@ -63,6 +68,7 @@ import {
   othersLine,
   othersOf,
   outsideChecks,
+  ownerOf,
   parseCommand,
   parseLcov,
   parseMergeTree,
@@ -495,6 +501,11 @@ async function remoteRepo($: EngineInterface, root: string, url: string, repo: s
   return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? verdict.repo }
 }
 
+/** The distinct, non-empty lines of a command's output, in order. */
+function linesOf(stdout: string): string[] {
+  return [...new Set(stdout.split('\n').map(line => line.trim()).filter(line => line !== ''))]
+}
+
 /**
  * Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. git pushes to every push
  * URL, so each is checked (PR #68 review), and one that is the fetch URL only once.
@@ -504,7 +515,7 @@ async function originCheck($: EngineInterface, root: string, repo: string): Prom
   const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
   if (fetched.exitCode !== 0 || pushed.exitCode !== 0) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
   const fetchUrl = fetched.stdout.trim()
-  const pushUrls = [...new Set(pushed.stdout.split('\n').map(u => u.trim()))].filter(u => u !== '' && u !== fetchUrl)
+  const pushUrls = linesOf(pushed.stdout).filter(u => u !== fetchUrl)
   for (const [url, isPush] of [[fetchUrl, false] as const, ...pushUrls.map(u => [u, true] as const)]) {
     const found = await remoteRepo($, root, url, repo)
     if (found === 'match') continue
@@ -512,6 +523,63 @@ async function originCheck($: EngineInterface, root: string, repo: string): Prom
     const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`
     return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, next)
   }
+  return null
+}
+
+/** A fork clone's remotes (#26): the one the base is fetched from, and the fork origin pushes to (`host/owner/repo`). */
+type Fork = { baseRemote: string; headRepo: string }
+
+/** The one repository every push URL of origin names, when it isn't `repo` but is on its host: the fork a run pushes to. */
+async function forkOf($: EngineInterface, root: string, repo: string): Promise<string | null> {
+  const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
+  let fork: string | null = null
+  for (const url of linesOf(pushed.stdout)) {
+    const found = await remoteRepo($, root, url, repo)
+    if (found === 'match' || found.other === null || hostOf(found.other) !== hostOf(repo) || (fork !== null && !isSameRepo(fork, found.other))) return null
+    fork = found.other
+  }
+  return fork
+}
+
+/** The remote a fork clone fetches the base from: the one remote besides origin whose fetch URL names `repo`. */
+async function baseRemoteFor($: EngineInterface, root: string, repo: string): Promise<Blocked | string | null> {
+  const matching: string[] = []
+  for (const name of linesOf((await git($, root, ['remote'])).stdout).filter(n => n !== 'origin')) {
+    const url = await git($, root, ['remote', 'get-url', name])
+    if (url.exitCode === 0 && (await remoteRepo($, root, url.stdout.trim(), repo)) === 'match') matching.push(name)
+  }
+  const found = baseRemoteOf(matching)
+  if (found.kind === 'several') return block(`remotes ${found.remotes.slice(0, -1).join(', ')} and ${found.remotes.slice(-1).join('')} both point at ${repoLabel(repo)}`, 'remove one of them')
+  return found.kind === 'one' ? found.remote : null
+}
+
+/**
+ * A clone whose origin isn't `repo` may be a fork clone (#26): origin pushes to a fork of `repo` and another remote is `repo`. The
+ * fork must be a user's, not an organization's, which `gh pr create --head` can't name. This runs before anything is fetched. Any
+ * other clone gets `stray`, the origin block.
+ */
+async function forkCheck($: EngineInterface, root: string, repo: string, stray: Blocked): Promise<Blocked | Fork> {
+  const headRepo = await forkOf($, root, repo)
+  if (!headRepo) return stray
+  const baseRemote = await baseRemoteFor($, root, repo)
+  if (typeof baseRemote !== 'string') return baseRemote ?? stray
+  const view = await $.process.run(['gh', 'repo', 'view', headRepo, '--json', 'isFork,parent'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  if (!view || view.exitCode !== 0) return block(`could not read ${repoLabel(headRepo)} from gh: ${firstLine(view?.stderr ?? 'gh repo view did not finish')}`, 'check gh and your access to the fork')
+  if (!isForkOf(view.stdout, repo)) return block(`origin ${repoLabel(headRepo)} isn't a fork of ${repoLabel(repo)}`, `point origin at your fork of ${repoLabel(repo)}`)
+  const owner = ownerOf(headRepo)
+  const type = await $.process.run(['gh', 'api', `users/${owner}`, '--jq', '.type'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  if (!type || type.exitCode !== 0) return block(`could not tell whether ${owner} is a user or an organization: ${firstLine(type?.stderr ?? 'gh api did not finish')}`, 'check gh')
+  if (type.stdout.trim() === 'Organization') return block("gh pr create can't name an organization's fork as the head (cli/cli#10093)", `point origin at a fork in a personal account, not ${owner}'s`)
+  return { baseRemote, headRepo }
+}
+
+/** A fork run's origin still pushes only to the fork it was preflighted for: git pushes to every push URL (#26). */
+async function forkPushCheck($: EngineInterface, root: string, headRepo: string): Promise<Blocked | null> {
+  const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
+  const urls = linesOf(pushed.stdout)
+  const moved = block(`origin no longer pushes to ${repoLabel(headRepo)}`, 'point origin back at it, or start a new run')
+  if (pushed.exitCode !== 0 || urls.length === 0) return moved
+  for (const url of urls) if ((await remoteRepo($, root, url, headRepo)) !== 'match') return moved
   return null
 }
 
@@ -536,21 +604,24 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   return problems.length > 0 ? { profile: null, errors: problems } : { profile: p, errors: [] }
 }
 
-/** `git fetch origin <base>`, or the block naming why it failed. */
-async function fetchBase($: EngineInterface, cwd: string, base: string): Promise<Blocked | null> {
-  await setActivity($, `git fetch origin ${base}`)
-  const fetched = await gitRetry($, cwd, ['fetch', 'origin', base])
-  return fetched.exitCode === 0 ? null : block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+/** The remote a run fetches its base from: the project's in a fork clone (#26), origin in every other run. */
+const baseRemoteOfRun = (run: Run): string => run.baseRemote ?? 'origin'
+
+/** `git fetch <remote> <base>`, or the block naming why it failed. */
+async function fetchBase($: EngineInterface, cwd: string, remote: string, base: string): Promise<Blocked | null> {
+  await setActivity($, `git fetch ${remote} ${base}`)
+  const fetched = await gitRetry($, cwd, ['fetch', remote, base])
+  return fetched.exitCode === 0 ? null : block(`git fetch ${remote} ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
 }
 
-/** A branch with no commits of its own fast-forwards to origin/<base>, so a fix pushed there reaches it. */
-async function catchUp($: EngineInterface, run: Run, cwd: string, base: string): Promise<Blocked | null> {
-  const hasNoOwnCommits = (await git($, cwd, ['merge-base', '--is-ancestor', 'HEAD', `origin/${base}`])).exitCode === 0
+/** A branch with no commits of its own fast-forwards to <remote>/<base>, so a fix pushed there reaches it. */
+async function catchUp($: EngineInterface, run: Run, cwd: string, remote: string, base: string): Promise<Blocked | null> {
+  const hasNoOwnCommits = (await git($, cwd, ['merge-base', '--is-ancestor', 'HEAD', `${remote}/${base}`])).exitCode === 0
   if (!hasNoOwnCommits) return null
   stillDriving(run)
-  await setActivity($, `catching up with origin/${base}`)
-  const ff = await git($, cwd, ['merge', '--ff-only', '-q', `origin/${base}`])
-  return ff.exitCode === 0 ? null : block(`could not fast-forward to origin/${base}: ${firstLine(ff.stderr)}`, 'check the branch')
+  await setActivity($, `catching up with ${remote}/${base}`)
+  const ff = await git($, cwd, ['merge', '--ff-only', '-q', `${remote}/${base}`])
+  return ff.exitCode === 0 ? null : block(`could not fast-forward to ${remote}/${base}: ${firstLine(ff.stderr)}`, 'check the branch')
 }
 
 type Where = { kind: 'here' } | { kind: 'worktree'; worktreeDir: string; minutes: number }
@@ -564,15 +635,15 @@ async function checkoutOf($: EngineInterface, root: string, base: string, heldBy
 }
 
 /**
- * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from origin/<base> before
+ * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from <remote>/<base> before
  * anything is made or switched; a busy checkout is never branched in place.
  */
-async function whereToWork($: EngineInterface, run: Run, root: string, base: string): Promise<Blocked | Where> {
+async function whereToWork($: EngineInterface, run: Run, root: string, remote: string, base: string): Promise<Blocked | Where> {
   const issue = run.issue
-  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
-  const shown = await git($, root, ['show', `origin/${base}:${PROFILE_FILE}`])
+  await setActivity($, `reading ${PROFILE_FILE} from ${remote}/${base}`)
+  const shown = await git($, root, ['show', `${remote}/${base}:${PROFILE_FILE}`])
   const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
-  if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
+  if (!atBase.profile) return block(`${remote}/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
   const { workspace, worktreeDir, commandTimeoutMinutes } = atBase.profile
   // `worktree` makes one whatever the checkout holds, so it isn't looked at (a status is slow on a big tree or a Windows mount).
   // Another active run working in this checkout makes it busy (Change 0.3.0).
@@ -592,30 +663,32 @@ async function whereToWork($: EngineInterface, run: Run, root: string, base: str
   return { kind: 'worktree', worktreeDir, minutes: commandTimeoutMinutes }
 }
 
-/** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree. */
-async function makeBranch($: EngineInterface, run: Run, issueBody: string): Promise<Blocked | Kept> {
+/** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree from `remote`'s base. */
+async function makeBranch($: EngineInterface, run: Run, issueBody: string, remote: string): Promise<Blocked | Kept> {
   const root = run.root
-  // This checkout's profile only names the base; the profile that is checked and runs is origin/<base>'s.
+  // This checkout's profile only names the base; the profile that is checked and runs is <remote>/<base>'s.
   await setActivity($, `reading ${PROFILE_FILE}`)
   const profileBase = checkoutBaseOf(await readLocalProfile($, root))
   const asked = baseOf({ baseBranch: profileBase }, issueBody)
   const base = asked === profileBase ? asked : await chooseBase($, run.issue, asked, profileBase)
   if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profileBase}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
   stillDriving(run)
-  const unfetched = await fetchBase($, root, base)
+  const unfetched = await fetchBase($, root, remote, base)
   if (unfetched) return unfetched
-  const where = await whereToWork($, run, root, base)
+  const where = await whereToWork($, run, root, remote, base)
   if ('type' in where) return where
   const local = splitZ((await gitOut($, root, ['for-each-ref', '--format=%(refname:short)%00', `refs/heads/issue-${run.issue}-*`, `refs/heads/issue-${run.issue}`])).replace(/\n/g, ''))
-  const remote = (await gitOut($, root, ['ls-remote', '--heads', 'origin', `issue-${run.issue}*`]))
-    .split('\n')
-    .map(line => line.split('refs/heads/')[1] ?? '')
-    .filter(Boolean)
-  const branch = branchName(run.issue, run.title, [...local, ...remote])
+  // A fork clone's branch name must be free on the fork it is pushed to and on the project it is cut from (#26).
+  const remoteHeads: string[] = []
+  for (const name of new Set(['origin', remote])) {
+    const listed = await gitOut($, root, ['ls-remote', '--heads', name, `issue-${run.issue}*`])
+    remoteHeads.push(...listed.split('\n').map(line => line.split('refs/heads/')[1] ?? '').filter(Boolean))
+  }
+  const branch = branchName(run.issue, run.title, [...local, ...remoteHeads])
   stillDriving(run)
   if (where.kind === 'here') {
     await setActivity($, `git switch -c ${branch}`)
-    const switched = await git($, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
+    const switched = await git($, root, ['switch', '--no-track', '-c', branch, `${remote}/${base}`])
     if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
     await recordMade($, run, { branch, workRoot: root, base })
     return { branch, workRoot: root, base }
@@ -627,7 +700,7 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
   const made = { branch, workRoot, base }
   let added: CommandResult
   try {
-    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
+    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `${remote}/${base}`], root, where.minutes)
   } catch (err) {
     // A Stop during the add: the branch git already made is kept on the stopped run, like one made before it.
     if (err instanceof Stopped && (await hasBranch($, root, branch))) await recordMade($, run, made)
@@ -668,8 +741,15 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   const resolved = run.ghRepo ? { repo: run.ghRepo } : await ghRepoOf($, run.root)
   if ('type' in resolved) return resolved
   const { repo } = resolved
+  // Origin is the project, or (#26) the contributor's fork with the project as another remote.
   const stray = await originCheck($, run.root, repo)
-  if (stray) return stray
+  let fork: Fork | null = null
+  if (stray) {
+    const found = await forkCheck($, run.root, repo, stray)
+    if ('type' in found) return found
+    fork = found
+  }
+  const remote = fork?.baseRemote ?? 'origin'
   // Pinned once origin agrees, so a later block keeps it; an origin block leaves it open to a fix of the remotes.
   if (!run.ghRepo) await recordPinned($, run, repo)
   const issue = await issueCheck($, run, repo)
@@ -692,25 +772,25 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
       if (again.exit !== 0) return { ...block(worktreeAddFailure(again, minutes), `check ${made.workRoot}`), keep: made }
     }
     // A kept worktree's own config can give origin other URLs (extensions.worktreeConfig): it is checked where it fetches.
-    const strayThere = made.workRoot !== run.root ? await originCheck($, made.workRoot, repo) : null
+    const strayThere = made.workRoot === run.root ? null : fork ? await forkPushCheck($, made.workRoot, fork.headRepo) : await originCheck($, made.workRoot, repo)
     if (strayThere) return { ...strayThere, keep: made }
-    const unfetched = await fetchBase($, made.workRoot, made.base)
+    const unfetched = await fetchBase($, made.workRoot, remote, made.base)
     if (unfetched) return { ...unfetched, keep: made }
     // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
-    const behind = await catchUp($, run, made.workRoot, made.base)
+    const behind = await catchUp($, run, made.workRoot, remote, made.base)
     if (behind) return { ...behind, keep: made }
   } else {
-    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body)
+    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body, remote)
     if ('type' in fresh) return fresh
     made = fresh
   }
   try {
-    const mergeBase = (await gitOut($, made.workRoot, ['merge-base', 'HEAD', `origin/${made.base}`])).trim()
+    const mergeBase = (await gitOut($, made.workRoot, ['merge-base', 'HEAD', `${remote}/${made.base}`])).trim()
     // The profile whose commands run is the base's, not the checkout the run started from (which anyone may have pushed).
-    await setActivity($, `reading ${PROFILE_FILE} from origin/${made.base}`)
+    await setActivity($, `reading ${PROFILE_FILE} from ${remote}/${made.base}`)
     const trusted = await loadProfile($, made.workRoot)
-    if (!trusted.profile) return { ...block(`origin/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
-    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot, repo }
+    if (!trusted.profile) return { ...block(`${remote}/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
+    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot, repo, ...fork }
   } catch (err) {
     if (err instanceof Stopped) throw err
     return { ...block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status'), keep: made }
@@ -734,11 +814,11 @@ async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEv
   const shared = await lcovShared($, run, p)
   if (shared) return shared
   const root = workOf(run)
-  const unfetched = await fetchBase($, root, run.base)
+  const unfetched = await fetchBase($, root, baseRemoteOfRun(run), run.base)
   if (unfetched) return unfetched
-  const behind = await catchUp($, run, root, run.base)
+  const behind = await catchUp($, run, root, baseRemoteOfRun(run), run.base)
   if (behind) return behind
-  const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${run.base}`])).trim()
+  const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', baseRefOf(run)])).trim()
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
   if (tests.exit !== 0) return block(tests.isTimedOut ? 'tests time out before any change' : 'tests fail before any change', `fix ${run.base}`)
@@ -908,8 +988,9 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
     const tip = (await gitOut($, workOf(run), ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
-  // A run pinned to a repository pushes only to an origin that is it (#25), as the folder that pushes reads it (PR #68 review 2).
-  const stray = run.ghRepo ? await originCheck($, workOf(run), run.ghRepo) : null
+  // A run pinned to a repository pushes only to an origin that is it (#25), as the folder that pushes reads it (PR #68 review 2);
+  // a fork run, only to the fork it was preflighted for (#26).
+  const stray = run.headRepo ? await forkPushCheck($, workOf(run), run.headRepo) : run.ghRepo ? await originCheck($, workOf(run), run.ghRepo) : null
   if (stray) return stray
   // The PR body says what was true when it was pushed: the merge is checked again here.
   const merge = await mergeCheck($, run)
@@ -921,7 +1002,7 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
   await stillOwned($, run)
   await setActivity($, 'gh pr create')
-  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body, ...(run.ghRepo ? ['--repo', run.ghRepo] : [])], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
+  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', headArg(run.branch, run.headRepo), '--title', `${run.title} (#${run.issue})`, '--body-file', body, ...(run.ghRepo ? ['--repo', run.ghRepo] : [])], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
   return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '', merge }
 }
@@ -954,11 +1035,12 @@ async function askOr($: EngineInterface, question: string, labels: string[]): Pr
 /** Case 1: does the gated commit still merge into a freshly fetched base? It informs, never blocks, and never throws. */
 async function mergeCheck($: EngineInterface, run: Run): Promise<MergeCheck> {
   const work = workOf(run)
-  await setActivity($, `checking the merge with origin/${run.base}`)
+  const remote = baseRemoteOfRun(run)
+  await setActivity($, `checking the merge with ${baseRefOf(run)}`)
   try {
-    const fetched = await gitRetry($, work, ['fetch', 'origin', run.base])
-    if (fetched.exitCode !== 0) return { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` }
-    return parseMergeTree(await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`]))
+    const fetched = await gitRetry($, work, ['fetch', remote, run.base])
+    if (fetched.exitCode !== 0) return { isClean: false, files: [], error: `git fetch ${remote} ${run.base} failed: ${firstLine(fetched.stderr)}` }
+    return parseMergeTree(await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', run.gatedHead ?? `refs/heads/${run.branch}`, baseRefOf(run)]))
   } catch (err) {
     return { isClean: false, files: [], error: err instanceof Error ? err.message : String(err) }
   } finally {
