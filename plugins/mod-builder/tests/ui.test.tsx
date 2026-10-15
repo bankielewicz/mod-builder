@@ -2573,6 +2573,20 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect((await listed($)).names).toEqual(['alpha'])
   })
 
+  test('a pin a fresh module finds at session start is kept, as after a reload', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    const restored: Record<string, unknown> = { pinned: { modsDir: `${WT}/mods`, root: MAIN } }
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key in restored) return { value: { version: 1, value: restored[key] } } as never
+      return next(e)
+    })
+    await start($)
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN
