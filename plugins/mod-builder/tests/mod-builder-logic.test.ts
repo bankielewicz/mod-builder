@@ -1233,10 +1233,10 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect([...REPORT_SCHEMA.required]).toEqual(['mod', 'stage', 'status'])
   })
 
-  test('watchedDirOf: a pin wins over modsDir and the walk while the root is its own or unknown', () => {
+  test('watchedDirOf: a pin wins over the walk while the root is its own or unknown; a set modsDir wins over the pin', () => {
     const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
     const main = ['/w/main/.claude-plugin/marketplace.json']
-    expect(watchedDirOf(pin, '/w/main', '/chosen/mods', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+    expect(watchedDirOf(pin, '/w/main', '/chosen/mods', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/chosen/mods', pin })
     expect(watchedDirOf(pin, '/w/main/', '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
     expect(watchedDirOf(pin, null, '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
     const rootless = { modsDir: '/w/wt/mods', root: null }
