@@ -132,8 +132,10 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
 **`mods/*`**: `git-branch`, `duet` (delegates subagents/reviews to the Codex CLI), `issue-forge` (a
 GitHub issue to a PR via red/green/refactor subagents behind a diff-coverage gate; this repo's profile
 is `.issue-forge.json`, its coverage kit `plugins/mod-builder/skills/build/scripts/coverage/`, its
-design spec `docs/specs/issue-forge.md`), `turn-counter` (left as raw scaffold output on purpose, and
-not in the marketplace). Each has the same layout and its own `SPEC.md` with dated changes.
+design spec `docs/specs/issue-forge.md`), `tdd-guard` (limits which paths each subagent type may
+write, and reports protected files a guarded run changed through the shell), `turn-counter` (left as
+raw scaffold output on purpose, and not in the marketplace). Each has the same layout and its own
+`SPEC.md` with dated changes.
 
 **Template files are `*.tpl`** so `claude plugin test`/`validate` never pick them up as real plugins.
 

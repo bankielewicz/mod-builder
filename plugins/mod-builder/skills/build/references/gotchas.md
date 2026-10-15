@@ -268,6 +268,13 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `mock.clock(on)` and `await clock.settle()` before asserting on what background work did.
 - **[probe]** Test `options` reach the mod only for keys declared in `plugin.json`'s `userConfig`.
   Undeclared keys arrive as absent, so the mod's default applies.
+- **[probe]** A test that passes no `options` gets each `userConfig` key's `default` from
+  `plugin.json`: changing only tdd-guard's default turned its red test green (2.1.300, PR #81 `78a8ffc`).
+- **[probe]** The kit answers `$.state` beneath the hooks, so a test's `on('state.set', ($, e, next) => …)`
+  sees every write a mod makes (`e.plugin`, `e.key`, `e.value`; 2.1.300, PR #57 `2a87222`). Returning
+  `held.then(() => next(e))` holds that one write until `held` settles, while `clock.settle()` and the
+  mod's other hooks go on. That reproduced a `turn.complete` arriving before a pending-record write
+  landed (2.1.300, PR #81 `4de7fe9`).
 - **[probe]** `$.process.spawn` can't be stubbed in `claude plugin test` (2.1.296). Async or sync
   generator hooks, `{ value }` answers and argv matchers all end in "no implementation for
   process.spawn". Spawn rejects its first pull when it can't start, so fall back to
