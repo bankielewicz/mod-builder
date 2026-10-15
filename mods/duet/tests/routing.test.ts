@@ -1399,8 +1399,8 @@ describe('issue 7: each session keeps its own run log', () => {
 describe('issue 8: run-log appends within a session are serialized', () => {
   test('two routed Codex runs that finish together both land in the session log (PR #1: 56c0832)', { options: { codexAgents: '*', codexConsent: 'allow', codexRunMode: 'wait' } }, async ($: any, on: any) => {
     // A read of a run log takes what the file holds when it starts, then stays in flight for 1000 promise turns, so an append that
-    // doesn't wait for the one before it reads the log before that one has written. With 3ea3c3b's hooks (2.1.300), 40 turns
-    // missed the race and 80 caught it; 1000 is the margin.
+    // doesn't wait for the one before it reads the log before that one has written. With 3ea3c3b's hooks (2.1.296 and 2.1.300), 40
+    // turns missed the race and 80 caught it; 1000 is the margin.
     const seen = engine(on, { hold: path => (path.endsWith('/runs.jsonl') ? 1000 : 0) })
     await start($)
     await Promise.all([$.tool.call(call() as never), $.tool.call(call() as never)])
