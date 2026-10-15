@@ -1808,6 +1808,12 @@ describe('new plugins are built with mod-builder, not issue-forge (Change 0.5.0)
     expect(quoted.blocked.steps).toContain("Follow the issue's own guidance (quoted from #16 as its author wrote it):\n   > Build it with /mod-builder:build\n   > as a guard.")
   })
 
+  test('the final block at gate R in the checkout points at the checkout\'s uncommitted files', () => {
+    const r = advance(run({ step: 'gateR', branch: 'b', base: 'main', used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: npGate('R') }, 5) as Run & { blocked: { steps: string[] } }
+    expect(r.blocked.steps[0]).toBe("Nothing was committed, and nothing was pushed. The checkout's uncommitted files (git status lists them) are red's.")
+    expect(r.blocked.steps[2]).toContain("not in this run's branch, whose files")
+  })
+
   test('a final block is not resumed; its status says to stop it and lists the steps; a plain block still says resume', () => {
     const r = run({ step: 'gateG', branch: 'b', base: 'main', redCommit: 'abcdef1234' })
     const b = advance(r, { type: 'gated', gate: npGate('G') }, 5)
