@@ -776,6 +776,12 @@ async function openForSkill($: Engine, command: string): Promise<void> {
   }
 }
 
+/** Selects `name` in the pane, out of any README. */
+async function selectMod($: Engine, name: string): Promise<void> {
+  await update($, selected, () => name)
+  await update($, readme, () => null)
+}
+
 async function startDemo($: Engine): Promise<void> {
   const now = await $.clock.now()
   lastTickMs = now
@@ -951,16 +957,18 @@ export const register: Register = (on, options) => {
       }
       if (word) {
         const name = sub
-        await openPane($)
+        // A mod already listed is selected before the pane opens, so its first frame shows it (PR #93 review).
+        if ((await read($, judged)).views.some(view => view.name === name)) await selectMod($, name)
+        // The scan starts before the open, so a refused open still selects the mod.
         void (async () => {
           await scan($, false)
           if ((await read($, judged)).views.some(view => view.name === name)) {
-            await update($, selected, () => name)
-            await update($, readme, () => null)
+            await selectMod($, name)
           } else {
             $.ui.toast(`No mod named ${name} in ${Lab.shortPath(await shownModsDir($))}`)
           }
         })().catch((error: unknown) => logCaught($, 'modlab.select', error, 'normal', { mod: name }))
+        await openPane($)
         return { text: `Mod Lab: ${name}.` }
       }
       if (await isPaneShown($)) {

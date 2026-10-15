@@ -1786,6 +1786,33 @@ describe('the pane opens from the command itself (#90)', () => {
     expect(seen.toasts.filter(text => text.startsWith('No mod named'))).toEqual([])
   })
 
+  test('/modlab <listed mod> shows it in the first frame, before the scan lands (PR #93 review)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), ...modFiles('duet') })
+    await start($)
+    await clock.advance(10)
+    const release = holdModsList(seen)
+    await command($, 'duet')
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+    await ui.unmount()
+    release()
+    await clock.advance(10)
+  })
+
+  test('/modlab <mod> still selects the mod when the open is refused (PR #93 review)', OPTIONS, async ($, on) => {
+    const disk = modFiles('git-branch')
+    const { seen, clock } = world(on, disk)
+    await start($)
+    await clock.advance(10)
+    // Not listed yet: only the command's own scan can find it.
+    Object.assign(disk, modFiles('duet'))
+    seen.denyOpen = 'no panes here'
+    await command($, 'duet')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+  })
+
   test('/modlab <name> with no such mod opens the pane on the list and says so', OPTIONS, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'))
     await start($)
