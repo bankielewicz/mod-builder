@@ -1,7 +1,7 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { resultOf, signatureOf } from '../hooks/mod-builder-logic'
+import { REPORT_TTL_MS, resultOf, signatureOf } from '../hooks/mod-builder-logic'
 
 import { testFail } from './fixtures/test-fail'
 import { testNone } from './fixtures/test-none'
@@ -833,6 +833,69 @@ describe('a mod reported before its folder exists (#19)', () => {
     expect(await real.find({ type: 'Text', text: /folder not written yet/ })).toBeUndefined()
     expect(await real.find({ key: 'validate' })).toBeDefined()
     expect(await rowsOf(real)).toBe(1)
+  })
+
+  test('a placeholder whose running report expires leaves the list at the next tick, with no turn or command (Codex P2, PR #80)', OPTIONS, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await rowsOf(before)).toBe(1)
+    await before.unmount()
+    await clock.advance(REPORT_TTL_MS + 1000)
+    await clock.settle()
+    const after = await mountPane($)
+    expect(await rowsOf(after)).toBe(0)
+    expect(await after.find({ type: 'Text', text: /^1 building$/ })).toBeUndefined()
+  })
+
+  test('a placeholder is listed only in the mods folder its report was made in, across a /cd (Codex P2, PR #80)', async ($, on) => {
+    const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const two = await mountPane($)
+    expect(await two.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await rowsOf(two)).toBe(0)
+    await two.unmount()
+    seen.cwd = '/w/one/plugins/x'
+    await command($, 'alpha')
+    await clock.advance(10)
+    const one = await mountPane($)
+    expect(await rowsOf(one)).toBe(1)
+    expect(await one.find({ type: 'Text', text: /folder not written yet: .*one\/mods\/new-mod\// })).toBeDefined()
+  })
+
+  test('a repeated Spec running for a placeholder starts no edit, so the SPEC written next is not stale', OPTIONS, async ($, on) => {
+    const disk: Disk = modFiles('git-branch')
+    const { clock } = world(on, disk)
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    Object.assign(disk, { [`${MODS}/new-mod/SPEC.md`]: '# new-mod\n| archetype | REQUIRED | band | x |\nDone.\n' })
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'new-mod', stage: 'Spec', status: 'passed' } as never)
+    await clock.advance(10)
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^edit · / })).toBeUndefined()
   })
 })
 
