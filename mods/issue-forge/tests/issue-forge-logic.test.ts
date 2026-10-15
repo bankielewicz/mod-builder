@@ -1178,14 +1178,17 @@ describe('parallel runs (Change 0.3.0)', () => {
   const at = (issue: number, step: Run['step'], extra: Partial<Run> = {}): Run => ({ ...newRun(`${issue}-${extra.startedAt ?? 0}`, ROOT, issue, extra.startedAt ?? 0), repo: REPO, step, ...extra })
   const foreign = { driver: { session: OTHER, since: 0 } }
 
-  test('one key per repository and issue; the 0.2 per-checkout form reads as legacy', () => {
-    expect(runKey(REPO, 44)).toBe('issue-forge:run:/repo/.git#44')
-    expect(agentsKey(REPO, 44)).toBe('issue-forge:agents:/repo/.git#44')
-    expect(parseRunKey('issue-forge:run:/repo/.git#44')).toEqual({ kind: 'run', repo: REPO, issue: 44 })
-    expect(parseRunKey('issue-forge:agents:/repo/.git#44')).toEqual({ kind: 'agents', repo: REPO, issue: 44 })
+  test('one key per repository and issue, under a prefix of its own; every 0.2 per-checkout key reads as legacy', () => {
+    expect(runKey(REPO, 44)).toBe('issue-forge:repo-run:/repo/.git#44')
+    expect(agentsKey(REPO, 44)).toBe('issue-forge:repo-agents:/repo/.git#44')
+    expect(parseRunKey('issue-forge:repo-run:/repo/.git#44')).toEqual({ kind: 'run', repo: REPO, issue: 44 })
+    expect(parseRunKey('issue-forge:repo-agents:/repo/.git#44')).toEqual({ kind: 'agents', repo: REPO, issue: 44 })
     expect(parseRunKey('issue-forge:run:/mnt/c/Projects/ClaudeMod')).toEqual({ kind: 'legacyRun', root: '/mnt/c/Projects/ClaudeMod' })
     expect(parseRunKey('issue-forge:agents:/w')).toEqual({ kind: 'legacyAgents', root: '/w' })
     expect(parseRunKey('issue-forge:run:/a#b')).toEqual({ kind: 'legacyRun', root: '/a#b' })
+    // A checkout whose folder name ends in #<digits> was a 0.2 key too (Codex 4278707570).
+    expect(parseRunKey('issue-forge:run:/work/project#2')).toEqual({ kind: 'legacyRun', root: '/work/project#2' })
+    expect(parseRunKey('issue-forge:agents:/work/project#2')).toEqual({ kind: 'legacyAgents', root: '/work/project#2' })
     expect(parseRunKey('other:thing')).toBeNull()
   })
 

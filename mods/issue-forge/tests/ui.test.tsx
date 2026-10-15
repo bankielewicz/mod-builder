@@ -7,7 +7,7 @@ const ROOT = '/w'
 const SESSION = 'session-me'
 const OTHER = 'session-other'
 /** The run keys of 0.3.0: git's common folder of /w, and the issue. */
-const key = (issue: number) => `issue-forge:run:${ROOT}/.git#${issue}`
+const key = (issue: number) => `issue-forge:repo-run:${ROOT}/.git#${issue}`
 const LCOV_PATH = '/cov/lcov.info'
 const BRANCH = 'issue-16-fix-the-thing'
 const PANE = { title: 'Issue Forge', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
