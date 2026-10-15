@@ -27,6 +27,9 @@ and probes in this repo agree (each in
   imports `node:fs` or uses `import()` didn't load.
 - On 2.1.300, neither command started a `SessionStart` command hook in `hooks/hooks.json` or a
   `.mcp.json` server, the two shapes probed. A live `claude --plugin-dir` session started both.
+- On 2.1.300, neither command ran shell in a command or skill body (`` !`…` ``) or started an
+  agent's `mcpServers`. No live control was run for these three, so it isn't shown that they would
+  run in a session.
 
 Those are the builds checked; Claude Code changes between builds. Mod Lab only re-runs mods you
 have already validated or tested in this install. To turn it off, set `autoRerun` to off in

@@ -257,9 +257,35 @@ Re-check [field] items against the d.ts after a Claude Code update.
 
   Validate and test passed, and neither marker appeared (run twice). Control: `claude -p
   --plugin-dir <probe> "hi"` created both, so the shapes are live ones. Not probed: hooks or
-  `mcpServers` declared in `plugin.json`, other hook events and types, `lspServers`, an agent's
-  `mcpServers`, shell in skill or command bodies. Mod Lab's `autoRerun` relies on this, so re-run
-  the probe after a Claude Code update.
+  `mcpServers` declared in `plugin.json`, other hook events and types, `lspServers`. An agent's
+  `mcpServers` and shell in skill or command bodies were probed later without a control (next
+  entry). Mod Lab's `autoRerun` relies on this, so re-run the probe after a Claude Code update.
+- **[probe]** `claude plugin validate` and `claude plugin test` ran no shell in a command or skill
+  body and started no server from an agent's `mcpServers`. Probed on 2.1.300 (PR #76) on a copy of
+  git-branch, with a `markers/` folder made beforehand, and these three, each touching a marker:
+  - `commands/run.md`: frontmatter `description: probe`, body ``Run: !`touch <abs>/markers/cmd` ``
+  - `skills/s/SKILL.md`: frontmatter `name: s`, `description: probe`, body ``Run: !`touch <abs>/markers/skill` ``
+  - `agents/a.md`: frontmatter `name: a`, `description: probe`, `mcpServers: { probe: { command: touch, args: ["<abs>/markers/agentmcp"] } }`
+
+  Validate passed, test passed (7), and no marker appeared (each run twice). **No control was run**,
+  so this doesn't show that these shapes run in a live session. The control needs the owner's OK: a
+  session with the plugin that invokes the command, the skill and the agent.
+- **[probe]** What `claude plugin validate` reads, beyond the manifest and `hooks/`. Probed on 2.1.300
+  (PR #76) on copies of git-branch, one file per copy:
+
+  | File | Result |
+  |---|---|
+  | empty `agents/x.md`, `commands/x.md`, `commands/sub/x.md`, `skills/x/SKILL.md` | "passed with warnings" (`frontmatter: No frontmatter block found`) |
+  | empty `skills/x/references/y.md`, beside a valid `SKILL.md` | "passed", no warning |
+  | `{ not json` as the root `.mcp.json` | "Validation failed" (`json: Invalid JSON syntax`) |
+  | `{ not json` in a file named by `plugin.json`'s `"mcpServers": "./servers.json"` | "Validation failed", naming `servers.json` |
+  | empty `cmds/x.md` with `plugin.json`'s `"commands": "./cmds"` | "passed", no `Validating command:` line |
+  | frontmatter `description: [broken` and `name: [broken`, in `agents/`, `commands/` and `skills/x/SKILL.md` | "passed", no warning (issue #17's probe of `name: [broken` in `agents/` warned on 2.1.296) |
+
+  Validate prints a `Validating <kind>: <path>` header only for a file with a finding, so a file that
+  passes leaves no trace. Mod Lab's code signature (0.2.15) covers `agents/`, `commands/`,
+  `skills/` (3 levels down) and the root `.mcp.json`. It doesn't cover a `plugin.json`
+  `mcpServers` path.
 - **[d.ts] [probe]** The d.ts header (2.1.296, unchanged on 2.1.299 and 2.1.300) says `claude plugin
   test` runs test files "in an environment like the one a plugin's hooks run in (no fs, network or
   process)". Issue #9's audit run probed it on 2.1.296 (not re-run since): in test code, `process`,
