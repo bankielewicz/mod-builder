@@ -89,11 +89,14 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `bad: [` in another field are loaded (the `.git` stop and the unreadable file were probed on 2.1.299 only; the next-line `name`, the `>` block and a wrapped `description` on 2.1.300 only).
 - **[probe]** `$.process.spawn` of a binary that exists starts it: under `claude -p --plugin-dir` on 2.1.300,
   `codex --version` resolved on the first pull (one stdout chunk, exit 0), also with an `env` map and with
-  `input`. The first pull rejects, after 0 chunks, only when the binary is missing: `$.process.spawn(<name>)
-  failed to start: ENOENT: Executable not found in $PATH: "<name>"`. So a mod's `$.process.run` fallback for a
-  spawn that could not start is rare in a live `claude -p` run (duet takes it only in `claude plugin test`,
-  where spawn can't be stubbed). `$.process.run` is capped at ten minutes [d.ts], so a streamed run's longer
-  timeout does not carry over to that fallback. Interactive sessions: not tested.
+  `input`. The first pull rejected, after 0 chunks, in the three failing cases probed: a name not on PATH
+  (`$.process.spawn(<name>) failed to start: ENOENT: Executable not found in $PATH: "<name>"`), a plain file
+  without execute permission (`/etc/passwd`) and a directory (`/tmp`) (both `failed to start: EACCES: EACCES:
+  permission denied, posix_spawn '<path>'`). `$.process.run` of the same argv rejected in each of those
+  cases too, within 300 ms, with the same message. So a mod's `$.process.run` fallback for a spawn that could
+  not start fails as well in every case probed; it completes under `claude plugin test`, where spawn can't be
+  stubbed and run can. `$.process.run` is capped at ten minutes [d.ts], so a streamed run's longer timeout
+  does not carry over to that fallback. Interactive sessions: not tested.
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every
