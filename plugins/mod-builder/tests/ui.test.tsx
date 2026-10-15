@@ -713,7 +713,7 @@ describe('a results write that fails', () => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean } })
     await start($)
     await clock.advance(10)
-    seen.denyStoreSet = 'modlab:results'
+    seen.denyStoreSet = `modlab:results:${MODS}`
     const ui = await mountPane($)
     await ui.press({ key: 'validate' })
     await clock.advance(500)
