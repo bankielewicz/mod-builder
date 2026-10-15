@@ -669,13 +669,87 @@ export function failuresOf(g: Gate): string[] {
   return out
 }
 
+// ── Repository (#25) ──────────────────────────────────────────────────────
+
+/** `host/owner/repo` from `gh repo view --json nameWithOwner,url`: the host from the url (lowercased), the rest from nameWithOwner. */
+export function repoOfView(stdout: string): string | null {
+  let view: { nameWithOwner?: unknown; url?: unknown }
+  try {
+    view = JSON.parse(stdout) as typeof view
+  } catch {
+    return null
+  }
+  const host = typeof view?.url === 'string' ? /^https?:\/\/([^/@]+)\//.exec(view.url)?.[1] : undefined
+  return host && typeof view.nameWithOwner === 'string' && /^[^/]+\/[^/]+$/.test(view.nameWithOwner) ? `${host.toLowerCase()}/${view.nameWithOwner}` : null
+}
+
+// The scheme is group 1 and the host group 2 in a URL, the host group 3 in the scp-like form; then owner (4) and repository (5).
+const REMOTE_URL = /^(?:(https?|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s?#]+)\/([^/\s?#]+?)(?:\.git)?\/?$/i
+
+/** A remote's `host/owner/repo`, and whether git reaches it over ssh (an ssh:// URL or the scp-like form). */
+function parseRemote(url: string): { repo: string; isSsh: boolean } | null {
+  const m = url.trim().match(REMOTE_URL)
+  return m ? { repo: `${String(m[2] ?? m[3]).toLowerCase()}/${m[4]}/${m[5]}`, isSsh: m[1] === undefined || m[1].toLowerCase() === 'ssh' } : null
+}
+
+/**
+ * `host/owner/repo` from a git remote URL: https, http and ssh URLs (the scheme in any case; userinfo, port, `.git` and a
+ * trailing slash dropped, the host lowercased) and scp-like `[user@]host:owner/repo`. Any other form (git://, file://, a
+ * path) is null.
+ */
+export function repoOfRemoteUrl(url: string): string | null {
+  return parseRemote(url)?.repo ?? null
+}
+
+export type RemoteVerdict = { kind: 'match' } | { kind: 'unrecognised' } | { kind: 'ask'; repo: string } | { kind: 'other'; repo: string }
+
+const hostOf = (repo: string) => repo.slice(0, repo.indexOf('/')).toLowerCase()
+
+/**
+ * Whether a remote URL names `repo` (PR #68 review). An https host is the host; git hands an ssh remote's host to ssh, and
+ * ~/.ssh/config may alias it, so there the same owner and repository is enough. Another owner or repository on the pinned
+ * host may be `repo` renamed, which only gh can say (`ask`); gh is never asked about another host.
+ */
+export function remoteVerdict(url: string, repo: string): RemoteVerdict {
+  const remote = parseRemote(url)
+  if (!remote) return { kind: 'unrecognised' }
+  if (isSameRepo(remote.repo, repo) || (remote.isSsh && isSameOwnerRepo(remote.repo, repo))) return { kind: 'match' }
+  return hostOf(remote.repo) === hostOf(repo) ? { kind: 'ask', repo: remote.repo } : { kind: 'other', repo: remote.repo }
+}
+
+/** The same host, owner and repository, in any case; a null side never matches. */
+export function isSameRepo(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
+}
+
+/** The same owner and repository on any host: an SSH alias from ~/.ssh/config stands in for the host. */
+export function isSameOwnerRepo(a: string | null, b: string | null): boolean {
+  const ownerRepo = (repo: string) => repo.slice(repo.indexOf('/') + 1).toLowerCase()
+  return a !== null && b !== null && ownerRepo(a) === ownerRepo(b)
+}
+
+/** Whether an issue's url is a pull request's: `gh issue view` answers for both. */
+export function isPullUrl(url: string): boolean {
+  return /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+$/.test(url)
+}
+
+/** `owner/repo` on github.com, `host/owner/repo` anywhere else. */
+export function repoLabel(repo: string): string {
+  return repo.replace(/^github\.com\//i, '')
+}
+
+/** `#16`, or `o/r#16` for a run pinned to a repository. */
+export function issueLabel(run: Run): string {
+  return `${run.ghRepo ? repoLabel(run.ghRepo) : ''}#${run.issue}`
+}
+
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
 /** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
 export type Kept = { branch: string; workRoot: string; base: string }
 
 export type RunEvent =
-  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string }
+  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
@@ -683,6 +757,7 @@ export type RunEvent =
   | { type: 'block'; reason: string; next: string; keep?: Kept }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'made'; keep: Kept }
+  | { type: 'pinned'; repo: string }
   | { type: 'resume' }
   | { type: 'stop' }
   | { type: 'drive'; session: string }
@@ -710,10 +785,12 @@ export function phaseOf(step: Step): Phase | 'publish' | 'setup' | null {
   return null
 }
 
-export function newRun(id: string, root: string, issue: number, now: number): Run {
+/** `ghRepo` (`host/owner/repo`) pins a run started from an issue URL to that repository (#25). */
+export function newRun(id: string, root: string, issue: number, now: number, ghRepo?: string): Run {
   return {
     id,
     root,
+    ...(ghRepo === undefined ? {} : { ghRepo }),
     issue,
     title: '',
     body: '',
@@ -760,6 +837,8 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   }
   // The branch and folder preflight made land at any step, a stopped one too, so a Stop never loses them.
   if (ev.type === 'made') return { ...run, ...ev.keep }
+  // A number start's repository, once origin agrees with it: kept over a block, so resume can't move the run (PR #68 review 2).
+  if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
   if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next) : run
   if (ev.type === 'resume') {
@@ -777,7 +856,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   switch (run.step) {
     case 'preflight':
       if (ev.type !== 'preflighted') return run
-      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), step: 'baseline' }
+      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), ghRepo: ev.repo, step: 'baseline' }
     case 'baseline':
       if (ev.type !== 'baselined') return run
       return { ...run, baseline: ev.baseline, mergeBase: ev.mergeBase ?? run.mergeBase, step: 'red', times: start(run, 'red', now) }
@@ -1016,8 +1095,13 @@ export function mergeLine(run: Run): string | null {
   return run.merge ? mergeSaid(run.merge, { error: why => `merge check unavailable: ${why}`, clean: `merges cleanly with ${base}`, conflict: files => `conflicts with ${base}: ${files}` }) : null
 }
 
+/** The publish question without the merge check: the pane's ready line, and the question's head. */
+export function publishAsk(run: Run): string {
+  return `Push ${run.branch} and open a pull request${run.ghRepo ? ` on ${repoLabel(run.ghRepo)}` : ''} against ${run.base}?`
+}
+
 export function publishQuestion(run: Run): string {
-  const ask = `Push ${run.branch} and open a pull request against ${run.base}?`
+  const ask = publishAsk(run)
   return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with origin/${run.base} in: ${files}.` }) : ask
 }
 
@@ -1212,13 +1296,18 @@ export function prBody(run: Run): string {
 
 export type Command =
   | { kind: 'toggle' }
-  | { kind: 'start'; issue: number }
+  | { kind: 'start'; issue: number; repo?: string }
   | { kind: 'status' | 'resume' | 'publish' | 'stop' | 'handoff'; issue?: number }
   | { kind: 'demo'; state: DemoState | null }
   | { kind: 'unknown'; text: string }
 
+const ISSUE_URL = /^https:\/\/([A-Za-z0-9.-]+)\/([A-Za-z0-9_-]+)\/([A-Za-z0-9._-]+)\/issues\/([0-9]+)\/?(?:[?#].*)?$/
+
 export function parseCommand(args: string): Command {
   const words = args.trim().split(/\s+/).filter(Boolean)
+  // An issue URL names its repository (#25); its owner and repository keep their case, its host doesn't.
+  const url = ISSUE_URL.exec(words[0] ?? '')
+  if (url) return { kind: 'start', issue: Number(url[4]), repo: `${String(url[1]).toLowerCase()}/${url[2]}/${url[3]}` }
   const first = (words[0] ?? '').toLowerCase()
   if (first === '') return { kind: 'toggle' }
   if (/^#?\d+$/.test(first)) return { kind: 'start', issue: Number(first.replace('#', '')) }
@@ -1235,7 +1324,7 @@ export function parseCommand(args: string): Command {
   return { kind: 'unknown', text: args.trim() }
 }
 
-export const USAGE = '/issue-forge <issue number> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo'
+export const USAGE = '/issue-forge <issue number or URL> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo'
 
 // ── View (§7.3) ───────────────────────────────────────────────────────────
 
@@ -1357,7 +1446,7 @@ export function badgeOf(run: Run, now: number): string {
 export function statusText(run: Run | null, isDriving: boolean, now: number, me = '', others: readonly OtherRun[] = []): string {
   if (!run) return `No run in this repository. ${USAGE}`
   const view = viewOf(run, isDriving, me)
-  const head = `#${run.issue}${run.title ? ` ${run.title}` : ''}${run.branch ? ` · ${run.branch} → ${run.base}` : ''}`
+  const head = `${issueLabel(run)}${run.title ? ` ${run.title}` : ''}${run.branch ? ` · ${run.branch} → ${run.base}` : ''}`
   const lines = [head]
   if (view === 'blocked' && run.blocked) lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then /issue-forge resume`)
   else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
@@ -1424,7 +1513,7 @@ export function demoRun(state: DemoState, now: number): DemoView {
 function demoShown(state: DemoState, now: number): { run: Run | null; isDriving: boolean; activity: Activity | null } {
   if (state === 'empty') return { run: null, isDriving: false, activity: null }
   const base: Run = {
-    ...newRun('demo', '/demo', 16, now - 380_000),
+    ...newRun('demo', '/demo', 16, now - 380_000, 'github.com/bankielewicz/mod-builder'),
     title: 'Mod Lab: Fix prompt and path header hardcode mods/ instead of modsDir',
     url: 'https://github.com/bankielewicz/mod-builder/issues/16',
     branch: 'issue-16-mod-lab-fix-prompt-and-path-header-hardc',

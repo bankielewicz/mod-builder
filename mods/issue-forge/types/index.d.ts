@@ -91,6 +91,8 @@ export type Run = {
   id: string
   /** git's common folder: every worktree of the repository shares it, and it keys the store (Change 0.3.0). Absent in runs stored before. */
   repo?: string
+  /** The GitHub repository (`host/owner/repo`) every gh call of the run names with `--repo` (#25). Absent in runs stored before. */
+  ghRepo?: string
   /** Set while a session drives the run; cleared when the drive ends (Change 0.3.0). */
   driver?: Driver
   /** Started from the menu's Start under `ask`: it works in a new worktree, asked once (Change 0.3.0). */

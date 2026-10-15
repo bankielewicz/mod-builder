@@ -44,8 +44,11 @@ import {
   isLockError,
   isOwnHandback,
   isPrunable,
+  isPullUrl,
+  isSameRepo,
   isWorking,
   isWorktreeRun,
+  issueLabel,
   keepText,
   keptWorktreePlan,
   layoutOf,
@@ -72,9 +75,13 @@ import {
   profileProblems,
   profileStatusText,
   pruneKeys,
+  publishAsk,
   publishQuestion,
   readdWorktreeCommand,
   releasesOnEnd,
+  remoteVerdict,
+  repoLabel,
+  repoOfView,
   repoAgentsKeys,
   repoRunKeys,
   routedRedBlock,
@@ -293,6 +300,12 @@ async function recordMade($: EngineInterface, run: Run, made: Kept): Promise<voi
   await updateRun($, keyOf(run), stored => (stored?.id === run.id && !isTakenOver(stored) ? advance(stored, { type: 'made', keep: made }, now) : null))
 }
 
+/** A number start's repository, written onto the stored run at once, as recordMade writes the branch (PR #68 review 2). */
+async function recordPinned($: EngineInterface, run: Run, repo: string): Promise<void> {
+  const now = await $.clock.now()
+  await updateRun($, keyOf(run), stored => (stored?.id === run.id && !isTakenOver(stored) ? advance(stored, { type: 'pinned', repo }, now) : null))
+}
+
 /** Adds agents to the run's known list (memory and store); they are refused tools unless live. */
 async function rememberAgents($: EngineInterface, run: Run, refs: readonly string[]): Promise<void> {
   for (const ref of refs) knownRefs.add(ref)
@@ -444,14 +457,62 @@ async function stashAll($: EngineInterface, run: Run, message: string): Promise<
 type Blocked = Extract<RunEvent, { type: 'block' }>
 const block = (reason: string, next: string): Blocked => ({ type: 'block', reason, next })
 
-async function issueCheck($: EngineInterface, run: Run): Promise<Blocked | { title: string; body: string; url: string }> {
+async function authCheck($: EngineInterface, run: Run): Promise<Blocked | null> {
   const auth = await $.process.run(['gh', 'auth', 'status'], { cwd: run.root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
-  if (!auth || auth.exitCode !== 0) return block('gh is not signed in', 'run gh auth login')
-  const view = await $.process.run(['gh', 'issue', 'view', String(run.issue), '--json', 'number,title,body,state,url'], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
-  if (view.exitCode !== 0) return block(`issue #${run.issue} not found: ${firstLine(view.stderr)}`, 'check the issue number')
+  return !auth || auth.exitCode !== 0 ? block('gh is not signed in', 'run gh auth login') : null
+}
+
+/** The issue as gh reads it from `repo` (the run's pinned repository, or gh's own choice for a run stored before #25). */
+async function issueCheck($: EngineInterface, run: Run, repo: string | null): Promise<Blocked | { title: string; body: string; url: string }> {
+  const view = await $.process.run(['gh', 'issue', 'view', String(run.issue), ...(repo ? ['--repo', repo] : []), '--json', 'number,title,body,state,url'], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
+  if (view.exitCode !== 0) return block(`issue #${run.issue} not found: ${firstLine(view.stderr)}`, 'check the issue number or URL')
   const issue = JSON.parse(view.stdout) as { title: string; body: string; state: string; url: string }
+  // gh issue view answers for a pull request's number too.
+  if (isPullUrl(issue.url)) return block(`#${run.issue} is a pull request, not an issue`, 'pick another issue')
   if (issue.state !== 'OPEN') return block(`issue #${run.issue} is ${issue.state.toLowerCase()}`, 'reopen it or pick another issue')
   return { title: issue.title, body: issue.body ?? '', url: issue.url }
+}
+
+/** The GitHub repository gh resolves in `root` (`host/owner/repo`), or why it can't say. */
+async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { repo: string }> {
+  const view = await $.process.run(['gh', 'repo', 'view', '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  if (!view || view.exitCode !== 0) return block(`could not tell which GitHub repository this checkout belongs to: ${firstLine(view?.stderr ?? 'gh repo view did not finish')}`, 'give the checkout a GitHub remote named origin')
+  const repo = repoOfView(view.stdout)
+  return repo ? { repo } : block("could not read gh repo view's output", 'check gh')
+}
+
+/**
+ * Whether a remote URL names `repo`. The URL itself is parsed here and never passed on: it can hold a token. A renamed or
+ * transferred repository differs from the URL, so gh is asked for the name it gives `host/owner/repo`.
+ */
+async function remoteRepo($: EngineInterface, root: string, url: string, repo: string): Promise<'match' | { other: string | null }> {
+  const verdict = remoteVerdict(url, repo)
+  if (verdict.kind === 'match') return 'match'
+  if (verdict.kind === 'unrecognised') return { other: null }
+  if (verdict.kind === 'other') return { other: verdict.repo }
+  const view = await $.process.run(['gh', 'repo', 'view', verdict.repo, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  const canonical = view?.exitCode === 0 ? repoOfView(view.stdout) : null
+  return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? verdict.repo }
+}
+
+/**
+ * Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. git pushes to every push
+ * URL, so each is checked (PR #68 review), and one that is the fetch URL only once.
+ */
+async function originCheck($: EngineInterface, root: string, repo: string): Promise<Blocked | null> {
+  const fetched = await git($, root, ['remote', 'get-url', 'origin'])
+  const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
+  if (fetched.exitCode !== 0 || pushed.exitCode !== 0) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
+  const fetchUrl = fetched.stdout.trim()
+  const pushUrls = [...new Set(pushed.stdout.split('\n').map(u => u.trim()))].filter(u => u !== '' && u !== fetchUrl)
+  for (const [url, isPush] of [[fetchUrl, false] as const, ...pushUrls.map(u => [u, true] as const)]) {
+    const found = await remoteRepo($, root, url, repo)
+    if (found === 'match') continue
+    const label = found.other === null ? 'an unrecognised URL' : repoLabel(found.other)
+    const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`
+    return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, next)
+  }
+  return null
 }
 
 /** Reads and validates the profile, the outside checks included (§4.2). */
@@ -601,7 +662,17 @@ const strayFolder = (workRoot: string): Blocked => block(`${workRoot} is there b
  */
 async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   await setActivity($, 'checking gh and the issue')
-  const issue = await issueCheck($, run)
+  const unauthed = await authCheck($, run)
+  if (unauthed) return unauthed
+  // Every gh call of the run names this repository, and origin must be it (#25).
+  const resolved = run.ghRepo ? { repo: run.ghRepo } : await ghRepoOf($, run.root)
+  if ('type' in resolved) return resolved
+  const { repo } = resolved
+  const stray = await originCheck($, run.root, repo)
+  if (stray) return stray
+  // Pinned once origin agrees, so a later block keeps it; an origin block leaves it open to a fix of the remotes.
+  if (!run.ghRepo) await recordPinned($, run, repo)
+  const issue = await issueCheck($, run, repo)
   if ('type' in issue) return issue
   let made: Kept
   if (run.branch) {
@@ -620,6 +691,9 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
       const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes)
       if (again.exit !== 0) return { ...block(worktreeAddFailure(again, minutes), `check ${made.workRoot}`), keep: made }
     }
+    // A kept worktree's own config can give origin other URLs (extensions.worktreeConfig): it is checked where it fetches.
+    const strayThere = made.workRoot !== run.root ? await originCheck($, made.workRoot, repo) : null
+    if (strayThere) return { ...strayThere, keep: made }
     const unfetched = await fetchBase($, made.workRoot, made.base)
     if (unfetched) return { ...unfetched, keep: made }
     // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
@@ -636,7 +710,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     await setActivity($, `reading ${PROFILE_FILE} from origin/${made.base}`)
     const trusted = await loadProfile($, made.workRoot)
     if (!trusted.profile) return { ...block(`origin/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
-    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot }
+    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot, repo }
   } catch (err) {
     if (err instanceof Stopped) throw err
     return { ...block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status'), keep: made }
@@ -834,6 +908,9 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
     const tip = (await gitOut($, workOf(run), ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
+  // A run pinned to a repository pushes only to an origin that is it (#25), as the folder that pushes reads it (PR #68 review 2).
+  const stray = run.ghRepo ? await originCheck($, workOf(run), run.ghRepo) : null
+  if (stray) return stray
   // The PR body says what was true when it was pushed: the merge is checked again here.
   const merge = await mergeCheck($, run)
   await $.fs.write(body, prBody({ ...run, merge }))
@@ -844,7 +921,7 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
   await stillOwned($, run)
   await setActivity($, 'gh pr create')
-  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
+  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body, ...(run.ghRepo ? ['--repo', run.ghRepo] : [])], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
   return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '', merge }
 }
@@ -1078,8 +1155,17 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
  * `/issue-forge <N>` (Change 0.3.0, 3): the same issue answers its status; another active run, or a drive in this
  * session, gets one question; otherwise the run starts.
  */
-async function startRun($: EngineInterface, at: Repo | null, issue: number): Promise<string> {
+async function startRun($: EngineInterface, at: Repo | null, issue: number, named?: string): Promise<string> {
   if (!at) return 'not in a git repository. Start Claude Code inside the repository the issue belongs to.'
+  // An issue URL must name the repository gh resolves here (#25), before this checkout's runs answer for its number (PR #68
+  // review); the run is pinned to the name gh gives it.
+  let ghRepo: string | undefined
+  if (named) {
+    const resolved = await ghRepoOf($, at.root)
+    if ('type' in resolved) return resolved.reason
+    if (!isSameRepo(named, resolved.repo)) return `${repoLabel(named)}#${issue} is in another repository: this checkout's GitHub repository is ${repoLabel(resolved.repo)}. Start Claude Code in a clone of ${repoLabel(named)}.`
+    ghRepo = resolved.repo
+  }
   const runs = await runsOf($, at.repo)
   const same = runs.find(r => r.issue === issue && isActive(r))
   if (same) {
@@ -1092,23 +1178,23 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number): Pro
   const workspace = checkoutWorkspaceOf(local)
   const others = runs.filter(r => isActive(r) && r.id !== drivingRun?.id)
   const menu = startChoices({ issue, base: checkoutBaseOf(local), workspace, driving: drivingRun, others, me: sessionId, now: await $.clock.now() })
-  if (!menu) return begin($, at, issue, false)
+  if (!menu) return begin($, at, issue, false, ghRepo)
   const action = startAnswer(menu, await askOr($, menu.question, menu.options.map(o => o.label)), isInteractive)
   const isChosen = workspace !== 'here'
   switch (action.kind) {
     case 'start':
-      return begin($, at, issue, isChosen)
+      return begin($, at, issue, isChosen, ghRepo)
     case 'takeOver':
       return resumeRun($, at, action.issue, true)
     case 'resume':
       return resumeRun($, at, action.issue)
     case 'stopThenStart': {
       const stopped = await stopRun($, at, action.issue)
-      return stopped.startsWith('stopped') ? `stopped #${action.issue}; ${await begin($, at, issue, isChosen)}` : stopped
+      return stopped.startsWith('stopped') ? `stopped #${action.issue}; ${await begin($, at, issue, isChosen, ghRepo)}` : stopped
     }
     case 'handOffThenStart': {
       const step = await handOff($)
-      return step ? `handed off #${action.issue} at ${step}; ${await begin($, at, issue, isChosen)}` : 'this session is driving no run.'
+      return step ? `handed off #${action.issue} at ${step}; ${await begin($, at, issue, isChosen, ghRepo)}` : 'this session is driving no run.'
     }
     case 'keep':
       return keepText(issue)
@@ -1131,9 +1217,9 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
 }
 
 /** Writes the new run, with this session as its driver, only if its key is still free; then drives it. */
-async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktree: boolean): Promise<string> {
+async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktree: boolean, ghRepo?: string): Promise<string> {
   const now = await $.clock.now()
-  const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
+  const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now, ghRepo), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
   const run = advance(fresh, { type: 'drive', session: sessionId }, now)
   await update($, focusAtom, () => issue)
   const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
@@ -1142,7 +1228,7 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   await update($, demoAtom, () => null)
   void openPane($).catch(() => undefined)
   startDrive($, claimed)
-  return `starting #${issue}; the pane shows progress. Nothing is pushed until you say yes.`
+  return `starting ${issueLabel(run)}; the pane shows progress. Nothing is pushed until you say yes.`
 }
 
 /**
@@ -1171,14 +1257,15 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const key = keyOf(run)
   const back = advance(run, { type: 'resume' }, await $.clock.now())
   if (back.branch) {
-    const issueNow = await issueCheck($, back)
+    // At preflight the issue is read again, from the repository preflight pins; a run blocked there may have none yet (PR #68 review).
+    const issueNow = (await authCheck($, back)) ?? (back.step === 'preflight' ? null : await issueCheck($, back, back.ghRepo ?? null))
     const work = workOf(back)
     // A worktree that is gone, or a folder in its place, is preflight's to handle; at a later step it holds the
     // run's work, so the person decides. git runs in the folder only once git has it as the worktree.
     const kept = isWorktreeRun(back) ? await keptWorktree($, back.root, work) : 'reuse'
     const head = kept === 'reuse' ? (await gitOut($, work, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() : null
     const why =
-      'type' in issueNow
+      issueNow && 'type' in issueNow
         ? issueNow
         : typeof kept !== 'string'
           ? kept
@@ -1305,7 +1392,7 @@ type RunCommand = Extract<Command, { kind: 'start' | 'status' | 'resume' | 'publ
 
 /** A command about a run, by the issue it names (Change 0.3.0). */
 async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand): Promise<string> {
-  if (cmd.kind === 'start') return startRun($, at, cmd.issue)
+  if (cmd.kind === 'start') return startRun($, at, cmd.issue, cmd.repo)
   const issue = cmd.issue ?? null
   switch (cmd.kind) {
     case 'status':
@@ -1413,7 +1500,7 @@ export const register: Register = (on, raw) => {
     sessionCwd = e.cwd
     isInteractive = e.isInteractive
     await $.command
-      .register({ name: 'issue-forge', description: 'Take a GitHub issue to a pull request, test-first, behind a coverage gate', argumentHint: '<issue> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo' })
+      .register({ name: 'issue-forge', description: 'Take a GitHub issue to a pull request, test-first, behind a coverage gate', argumentHint: '<issue number or URL> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo' })
       .catch(() => undefined)
     for (const which of PHASES) {
       await $.agent
@@ -1506,7 +1593,7 @@ export const register: Register = (on, raw) => {
     const layout = e.surface === 'mobile' ? 'compact' : layoutOf(e.props.bodyColumns)
     const rows = run && view !== 'blocked' && view !== 'stopped' ? phaseRows(run, now, live.activity) : []
     const cov = run ? coverageLine(run, layout) : null
-    const masthead = run ? truncate(`#${run.issue} ${run.title}`, Math.max(0, cols - 24)) : ''
+    const masthead = run ? truncate(`${issueLabel(run)} ${run.title}`, Math.max(0, cols - 24)) : ''
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
@@ -1517,10 +1604,10 @@ export const register: Register = (on, raw) => {
         </Box>
         {demo && <Text dimColor>{`demo · ${demo} (${DEMO_STATES.indexOf(demo) + 1}/${DEMO_STATES.length})`}</Text>}
         <Text dimColor>{'─'.repeat(cols)}</Text>
-        {view === 'empty' && <Text>No run here. /issue-forge &lt;issue number&gt; starts one,</Text>}
+        {view === 'empty' && <Text>No run here. /issue-forge &lt;issue number or URL&gt; starts one,</Text>}
         {view === 'empty' && <Text dimColor>/issue-forge demo shows every state.</Text>}
         {view === 'stopped' && run && <Text dimColor>{truncate(`Run #${run.issue} stopped; its branch ${run.branch || '(none)'} is kept.`, cols)}</Text>}
-        {view === 'stopped' && <Text dimColor>/issue-forge &lt;issue number&gt; starts another.</Text>}
+        {view === 'stopped' && <Text dimColor>/issue-forge &lt;issue number or URL&gt; starts another.</Text>}
         {(view === 'stopped' || view === 'done') && run && cleanupLine(run) && <Text dimColor>{truncate(cleanupLine(run) ?? '', cols)}</Text>}
         {view === 'blocked' && run?.blocked && (
           <Text color="#E06C6C">{truncate(`✕ blocked at ${run.blocked.at}: ${run.blocked.reason}`, cols)}</Text>
@@ -1550,7 +1637,7 @@ export const register: Register = (on, raw) => {
           <Text color={run.merge?.isClean ? '#7FB685' : '#E0B15A'}>{truncate(mergeLine(run) ?? '', cols)}</Text>
         )}
         {view === 'ready' && run && layout !== 'compact' && (
-          <Text>{truncate(`Push ${run.branch} and open a pull request against ${run.base}?`, cols)}</Text>
+          <Text>{truncate(publishAsk(run), cols)}</Text>
         )}
         {view === 'done' && run && <Text color="#7FB685">✓ pull request opened</Text>}
         {view === 'done' && run?.prUrl && <Text color="#D97757">{truncate(run.prUrl, cols)}</Text>}

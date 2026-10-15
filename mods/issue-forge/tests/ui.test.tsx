@@ -101,6 +101,18 @@ type World = {
   mergeThrows?: boolean
   /** Where the coverage command last ran: a real reporter names files under that folder. */
   lcovRoot?: string
+  /** `gh repo view --json nameWithOwner,url`; absent, o/r on github.com (#25). */
+  repoView?: { exitCode: number; stdout: string; stderr?: string }
+  /** `git remote get-url origin`: the URL, or a failure; absent, https://github.com/o/r.git (#25). */
+  originUrl?: string | { exitCode: number; stderr: string }
+  /** `git remote get-url --push --all origin`, one line per URL; absent, the same as originUrl (#25, PR #68 review). */
+  pushUrl?: string | string[] | { exitCode: number; stderr: string }
+  /** What `gh repo view <host/owner/repo>` canonicalises an argument to (its nameWithOwner); absent, the argument itself (#25). */
+  canonical?: Record<string, string>
+  /** The url `gh issue view` answers with; absent, ISSUE's (#25). */
+  issueUrl?: string
+  /** `gh issue view` exits 1 with this on stderr (#25). */
+  issueFails?: string
   /** What $.command.register was given. */
   registered: { name: string; argumentHint?: string }[]
   /** Every process.run with the folder it ran in. */
@@ -223,14 +235,26 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
+      if (s === 'repo view --json nameWithOwner,url') return world.repoView ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.repoView } } : ok(JSON.stringify({ nameWithOwner: 'o/r', url: 'https://github.com/o/r' }))
+      if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'nameWithOwner,url') {
+        const [host = '', owner = '', name = ''] = (a[2] ?? '').split('/')
+        const nameWithOwner = world.canonical?.[a[2] ?? ''] ?? `${owner}/${name}`
+        return ok(JSON.stringify({ nameWithOwner, url: `https://${host}/${nameWithOwner}` }))
+      }
       if (a[0] === 'issue') {
         world.beforeIssueView?.()
-        return ok(JSON.stringify({ ...ISSUE, body: world.issueBody }))
+        if (world.issueFails) return fail(world.issueFails)
+        return ok(JSON.stringify({ ...ISSUE, ...(world.issueUrl ? { url: world.issueUrl } : {}), body: world.issueBody }))
       }
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     // git's common folder: the main checkout answers relative, as git does there.
+    // As git 2.53 prints them: `--all` lists every push URL, one per line.
+    if (s === 'remote get-url origin' || s === 'remote get-url --push --all origin') {
+      const url = (s === 'remote get-url origin' ? world.originUrl : (world.pushUrl ?? world.originUrl)) ?? 'https://github.com/o/r.git'
+      return typeof url === 'string' ? ok(`${url}\n`) : Array.isArray(url) ? ok(url.map(u => `${u}\n`).join('')) : fail(url.stderr, url.exitCode)
+    }
     if (s === 'rev-parse --git-common-dir') return ok('.git\n')
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
@@ -351,7 +375,7 @@ describe('demo and drawing', () => {
     const { text } = await run($, 'demo')
     expect(text).toContain('[ Next state ] steps through empty, running, gate, failed, blocked, interrupted, elsewhere, ready, done')
     const copy: [string, RegExp][] = [
-      ['empty', /No run here\. \/issue-forge <issue number> starts one/],
+      ['empty', /No run here\. \/issue-forge <issue number or URL> starts one/],
       ['running', /attempt 1\/3 · agent working/],
       ['gate', /gate G · running tests/],
       ['failed', /gate G: diff branch 91\.30% < 95/],
@@ -642,6 +666,9 @@ describe('a run, stage by stage', () => {
     expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
     const pr = w.argv.find(a => a[0] === 'gh' && a[1] === 'pr')!
     expect(pr.slice(0, 7)).toEqual(['gh', 'pr', 'create', '--base', 'main', '--head', BRANCH])
+    // A run stored by 0.1.0 has no pinned repository: no --repo, and no origin check (#25).
+    expect(pr).not.toContain('--repo')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'remote')).toBe(false)
     expect(pr[8]).toBe('Fix the thing (#16)')
     const body = w.files[pr[pr.length - 1]!] ?? ''
     expect(pr[pr.length - 1]).toBe('/home/u/.claude/issue-forge-data/16-1/pr.md')
@@ -786,6 +813,8 @@ describe('reloads, resume and stop', () => {
     await until(w, () => w.spawned.length === 1, 'green')
     // Attempts reset; the name counts the run's green agents, so it never repeats the earlier one's.
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', name: 'issue-forge-16-green-2' })
+    // A run stored by 0.1.0 has no pinned repository: the issue is looked up as before (#25).
+    expect(w.argv.find(a => a[0] === 'gh' && a[1] === 'issue')).not.toContain('--repo')
     expect((await run($, 'stop')).text).toContain('its agents are refused further tool calls')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-green' } as never)) as any).deny).toContain('issue-forge:')
@@ -1538,7 +1567,7 @@ describe('parallel runs (Change 0.3.0)', () => {
   test('the command offers handoff and the optional issue numbers in its hint (PR #51 review)', async ($, on) => {
     const w = engine(on)
     await start($)
-    expect(w.registered.map(r => r.argumentHint)).toEqual(['<issue> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo'])
+    expect(w.registered.map(r => r.argumentHint)).toEqual(['<issue number or URL> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo'])
   })
 
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
@@ -1556,5 +1585,425 @@ describe('parallel runs (Change 0.3.0)', () => {
     await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), 'the block')
     expect((await run($, 'status 16')).text).toContain('lcovPath /cov/lcov.info is shared by every run and #40 is running')
     expect(w.spawned).toEqual([])
+  })
+})
+
+// Issue #25: an issue URL, and each run pinned to one GitHub repository. The pinned repository is `Run.ghRepo`
+// (`host/owner/repo`): `Run.repo` is git's common folder, which keys the store (Change 0.3.0).
+describe('an issue URL, and a run pinned to one repository (#25)', () => {
+  const URL16 = 'https://github.com/o/r/issues/16'
+  const ISSUE_VIEW = ['gh', 'issue', 'view', '16', '--repo', 'github.com/o/r', '--json', 'number,title,body,state,url']
+  const REPO_VIEW = ['gh', 'repo', 'view', '--json', 'nameWithOwner,url']
+  const BUT = 'but gh sends issues and pull requests to o/r'
+  const NEXT_CLONE = 'work from a clone whose origin is o/r (forks: #26)'
+  /** The store the mod writes to, readable here. */
+  const watched = (): Record<string, unknown> => ({})
+  const WATCH = { when: () => false, until: Promise.resolve() }
+  const storedRuns = (store: Record<string, unknown>) => Object.keys(store).filter(k => k.includes('#16'))
+  const argvText = (w: World) => w.argv.map(a => a.join(' '))
+  const indexOfArgv = (w: World, text: string) => argvText(w).indexOf(text)
+  /** Starts #16 and waits for the block (a run that passes preflight blocks right after the red spawn, under test). */
+  async function blockedStatus($: any, w: World, args = '16'): Promise<string> {
+    await run($, args)
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    return (await run($, 'status')).text ?? ''
+  }
+
+  test('a pasted issue URL starts the run for its repository, and the issue is read from it', async ($, on) => {
+    const store = watched()
+    const w = engine(on, { storeHold: WATCH }, store)
+    await start($)
+    expect((await run($, URL16)).text).toBe('starting o/r#16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(ISSUE_VIEW)
+    expect(w.argv).toContainEqual(REPO_VIEW)
+    expect(Object.keys(store).some(k => k.startsWith('issue-forge:repo-run:') && k.endsWith('#16'))).toBe(true)
+    expect((await run($, 'status')).text).toStartWith('o/r#16 ')
+  })
+
+  test("a URL's case and a trailing fragment do not matter: the run is pinned to the name gh gives the checkout", async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect((await run($, 'https://GitHub.com/O/R/issues/16#issuecomment-1')).text).toBe('starting o/r#16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(ISSUE_VIEW)
+  })
+
+  test("a URL of another repository answers with both names and starts nothing: no issue read, nothing fetched or switched", async ($, on) => {
+    const store = watched()
+    const w = engine(on, { storeHold: WATCH }, store)
+    await start($)
+    expect((await run($, 'https://github.com/x/y/issues/16')).text).toBe("x/y#16 is in another repository: this checkout's GitHub repository is o/r. Start Claude Code in a clone of x/y.")
+    await w.clock.settle()
+    expect(storedRuns(store)).toEqual([])
+    expect(w.argv).toContainEqual(REPO_VIEW)
+    expect(w.argv.some(a => (a[0] === 'gh' && a[1] === 'issue') || (a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch')))).toBe(false)
+  })
+
+  test("a URL of another repository's issue is refused though this checkout has a run with the same number (PR #68 review)", async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', blocked: { at: 'green', reason: 'r', next: 'n' }, used: { red: 1, green: 1, refactor: 0 } })
+    engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'https://github.com/x/y/issues/16')).text).toBe("x/y#16 is in another repository: this checkout's GitHub repository is o/r. Start Claude Code in a clone of x/y.")
+  })
+
+  test('a URL on another host is another repository, named with its host', async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect((await run($, 'https://ghe.example.com/o/r/issues/16')).text).toBe("ghe.example.com/o/r#16 is in another repository: this checkout's GitHub repository is o/r. Start Claude Code in a clone of ghe.example.com/o/r.")
+    expect(w.argv.some(a => a[0] === 'gh' && a[1] === 'issue')).toBe(false)
+  })
+
+  test('a URL start where gh cannot tell the repository says why, and starts nothing', async ($, on) => {
+    const store = watched()
+    const w = engine(on, { repoView: { exitCode: 1, stdout: '', stderr: 'no git remotes found\nsecond line' }, storeHold: WATCH }, store)
+    await start($)
+    expect((await run($, URL16)).text).toBe('could not tell which GitHub repository this checkout belongs to: no git remotes found')
+    await w.clock.settle()
+    expect(storedRuns(store)).toEqual([])
+    expect(w.argv.some(a => a[0] === 'gh' && a[1] === 'issue')).toBe(false)
+  })
+
+  test("a URL start where gh repo view prints something else says it could not read the output, and starts nothing", async ($, on) => {
+    const store = watched()
+    const w = engine(on, { repoView: { exitCode: 0, stdout: 'not json' }, storeHold: WATCH }, store)
+    await start($)
+    expect((await run($, URL16)).text).toBe("could not read gh repo view's output")
+    await w.clock.settle()
+    expect(storedRuns(store)).toEqual([])
+  })
+
+  test("a pull request's URL is not an issue URL: the answer is unknown, with the new usage", async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect((await run($, 'https://github.com/o/r/pull/16')).text).toBe(
+      'unknown: https://github.com/o/r/pull/16. /issue-forge <issue number or URL> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo',
+    )
+    expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
+  })
+
+  test('preflight checks gh, then the repository, then origin (fetch, then push), then the issue, before any fetch or switch; the issue is read with --repo', async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(ISSUE_VIEW)
+    const order = ['gh auth status', 'gh repo view --json nameWithOwner,url', 'git remote get-url origin', 'git remote get-url --push --all origin', ISSUE_VIEW.join(' '), 'git fetch origin main'].map(t => indexOfArgv(w, t))
+    expect(order.every(i => i >= 0)).toBe(true)
+    expect([...order].sort((x, y) => x - y)).toEqual(order)
+    const switched = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'switch')
+    expect(switched > (order[5] ?? 0)).toBe(true)
+  })
+
+  test('a number start where gh cannot tell the repository blocks at preflight with that reason, before anything is fetched or switched', async ($, on) => {
+    const w = engine(on, { repoView: { exitCode: 1, stdout: '', stderr: 'no git remotes found' } })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain('blocked at preflight: could not tell which GitHub repository this checkout belongs to: no git remotes found')
+    expect(status).toContain('next: give the checkout a GitHub remote named origin')
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+    expect(w.argv.some(a => a[0] === 'gh' && a[1] === 'issue')).toBe(false)
+  })
+
+  test("a number start where gh repo view prints something else blocks: could not read its output", async ($, on) => {
+    const w = engine(on, { repoView: { exitCode: 0, stdout: 'not json' } })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain("blocked at preflight: could not read gh repo view's output")
+    expect(status).toContain('next: check gh')
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('a checkout with no origin remote blocks, naming the repository to add it for', async ($, on) => {
+    const w = engine(on, { originUrl: { exitCode: 2, stderr: "error: No such remote 'origin'" } })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain('blocked at preflight: this checkout has no remote named origin')
+    expect(status).toContain('next: add a remote named origin for o/r')
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test("an origin renamed since the clone was made is asked about by host/owner/repo, never by URL, and passes when gh gives the repository's name", async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/old/r.git', canonical: { 'github.com/old/r': 'o/r' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['gh', 'repo', 'view', 'github.com/old/r', '--json', 'nameWithOwner,url'])
+    expect(w.argv.flat().some(x => x.includes('old/r.git'))).toBe(false)
+  })
+
+  test('an origin that is a fork blocks, and neither the block, the argv nor the pane carries the token in its URL', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://x-access-token:SECRET@github.com/fork/r.git', canonical: { 'github.com/fork/r': 'fork/r' } })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from fork/r, ${BUT}`)
+    expect(status).toContain(`next: ${NEXT_CLONE}`)
+    expect(w.argv).toContainEqual(['gh', 'repo', 'view', 'github.com/fork/r', '--json', 'nameWithOwner,url'])
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /origin fetches from fork\/r/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /SECRET/ })).toBeUndefined()
+    expect(JSON.stringify([w.argv, w.toasts, w.asked, status])).not.toContain('SECRET')
+  })
+
+  test('an origin that pushes somewhere else blocks, naming where', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/o/r.git', pushUrl: 'https://github.com/me/r.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin pushes to me/r, ${BUT}`)
+    expect(status).toContain(`next: ${NEXT_CLONE}`)
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('an origin with several push URLs blocks when any of them is another repository, since git pushes to all of them (PR #68 review)', async ($, on) => {
+    const w = engine(on, { pushUrl: ['https://github.com/o/r.git', 'git@github.com:me/other.git'] })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin pushes to me/other, ${BUT}`)
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('a push URL that is the fetch URL is not checked twice: a renamed origin is asked of gh once (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/old/r.git', canonical: { 'github.com/old/r': 'o/r' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.filter(a => a.join(' ') === 'gh repo view github.com/old/r --json nameWithOwner,url')).toHaveLength(1)
+  })
+
+  test('an origin URL it cannot read says which forms it reads, rather than to clone again (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'file:///srv/mirror/r.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from an unrecognised URL, ${BUT}`)
+    expect(status).toContain('next: give origin an https, http or ssh URL for o/r, then /issue-forge resume')
+  })
+
+  test('an origin URL gh cannot place is an unrecognised URL, and no gh repo view is run for it', async ($, on) => {
+    const w = engine(on, { originUrl: 'git://example.org/x.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from an unrecognised URL, ${BUT}`)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+  })
+
+  test('an scp-like origin for the same repository passes without asking gh about it', async ($, on) => {
+    const w = engine(on, { originUrl: 'git@github.com:o/r.git' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'remote', 'get-url', 'origin'])
+    expect(w.argv).toContainEqual(['git', 'remote', 'get-url', '--push', '--all', 'origin'])
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+  })
+
+  test('an https origin on another host blocks though its owner and repository match, and gh is not asked about that host (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://ghe.example.com/o/r.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from ghe.example.com/o/r, ${BUT}`)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('an ssh origin on another host, for another repository, blocks without asking gh about that host (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'git@some-host:x/y.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from some-host/x/y, ${BUT}`)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+  })
+
+  test('an ssh:// origin through an alias of the host passes for the same owner and repository, as the scp-like form does', async ($, on) => {
+    const w = engine(on, { originUrl: 'ssh://git@github-work/o/r.git' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+  })
+
+  test("the number of a pull request is refused as an issue", async ($, on) => {
+    const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain('blocked at preflight: #16 is a pull request, not an issue')
+    expect(status).toContain('next: pick another issue')
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('a number start that blocks after origin passes is pinned to its repository, and resume keeps it (PR #68 review 2)', async ($, on) => {
+    const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toStartWith('o/r#16\n')
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.toasts.filter(t => t.includes('blocked')).length >= 2, 'the second block')
+    // The repository is not asked again: a remote changed meanwhile can't move the run to another repository's #16.
+    expect(w.argv.filter(a => a.join(' ') === REPO_VIEW.join(' '))).toHaveLength(1)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue')).toEqual([ISSUE_VIEW, ISSUE_VIEW])
+  })
+
+  test('a number start that origin blocks stays unpinned, so fixing the remotes or gh repo set-default and resuming recovers it', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/fork/r.git', canonical: { 'github.com/fork/r': 'fork/r' } })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toStartWith('#16\n')
+  })
+
+  test('an issue gh cannot find says to check the number or URL', async ($, on) => {
+    const w = engine(on, { issueFails: 'GraphQL: Could not resolve to an issue or pull request with the number of 16.' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain('blocked at preflight: issue #16 not found: GraphQL: Could not resolve to an issue or pull request with the number of 16.')
+    expect(status).toContain('next: check the issue number or URL')
+  })
+
+  test('publish checks origin (push URL) before it pushes, and opens the pull request on the run\'s repository', async ($, on) => {
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    expect((await run($, 'publish')).text).toBe(`publishing #16: pushing ${BRANCH} and opening a pull request against main.`)
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    const pushUrl = indexOfArgv(w, 'git remote get-url --push --all origin')
+    const push = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'push')
+    expect(pushUrl >= 0 && pushUrl < push).toBe(true)
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
+    const pr = w.argv.find(a => a[0] === 'gh' && a[1] === 'pr')!
+    expect(pr.slice(0, 7)).toEqual(['gh', 'pr', 'create', '--base', 'main', '--head', BRANCH])
+    expect(pr.slice(-4)).toEqual(['--body-file', '/home/u/.claude/issue-forge-data/16-1/pr.md', '--repo', 'github.com/o/r'])
+    expect(w.files['/home/u/.claude/issue-forge-data/16-1/pr.md']).toContain('Closes #16')
+  })
+
+  test('publish blocks when origin is no longer the run\'s repository: nothing is pushed, no pull request is opened', async ($, on) => {
+    const w = engine(on, { head: BRANCH, originUrl: 'https://github.com/fork/r.git' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.includes('blocked') || t.startsWith('PR opened')), 'the block')
+    expect((await run($, 'status')).text).toContain(`blocked at publishing: origin fetches from fork/r, ${BUT}`)
+    expect(w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))).toBe(false)
+  })
+
+  // With extensions.worktreeConfig, a linked worktree's config.worktree can give origin another pushurl than the
+  // checkout's (probed, git 2.53): origin is checked in the folder git fetches and pushes from.
+  test('publish of a worktree run checks origin in the worktree that pushes (PR #68 review 2)', async ($, on) => {
+    const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+    const w = engine(on, { head: BRANCH, worktrees: [WT], wtHead: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0', workRoot: WT }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    expect(w.calls.filter(c => c.argv.join(' ') === 'git remote get-url --push --all origin').map(c => c.cwd)).toEqual([WT])
+  })
+
+  test('resume of a worktree run at preflight checks origin in its kept worktree too, before it fetches there (PR #68 review 2)', async ($, on) => {
+    const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] })
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, worktrees: [WT], wtHead: BRANCH }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const pushUrlCwds = w.calls.filter(c => c.argv.join(' ') === 'git remote get-url --push --all origin').map(c => c.cwd)
+    expect(pushUrlCwds).toEqual([ROOT, WT])
+    const checked = w.calls.findIndex(c => c.cwd === WT && c.argv.join(' ') === 'git remote get-url --push --all origin')
+    const fetched = w.calls.findIndex(c => c.cwd === WT && c.argv[1] === 'fetch')
+    expect(checked >= 0 && checked < fetched).toBe(true)
+  })
+
+  test('publish blocks when origin now pushes elsewhere, though it still fetches from the run\'s repository', async ($, on) => {
+    const w = engine(on, { head: BRANCH, pushUrl: 'https://github.com/me/r.git' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.includes('blocked') || t.startsWith('PR opened')), 'the block')
+    expect((await run($, 'status')).text).toContain(`blocked at publishing: origin pushes to me/r, ${BUT}`)
+    expect(w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))).toBe(false)
+  })
+
+  test('the pane names the repository in its masthead and in the publish line of a ready run', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /^o\/r#16 Fix the thing$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Push issue-16-fix-the-thing and open a pull request on o\/r against main\?$/ })).toBeDefined()
+    // The branch line stays as it was.
+    expect(await ui.find({ type: 'Text', text: /^branch {5}issue-16-fix-the-thing → main$/ })).toBeDefined()
+  })
+
+  test('a run driven to gate F asks to publish on its repository', async ($, on) => {
+    const w = engine(on, { head: BRANCH, hasChanges: false, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateF', { ghRepo: 'github.com/o/r', greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    expect(w.asked[0]).toBe(`Push ${BRANCH} and open a pull request on o/r against main?`)
+  })
+
+  test('a GitHub Enterprise run is named with its host in the masthead', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'ghe.example.com/o/r', greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /^ghe\.example\.com\/o\/r#16 Fix the thing$/ })).toBeDefined()
+  })
+
+  test("resume reads the issue of a run with a branch from the repository it is pinned to", async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', blocked: { at: 'green', reason: 'r', next: 'n' }, used: { red: 1, green: 1, refactor: 0 } })
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(w.argv).toContainEqual(ISSUE_VIEW)
+  })
+
+  test('resume of a pinned run whose issue is now a pull request stays blocked, and starts no agent', async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', blocked: { at: 'green', reason: 'r', next: 'n' }, used: { red: 1, green: 1, refactor: 0 } })
+    const w = engine(on, { head: BRANCH, issueUrl: 'https://github.com/o/r/pull/16' }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('still blocked: #16 is a pull request, not an issue.')
+    expect(w.spawned).toEqual([])
+  })
+
+  test('resume of a run that blocked at preflight after making its branch reads the issue only with --repo (PR #68 review)', async ($, on) => {
+    // A number start that made its branch, then found no profile on origin/main: the block keeps the branch, and no repository is pinned yet.
+    const kept = storedRun('blocked', {
+      blocked: { at: 'preflight', reason: 'origin/main has no valid .issue-forge.json: missing', next: 'commit .issue-forge.json to main' },
+      mergeBase: '', profile: null, used: { red: 0, green: 0, refactor: 0 }, redCommit: undefined, baseline: null,
+    })
+    const w = engine(on, { head: BRANCH }, { [`issue-forge:run:${ROOT}`]: kept })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    const issueViews = w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue')
+    expect(issueViews.length).toBeGreaterThan(0)
+    expect(issueViews.filter(a => !a.includes('--repo'))).toEqual([])
+  })
+
+  test("resume of a run stored by 0.1.0 at preflight (no branch, no repository) runs the whole new preflight and pins it", async ($, on) => {
+    const early = storedRun('blocked', {
+      blocked: { at: 'preflight', reason: 'gh is not signed in', next: 'run gh auth login' },
+      title: '', body: '', url: '', branch: '', base: '', mergeBase: '', profile: null,
+      used: { red: 0, green: 0, refactor: 0 }, redCommit: undefined, baseline: null, times: {}, agents: [],
+    })
+    const w = engine(on, {}, { [`issue-forge:run:${ROOT}`]: early })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(REPO_VIEW)
+    expect(w.argv).toContainEqual(ISSUE_VIEW)
+    expect((await run($, 'status')).text).toStartWith('o/r#16 ')
+  })
+
+  test('the demo run is named with its repository in the masthead', async ($, on) => {
+    const w = engine(on)
+    await start($)
+    await run($, 'demo ready')
+    await w.clock.settle()
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /^bankielewicz\/mod-builder#16 Mod Lab/ })).toBeDefined()
+  })
+
+  test('the stopped pane says an issue number or URL starts another run', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('stopped') })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /^\/issue-forge <issue number or URL> starts another\.$/ })).toBeDefined()
   })
 })
