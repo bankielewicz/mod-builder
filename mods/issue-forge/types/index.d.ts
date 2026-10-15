@@ -123,6 +123,7 @@ export type Run = {
   redTestTail?: string
   /** Last 200 lines of the latest gate's test output: a retry's prompt gets them. */
   lastTestTail?: string
+  /** The red agent's final answer (every red answer, on a behaviour detour): each green prompt and the PR body get it. */
   redAnswer?: string
   /** Set while red adds a behaviour test for these files (G6's one return). */
   behaviourFor?: string[]

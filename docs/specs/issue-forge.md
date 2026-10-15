@@ -115,8 +115,8 @@ it finishes, stage everything (`git add -A`) and check **gate R**:
 On pass, commit `test(#<N>): red: <title>` (with `commitTrailers`; same for every commit below); record it as the **red commit**. On fail, give the
 agent the failed checks and try again, up to `attempts.red` (default 2), then stop in `blocked`.
 
-**Step 5: green phase.** Spawn the green agent with the issue text, the red commit's test file paths,
-and the last 200 lines of R3's test output. When it finishes, `git add -A` and check **gate G**:
+**Step 5: green phase.** Spawn the green agent with the issue text, the red agent's answer, the red
+commit's test file paths, and the last 200 lines of R3's test output. When it finishes, `git add -A` and check **gate G**:
 - G1: tests unchanged since the red commit: `git diff --cached --name-only <red commit> -- <testGlobs>` is empty;
 - G2: `testCommand` exits 0;
 - G3: `coverageCommand` succeeds and writes LCOV;

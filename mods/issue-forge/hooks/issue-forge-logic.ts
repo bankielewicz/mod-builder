@@ -1152,9 +1152,9 @@ function profileLines(p: Profile): string[] {
   ]
 }
 
-/** Issue text (or the red agent's notes) with any `<issue` / `</issue` / `<red-notes` / `</red-notes` written as `<\issue`, so it can't end or open the block it sits in. */
+/** Issue text (or the red agent's notes) with a backslash after the `<` of any `<issue`, `</issue`, `<red-notes` or `</red-notes` (`<\issue`), so it can't end or open the block it sits in. */
 export function fenced(text: string): string {
-  return text.replace(/<(\/?)(issue|red-notes)/gi, (_m, slash: string, word: string) => `<\\${slash}${word}`)
+  return text.replace(/<(\/?(?:issue|red-notes))/gi, '<\\$1')
 }
 
 /** The task each spawn gets: the rules (again, for agent types that aren't the mod's), the issue, the profile, the red agent's notes (green only), and retry details. */
