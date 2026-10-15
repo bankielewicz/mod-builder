@@ -1136,6 +1136,11 @@ export function runLimitMsOf(raw: unknown): number {
   return Math.max(RUN_MS_MIN, Math.round(Math.min(minutes, RUN_MINUTES_MAX) * 60_000))
 }
 
+/** Whether a check that ran `elapsedMs` used its whole time limit. */
+export function isOverLimit(elapsedMs: number, limitMs: number): boolean {
+  return elapsedMs >= limitMs
+}
+
 /** The summary of a check stopped at its time limit: "timed out after 3 minutes". */
 export function timeoutText(limitMs: number): string {
   return `timed out after ${plural(Math.round(limitMs / 600) / 100, 'minute')}`

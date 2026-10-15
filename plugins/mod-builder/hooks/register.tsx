@@ -415,11 +415,15 @@ async function liveRunsOf($: Engine): Promise<Run[]> {
   return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimitMs())
 }
 
+/** Runs a check to the end. `$.process.run` kills one still going at the time limit and rejects: that is a RunTimeout. */
 async function runToEnd($: Engine, argv: readonly string[], dir: string): Promise<{ exitCode: number; output: string }> {
-  const startedAt = Date.now()
-  const out = await $.process.run(argv, { cwd: dir, timeoutMs: runLimitMs() })
+  const startedAt = await $.clock.now()
+  const out = await $.process.run(argv, { cwd: dir, timeoutMs: runLimitMs() }).catch(async (error: unknown) => {
+    // It also rejects when the command cannot start, which happens at once.
+    throw Lab.isOverLimit((await $.clock.now()) - startedAt, runLimitMs()) ? timeoutOf() : error
+  })
   const output = `${out.stdout}\n${out.stderr}`
-  logProcess($, argv, out.exitCode, Date.now() - startedAt, output)
+  logProcess($, argv, out.exitCode, (await $.clock.now()) - startedAt, output)
   return { exitCode: out.exitCode, output }
 }
 
