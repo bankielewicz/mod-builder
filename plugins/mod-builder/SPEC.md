@@ -452,5 +452,10 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Cost:** the walk probes nearest first and stops at the first marketplace found (one `fs.exists` in the common case, not one per folder up to the root). `/mod-builder config` walks only while `modsDir` is empty or being set.
   - **Docs:** `docs/use-in-your-project.md` step 5, `docs/troubleshooting.md` and the design README prompt described the old default.
   - **Owner's choices:** a marketplace without `mods/` keeps showing `No mods yet.` (it's where `/mod-builder:build` writes). Pruning keys is #59.
+  - **Live check (round 1, 2.1.300, `--plugin-dir` with the installed copy off):**
+    - Started in the main checkout with the pane on `…/ClaudeMod/mods`, then `/cd` into the worktree with no scan since.
+    - V on `duet` ran in the shown folder. Only `modlab:results:/mnt/c/Projects/ClaudeMod/mods` got a new `duet` Validate time, and no worktree key was written.
+    - The run's scans then moved the pane to the worktree, where `duet` read stale from the old unkeyed records. Under `--plugin-dir` those belong to the worktree's `mods/`.
+    - After `/cd` back and a scan, the main checkout's `duet` showed Validate fresh (`next: Test`).
   - **Not testable in the kit:** the kit has no reload, so the reload case rests on state surviving a reload (types: `$.state` survives a hot reload).
   - **Tests:** UI: V after a `/cd` with no scan since; the end-of-turn re-run with a `/cd` during its first run; `lab_report` after a `/cd`; README closed on a folder change; "ready to share" per folder; the old keys read by their folder and not by another. Logic: drive, UNC and relative walks; `modsDirFor` on a drive and a share; `normalizePath` and `displayPathOf` on UNC and `C:\..`.
