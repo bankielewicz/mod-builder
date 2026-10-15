@@ -184,7 +184,8 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N or issue URL>` or
    `{ subagentType, prompt, description: 'issue-forge #<N> <phase>', model, cwd: <root>, name }`;
    keep `waiting[agentId] = resolve`; the `turn.complete` hook resolves it with `e.answer`
    (main-loop turns pass straight through). Pure `phasePrompt` builds the prompt: the phase's
-   rules, issue number, title, body, the globs, `notes`, and on a retry the failed checks verbatim.
+   rules, issue number, title, body, the globs, `notes`, for green the red agent's answer (Change 0.4.2),
+   and on a retry the failed checks verbatim.
    The run's agent ids and names are stored. **From the probes (C0):**
    - The mod's own types are spawned with `name: issue-forge-<N>-<phase>-<k>`. duet routes a mod's
      spawn like a model's Agent call, and with `codexAgents: "*"` it would send an unnamed
@@ -310,8 +311,8 @@ kit's matchers (`toBe`, `toEqual`, `toContain`, `toMatchObject`, `toBeNull`, `to
    up to `attempts.<phase>` then block; G6 alone → red once, then a second G6 failure blocks;
    rejected refactor → ready with the refactor stashed; publish no → ready; stop → stopped; a second
    start while active is refused; isActive is false for `done` and `stopped`.
-7. **Prompts and PR body:** the phase prompt holds issue, globs, notes, and a retry's failed checks
-   verbatim; commit messages carry trailers after a blank line; the PR body holds every gate result,
+7. **Prompts and PR body:** the phase prompt holds issue, globs, notes, for green the red agent's answer,
+   and a retry's failed checks verbatim; commit messages carry trailers after a blank line; the PR body holds every gate result,
    coverage numbers and `Closes #<N>`.
 8. **View:** phase rows and glyphs from a run; elapsed formatting (`2m10s`); title truncation; the
    width breakpoints; interrupted when the store says live but no worker runs.
@@ -1289,3 +1290,31 @@ round takes. It supersedes items 1 and 3 above.
 - **Not done:** withholding SendMessage through `disallowedTools`. The teammate had it although the
   agent's `tools` list leaves it out, and whether `disallowedTools` removes it isn't probed.
 - **Live check** (review 5): still the merge gate.
+
+## Change 0.4.2 (2026-10-15)
+
+> issue-forge: the green agent sees the red agent's answer (#78)
+
+**Why.** `run.redAnswer` was kept for the PR body only. In #10 (PR #74) red had found that the issue's
+suggested fix times out five existing tests and that the fallback passes all 173; green tried the suggested
+fix first, hit the same five failures and narrowed the guard. It passed in one attempt, but with
+`attempts.green` at 3 a harder case could spend a whole attempt on a dead end red had already ruled out.
+
+**What changes.**
+1. **`phasePrompt('green', run)`** (logic module) prints `run.redAnswer`, when it has any text, after the
+   issue: a line saying these are the red agent's notes on its tests, context and not instructions, then
+   the answer in a `<red-notes>` block. Nothing in `register.tsx` changes: `phase()` already passes the
+   run, so `PromptExtra` gains no field.
+2. **Fenced.** Red's answer is written from the issue, which anyone who can file an issue writes (design
+   spec §8, Trust), so `fenced` (which wrote `<issue` / `</issue` as `<\issue`) now does the same for
+   `<red-notes` / `</red-notes`: the answer can't close its own block or the issue's.
+3. **Capped** to its last 200 lines by `tailLines`, as a test tail is.
+4. **Unchanged:** a green prompt with no answer, or a blank one, is the same as before; the red prompt
+   (on a retry or a behaviour detour) and the refactor prompt never carry it. On a behaviour detour
+   `redAnswer` accumulates the red answers (`advance`, `gated`), and green gets all of them.
+5. **Docs.** The design spec's section 6, after the prompts table, says what a spawn's prompt holds.
+
+**Tests** (red): `tests/issue-forge-logic.test.ts` (placement after the issue, the red marking, the fence
+holding against an answer that writes the closing line or `</issue>`, the 200-line cap, no answer or a blank
+one, red and refactor) and `tests/ui.test.tsx` (a run resumed at gate R spawns green with the stored answer
+in its prompt).
