@@ -1013,3 +1013,43 @@ describe('issue 6 review (Codex P2): the fallback cap is readable where the conf
     expect(timeoutRow({ timeoutMinutes: 5 })).not.toMatch(/one-shot/)
   })
 })
+
+describe('issue 7: mergeLogs joins the per-session run logs for /duet stats', () => {
+  const line = (provider: 'codex' | 'claude', type: string, ms: number, tokens: number, ok: boolean) => ({ id: 'x', at: 0, provider, kind: 'agent' as const, type, model: '', ms, tokens, ok })
+  const text = (...lines: ReturnType<typeof line>[]) => lines.reduce((log, l) => appendLog(log, l), '')
+  const mergeLogs = (texts: string[]): string => {
+    const fn = (logic as Record<string, unknown>).mergeLogs
+    expect(typeof fn).toBe('function')
+    const merged = (fn as (t: string[]) => unknown)(texts)
+    expect(typeof merged).toBe('string')
+    return merged as string
+  }
+
+  test('two session logs and a legacy log give the union, summarized as one', () => {
+    const legacy = text(line('codex', 'Explore', 1000, 100, true))
+    const s1 = text(line('codex', 'Explore', 3000, 300, false), line('claude', 'Explore', 2000, 200, true))
+    const s2 = text(line('claude', 'Plan', 500, 50, true))
+    const merged = mergeLogs([legacy, s1, s2])
+    expect(merged.split('\n').filter(l => l.trim()).length).toBe(4)
+    expect(summarize(merged)).toEqual([
+      { key: 'claude · Explore', runs: 1, okPct: 100, medianMs: 2000, medianTokens: 200 },
+      { key: 'claude · Plan', runs: 1, okPct: 100, medianMs: 500, medianTokens: 50 },
+      { key: 'codex · Explore', runs: 2, okPct: 50, medianMs: 2000, medianTokens: 200 },
+    ])
+  })
+
+  test('a log without a final newline does not swallow the first line of the next', () => {
+    const bare = JSON.stringify(line('codex', 'Explore', 1000, 100, true))
+    const next = text(line('claude', 'Plan', 500, 50, true))
+    expect(summarize(mergeLogs([bare, next])).map(r => `${r.key}:${r.runs}`)).toEqual(['claude · Plan:1', 'codex · Explore:1'])
+    expect(summarize(mergeLogs(['torn{', next])).map(r => `${r.key}:${r.runs}`)).toEqual(['claude · Plan:1'])
+  })
+
+  test('blank and corrupt lines are skipped, as summarize skips them, and nothing at all merges to no rows', () => {
+    const good = text(line('codex', 'Explore', 1000, 100, true))
+    const merged = mergeLogs(['', '\n\n', 'torn{\n', good, '   \n', '{"provider":\n'])
+    expect(summarize(merged)).toEqual([{ key: 'codex · Explore', runs: 1, okPct: 100, medianMs: 1000, medianTokens: 100 }])
+    expect(summarize(mergeLogs([]))).toEqual([])
+    expect(summarize(mergeLogs(['', '\n']))).toEqual([])
+  })
+})
