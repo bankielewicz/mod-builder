@@ -212,7 +212,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('hasPlaceholder: a code span may wrap onto the next line, so <word> inside it is not a placeholder (#20)', () => {
-    // The span starts on one line and ends on the next; CommonMark allows one line ending in a span.
+    // The span starts on one line and ends on the next; CommonMark allows line endings in a span.
     expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep the work.\n')).toBe(false)
     // The `<word>` is on the first line of the wrapped span.
     expect(hasPlaceholder('# x\nRun `git stash <message>\nand then pop` here.\n')).toBe(false)
