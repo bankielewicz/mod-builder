@@ -256,7 +256,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const results = await resultsOf($)
   const generations = await generationsOf($)
   const cwd = await cwdOf($)
-  const inFlight = await read($, runs)
+  const inFlight = await liveRunsOf($)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
   factsByMod.clear()
   for (const folder of folders) {
@@ -388,7 +388,7 @@ async function tick($: Engine): Promise<void> {
   await refreshStatus($)
 
   const isLive =
-    (await read($, runs)).length > 0 ||
+    (await liveRunsOf($)).length > 0 ||
     (await read($, demoStartedAt)) !== null ||
     Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
   if (!isLive) {
@@ -412,6 +412,11 @@ const runLimitMs = (): number => runMinutes * 60_000
 
 /** The error a check ends with at its time limit: "timed out after 3 minutes". */
 const timeoutOf = (): RunTimeout => new RunTimeout(`timed out after ${runMinutes} minute${runMinutes === 1 ? '' : 's'}`)
+
+/** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
+async function liveRunsOf($: Engine): Promise<Run[]> {
+  return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimitMs())
+}
 
 async function runToEnd($: Engine, argv: readonly string[], dir: string): Promise<{ exitCode: number; output: string }> {
   const startedAt = Date.now()
@@ -492,9 +497,7 @@ async function resultOfRun($: Engine, entry: Run, dir: string, stamp: number): P
 }
 
 async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
-  // A row older than the time limit is an orphan (its run died with a reload), so it blocks nothing.
-  const now = await $.clock.now()
-  if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind && now - one.startedAt <= runLimitMs())) return
+  if ((await liveRunsOf($)).some(one => one.mod === mod && one.kind === kind)) return
   const dir = `${modsDirOf($)}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
   const hasTypes =
@@ -540,7 +543,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
 async function rerunStale($: Engine): Promise<void> {
   await scan($, true)
   if (!autoRerun) return
-  const inFlight = await read($, runs)
+  const inFlight = await liveRunsOf($)
   for (const view of await read($, views)) {
     const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
     if (plan.includes('Validate')) await run($, view.name, 'Validate')
@@ -849,7 +852,7 @@ export const register: Register = (on, options) => {
     const pick = await read($, selected)
     const current = all.find(view => view.name === pick) ?? all[0] ?? null
     const doc = await read($, readme)
-    const inFlight = await read($, runs)
+    const inFlight = await liveRunsOf($)
     const demoStart = await read($, demoStartedAt)
     const isDemoRunning = demoStart !== null
 
@@ -1301,7 +1304,7 @@ export const register: Register = (on, options) => {
       const started = await read($, demoStartedAt)
       const demo = started === null ? null : { view: Lab.demoViewAt(Math.max(0, now - started)), since: started }
       const entries = Lab.bandEntriesOf(
-        await read($, runs),
+        await liveRunsOf($),
         Lab.liveReports(await read($, reported), now),
         demo,
         await read($, views),

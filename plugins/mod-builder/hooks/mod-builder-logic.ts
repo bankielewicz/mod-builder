@@ -1116,6 +1116,14 @@ export function liveReports(
   return live
 }
 
+/** How long past its time limit a run still counts: one that is ending (its scan, its store write) is not an orphan. */
+export const RUN_GRACE_MS = 30_000
+
+/** The runs still in flight at `now`. A row older than the time limit plus the grace lost its run (a reload ended it). */
+export function liveRuns(all: readonly Run[], now: number, limitMs: number): Run[] {
+  return all.filter(one => now - one.startedAt <= limitMs + RUN_GRACE_MS)
+}
+
 // ── Logging ───────────────────────────────────────────────────────────────
 
 export const LOG_LEVELS = ['off', 'normal', 'verbose', 'debug'] as const
