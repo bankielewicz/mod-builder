@@ -1069,19 +1069,67 @@ export function countStreamed(text: string): { passed: number; failed: number } 
   return { passed, failed }
 }
 
-/** A streamed `claude plugin test` run so far: its output and its counts. */
-export type TestStream = { output: string; passed: number; failed: number }
-export const EMPTY_STREAM: TestStream = { output: '', passed: 0, failed: 0 }
+/** The longest line a streamed test run keeps; the rest of a longer line is dropped. */
+const STREAM_LINE_MAX = 2000
+/** The last lines a streamed test run keeps: the summary, and the error lines of a run that didn't start. */
+const STREAM_TAIL_LINES = 50
+/** The `(fail)` lines a streamed test run keeps from the start, each with the 2 after it: parseTest shows 6 entries. */
+const STREAM_FAILS_KEPT = 6
 
-/** The stream once one more piece of output arrived. */
+/** A line number and its text. */
+type NumberedLine = readonly [number, string]
+
+/**
+ * A streamed `claude plugin test` run so far: its counts and only the lines
+ * parseTest and the log read, so a test that prints without end costs
+ * bounded memory, and each piece costs its own length (#9, Codex P2 on PR #65).
+ */
+export type TestStream = {
+  passed: number
+  failed: number
+  /** Lines finished so far. */
+  lines: number
+  /** The line still being printed, cut at STREAM_LINE_MAX. */
+  partial: string
+  /** The first STREAM_FAILS_KEPT `(fail)` lines and the 2 after each. */
+  heads: readonly NumberedLine[]
+  failsKept: number
+  /** Lines still to keep after the last kept `(fail)` line. */
+  after: number
+  /** The last STREAM_TAIL_LINES lines. */
+  tail: readonly NumberedLine[]
+}
+export const EMPTY_STREAM: TestStream = { passed: 0, failed: 0, lines: 0, partial: '', heads: [], failsKept: 0, after: 0, tail: [] }
+
+/** The stream once one more piece of output arrived: only the lines it finishes are counted and kept. */
 export function streamPiece(s: TestStream, text: string): TestStream {
-  const output = s.output + text
-  return { output, ...countStreamed(output) }
+  const parts = (s.partial + text).split('\n')
+  const partial = (parts.pop() ?? '').slice(0, STREAM_LINE_MAX)
+  let { passed, failed, lines, failsKept, after } = s
+  const heads = [...s.heads]
+  const tail = [...s.tail]
+  for (const whole of parts) {
+    const line = whole.slice(0, STREAM_LINE_MAX)
+    const isFail = line.startsWith('(fail) ')
+    if (isFail) failed += 1
+    else if (line.startsWith('(pass) ')) passed += 1
+    const isKeptFail = isFail && failsKept < STREAM_FAILS_KEPT
+    if (isKeptFail || after > 0) heads.push([lines, line])
+    if (isKeptFail) {
+      failsKept += 1
+      after = 2
+    } else if (after > 0) after -= 1
+    tail.push([lines, line])
+    lines += 1
+  }
+  return { passed, failed, lines, partial, heads, failsKept, after, tail: tail.slice(-STREAM_TAIL_LINES) }
 }
 
-/** The output a finished stream is judged and logged from. */
+/** The output a finished stream is judged and logged from: its kept lines in order, then the unfinished one. */
 export function streamOutput(s: TestStream): string {
-  return s.output
+  const kept = new Map<number, string>([...s.heads, ...s.tail])
+  const ordered = [...kept.entries()].sort((a, b) => a[0] - b[0]).map(([, line]) => line)
+  return [...ordered, s.partial].join('\n')
 }
 
 // ── lab_report ────────────────────────────────────────────────────────────
