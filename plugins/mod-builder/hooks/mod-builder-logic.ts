@@ -807,20 +807,33 @@ export function demoViewAt(elapsedMs: number, beats: readonly Beat[] = demoTimel
 /** A directory entry as `$.fs.list` gives it, cut to what Mod Lab reads. */
 export type Entry = { name: string; kind: 'file' | 'dir' | 'other'; mtimeMs: number }
 
+/** How many parts of a UNC path (`//server/share`) are its root. */
+const UNC_ROOT_PARTS = 2
+
 /** Resolves `.` and `..` segments in a `/`-separated path. */
 export function normalizePath(path: string): string {
-  const isAbsolute = path.startsWith('/')
+  const slashed = path.replace(/\\/g, '/')
+  const root = rootOf(slashed)
+  // A UNC path's server and share are part of its root: '..' stops above them, as at `/`.
+  const floor = root === '//' ? UNC_ROOT_PARTS : 0
   const parts: string[] = []
-  for (const part of path.replace(/\\/g, '/').split('/')) {
+  for (const part of slashed.slice(root.length).split('/')) {
     if (part === '' || part === '.') continue
     if (part === '..') {
-      if (parts.length && parts[parts.length - 1] !== '..') parts.pop()
-      else if (!isAbsolute) parts.push('..')
+      if (parts.length > floor && parts[parts.length - 1] !== '..') parts.pop()
+      else if (!root) parts.push('..')
     } else {
       parts.push(part)
     }
   }
-  return (isAbsolute ? '/' : '') + parts.join('/')
+  return root + parts.join('/')
+}
+
+/** A `/`-separated path's root: `//` for a UNC path, `/`, a drive (`C:/`, upper case), or '' when it is relative. */
+function rootOf(slashed: string): string {
+  if (/^\/\/[^/]/.test(slashed)) return '//'
+  if (slashed.startsWith('/')) return '/'
+  return /^[A-Za-z]:(\/|$)/.test(slashed) ? `${slashed.charAt(0).toUpperCase()}:/` : ''
 }
 
 /**
@@ -836,6 +849,48 @@ export function displayPathOf(path: string, cwd: string | null): string {
   // `normalizePath` keeps a trailing `/` only for the root itself: cwd `/` gives prefix `/`, not `//`.
   const prefix = `${root.replace(/\/$/, '')}/`
   return target.startsWith(prefix) ? target.slice(prefix.length) : target
+}
+
+/** Where a marketplace keeps its manifest, below its folder. */
+const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
+
+/**
+ * The marketplace file `cwd` would have if it were a marketplace, then that of every folder above
+ * it, nearest first, down to its root: `/`, a drive (`C:/`) or a UNC share (`//server/share`).
+ * A relative `cwd` names no folder to walk, so it has none.
+ */
+export function marketplaceCandidatesOf(cwd: string): string[] {
+  const path = normalizePath(cwd)
+  const root = rootOf(path)
+  if (!root) return []
+  const parts = path.slice(root.length).split('/').filter(Boolean)
+  // A UNC path's server and share are its root folder; nothing sits above them.
+  const top = root === '//' ? Math.min(UNC_ROOT_PARTS, parts.length) : 0
+  const candidates: string[] = []
+  for (let depth = parts.length; depth >= top; depth--) {
+    const folder = root + parts.slice(0, depth).join('/')
+    candidates.push(folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE)
+  }
+  return candidates
+}
+
+/**
+ * The mods folder: a set `modsDir` always wins. Otherwise the `mods/` of the nearest folder at or
+ * above `cwd` whose marketplace file is among `existing`, the way /mod-builder:build finds it, and
+ * `fallback` (the plugin's own) when `cwd` is unknown or no marketplace is above it.
+ */
+export function modsDirFor(configured: string, cwd: string | null, existing: readonly string[], fallback: string): string {
+  if (configured) return normalizePath(configured)
+  const found = cwd === null ? undefined : marketplaceCandidatesOf(cwd).find(candidate => existing.includes(candidate))
+  return found === undefined ? normalizePath(fallback) : `${found.slice(0, -MARKETPLACE_FILE.length)}/mods`
+}
+
+/**
+ * "Ready to share" marks as `<modsDir>/<name>`. Before 0.2.9 a mark was the bare name, of a mod
+ * in the one folder Mod Lab watched (`legacyDir`), so a bare one is read as that folder's.
+ */
+export function freshIdsOf(stored: readonly string[], legacyDir: string): string[] {
+  return stored.map(id => (id.includes('/') ? id : `${legacyDir}/${id}`))
 }
 
 /** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */

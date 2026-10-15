@@ -60,8 +60,9 @@ change to this repo happens in its own worktree and reaches `main` through a PR:
    (`scratch/` is gitignored). Edit, test and commit only inside `scratch/<name>`.
 2. Test the worktree's code, not the installed copy, which still loads from the main folder. From
    inside the worktree, the commands above work as written (`claude plugin test mods/duet`); a live
-   session there is `claude --plugin-dir <plugin>`. Mod Lab started in a worktree still watches the
-   main folder's `mods/` (#23).
+   session there is `claude --plugin-dir <plugin>`. Mod Lab follows the session's working directory,
+   so in a worktree it watches that worktree's `mods/` (a `/cd` takes effect at its next scan), even
+   though its code comes from wherever the plugin loads from.
 3. Push and open the PR: `git push -u origin <branch>`, then `gh pr create --base main --head <branch>`.
    Commit and push each fix on its own. Codex reviews every PR automatically: triage its findings by
    severity, verify each against the code, and fix real ones with a test.
@@ -123,7 +124,8 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
   It scans `modsDir`, judges 8 stages from **files on disk and exit codes** (a model's `lab_report`
   tool call only ever adds "running"), stores run results in `$.store`, re-runs stale checks at the end
   of each turn (`autoRerun`), and treats an edit as a **build generation** (evidence older than the edit
-  goes stale). Every write to `modlab:results` and `modlab:generations` goes through `updateStore` in
+  goes stale). Records are kept per mods folder (`modlab:results:<modsDir>`, `modlab:done:<modsDir>`,
+  `modlab:generations:<modsDir>`); every write to results and generations goes through `updateStore` in
   `register.tsx`, chained on one promise; that orders this session's writes only (#58). `SPEC.md`
   sections "Design" and "Edits" record why.
 

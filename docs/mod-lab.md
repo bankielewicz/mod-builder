@@ -95,7 +95,7 @@ Set them on the install options screen, or in `/config`.
 
 | Option | Default | What it does |
 |---|---|---|
-| Mods folder (`modsDir`) | the `mods/` next to the plugin's marketplace | The folder Mod Lab tracks. Set it to your project's `mods/`. |
+| Mods folder (`modsDir`) | the `mods/` of the marketplace nearest your working directory (a git worktree's own), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow your working directory, or set it to pin one folder. |
 | `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide) |
 | `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |
 | `logging` | normal | `off` · `normal` (errors, session start, check results) · `verbose` (+ reports, scans, processes, commands) · `debug` (+ expected misses, lights, process output). Log: `~/.claude/mod-builder-data/logs/` |

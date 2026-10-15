@@ -66,8 +66,12 @@ export type Run = {
 declare module 'claude-code' {
   interface PluginState {
     'mod-builder': {
-      /** The mods on disk, scanned and judged; the demo is not among them. */
-      views: ModView[]
+      /**
+       * The last scan's verdict, written as one value so no reader pairs one folder's rows with
+       * another's path: `views`, the mods on disk judged (the demo is not among them), and `modsDir`,
+       * the folder they were judged in, which the pane's buttons act on (null before the first scan).
+       */
+      judged: { modsDir: string | null; views: ModView[] }
       /** The row the detail panel shows. */
       selected: string | null
       runs: Run[]
@@ -78,7 +82,7 @@ declare module 'claude-code' {
       demoStartedAt: number | null
       /** The README the pane shows in place of the list, or null. */
       readme: { name: string; text: string; isStale: boolean } | null
-      /** Mods that went all green this session (newest code stamp), for "ready to share". */
+      /** Mods that went all green this session (newest code stamp), for "ready to share", as `<modsDir>/<name>`. */
       fresh: string[]
       /** The "too narrow" toast fired for the current narrow spell; reset once wide again. */
       hasWarnedNarrow: boolean
