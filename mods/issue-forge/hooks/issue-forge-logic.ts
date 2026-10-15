@@ -4,9 +4,9 @@
  * Section numbers like §4 refer to docs/specs/issue-forge.md.
  */
 
-import type { Activity, AgentRef, Baseline, Check, Coverage, Gate, MergeCheck, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
+import type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
 
-export type { Activity, AgentRef, Baseline, Check, Coverage, Gate, MergeCheck, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
+export type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
 
 export const NAME = 'issue-forge'
 export const PROFILE_FILE = '.issue-forge.json'
@@ -1445,4 +1445,114 @@ export function demoRun(state: DemoState, now: number): { run: Run | null; isDri
     }
   }
   return { run: null, isDriving: false, activity: null }
+}
+
+// ── Parallel runs (Change 0.3.0) ──────────────────────────────────────────
+// Red stubs: each answers wrongly until green.
+
+export const KEEP_FINISHED = 20
+
+export function runKey(repo: string, issue: number): string {
+  return `${repo}${issue}`
+}
+
+export function agentsKey(repo: string, issue: number): string {
+  return `${repo}${issue}`
+}
+
+export type ParsedKey = { kind: 'run' | 'agents'; repo: string; issue: number } | { kind: 'legacyRun' | 'legacyAgents'; root: string }
+
+export function parseRunKey(key: string): ParsedKey | null {
+  return key ? null : null
+}
+
+export function commonDirOf(top: string, out: string): string | null {
+  return top && out ? null : null
+}
+
+export function repoRunKeys(keys: readonly string[], repo: string): string[] {
+  return repo ? [] : [...keys]
+}
+
+export type LegacyEntry = { key: string; root: string; run: Run }
+export type MigrationPlan = { moves: { from: string; root: string; to: string; run: Run }[]; drops: { from: string; root: string; to: string }[] }
+
+export function migrationPlan(entries: readonly LegacyEntry[], worktrees: readonly string[], repo: string, existing: Readonly<Record<string, Run | null | undefined>>): MigrationPlan {
+  return entries && worktrees && repo && existing ? { moves: [], drops: [] } : { moves: [], drops: [] }
+}
+
+export type StartAction =
+  | { kind: 'start' }
+  | { kind: 'takeOver'; issue: number }
+  | { kind: 'resume'; issue: number }
+  | { kind: 'stopThenStart'; issue: number }
+  | { kind: 'keep' }
+  | { kind: 'handOffThenStart'; issue: number }
+  | { kind: 'cancel' }
+export type StartMenu = { question: string; options: { label: string; action: StartAction }[]; fallback: StartAction }
+export type StartContext = { issue: number; base: string; workspace: Workspace; driving: Run | null; others: readonly Run[]; me: string; now: number }
+
+export function startChoices(ctx: StartContext): StartMenu | null {
+  return ctx ? null : null
+}
+
+export function startAnswer(menu: StartMenu, answer: string | null): StartAction {
+  return answer === null ? { kind: 'cancel' } : menu.fallback
+}
+
+export function keepText(issue: number): string {
+  return String(issue)
+}
+
+export function takeOverQuestion(run: Run, now: number): string {
+  return `${run.issue}${now}`
+}
+
+export function elsewhereText(issue: number): string {
+  return String(issue)
+}
+
+export type Pick = { kind: 'run'; run: Run } | { kind: 'several'; runs: Run[] } | { kind: 'none' }
+export type PickQuery = { issue: number | null; focus: number | null; root: string; needActive: boolean }
+
+export function pickRun(runs: readonly Run[], q: PickQuery): Pick {
+  return runs && q ? { kind: 'none' } : { kind: 'none' }
+}
+
+export type LineContext = { me: string; drivingId: string | null; now: number }
+
+export function lineOf(run: Run, ctx: LineContext): string {
+  return ctx ? `#${run.issue}` : ''
+}
+
+export function severalText(runs: readonly Run[], verb: string, ctx: LineContext): string {
+  return `${runs.length}${verb}${ctx.me}`
+}
+
+export function othersOf(runs: readonly Run[], ctx: LineContext & { shownId: string | null }): OtherRun[] {
+  return runs && ctx ? [] : []
+}
+
+export function othersLine(others: readonly OtherRun[]): string {
+  return others.length ? '' : ''
+}
+
+export function isLockError(text: string): boolean {
+  return text === null
+}
+
+export function sharedLcovBlock(p: Profile, workRoot: string, others: readonly Run[]): { reason: string; next: string } | null {
+  return p && workRoot && others ? null : null
+}
+
+export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = KEEP_FINISHED): string[] {
+  return entries.length > keep ? [] : []
+}
+
+export function foreignChange(stored: Run | null, runId: string, me: string): 'stopped' | 'takenOver' | 'gone' | null {
+  return stored && runId && me ? null : null
+}
+
+export function checkoutWorkspaceOf(text: string | null): Workspace {
+  return text ? 'worktree' : 'worktree'
 }

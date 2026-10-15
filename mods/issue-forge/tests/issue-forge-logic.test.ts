@@ -4,7 +4,10 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   DEMO_STATES,
+  KEEP_FINISHED,
+  USAGE,
   advance,
+  agentsKey,
   agentName,
   agentPrompt,
   badgeOf,
@@ -14,18 +17,22 @@ import {
   canRetry,
   checkoutBaseOf,
   checkoutState,
+  checkoutWorkspaceOf,
   cleanupCommand,
+  commonDirOf,
   cleanupLine,
   commitMessage,
   coverageLine,
   demoRun,
   diffCoverage,
   elapsed,
+  elsewhereText,
   expandHome,
   fenced,
   failuresOf,
   firstFailure,
   findStash,
+  foreignChange,
   gateG,
   gateR,
   gitFailure,
@@ -34,18 +41,24 @@ import {
   hasSourceRecord,
   hasStash,
   isActive,
+  isLockError,
   isSafeBranch,
   isOwnHandback,
   isWorking,
+  keepText,
   keptWorktreePlan,
   kindOf,
   layoutOf,
   lcovFileOf,
+  lineOf,
   matchesAny,
   mergeLine,
+  migrationPlan,
   newRun,
   nextDemoState,
   normalizePath,
+  othersLine,
+  othersOf,
   outsideChecks,
   outsideWorkRoot,
   parseCommand,
@@ -53,26 +66,36 @@ import {
   parseLcov,
   parseMergeTree,
   parseProfile,
+  parseRunKey,
   pct,
   pctText,
   phaseOf,
   phasePrompt,
   phaseRows,
+  pickRun,
   prBody,
+  pruneKeys,
   profileProblems,
   profileStatusText,
   publishQuestion,
   ranges,
   readdWorktreeCommand,
   relativeTo,
+  repoRunKeys,
   routedRedBlock,
+  runKey,
+  severalText,
+  sharedLcovBlock,
   slugOf,
   splitZ,
+  startAnswer,
+  startChoices,
   stashApplyArgv,
   stashMessage,
   statusText,
   steerBash,
   tailLines,
+  takeOverQuestion,
   totals,
   truncate,
   unstagedOf,
@@ -1143,5 +1166,246 @@ describe('review of PR #41, round 6', () => {
     for (const dir of ['.GIT', '.Git/wt', 'scratch/.gIt/x', '.git.', '.git ', 'scratch/.GIT. /x']) expect(refused(dir)).toContain('worktreeDir must be a relative path inside the repository')
     expect(refused('scratch/.GITHUB')).toBe('')
     expect(refused('.gits')).toBe('')
+  })
+})
+
+describe('parallel runs (Change 0.3.0)', () => {
+  const REPO = '/repo/.git'
+  const ME = 's-me'
+  const OTHER = 's-other'
+  const BLOCKED = { at: 'gateG' as const, reason: 'r', next: 'n' }
+  const at = (issue: number, step: Run['step'], extra: Partial<Run> = {}): Run => ({ ...newRun(`${issue}-${extra.startedAt ?? 0}`, ROOT, issue, extra.startedAt ?? 0), repo: REPO, step, ...extra })
+  const foreign = { driver: { session: OTHER, since: 0 } }
+
+  test('one key per repository and issue; the 0.2 per-checkout form reads as legacy', () => {
+    expect(runKey(REPO, 44)).toBe('issue-forge:run:/repo/.git#44')
+    expect(agentsKey(REPO, 44)).toBe('issue-forge:agents:/repo/.git#44')
+    expect(parseRunKey('issue-forge:run:/repo/.git#44')).toEqual({ kind: 'run', repo: REPO, issue: 44 })
+    expect(parseRunKey('issue-forge:agents:/repo/.git#44')).toEqual({ kind: 'agents', repo: REPO, issue: 44 })
+    expect(parseRunKey('issue-forge:run:/mnt/c/Projects/ClaudeMod')).toEqual({ kind: 'legacyRun', root: '/mnt/c/Projects/ClaudeMod' })
+    expect(parseRunKey('issue-forge:agents:/w')).toEqual({ kind: 'legacyAgents', root: '/w' })
+    expect(parseRunKey('issue-forge:run:/a#b')).toEqual({ kind: 'legacyRun', root: '/a#b' })
+    expect(parseRunKey('other:thing')).toBeNull()
+  })
+
+  test("commonDirOf: git's common folder, a relative answer resolved against the top level; nothing printed is no repository", () => {
+    expect(commonDirOf('/repo', '.git\n')).toBe('/repo/.git')
+    expect(commonDirOf('/repo/scratch/wt', '/repo/.git\n')).toBe('/repo/.git')
+    expect(commonDirOf('C:/r', 'C:/r/.git')).toBe('C:/r/.git')
+    expect(commonDirOf('/repo/sub', '../.git')).toBe('/repo/.git')
+    expect(commonDirOf('/repo', '  \n')).toBeNull()
+  })
+
+  test("repoRunKeys: only this repository's runs, not its agents, another repository's or a legacy key", () => {
+    const keys = [runKey(REPO, 1), runKey('/other/.git', 2), agentsKey(REPO, 1), 'issue-forge:run:/repo', runKey(REPO, 30), runKey('/repo/.git2', 3)]
+    expect(repoRunKeys(keys, REPO)).toEqual([runKey(REPO, 1), runKey(REPO, 30)])
+  })
+
+  test('migrationPlan: a legacy run of a listed checkout moves; an unlisted one stays; a held new key keeps its run', () => {
+    const legacy = (root: string, run: Run) => ({ key: `issue-forge:run:${root}`, root, run })
+    const { repo: _, ...old44 } = at(44, 'blocked', { blocked: BLOCKED, startedAt: 5 })
+    const old16: Run = { ...newRun('16-1', '/gone', 16, 1), step: 'stopped' }
+    const plan = migrationPlan([legacy('/repo/', old44 as Run), legacy('/gone', old16)], ['/repo', '/repo/scratch/wt'], REPO, {})
+    expect(plan.moves).toEqual([{ from: 'issue-forge:run:/repo/', root: '/repo/', to: runKey(REPO, 44), run: { ...old44, repo: REPO } }])
+    expect(plan.drops).toEqual([])
+    const done44 = { ...old44, step: 'done' } as Run
+    // The new key holds an active run: it keeps it; a finished legacy run is dropped, an active one is left alone.
+    expect(migrationPlan([legacy('/repo', done44)], ['/repo'], REPO, { [runKey(REPO, 44)]: at(44, 'green', { startedAt: 1 }) })).toEqual({ moves: [], drops: [{ from: 'issue-forge:run:/repo', root: '/repo', to: runKey(REPO, 44) }] })
+    expect(migrationPlan([legacy('/repo', old44 as Run)], ['/repo'], REPO, { [runKey(REPO, 44)]: at(44, 'green', { startedAt: 9 }) })).toEqual({ moves: [], drops: [] })
+    // A finished run there that is older gives way; a newer finished one keeps the key.
+    expect(migrationPlan([legacy('/repo', old44 as Run)], ['/repo'], REPO, { [runKey(REPO, 44)]: at(44, 'done', { startedAt: 1 }) }).moves).toHaveLength(1)
+    expect(migrationPlan([legacy('/repo', done44)], ['/repo'], REPO, { [runKey(REPO, 44)]: at(44, 'done', { startedAt: 9 }) }).drops).toHaveLength(1)
+    // Two checkouts with the same issue: the first move holds the key for the second.
+    const twice = migrationPlan([legacy('/repo', old44 as Run), legacy('/repo/scratch/wt', { ...(old44 as Run), id: '44-2', root: '/repo/scratch/wt', startedAt: 3 })], ['/repo', '/repo/scratch/wt'], REPO, {})
+    expect(twice.moves.map(m => m.from)).toEqual(['issue-forge:run:/repo'])
+  })
+
+  test('startChoices: no other run, no menu; another run driven elsewhere offers take-over; a blocked one offers resume and stop', () => {
+    const ctx = { issue: 40, base: 'main', workspace: 'worktree' as const, driving: null, others: [] as Run[], me: ME, now: 125_000 }
+    expect(startChoices(ctx)).toBeNull()
+    const green = at(44, 'green', { ...foreign, used: { red: 1, green: 2, refactor: 0 }, startedAt: 2 })
+    const menu = startChoices({ ...ctx, others: [green] })
+    expect(menu?.question).toBe('#44 is active in this repository: green 2/3, driven by another session for 2m05s. What should this session do?')
+    expect(menu?.options).toEqual([
+      { label: 'Start #40 in a new worktree from origin/main (Recommended)', action: { kind: 'start' } },
+      { label: 'Take over #44 here (its session stops it, or has crashed)', action: { kind: 'takeOver', issue: 44 } },
+      { label: 'Cancel', action: { kind: 'cancel' } },
+    ])
+    expect(menu?.fallback).toEqual({ kind: 'start' })
+    const blocked = at(52, 'blocked', { blocked: BLOCKED, startedAt: 1 })
+    const both = startChoices({ ...ctx, workspace: 'here', others: [blocked, green] })
+    // The newest other run is the one asked about; the rest are named.
+    expect(both?.question).toBe('#44 is active in this repository: green 2/3, driven by another session for 2m05s (also #52 blocked). What should this session do?')
+    expect(both?.options[0]?.label).toBe('Start #40 here (Recommended)')
+    const onBlocked = startChoices({ ...ctx, workspace: 'ask', others: [blocked] })
+    expect(onBlocked?.question).toBe('#52 is active in this repository: blocked at gateG. What should this session do?')
+    expect(onBlocked?.options).toEqual([
+      { label: 'Start #40 in a new worktree from origin/main (Recommended)', action: { kind: 'start' } },
+      { label: 'Resume #52 here (blocked at gateG)', action: { kind: 'resume', issue: 52 } },
+      { label: 'Stop #52, then start #40', action: { kind: 'stopThenStart', issue: 52 } },
+      { label: 'Cancel', action: { kind: 'cancel' } },
+    ])
+    const ready = startChoices({ ...ctx, others: [at(7, 'ready')] })
+    expect(ready?.question).toContain('#7 is active in this repository: ready to publish.')
+    expect(ready?.options[1]?.label).toBe('Resume #7 here (ready to publish)')
+    const interrupted = startChoices({ ...ctx, others: [at(8, 'gateG', { driver: { session: ME, since: 0 } })] })
+    expect(interrupted?.options[1]?.label).toBe('Resume #8 here (interrupted during gateG)')
+    for (const m of [menu, both, onBlocked, ready, interrupted]) expect((m?.options.length ?? 0) <= 4).toBe(true)
+  })
+
+  test('startChoices: the session driving a run offers keep (the default) or hand-off, never a second drive', () => {
+    const driving = at(44, 'green', { driver: { session: ME, since: 0 } })
+    const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving, others: [at(52, 'blocked', { blocked: BLOCKED })], me: ME, now: 0 })
+    expect(menu?.question).toBe('This session is driving #44 (green 1/3). What should it do with #40?')
+    expect(menu?.options).toEqual([
+      { label: 'Keep #44 here; start #40 from another session (Recommended)', action: { kind: 'keep' } },
+      { label: 'Hand #44 off and start #40 here (any session can resume #44)', action: { kind: 'handOffThenStart', issue: 44 } },
+      { label: 'Cancel', action: { kind: 'cancel' } },
+    ])
+    expect(menu?.fallback).toEqual({ kind: 'keep' })
+    expect(keepText(40)).toBe('Open another Claude Code session in this repository and run /issue-forge 40 there; it gets its own worktree.')
+  })
+
+  test('startAnswer: a label is its action; no answer or free text under Other is the fallback', () => {
+    const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving: null, others: [at(52, 'blocked', { blocked: BLOCKED })], me: ME, now: 0 })
+    if (!menu) throw new Error('no menu')
+    expect(startAnswer(menu, 'Stop #52, then start #40')).toEqual({ kind: 'stopThenStart', issue: 52 })
+    expect(startAnswer(menu, 'Cancel')).toEqual({ kind: 'cancel' })
+    expect(startAnswer(menu, null)).toEqual({ kind: 'start' })
+    expect(startAnswer(menu, 'something typed')).toEqual({ kind: 'start' })
+  })
+
+  test("a drive writes its session as the run's driver; only that session's release clears it, and the step stays", () => {
+    const driven = advance(at(44, 'green'), { type: 'drive', session: ME }, 5)
+    expect(driven.driver).toEqual({ session: ME, since: 5 })
+    expect(advance(driven, { type: 'release', session: OTHER }, 6).driver).toEqual({ session: ME, since: 5 })
+    const released = advance(driven, { type: 'release', session: ME }, 6)
+    expect('driver' in released).toBe(false)
+    expect(released.step).toBe('green')
+    expect(viewOf(released, false, OTHER)).toBe('interrupted')
+  })
+
+  test("checkoutState: a checkout another run works in is busy, even on the base with nothing changed", () => {
+    expect(checkoutState({ porcelain: '', head: 'main', base: 'main', heldBy: 44 })).toEqual({ isBusy: true, why: "#44's run works here" })
+    expect(checkoutState({ porcelain: ' M a\n', head: 'main', base: 'main', heldBy: 44 })).toEqual({ isBusy: true, why: "1 changed file, #44's run works here" })
+  })
+
+  test('viewOf: a run another session drives reads elsewhere while working or ready; its own, blocked or driven here do not', () => {
+    expect(viewOf(at(40, 'green', foreign), false, ME)).toBe('elsewhere')
+    expect(viewOf(at(40, 'ready', foreign), false, ME)).toBe('elsewhere')
+    expect(viewOf(at(40, 'green', { driver: { session: ME, since: 0 } }), false, ME)).toBe('interrupted')
+    expect(viewOf(at(40, 'blocked', { ...foreign, blocked: BLOCKED }), false, ME)).toBe('blocked')
+    expect(viewOf(at(40, 'green', foreign), true, ME)).toBe('running')
+  })
+
+  test('pickRun: the issue named, else the focused run, else the only active one; several active runs are listed', () => {
+    const r44 = at(44, 'blocked', { blocked: BLOCKED, startedAt: 1 })
+    const r40 = at(40, 'green', { startedAt: 2 })
+    const r16 = at(16, 'done', { startedAt: 0 })
+    const runs = [r44, r40, r16]
+    const q = { issue: null, focus: null, root: ROOT, needActive: true }
+    expect(pickRun(runs, { ...q, issue: 40 })).toEqual({ kind: 'run', run: r40 })
+    expect(pickRun(runs, { ...q, issue: 7 })).toEqual({ kind: 'none' })
+    expect(pickRun(runs, { ...q, focus: 44 })).toEqual({ kind: 'run', run: r44 })
+    expect(pickRun(runs, { ...q, focus: 16 })).toEqual({ kind: 'several', runs: [r40, r44] })
+    expect(pickRun(runs, { ...q, focus: 16, needActive: false })).toEqual({ kind: 'run', run: r16 })
+    expect(pickRun(runs, q)).toEqual({ kind: 'several', runs: [r40, r44] })
+    expect(pickRun([r44, r16], q)).toEqual({ kind: 'run', run: r44 })
+    expect(pickRun([r16], q)).toEqual({ kind: 'none' })
+    expect(pickRun([r16], { ...q, needActive: false })).toEqual({ kind: 'run', run: r16 })
+    expect(pickRun([{ ...r16, root: '/elsewhere' }], { ...q, needActive: false })).toEqual({ kind: 'none' })
+    const ctx = { me: ME, drivingId: null, now: 0 }
+    expect(severalText([r40, r44], 'resume', ctx)).toBe('2 runs in this repository: #40 interrupted at green · #44 blocked at gateG. Name one: /issue-forge resume 40')
+  })
+
+  test('others: the repository\'s other active runs, newest first, one short line each', () => {
+    const r44 = at(44, 'blocked', { blocked: BLOCKED, startedAt: 1 })
+    const r52 = at(52, 'refactor', { ...foreign, startedAt: 3 })
+    const r40 = at(40, 'green', { startedAt: 2 })
+    const r7 = at(7, 'ready', { startedAt: 5 })
+    const r8 = at(8, 'red', { startedAt: 6, used: { red: 1, green: 0, refactor: 0 } })
+    const others = othersOf([r44, r52, r40, r7, r8, at(16, 'done', { startedAt: 4 })], { shownId: r40.id, drivingId: r8.id, me: ME, now: 0 })
+    expect(others).toEqual([
+      { issue: 8, step: 'red', line: '#8 red 1/2', isElsewhere: false },
+      { issue: 7, step: 'ready', line: '#7 ready', isElsewhere: false },
+      { issue: 52, step: 'refactor', line: '#52 refactor (another session)', isElsewhere: true },
+      { issue: 44, step: 'blocked', line: '#44 blocked at gateG', isElsewhere: false },
+    ])
+    expect(othersLine(others)).toBe('#8 red 1/2 · #7 ready · #52 refactor (another session) · #44 blocked at gateG')
+    expect(lineOf(r40, { me: ME, drivingId: null, now: 0 })).toBe('#40 interrupted at green')
+  })
+
+  test('status names a run driven elsewhere and how to take it over, and lists the others', () => {
+    const others = [{ issue: 44, step: 'blocked' as const, line: '#44 blocked at gateG', isElsewhere: false }]
+    const s = statusText(at(40, 'green', foreign), false, 125_000, ME, others)
+    expect(s).toContain('runs in another session (for 2m05s); /issue-forge resume 40 takes it over')
+    expect(s).toContain('also: #44 blocked at gateG')
+    expect(statusText(at(40, 'green'), false, 0, ME, [])).not.toContain('also:')
+    expect(takeOverQuestion(at(40, 'green', foreign), 125_000)).toBe('#40 is driven by another session (for 2m05s). If that session has ended, take it over?')
+    expect(elsewhereText(40)).toBe('#40 runs in another session; use that session, or answer Take over in an interactive one.')
+  })
+
+  test('commands take an optional issue number', () => {
+    expect(parseCommand('stop 44')).toEqual({ kind: 'stop', issue: 44 })
+    expect(parseCommand('resume #44')).toEqual({ kind: 'resume', issue: 44 })
+    expect(parseCommand('publish 7')).toEqual({ kind: 'publish', issue: 7 })
+    expect(parseCommand('status 3')).toEqual({ kind: 'status', issue: 3 })
+    expect(parseCommand('handoff')).toEqual({ kind: 'handoff' })
+    expect(parseCommand('Handoff 44')).toEqual({ kind: 'handoff', issue: 44 })
+    expect(parseCommand('stop x')).toEqual({ kind: 'unknown', text: 'stop x' })
+    expect(USAGE).toBe('/issue-forge <issue number> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo')
+  })
+
+  test("isLockError: git's lock refusals, not other failures", () => {
+    expect(isLockError("error: cannot lock ref 'refs/remotes/origin/main': is at 1a but expected 2b")).toBe(true)
+    expect(isLockError("fatal: Unable to create '/r/.git/index.lock': File exists.")).toBe(true)
+    expect(isLockError('error: could not lock config file .git/config: File exists')).toBe(true)
+    expect(isLockError('fatal: unable to access origin')).toBe(false)
+    expect(isLockError('')).toBe(false)
+  })
+
+  test('sharedLcovBlock: an lcovPath outside the run folder blocks only while another run of the repository is being driven', () => {
+    const abs = profile()
+    const working = at(44, 'green', foreign)
+    expect(sharedLcovBlock(abs, '/repo/scratch/wt', [working])).toEqual({
+      reason: 'lcovPath /home/u/.claude/issue-forge-data/coverage.lcov is shared by every run and #44 is running',
+      next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov',
+    })
+    expect(sharedLcovBlock(profile({ lcovPath: 'coverage/x.lcov' }), '/repo/scratch/wt', [working])).toBeNull()
+    expect(sharedLcovBlock(profile({ lcovPath: '/repo/scratch/wt/cov.lcov' }), '/repo/scratch/wt', [working])).toBeNull()
+    expect(sharedLcovBlock(abs, '/repo', [])).toBeNull()
+    expect(sharedLcovBlock(abs, '/repo', [at(44, 'blocked', { ...foreign, blocked: BLOCKED })])).toBeNull()
+    expect(sharedLcovBlock(abs, '/repo', [at(44, 'green')])).toBeNull()
+  })
+
+  test("pruneKeys: finished runs beyond the newest 20 go; active ones never do", () => {
+    const finished = Array.from({ length: 23 }, (_, i) => ({ key: runKey(REPO, 100 + i), run: at(100 + i, i % 2 ? 'done' : 'stopped', { startedAt: i }) }))
+    const active = { key: runKey(REPO, 1), run: at(1, 'blocked', { blocked: BLOCKED, startedAt: -5 }) }
+    expect(pruneKeys([...finished, active])).toEqual([runKey(REPO, 100), runKey(REPO, 101), runKey(REPO, 102)])
+    expect(pruneKeys(finished.slice(0, KEEP_FINISHED))).toEqual([])
+  })
+
+  test('foreignChange: what the driving session reads in the store every 5 s', () => {
+    const mine = at(40, 'green', { id: 'r1', driver: { session: ME, since: 0 } })
+    expect(foreignChange(mine, 'r1', ME)).toBeNull()
+    expect(foreignChange({ ...mine, step: 'stopped' }, 'r1', ME)).toBe('stopped')
+    expect(foreignChange({ ...mine, driver: { session: OTHER, since: 1 } }, 'r1', ME)).toBe('takenOver')
+    expect(foreignChange(null, 'r1', ME)).toBe('gone')
+    expect(foreignChange({ ...mine, id: 'r2' }, 'r1', ME)).toBe('gone')
+  })
+
+  test("checkoutWorkspaceOf: the starting checkout's workspace names the menu's start option; anything unreadable is ask", () => {
+    expect(checkoutWorkspaceOf('{"workspace":"here"}')).toBe('here')
+    expect(checkoutWorkspaceOf('{"workspace":"worktree"}')).toBe('worktree')
+    expect(checkoutWorkspaceOf('{"workspace":"nope"}')).toBe('ask')
+    expect(checkoutWorkspaceOf('{')).toBe('ask')
+    expect(checkoutWorkspaceOf(null)).toBe('ask')
+  })
+
+  test('the demo shows a run driven elsewhere, and the also line while running', () => {
+    const d = demoRun('elsewhere', 0)
+    expect(viewOf(d.run, d.isDriving, d.me)).toBe('elsewhere')
+    expect(demoRun('running', 0).others.map(o => o.line)).toEqual(['#44 blocked at gateG', '#52 refactor (another session)'])
+    expect(demoRun('empty', 0).others).toEqual([])
   })
 })
