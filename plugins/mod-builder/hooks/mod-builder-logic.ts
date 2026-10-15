@@ -1085,9 +1085,10 @@ function summaryKindOf(line: string): string {
  * A streamed `claude plugin test` run so far: its counts and only the lines
  * parseTest and the log read, so a test that prints without end costs
  * bounded memory, and each piece costs its own length (#9, Codex P2 on PR #65).
- * Pieces come per stream, as they came, not lines (claude-code.d.ts), and bun
- * writes its results to stderr: each stream has its own unfinished line, and the
- * first summary line of each kind is kept wherever it lands.
+ * Pieces come per stream, as they came, not lines (claude-code.d.ts); the results
+ * are on stdout and a test's console.log on stderr, whose backlog can arrive after
+ * the summary. So each stream has its own unfinished line, and the first summary
+ * line of each kind is kept wherever it lands.
  */
 export type TestStream = {
   passed: number

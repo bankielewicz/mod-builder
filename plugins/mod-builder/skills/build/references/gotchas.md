@@ -263,6 +263,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   process.spawn". Spawn rejects its first pull when it can't start, so fall back to
   `$.process.run` in that case. Tests then exercise the fallback, and the streaming arithmetic gets
   pure unit tests. A spawn ends with `await stream.result` → `{ code, signal }`.
+- **[probe]** `claude plugin test` writes its `(pass)`/`(fail)` lines and summary to stdout, and a
+  test's `console.log` to stderr (2.1.300). `$.process.spawn` hands them over as `{ stream, text }`
+  pieces, "as it came, not lines" [d.ts], and the two don't stay in order: in Mod Lab's live check
+  (#9) a test that printed 100,000 lines had its stderr backlog arrive after the stdout summary. Keep
+  one unfinished line per stream, and don't expect the summary at the end of what you kept.
 - **[probe]** Live, `$.process.spawn` does stream `claude plugin test` progressively, but the runner
   sends output once per test *file*. On Mod Lab's 38 tests it arrived as 2 pieces (22 at 0.9 s,
   38 at 2.4 s). A progress bar built on it moves in file-sized steps. Splitting tests across
