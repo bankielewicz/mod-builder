@@ -503,7 +503,8 @@ async function originCheck($: EngineInterface, root: string, repo: string): Prom
     const found = await remoteRepo($, root, url, repo)
     if (found === 'match') continue
     const label = found.other === null ? 'an unrecognised URL' : repoLabel(found.other)
-    return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`)
+    const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`
+    return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, next)
   }
   return null
 }

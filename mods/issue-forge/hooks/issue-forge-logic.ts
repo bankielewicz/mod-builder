@@ -684,17 +684,18 @@ export function repoOfView(stdout: string): string | null {
 }
 
 // The scheme is group 1 and the host group 2 in a URL, the host group 3 in the scp-like form; then owner (4) and repository (5).
-const REMOTE_URL = /^(?:(https|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
+const REMOTE_URL = /^(?:(https?|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i
 
 /** A remote's `host/owner/repo`, and whether git reaches it over ssh (an ssh:// URL or the scp-like form). */
 function parseRemote(url: string): { repo: string; isSsh: boolean } | null {
   const m = url.trim().match(REMOTE_URL)
-  return m ? { repo: `${String(m[2] ?? m[3]).toLowerCase()}/${m[4]}/${m[5]}`, isSsh: m[1] !== 'https' } : null
+  return m ? { repo: `${String(m[2] ?? m[3]).toLowerCase()}/${m[4]}/${m[5]}`, isSsh: m[1] === undefined || m[1].toLowerCase() === 'ssh' } : null
 }
 
 /**
- * `host/owner/repo` from a git remote URL: https and ssh URLs (userinfo, port, `.git` and a trailing slash dropped, the host
- * lowercased) and scp-like `[user@]host:owner/repo`. Any other form (git://, file://, a path) is null.
+ * `host/owner/repo` from a git remote URL: https, http and ssh URLs (the scheme in any case; userinfo, port, `.git` and a
+ * trailing slash dropped, the host lowercased) and scp-like `[user@]host:owner/repo`. Any other form (git://, file://, a
+ * path) is null.
  */
 export function repoOfRemoteUrl(url: string): string | null {
   return parseRemote(url)?.repo ?? null
