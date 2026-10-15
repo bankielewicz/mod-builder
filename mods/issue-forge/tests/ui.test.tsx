@@ -1773,6 +1773,14 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.argv.filter(a => a.join(' ') === 'gh repo view github.com/old/r --json nameWithOwner,url')).toHaveLength(1)
   })
 
+  test('an origin URL it cannot read says which forms it reads, rather than to clone again (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'file:///srv/mirror/r.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from an unrecognised URL, ${BUT}`)
+    expect(status).toContain('next: give origin an https, http or ssh URL for o/r, then /issue-forge resume')
+  })
+
   test('an origin URL gh cannot place is an unrecognised URL, and no gh repo view is run for it', async ($, on) => {
     const w = engine(on, { originUrl: 'git://example.org/x.git' })
     await start($)

@@ -1567,6 +1567,17 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
     expect(remoteVerdict('git://github.com/o/r.git', PIN)).toEqual({ kind: 'unrecognised' })
   })
 
+  test('repoOfRemoteUrl and remoteVerdict (PR #68 review): an http origin and a scheme in any case are read too; http is no ssh', () => {
+    const remoteVerdict = helper<[string, string], unknown>('remoteVerdict')
+    const repoOfRemoteUrl = helper<[string], string | null>('repoOfRemoteUrl')
+    expect(repoOfRemoteUrl('http://ghe.internal/team/tool.git')).toBe('ghe.internal/team/tool')
+    expect(repoOfRemoteUrl('HTTPS://GitHub.com/O/R')).toBe('github.com/O/R')
+    expect(repoOfRemoteUrl('SSH://git@github.com/O/R.git')).toBe('github.com/O/R')
+    expect(remoteVerdict('http://github.com/o/r', 'github.com/o/r')).toEqual({ kind: 'match' })
+    expect(remoteVerdict('SSH://git@github-work/o/r.git', 'github.com/o/r')).toEqual({ kind: 'match' })
+    expect(remoteVerdict('http://github-work/o/r.git', 'github.com/o/r')).toEqual({ kind: 'other', repo: 'github-work/o/r' })
+  })
+
   test('isPullUrl is true for a /<owner>/<repo>/pull/<N> path on any host, and for no issue URL', () => {
     const isPullUrl = helper<[string], boolean>('isPullUrl')
     expect(isPullUrl('https://github.com/o/r/pull/16')).toBe(true)
