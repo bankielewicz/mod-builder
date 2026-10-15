@@ -531,11 +531,17 @@ async function tick($: Engine): Promise<void> {
     void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
   }
 
+  // A placeholder whose running report expired has no folder for a later scan to correct, so rescan now (#19).
+  const liveNow = Lab.liveReports(await read($, reported), now)
+  if ((await read($, judged)).views.some(view => view.isPlaceholder && liveNow[view.name]?.status !== 'running')) {
+    void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
+  }
+
   // runs is read again here: a run may have started during the awaits above.
   const isLive =
     (await liveRunsOf($)).length > 0 ||
     (await read($, demoStartedAt)) !== null ||
-    Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
+    Object.values(liveNow).some(report => report.status === 'running')
   if (!isLive) {
     clock?.cancel()
     clock = null
