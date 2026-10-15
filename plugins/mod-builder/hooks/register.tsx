@@ -205,13 +205,28 @@ const resultsOf = async ($: Engine): Promise<StoredResults> =>
 
 /** When each mod's current edit started (a build generation), for mods being edited. */
 type Generation = { since: number; fromVersion: string | null }
-const generationsOf = async ($: Engine): Promise<Record<string, Generation>> =>
+/** As stored: an older version wrote the bare start time. */
+type StoredGenerations = Record<string, number | Generation>
+const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
   Object.fromEntries(
-    Object.entries(((await $.store.get(GENERATIONS_KEY)) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
-      mod,
-      typeof gen === 'number' ? { since: gen, fromVersion: null } : gen,
-    ]),
+    Object.entries(stored).map(([mod, gen]) => [mod, typeof gen === 'number' ? { since: gen, fromVersion: null } : gen]),
   )
+const generationsOf = async ($: Engine): Promise<Record<string, Generation>> =>
+  generationsFrom(((await $.store.get(GENERATIONS_KEY)) ?? {}) as StoredGenerations)
+
+// Writes to RESULTS_KEY and GENERATIONS_KEY go one at a time through this chain: each reads the key
+// inside its turn, so two runs ending together cannot overwrite one another. It orders this session's
+// writes only; $.store is one file per plugin, and a second session can still race.
+let storeChain: Promise<void> = Promise.resolve()
+
+function updateStore<T>($: Engine, key: string, change: (current: T) => T): Promise<void> {
+  storeChain = storeChain
+    .catch(() => undefined)
+    .then(async () => {
+      await $.store.set(key, change(((await $.store.get(key)) ?? {}) as T))
+    })
+  return storeChain
+}
 
 // ── Scanning ──────────────────────────────────────────────────────────────
 
@@ -305,9 +320,14 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
-    const remaining = { ...generations }
-    for (const view of finished) delete remaining[view.name]
-    await $.store.set(GENERATIONS_KEY, remaining)
+    // Drop only the generations this scan judged: one begun since is a new edit, and stays.
+    await updateStore($, GENERATIONS_KEY, (stored: StoredGenerations) => {
+      const remaining = generationsFrom(stored)
+      for (const view of finished) {
+        if (remaining[view.name]?.since === generations[view.name]?.since) delete remaining[view.name]
+      }
+      return remaining
+    })
   }
   await update($, views, () => next)
   logEvent($, 'verbose', 'scan', `${folders.length} folders, ${next.length} mods in ${Date.now() - scanStartedAt}ms`, { modsDir: dir })
@@ -481,8 +501,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   }
   if (codeSig !== undefined) result = { ...result, codeSig }
   logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
-  const results = await resultsOf($)
-  await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
+  await updateStore($, RESULTS_KEY, (stored: StoredResults) => ({ ...stored, [mod]: { ...stored[mod], [kind]: result } }))
   logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind })
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
   $.ui.toast(Lab.toastOfRun(mod, result))
@@ -728,7 +747,8 @@ export const register: Register = (on, options) => {
       known = (await read($, views)).find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      await $.store.set(GENERATIONS_KEY, { ...(await generationsOf($)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
+      const fromVersion = factsByMod.get(mod)?.version ?? null
+      await updateStore($, GENERATIONS_KEY, (stored: StoredGenerations) => ({ ...generationsFrom(stored), [mod]: { since: now, fromVersion } }))
       logEvent($, 'debug', 'store.set', GENERATIONS_KEY, { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))

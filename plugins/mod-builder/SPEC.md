@@ -401,3 +401,13 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - `[probe]` Under `claude plugin test`, `session.end` needs a stub.
 - **Unchanged:** Mod Lab's code and tests.
 - **Version:** 0.2.7 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.8 (2026-10-15)
+
+> Fix for issue #14: concurrent `$.store` read-modify-write dropped results and generations.
+
+- **Fix:** Mod Lab updated `modlab:results` and `modlab:generations` by reading the whole value, changing it and writing it back, with awaits between and nothing ordering concurrent callers. Two runs ending together dropped one run's result (it showed as pending until the next press of V or T), and a `lab_report` that began an edit while a scan was running was overwritten by the scan's cleanup of finished generations. A lost generation is a false green: the edit stops being tracked, so Spec, README, Logic and Share are judged against no edit.
+- **Fix:** every write to the two keys now goes through `updateStore($, key, change)` in `register.tsx`, chained on one module-level promise (as duet's `logChain` is). It reads the key inside its turn and writes `change(current)`, so each caller changes the latest value, never an earlier snapshot. `run()` merges its result into it, the `lab_report` handler adds its mod to the generations, and `scanOnce` deletes the finished mods from them and no longer writes its snapshot. The scan deletes a generation only if its start time is still the one it judged, so an edit begun during the scan stays.
+- **Limit:** the chain orders this session's writes only. `$.store` is one JSON file per plugin, shared live between sessions (see 0.2.7), and a read-then-write to one key from two sessions at once can still lose an update. Not verified in a live session; the fix is checked under `claude plugin test`.
+- **Tests:** 98 (logic and UI). The 2 new UI tests fail on 0.2.7: two Validate runs finishing together keep both results, and an edit reported while a scan is held (after its generations read) is still tracked when the scan ends.
+- **Version:** 0.2.8 in `plugin.json` and the marketplace entry.
