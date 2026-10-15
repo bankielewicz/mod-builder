@@ -36,6 +36,16 @@ describe('parseRules', () => {
     expect(parseRules('   ')).toEqual({ rules: {} })
   })
 
+  test('rejects a glob with a ".." segment, so no rule reaches outside the project; a name that only starts with ".." is fine', () => {
+    for (const entry of ['green-developer=-../shared/**', 'green-developer=-tests/../../x/**', 'red-test-writer=+..', 'refactorer=-tests/..']) {
+      const parsed = parseRules(`writer=+src/**; ${entry}`) as { rules?: unknown; error?: string }
+      expect(parsed.rules).toBeUndefined()
+      expect(parsed.error).toContain(`malformed rule "${entry}"`)
+      expect(parsed.error).toContain('".."')
+    }
+    expect(parseRules('green-developer=-tests/..fixtures/**')).toEqual({ rules: { 'green-developer': { allow: [], deny: ['tests/..fixtures/**'] } } })
+  })
+
   test('rejects a malformed entry with a message naming it, and keeps no rules', () => {
     const bad = [
       'green-developer', // no "="
