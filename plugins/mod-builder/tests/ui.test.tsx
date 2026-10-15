@@ -927,6 +927,33 @@ describe('a mod reported before its folder exists (#19)', () => {
     expect(await lateRows()).toBe(0)
   })
 
+  test('a live running report a fresh module finds at session start keeps a clock, so its placeholder still expires (Codex P2, PR #80 round 3)', { ...OPTIONS, timeoutMs: 20_000 }, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    // As after a reload: state kept a running report from the module before, and this module has no clock.
+    const restored = { 'new-mod': { stage: 'Spec', status: 'running', since: Date.parse('2026-10-12T10:00:00Z'), dir: MODS } }
+    let isWritten = false
+    on('state.set', (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key === 'reported') isWritten = true
+      return next(e)
+    })
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key === 'reported' && !isWritten) return { value: { version: 1, value: restored } } as never
+      return next(e)
+    })
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await rowsOf(before)).toBe(1)
+    await before.unmount()
+    await clock.advance(REPORT_TTL_MS + 1000)
+    await clock.settle()
+    const after = await mountPane($)
+    expect(await rowsOf(after)).toBe(0)
+    expect(await after.find({ type: 'Text', text: /^1 building$/ })).toBeUndefined()
+  })
+
   test('a repeated Spec running for a placeholder starts no edit, so the SPEC written next is not stale', OPTIONS, async ($, on) => {
     const disk: Disk = modFiles('git-branch')
     const { clock } = world(on, disk)
