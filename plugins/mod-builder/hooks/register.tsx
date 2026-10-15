@@ -1044,9 +1044,10 @@ export const register: Register = (on, options) => {
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
-    // A report with `path` pins its folder for the session (#92), before anything reads the folder.
+    // A report with `path` pins its folder for the session (#92), before anything reads the folder. It is
+    // handled in its own folder: another report may move the pin while this one awaits the write.
     if (checked.dir !== undefined) await setPin($, { modsDir: checked.dir, root: await rootOf($) })
-    const modsDir = await currentModsDir($)
+    const modsDir = checked.dir ?? (await currentModsDir($))
     // A Spec report on a mod the last written rows of this folder don't list waits for a scan before it reads
     // any state: the first `get` fixes the moment every read of this dispatch sees (#10, #79). A listed mod's rows are enough.
     if (report.stage === 'Spec' && !(published?.modsDir === modsDir && published.names.has(mod))) await scan($, false)
