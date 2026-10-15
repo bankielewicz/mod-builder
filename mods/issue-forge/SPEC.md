@@ -1319,7 +1319,7 @@ the run's worktree (or the checkout, for a `here` run). issue-forge deletes noth
    preflight's `gh repo view` names). When `newModGuidance(body)` finds a line asking to build it with mod-builder,
    the command replies with the next steps below and stores nothing: no run, branch, worktree, agent or pane. If
    the read fails (no `gh`, signed out, not found), the start goes on and preflight reports the real problem, in
-   0.4.0's order.
+   0.4.1's order.
 2. **What counts:** a line of the body on which the word `build` (any case; not the `build` of
    `/mod-builder:build` itself, so not after a letter, digit, `:`, `/` or `-`) is followed by `with` and then
    `/mod-builder:build`. Measured on all 52 of this repository's issues (`gh issue list --state all`): four bodies
@@ -1348,7 +1348,7 @@ the run's worktree (or the checkout, for a `here` run). issue-forge deletes noth
    /issue-forge stop <N> ends it.` and changes nothing. `/issue-forge status` lists the steps under the `next:`
    line; the pane shows `steps: /issue-forge status` when there are any. The pull-request block (`#N is a pull
    request, not an issue`) and the closed-issue block become final too: resume could never clear them, and
-   0.4.0's suffix told the person to try.
+   0.4.1's suffix told the person to try.
 7. **The next steps** (one pure function, `newPluginSteps`, for both cases; plain words, no repository-specific
    path). Shown here for the two cases.
 
@@ -1410,12 +1410,13 @@ committed, and step 4 is left out. The issue's guidance quote (item 2 above) is 
 
 **What gets touched.**
 - Files: `mods/issue-forge/hooks/issue-forge-logic.ts` (`newModGuidance`, `newPluginSteps`, `isPluginManifest`,
-  R4 in `gateR`, G8 in `gateG`, final blocks in `advance` and `statusText`, the prompt line, the
-  pull-request and closed-issue blocks marked final), `hooks/register.tsx` (the start read in `startRun`, the
-  guard rule and `newPlugin`, the added-paths fact at each gate, the pane's final block), `types/index.d.ts`
-  (`blocked.steps?`, `blocked.isFinal?`, `Run.newPlugin?`), both test files, `README.md`, this SPEC, the version
-  in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (0.4.0 → 0.5.0), and
-  `docs/specs/issue-forge.md` (§3: the check before a run, R4, G8 and final blocks; the "unconstrained in green and
+  R4 and G8 (`newPluginOf`, `newPluginGate`: checked before the tests run), final blocks in `advance` and
+  `statusText`, the prompt line, the pull-request and closed-issue blocks marked final), `hooks/register.tsx` (the
+  start read in `startRun`, the guard rule and `newPlugin`, the added-paths fact at each gate, the pane's final
+  block), `types/index.d.ts` (`blocked.steps?`, `blocked.isFinal?`, `Run.newPlugin?`), both test files,
+  `README.md`, this SPEC, the version in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+  (0.4.1 → 0.5.0; open PR #87 also takes 0.5.0, and whichever merges second re-bumps to the next free number),
+  and `docs/specs/issue-forge.md` (§3: the check before a run, R4, G8 and final blocks; the "unconstrained in green and
   refactor" sentence at line 147 gains the manifest exception; §7 views; §8 the promise and the gap; line 568's
   "#18 … not issue-forge" is now enforced).
 - Processes: one more `gh issue view` per start (read-only, before anything is stored), and one
@@ -1449,7 +1450,7 @@ UI (`ui.test.tsx`):
 7. `/issue-forge 16` with a #18-style body replies with the next steps and stores no run; no `git` command runs, no
    agent is spawned, no pane opens.
 8. The same start with a fix's body (one naming `/mod-builder:build` in passing) starts as before.
-9. A failed start read (`gh issue view` fails) still starts, and preflight blocks as 0.4.0 does.
+9. A failed start read (`gh issue view` fails) still starts, and preflight blocks as 0.4.1 does.
 10. The guard: the live agent's Write to a missing `x/.claude-plugin/plugin.json` is refused and recorded; a Write
     to one that exists passes.
 11. A green that adds a manifest blocks final at gate G: the pane shows Stop and Status, not Resume; green isn't
