@@ -92,6 +92,8 @@ const displayPathOf = (path: string, cwd: string | null): string | undefined =>
 /** The mods folder rules, read the same way: a missing rule fails its assertion, not the import. */
 const marketplaceCandidatesOf = (cwd: string): string[] | undefined =>
   (Logic as unknown as { marketplaceCandidatesOf?: (cwd: string) => string[] }).marketplaceCandidatesOf?.(cwd)
+const freshIdsOf = (stored: readonly string[], legacyDir: string): string[] | undefined =>
+  (Logic as unknown as { freshIdsOf?: (stored: readonly string[], legacyDir: string) => string[] }).freshIdsOf?.(stored, legacyDir)
 const modsDirFor = (configured: string, cwd: string | null, existing: readonly string[], fallback: string): string | undefined =>
   (Logic as unknown as { modsDirFor?: (configured: string, cwd: string | null, existing: readonly string[], fallback: string) => string }).modsDirFor?.(
     configured,
@@ -434,6 +436,12 @@ describe('mod-builder-logic', () => {
     expect(normalizePath('//server/share/x')).toBe('//server/share/x')
     expect(normalizePath('C:\\..\\x')).toBe('C:/x')
     expect(displayPathOf('//server/share/x/mods/foo', '\\\\server\\share\\x')).toBe('mods/foo')
+  })
+
+  test('freshIdsOf: "ready to share" marks kept before 0.2.9 as bare names belong to the folder the old records described (PR #57 review round 2)', () => {
+    expect(freshIdsOf(['alpha', '/w/one/mods/beta'], '/p/mods')).toEqual(['/p/mods/alpha', '/w/one/mods/beta'])
+    expect(freshIdsOf(['C:/w/mods/gamma'], '/p/mods')).toEqual(['C:/w/mods/gamma'])
+    expect(freshIdsOf([], '/p/mods')).toEqual([])
   })
 
   test('normalizePath: ".." stops at a UNC share, as at any root (PR #57 review round 2)', () => {
