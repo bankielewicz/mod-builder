@@ -227,6 +227,19 @@ describe('mod-builder-logic', () => {
     expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged with `git add`.\n')).toBe(true)
   })
 
+  test('hasPlaceholder: a code span may hold several line endings, as long as no blank line falls inside it (#20)', () => {
+    // Shaped like mods/issue-forge/SPEC.md: a quoted message that wraps twice.
+    expect(hasPlaceholder('# x\n- preflight blocks with `lcovPath <path> is shared by every\n  run and #44 is running; make it relative to the repository, as\n  coverage/issue-forge.lcov`.\n')).toBe(false)
+    // A placeholder after that span is still found.
+    expect(hasPlaceholder('# x\nRun `cat\nlist\n| sort` on <files>.\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: a span over two line endings leaves no backtick unpaired for the rest of the paragraph (#20)', () => {
+    // If the first span is not removed, its opening backtick pairs with the next one and every later
+    // pair in the paragraph shifts, so `<c>` reads as prose.
+    expect(hasPlaceholder('# x\nsay `one\ntwo\nthree` and `a`\nthen `b` and `<c>`\n')).toBe(false)
+  })
+
   test('validate: a clean report from real output', () => {
     const report = parseValidate(validateClean, 0)
     expect(report.ok).toBe(true)
