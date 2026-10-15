@@ -752,6 +752,25 @@ async function openPane($: Engine): Promise<void> {
   if (!opened.isPlaced) $.ui.toast(NARROW_TOAST)
 }
 
+/**
+ * Opens the pane from the hook of the person's command, before it returns: an open after that is "unasked", and the
+ * engine leaves it undrawn below 144 columns (#90). The scan runs on after the hook; the pane redraws when it lands.
+ */
+async function showPane($: Engine): Promise<void> {
+  await clearNarrowWarning($)
+  await openPane($)
+  void scan($, false).catch((error: unknown) => logCaught($, 'modlab.scan', error))
+}
+
+/** Opens the pane for a typed build or edit skill, unless it is open; a failure is logged and never stops the skill. */
+async function openForSkill($: Engine, command: string): Promise<void> {
+  try {
+    if (!(await isPaneOpen($))) await showPane($)
+  } catch (error) {
+    logCaught($, 'command.skill', error, 'normal', { command })
+  }
+}
+
 async function startDemo($: Engine): Promise<void> {
   const now = await $.clock.now()
   lastTickMs = now
@@ -915,11 +934,10 @@ export const register: Register = (on, options) => {
       logEvent($, 'verbose', 'command', `/modlab ${e.args}`.trim())
       const [sub = '', ...rest] = e.args.trim().split(/\s+/)
       const word = sub.toLowerCase()
+      // Each branch opens the pane before this hook returns: an open after it is "unasked", left undrawn below 144 columns (#90).
       if (word === 'demo') {
-        void (async () => {
-          await startDemo($)
-          await openPane($)
-        })().catch((error: unknown) => logCaught($, 'modlab.demo', error))
+        await startDemo($)
+        await openPane($)
         return { text: `Mod Lab: watch ${Lab.DEMO_NAME} build itself in the pane. Nothing is written to disk.` }
       }
       if (word === 'new') {
@@ -928,33 +946,46 @@ export const register: Register = (on, options) => {
       }
       if (word) {
         const name = sub
+        await openPane($)
         void (async () => {
           await scan($, false)
           if ((await read($, judged)).views.some(view => view.name === name)) {
             await update($, selected, () => name)
             await update($, readme, () => null)
-            await openPane($)
           } else {
             $.ui.toast(`No mod named ${name} in ${Lab.shortPath(await shownModsDir($))}`)
           }
         })().catch((error: unknown) => logCaught($, 'modlab.select', error, 'normal', { mod: name }))
         return { text: `Mod Lab: ${name}.` }
       }
-      const isOpen = await isPaneOpen($)
-      void (async () => {
-        if (isOpen) {
-          await $.ui.close({ id: PANE })
-          return
-        }
-        await clearNarrowWarning($)
-        await scan($, false)
-        await openPane($)
-      })().catch((error: unknown) => logCaught($, 'modlab.toggle', error))
-      return { text: isOpen ? 'Mod Lab folded to the status line. /modlab to reopen.' : 'Mod Lab opened.' }
+      if (await isPaneOpen($)) {
+        void $.ui.close({ id: PANE }).catch((error: unknown) => logCaught($, 'modlab.toggle', error))
+        return { text: 'Mod Lab folded to the status line. /modlab to reopen.' }
+      }
+      await showPane($)
+      return { text: 'Mod Lab opened.' }
     } catch (error) {
       logCaught($, 'modlab', error, 'normal', { args: e.args })
       return { text: 'Mod Lab: something went wrong; see the log (/mod-builder config) or claude --debug.' }
     }
+  })
+
+  // A typed /mod-builder:build or /mod-builder:edit opens Mod Lab too, from this hook, so it is drawn at any width (#90).
+  // Both fail open: the skill runs whatever happens to the pane.
+  on('command.run', { command: 'mod-builder:build' }, async ($, e, next) => {
+    await openForSkill($, e.command)
+    return next(e)
+  }).catch(($, e, next) => {
+    logEvent($, 'normal', 'command.skill', 'hook failed', { command: e.command, error: next.error })
+    return next(e)
+  })
+
+  on('command.run', { command: 'mod-builder:edit' }, async ($, e, next) => {
+    await openForSkill($, e.command)
+    return next(e)
+  }).catch(($, e, next) => {
+    logEvent($, 'normal', 'command.skill', 'hook failed', { command: e.command, error: next.error })
+    return next(e)
   })
 
   on('tool.call', { tool: 'mcp__mod-builder__lab_report' }, async ($, e) => {
