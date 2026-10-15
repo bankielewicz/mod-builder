@@ -132,14 +132,15 @@ claude plugin marketplace add ./mod-builder
 Edits to the folder load with `/reload-plugins`. While developing:
 `claude --plugin-dir plugins/mod-builder`.
 
-Each way of loading the plugin (`--plugin-dir`, or an installed copy) keeps its own store. If you
-switch, Validate and Test show `○` until you press V and T once.
+Each way of loading the plugin (`--plugin-dir`, or an installed copy) keeps its own store, and
+within it each mods folder keeps its own results. If you switch either one (another way of loading,
+or a `/cd` into another worktree), Validate and Test show `○` until you press V and T once.
 
 ## Options
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `modsDir` | empty: the `mods/` of the marketplace nearest the session's working directory, else the one next to this plugin | The folder whose child folders Mod Lab tracks. Empty, it is found the way `/mod-builder:build` finds where to write, so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan. Set it to pin one folder. |
+| `modsDir` | empty: the `mods/` of the marketplace nearest the session's working directory, else the one next to this plugin | The folder whose child folders Mod Lab tracks. Empty, it is found the way `/mod-builder:build` finds where to write, so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan. In another repository with a `.claude-plugin/marketplace.json`, that is its `mods/`, and the pane says `No mods yet.` if it keeps its plugins elsewhere. Set it to pin one folder. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
 | `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
@@ -155,11 +156,11 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | --- | --- |
 | Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
 | Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. |
-| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
+| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. With `modsDir` empty, checks whether `.claude-plugin/marketplace.json` exists in the working directory and in each folder above it, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |
-| Session | Reads the working directory (to name a mod's folder the way the session reads it) and the session id (to name the log file) |
-| Store | Its own `$.store`: last results per mod, which mods were announced, and edit generations |
+| Session | Reads the working directory (to find the mods folder when `modsDir` is empty, and to name a mod's folder the way the session reads it) and the session id (to name the log file) |
+| Store | Its own `$.store`, one set of keys per mods folder: last results per mod, which mods were announced, and edit generations |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
 | Tools it adds | `lab_report`, which records progress and runs nothing beyond the Validate and Test above |
