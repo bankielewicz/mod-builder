@@ -301,8 +301,11 @@ async function storedOf($: Engine, base: string, modsDir: string): Promise<unkno
 const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
   ((await storedOf($, RESULTS_KEY, modsDir)) ?? {}) as StoredResults
 
-/** When each mod's current edit started (a build generation), for mods being edited. */
-type Generation = { since: number; fromVersion: string | null }
+/**
+ * When each mod's current edit started (a build generation), for mods being edited, and the
+ * version it started from. `repeatedAt` is when a Spec running last repeated during the edit.
+ */
+type Generation = { since: number; fromVersion: string | null; repeatedAt?: number }
 /** As stored: an older version wrote the bare start time. */
 type StoredGenerations = Record<string, number | Generation>
 const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
@@ -402,10 +405,11 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
-    // Drop only the generations this scan judged: one begun since is a new edit, and stays.
+    // Drop only the generations this scan judged: one begun or reported on since stays.
     await updateGenerations($, dir, remaining => {
       for (const view of finished) {
-        if (remaining[view.name]?.since === generations[view.name]?.since) delete remaining[view.name]
+        const [latest, judgedAt] = [remaining[view.name], generations[view.name]]
+        if (latest?.since === judgedAt?.since && latest?.repeatedAt === judgedAt?.repeatedAt) delete remaining[view.name]
       }
       return remaining
     })
@@ -929,8 +933,16 @@ export const register: Register = (on, options) => {
       // The version on disk as the edit begins: a bump may land after the last scan.
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
-      await updateGenerations($, modsDir, all => ({ ...all, [mod]: { since: now, fromVersion } }))
-      logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
+      // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
+      // The stamp tells a scan that judged the edit finished before this report that it is not.
+      let isStarted = false
+      await updateGenerations($, modsDir, all => {
+        const current = all[mod]
+        if (current !== undefined) return { ...all, [mod]: { ...current, repeatedAt: now } }
+        isStarted = true
+        return { ...all, [mod]: { since: now, fromVersion } }
+      })
+      if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {
