@@ -54,8 +54,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     cwd: '/m' as string | null,
     failReads: [] as string[],
     denySet: '',
-    /** Arm mid-test: the `after`-th fs.list call from now (0 is the next one) waits for `until`. */
-    holdList: null as { after: number; until: Promise<void> } | null,
+    /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
+    holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -76,8 +76,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   let lists = 0
   on('fs.list', async ($, e) => {
     if (listHold && lists++ === 0) await listHold
-    if (seen.holdList && seen.holdList.after-- === 0) await seen.holdList.until
-    return { value: entriesOf((e as { path: string }).path) } as never
+    const path = (e as { path: string }).path
+    if (seen.holdList?.path === path && !seen.holdList.isReached) {
+      seen.holdList.isReached = true
+      await seen.holdList.until
+    }
+    return { value: entriesOf(path) } as never
   })
   on('fs.read', ($, e) => {
     const path = (e as { path: string }).path
@@ -727,9 +731,10 @@ describe('a scan that read the generations before an edit began', () => {
 
     // The scan that ends it reads the generations, then waits at the first mod folder.
     let release = () => {}
-    seen.holdList = { after: 1, until: new Promise<void>(resolve => (release = resolve)) }
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
     await $.turn.complete({ answer: 'edited' } as never)
     await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
 
     // Meanwhile inbox-zero, built before, starts an edit of its own.
     await report('inbox-zero', 'running')
@@ -740,7 +745,7 @@ describe('a scan that read the generations before an edit began', () => {
     await clock.advance(1000)
 
     const ui = await mountPane($)
-    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+    expect((await ui.find({ key: 'row-inbox-zero' }))?.text).toMatch(/ edit · update Spec for this change$/)
   })
 })
 
