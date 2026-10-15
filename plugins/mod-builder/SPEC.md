@@ -29,7 +29,7 @@
 | state lifetime | ARCH | atoms (session) for view state; `$.store` `modlab:results` for last validate/test result per mod, keyed by mod + newest file mtime | decided |
 | external reach | ARCH | **processes:** `claude plugin validate <dir>`, `claude plugin test <dir>`, `tsc -p <dir>`, on button press, on `lab_report`, or (option `autoRerun`, on by default) at the end of a main-loop turn for a mod whose Validate or Test went stale; never on a timer. **Files:** read-only under `modsDir`. No network, no model calls. | decided |
 | depends on | ARCH | none (the skill calls its tool; works without it) | |
-| options | ARCH | `modsDir: directory` (empty means `<plugin root>/../../mods`), `autoOpen: boolean = false` | decided |
+| options | ARCH | `modsDir: directory` (empty means the `mods/` of the marketplace nearest the session's working directory, else `<plugin root>/../../mods`; Change 0.2.9), `autoOpen: boolean = false` | decided |
 | home / tsconfig / state API / logic split / tests / demo | HOUSE | per conventions.md: `hooks/mod-builder-logic.ts` (`$`-free), `hooks/register.tsx`, `tests/mod-builder-logic.test.ts`, `tests/ui.test.tsx` | conventions.md |
 | built on | HOUSE | Claude Code 2.1.296 | `claude --version` |
 
@@ -401,3 +401,14 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - `[probe]` Under `claude plugin test`, `session.end` needs a stub.
 - **Unchanged:** Mod Lab's code and tests.
 - **Version:** 0.2.7 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.9 (2026-10-15)
+
+> Fix for issue #23: in a git worktree Mod Lab watched the main checkout's `mods/`, while `/mod-builder:build` wrote to the worktree's.
+
+- **Cause:** with `modsDir` empty the folder was `${$.plugin.root}/../../mods`. `$.plugin.root` is where the plugin loads from, which for an installed folder marketplace is always the main checkout. So a build in a worktree never showed up, and Validate, Test and `autoRerun` ran against the main checkout's files.
+- **Fix:** with `modsDir` empty, the mods folder is found the way the build skill finds it (step 0.2). Walk up from `$.session.cwd()` (it follows `/cd`; `$.session.root()` is only where the session started) to the nearest folder holding `.claude-plugin/marketplace.json`, checked with `$.fs.exists` at each level down to the filesystem root, and use its `mods/`. With no marketplace above the working directory, or no working directory to read, it is `${$.plugin.root}/../../mods` as before. A set `modsDir` always wins and is not walked.
+- **Design:** the walk is pure, in `mod-builder-logic.ts`: `marketplaceCandidatesOf(cwd)` lists the candidate files nearest first, `modsDirFor(configured, cwd, existing, fallback)` picks the folder. `register.tsx` does the `$.fs.exists` calls (`defaultModsDir`). The folder is resolved once at the start of each scan, and for the session's first log line; everything else in that pass (runs, the README view, the Fix prompt, the header and summary) reads the resolved folder, so a `/cd` into another worktree takes effect at the next scan and a run always targets the folder the pane lists. `/mod-builder config` resolves it again, so its `default (…)` names the folder a scan would use now.
+- **Tests:** logic: the candidates for a path (and `.`, `..`, `//`, trailing `/`), the nearest marketplace wins (a worktree under the main checkout), the fallback, a null working directory, a marketplace at the root, a set `modsDir` wins. UI: a worktree session lists that worktree's mods and Validate runs on its folder; a worktree inside the main checkout lists its own; a `/cd` is followed at the next scan, including out of every marketplace; the session-start log line and `/mod-builder config` name the resolved folder.
+- **Live check:** pending, to run from the PR: the session-start log line names the worktree's `mods/` when started in a worktree with the installed plugin, and the main checkout's when started there.
+- **Version:** 0.2.9 in `plugin.json` and the marketplace entry (0.2.8 is taken by issue #14's branch).

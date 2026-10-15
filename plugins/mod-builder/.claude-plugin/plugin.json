@@ -1,6 +1,6 @@
 {
   "name": "mod-builder",
-  "version": "0.2.7",
+  "version": "0.2.9",
   "description": "Build Claude Code mods spec-first (interview \u2192 SPEC \u2192 approve \u2192 build \u2192 verify), and watch them come together in Mod Lab: a pane, band, status line and toasts tracking every mod's pipeline.",
   "author": {
     "name": "Bryan Ankielewicz"
@@ -11,7 +11,7 @@
     "modsDir": {
       "type": "directory",
       "title": "Mods folder",
-      "description": "The folder whose child folders are the mods Mod Lab tracks. Empty: the marketplace's mods/ folder beside plugins/.",
+      "description": "The folder whose child folders are the mods Mod Lab tracks. Empty: the mods/ folder of the marketplace nearest the working directory (a git worktree's own), else the one beside this plugin.",
       "default": ""
     },
     "autoOpen": {

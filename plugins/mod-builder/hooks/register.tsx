@@ -54,6 +54,8 @@ type StoredResults = Record<string, Lab.Results>
 // Module state: options, timer handles and in-flight guards only. A reload
 // starts it afresh; what must survive lives in atoms and $.store.
 let configuredDir = ''
+// The mods folder as of the last scan (or the session's first line); null until one has run.
+let resolvedDir: string | null = null
 let autoOpen = false
 let autoRerun = true
 let clock: Timer | null = null
@@ -160,7 +162,36 @@ async function writeLog($: Engine): Promise<void> {
   writtenSig = sig
 }
 
-const modsDirOf = ($: Engine): string => Lab.normalizePath(configuredDir || `${$.plugin.root}/../../mods`)
+/** The mods folder of the plugin's own marketplace: `modsDir`'s default when nothing is found from the working directory. */
+const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
+
+/** The mods folder in use: the one the last scan resolved, else `modsDir` or the plugin's own. */
+const modsDirOf = ($: Engine): string => resolvedDir ?? Lab.modsDirFor(configuredDir, null, [], pluginModsDirOf($))
+
+/**
+ * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the working
+ * directory (the one /mod-builder:build writes to, a worktree's own in a worktree), else the
+ * plugin's own. The working directory is read now, so a `/cd` is followed.
+ */
+async function defaultModsDir($: Engine): Promise<string> {
+  const cwd = await cwdOf($)
+  const candidates = cwd === null ? [] : Lab.marketplaceCandidatesOf(cwd)
+  const isThere = await Promise.all(
+    candidates.map(path =>
+      $.fs.exists(path).catch((error: unknown) => {
+        logCaught($, 'fs.exists', error, 'debug', { path })
+        return false
+      }),
+    ),
+  )
+  return Lab.modsDirFor('', cwd, candidates.filter((_, at) => isThere[at]), pluginModsDirOf($))
+}
+
+/** Resolves the mods folder once, for a scan or the session's first line; the rest of the pass uses `modsDirOf`. */
+async function resolveModsDir($: Engine): Promise<string> {
+  resolvedDir = configuredDir ? Lab.modsDirFor(configuredDir, null, [], pluginModsDirOf($)) : await defaultModsDir($)
+  return resolvedDir
+}
 
 /** The session's working directory, read at each use so a `/cd` is followed; null when it can't be read. */
 const cwdOf = ($: Engine): Promise<string | null> =>
@@ -244,7 +275,7 @@ async function scanPasses($: Engine, isAnnounced: boolean): Promise<void> {
 
 async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const scanStartedAt = Date.now()
-  const dir = modsDirOf($)
+  const dir = await resolveModsDir($)
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
   const marketplace = (await readText($, `${dir}/../.claude-plugin/marketplace.json`)) ?? ''
   const results = await resultsOf($)
@@ -588,15 +619,16 @@ async function configure($: Engine, words: string[]): Promise<string> {
     const why = await setOption($, command.name, command.value)
     if (why) return `Could not change ${command.name}: ${why}`
   }
+  const defaultDir = await defaultModsDir($)
   const values: Lab.OptionValues = {
     logging: logLevel,
     autoRerun,
     autoOpen,
     modsDir: configuredDir,
-    modsDirShown: Lab.shortPath(modsDirOf($)),
+    modsDirShown: Lab.shortPath(Lab.modsDirFor(configuredDir, null, [], defaultDir)),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
-  if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, Lab.normalizePath(`${$.plugin.root}/../../mods`)))
+  if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, defaultDir))
   const shown = (value: string | boolean): string => (typeof value === 'boolean' ? (value ? 'on' : 'off') : value || 'default')
   const head = command.kind === 'set' ? `${command.name} is now ${shown(command.value)}.\n` : ''
   return head + Lab.configListText(values, logFile)
@@ -624,12 +656,13 @@ async function setOption($: Engine, name: Lab.OptionName, value: string | boolea
 /** The session's first line: plugin version, mods folder and level. */
 async function logStart($: Engine): Promise<void> {
   const manifest = Lab.manifestOf(await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`))
-  logEvent($, 'normal', 'session.start', 'Mod Lab started', { version: manifest.version, modsDir: modsDirOf($), logging: logLevel })
+  logEvent($, 'normal', 'session.start', 'Mod Lab started', { version: manifest.version, modsDir: await resolveModsDir($), logging: logLevel })
 }
 
 export const register: Register = (on, options) => {
   const config = (options ?? {}) as Record<string, unknown>
   configuredDir = String(config.modsDir ?? '').trim()
+  resolvedDir = null
   autoOpen = config.autoOpen === true
   autoRerun = config.autoRerun !== false
   logLevel = Lab.logLevelOf(config.logging)

@@ -139,7 +139,7 @@ switch, Validate and Test show `○` until you press V and T once.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `modsDir` | empty: the `mods/` next to the plugin's marketplace | The folder whose child folders Mod Lab tracks. In your own project, set it to your `mods/`. |
+| `modsDir` | empty: the `mods/` of the marketplace nearest the session's working directory, else the one next to this plugin | The folder whose child folders Mod Lab tracks. Empty, it is found the way `/mod-builder:build` finds where to write, so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan. Set it to pin one folder. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
 | `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |

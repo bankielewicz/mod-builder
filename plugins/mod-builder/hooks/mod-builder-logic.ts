@@ -838,6 +838,31 @@ export function displayPathOf(path: string, cwd: string | null): string {
   return target.startsWith(prefix) ? target.slice(prefix.length) : target
 }
 
+/** Where a marketplace keeps its manifest, below its folder. */
+const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
+
+/**
+ * The marketplace file `cwd` would have if it were a marketplace, then that of every folder above
+ * it, nearest first, down to the filesystem root. `cwd` is an absolute path.
+ */
+export function marketplaceCandidatesOf(cwd: string): string[] {
+  const parts = normalizePath(cwd).split('/').filter(Boolean)
+  const candidates: string[] = []
+  for (let depth = parts.length; depth >= 0; depth--) candidates.push(parts.slice(0, depth).map(part => `/${part}`).join('') + MARKETPLACE_FILE)
+  return candidates
+}
+
+/**
+ * The mods folder: a set `modsDir` always wins. Otherwise the `mods/` of the nearest folder at or
+ * above `cwd` whose marketplace file is among `existing`, the way /mod-builder:build finds it, and
+ * `fallback` (the plugin's own) when `cwd` is unknown or no marketplace is above it.
+ */
+export function modsDirFor(configured: string, cwd: string | null, existing: readonly string[], fallback: string): string {
+  if (configured) return normalizePath(configured)
+  const found = cwd === null ? undefined : marketplaceCandidatesOf(cwd).find(candidate => existing.includes(candidate))
+  return found === undefined ? normalizePath(fallback) : `${found.slice(0, -MARKETPLACE_FILE.length)}/mods`
+}
+
 /** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */
 export function shortPath(path: string): string {
   const parts = normalizePath(path).split('/').filter(Boolean)
