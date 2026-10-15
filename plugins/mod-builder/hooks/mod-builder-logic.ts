@@ -254,8 +254,11 @@ export function isGreen(lights: readonly Light[]): boolean {
  */
 const BLOCK_BREAK = String.raw`[ \t]*(?:\r?\n|$|#{1,6}(?:[ \t]|$)|[-*+][ \t]|\d{1,9}[.)][ \t]|>)`
 
-/** An inline code span: it may wrap over lines, but not into another block (CommonMark). */
-const CODE_SPAN = new RegExp(String.raw`\x60(?:[^\x60\n]|\n(?!${BLOCK_BREAK}))*\x60`, 'g')
+/**
+ * An escaped `\` or backtick, which opens no span, or an inline code span: it
+ * may wrap over lines, but not into another block (CommonMark).
+ */
+const ESCAPE_OR_SPAN = new RegExp(String.raw`\\[\\\x60]|\x60(?:[^\x60\n]|\n(?!${BLOCK_BREAK}))*\x60`, 'g')
 
 /**
  * Whether a SPEC still holds a `<placeholder>`: an angle-bracketed phrase
@@ -265,7 +268,7 @@ export function hasPlaceholder(spec: string): boolean {
   const prose = spec
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(CODE_SPAN, '')
+    .replace(ESCAPE_OR_SPAN, m => (m.startsWith('\\') ? m : ''))
   return /<(?![/!])[^<>\n]{1,120}>/.test(prose)
 }
 
