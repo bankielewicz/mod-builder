@@ -554,6 +554,25 @@ describe('a run that does not end', () => {
     expect(seen.argv.slice(3).map(argv => argv[2])).toEqual(['validate', 'test'])
   })
 
+  test('a run that throws before its result is stored says so, and the pane stops showing it running', OPTIONS, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    seen.denyStoreSet = 'EIO: store write failed'
+    release()
+    await clock.advance(500)
+    seen.denyStoreSet = ''
+    expect(seen.toasts.some(text => text.startsWith('✕ git-branch: Test stopped before its result was saved ('))).toBe(true)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
+  })
+
   test('a Validate that process.run stops at the time limit reads as timed out; one refused sooner could not run', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
     let release = () => {}
     const hold = new Promise<void>(resolve => (release = resolve))

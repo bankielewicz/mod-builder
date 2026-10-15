@@ -713,3 +713,18 @@ describe('the time limit, testTimeoutMinutes (PR #55 review)', () => {
     expect(text).toContain('  logging            normal')
   })
 })
+
+describe('a run that does not end well (PR #55 review)', () => {
+  test('a run that threw before its result was stored: the toast names the check and the error', () => {
+    expect(typeof Logic.toastOfRunError).toBe('function')
+    expect(Logic.toastOfRunError('m', 'Typecheck', new Error('EIO'))).toBe('✕ m: Type-check stopped before its result was saved (Error: EIO)')
+    expect(Logic.toastOfRunError('m', 'Test', 'x'.repeat(300))).toBe(`✕ m: Test stopped before its result was saved (${'x'.repeat(119)}…)`)
+  })
+
+  test('streamed progress lands on its own run, not on a newer run of the same check', () => {
+    expect(typeof Logic.withProgress).toBe('function')
+    const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+    const other: Run = { ...row(5), kind: 'Validate' }
+    expect(Logic.withProgress([row(5), row(9), other], row(5), { passed: 2, failed: 1 })).toEqual([{ ...row(5), passed: 2, failed: 1 }, row(9), other])
+  })
+})
