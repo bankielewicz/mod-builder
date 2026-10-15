@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
+import { demoTasks, rowsThatFit } from '../hooks/duet-logic'
 
 const PANE = { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
 const COMPOSER = { kind: 'composer' } as const
@@ -8,9 +9,9 @@ const DATA = '/home/u/.claude/duet-data'
 const LEGACY_LOG = `${DATA}/runs.jsonl`
 const RUN = (provider: 'codex' | 'claude', type: string) => JSON.stringify({ id: 'd1', at: 0, provider, kind: 'agent', type, model: '', ms: 4000, tokens: 900, ok: true }) + '\n'
 
-/** `sessions`: each session folder's runs.jsonl, by folder name; the legacy log holds one codex Explore run. */
+/** `sessions`: each session folder's runs.jsonl, by folder name; the legacy log holds one codex Explore run. Returns the test's clock. */
 function engine(on: any, opened: string[], sessions: Record<string, string> = {}) {
-  mock.clock(on)
+  const clock = mock.clock(on)
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
   on('ui.open', ($: any, e: any) => (opened.push(e.id), { value: { isPlaced: true } }))
@@ -27,6 +28,7 @@ function engine(on: any, opened: string[], sessions: Record<string, string> = {}
     const session = Object.keys(sessions).find(name => e.path === `${DATA}/sessions/${name}/runs.jsonl`)
     return session ? { value: sessions[session] } : { deny: 'ENOENT' }
   })
+  return clock
 }
 
 const mount = ($: any, surface: 'terminal' | 'desktop', props: object = PANE) =>
@@ -102,5 +104,26 @@ describe('ui', () => {
     const stats = await mount($, 'terminal')
     expect(await stats.find({ type: 'Text', text: /claude · Explore/ })).toBeDefined()
     await stats.unmount()
+  })
+
+  test('the selection stops at the last drawn row: after more presses than rows, a row is still highlighted (PR #1: 6148aa6)', async ($, on) => {
+    const clock = engine(on, [])
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await $.command.run({ command: 'duet', args: 'demo', origin: COMPOSER, presentation: PRESENTATION })
+    await clock.settle() // the demo's tasks are set without being awaited
+    // The demo lists 5 tasks and bodyRows 10 draws 2 of them (d5, d4), so d4 is the last drawn row. If the demo or the
+    // pane's chrome changes, these two fail first and say which.
+    expect(demoTasks(0).length).toBe(5)
+    expect(rowsThatFit(10)).toBe(2)
+    const props = { ...PANE, scroll: { offset: 0, bodyRows: 10 } }
+    let ui = await mount($, 'terminal', props)
+    for (let press = 1; press <= 6; press++) {
+      await ui.press({ key: 'next' })
+      await clock.settle()
+      await ui.unmount()
+      ui = await mount($, 'terminal', props)
+      expect([press, (await ui.find({ type: 'Text', text: /▸ d4 / })) !== undefined]).toEqual([press, true])
+    }
+    await ui.unmount()
   })
 })

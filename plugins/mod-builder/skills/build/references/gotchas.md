@@ -315,6 +315,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   process.spawn". Spawn rejects its first pull when it can't start, so fall back to
   `$.process.run` in that case. Tests then exercise the fallback, and the streaming arithmetic gets
   pure unit tests. A spawn ends with `await stream.result` → `{ code, signal }`.
+- **[probe]** A `process.run` stub's event is `{ argv, init }`. The child's env and stdin are
+  `e.init.env` and `e.init.stdin` (beside `e.init.timeoutMs`); `e.env` and `e.stdin` are undefined
+  (2.1.300). duet's `tests/routing.test.ts` reads them this way.
+- **[probe]** A stub that throws is skipped: the call rejects with "no implementation for env.get"
+  (for `$.env.get`), and the stub's own error is lost. To make a call reject with a reason, answer
+  `{ deny: '<reason>' }`; `$.env.get` then rejects with `<plugin>: $.env.get: <reason>` (2.1.300).
 - **[probe]** `claude plugin test` writes its `(pass)`/`(fail)` lines and summary to stdout, and a
   test's `console.log` to stderr (2.1.300). `$.process.spawn` hands them over as `{ stream, text }`
   pieces, "as it came, not lines" [d.ts], and the two don't stay in order: in Mod Lab's live check
