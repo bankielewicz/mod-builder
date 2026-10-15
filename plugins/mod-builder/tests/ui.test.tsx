@@ -2856,6 +2856,34 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect((await listed($)).names).toEqual(['gamma'])
   })
 
+  test('overlapping reports with different paths each keep their own folder (PR #95, Codex P2)', async ($, on) => {
+    const WT2 = '/w/main/scratch/wt2'
+    const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(WT2), ...modFiles('delta', `${WT2}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    // The first report's write of the pin waits; a second report with another path lands meanwhile.
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    let isHeld = false
+    on('state.set', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key === 'pinned' && !isHeld) {
+        isHeld = true
+        await held
+      }
+      return next(e)
+    })
+    await start($)
+    await clock.advance(10)
+    const first = report($, { mod: 'beta', stage: 'Validate', status: 'passed', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    await report($, { mod: 'delta', stage: 'Logic', status: 'running', path: `${WT2}/mods/delta` })
+    release()
+    await first
+    await clock.advance(1000)
+    await clock.settle()
+    expect(seen.argv.filter(argv => argv.includes('validate')).map(argv => argv[4])).toEqual([`${WT}/mods/beta`])
+  })
+
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN
