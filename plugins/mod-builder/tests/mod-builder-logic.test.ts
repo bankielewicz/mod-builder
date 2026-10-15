@@ -899,6 +899,22 @@ describe('a streamed test run keeps bounded output (#9, Codex P2 on PR #65)', ()
     expect(parseTest(streamOutput(s), 0)).toMatchObject({ ok: true, passed: 4, failed: 0 })
   })
 
+  test('stdout printing that arrives after the stderr summary keeps the summary (found live: "0 tests passed")', () => {
+    let s = EMPTY_STREAM
+    s = streamPiece(s, testPass, 'stderr')
+    for (let at = 0; at < noise.length; at += 16_384) s = streamPiece(s, noise.slice(at, at + 16_384), 'stdout')
+    expect(200_000).toBeGreaterThan(streamOutput(s).length)
+    expect(parseTest(streamOutput(s), 0)).toEqual(parseTest(testPass, 0))
+  })
+
+  test('a stdout piece cut mid-line does not join the stderr line after it', () => {
+    let s = EMPTY_STREAM
+    s = streamPiece(s, 'noise without its end', 'stdout')
+    s = streamPiece(s, '(pass) t > one [1.00ms]\n', 'stderr')
+    s = streamPiece(s, ' still noise\n', 'stdout')
+    expect({ passed: s.passed, failed: s.failed }).toEqual({ passed: 1, failed: 0 })
+  })
+
   test('many failures among the noise: the first ones, which a result shows, are kept with their detail', () => {
     const fails = Array.from({ length: 40 }, (_, i) => `(fail) t > case ${i} [1.00ms]\n  AssertionError: case ${i}`).join('\n')
     const whole = `${fails}\n${noise}\n\n 0 pass\n 40 fail\nRan 40 tests across 1 file. [0.50s]\n`

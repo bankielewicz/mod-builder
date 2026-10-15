@@ -33,8 +33,15 @@ have already validated or tested in this install. To turn it off, set `autoRerun
 `/config`. Separately, when a skill's `lab_report` says a Validate or Test stage finished, Mod Lab
 runs that check on the mod the report names.
 
+What the sandbox doesn't stop is a test that loops or uses up memory. It runs until
+`testTimeoutMinutes` (3 minutes by default) and is then killed. Mod Lab keeps only the lines of its
+output it reads, so a test that prints without end doesn't fill Mod Lab's memory.
+
 The own-code-only rule is stricter than that sandbox, and stays: installing a mod or opening a
-session with it runs its hooks with your full access.
+session with it runs its hooks with your full access. `autoRerun` does run tests on code someone
+else changed, such as a collaborator's edit to a mod you tested before, which that rule forbids for
+mods from elsewhere. It's on by default because the probed builds sandbox the test. If others push
+to your mods folder, turn it off: `/mod-builder config autoRerun off`.
 
 What the skills do for safety:
 
