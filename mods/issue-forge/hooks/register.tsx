@@ -269,11 +269,12 @@ async function saveRun($: EngineInterface, run: Run): Promise<Run | null> {
 
 /**
  * The branch and folder preflight just made, written onto the stored run at once, even over a stop, so a
- * Stop pressed before preflight returns never loses them (Codex, PR #41 round 3).
+ * Stop pressed before preflight returns never loses them (Codex, PR #41 round 3). Never onto a run another
+ * session took over meanwhile: it makes its own (Codex 4278707576).
  */
 async function recordMade($: EngineInterface, run: Run, made: Kept): Promise<void> {
   const now = await $.clock.now()
-  await updateRun($, keyOf(run), stored => (stored?.id === run.id ? advance(stored, { type: 'made', keep: made }, now) : null))
+  await updateRun($, keyOf(run), stored => (stored?.id === run.id && !isTakenOver(stored) ? advance(stored, { type: 'made', keep: made }, now) : null))
 }
 
 /** Adds agents to the run's known list (memory and store); they are refused tools unless live. */
