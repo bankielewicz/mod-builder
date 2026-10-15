@@ -401,3 +401,17 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - `[probe]` Under `claude plugin test`, `session.end` needs a stub.
 - **Unchanged:** Mod Lab's code and tests.
 - **Version:** 0.2.7 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.8 (2026-10-15)
+
+> For issue #13: a Test that never ends, or a throw in `run()`, left a row that blocked later runs.
+
+- **New option:** `testTimeoutMinutes` (number, default 3, at most 10, the most `$.process.run` allows) in `userConfig`. It is the time limit of every check Mod Lab runs. Anything that is not a positive number reads as 3.
+- **Changed:**
+  - The streamed Test has a timer (`$.clock.every`, 5 s), as duet's `runCodex` does. At the limit it ends the stream with `stream.return()`, which kills the child, skips `stream.result`, and throws a `RunTimeout`. The timer is cancelled in a `finally`. `run()` shows that error's message ("timed out after 3 minutes") as the summary, not "could not run". A stream that cannot start still falls back to `$.process.run`.
+  - `runToEnd` (Validate, type-check, and the Test fallback) passes the same limit as `timeoutMs`, where it was a fixed 3 minutes.
+  - Everything in `run()` after the row is added is in `try`/`finally`, and the `finally` removes the row, so a throw from `scan`, `resultsOf` or `$.store.set` no longer leaves it. The `finally` removes only the row it added (same mod, kind and `startedAt`).
+  - The guard in `run()` ignores a row older than the limit: the `runs` atom survives a reload but the continuation that would remove its row does not. The new run replaces that row.
+- **Not changed:** `rerunStale` still counts any row of a mod as in flight, so an orphan holds back that mod's automatic re-run until a press or a report starts a run.
+- **Tests:** `tests/ui.test.tsx`, "a run that does not end": a failing `$.store.set` leaves no row, an orphan is replaced and a younger row still blocks, `testTimeoutMinutes` moves that age, and the `timeoutMs` given to a Test run (5 minutes as set, 10 when asked for 30). `$.process.spawn` cannot be stubbed, so the timeout of the stream itself is checked live, not in a test; that check is awaiting the owner (set `testTimeoutMinutes` to 1, a throwaway mod whose only test is `while (true) {}`, expect "timed out after 1 minute" and a second T that starts a new run).
+- **Version:** 0.2.8 in `plugin.json` and the marketplace entry.

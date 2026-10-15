@@ -142,6 +142,7 @@ switch, Validate and Test show `○` until you press V and T once.
 | `modsDir` | empty: the `mods/` next to the plugin's marketplace | The folder whose child folders Mod Lab tracks. In your own project, set it to your `mods/`. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
 | `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
+| `testTimeoutMinutes` | `3` | How long a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10). A run row older than this is dropped, so a Test that never ended can't block the next one |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
 
 `/mod-builder config` lists these with their current values and this session's log file; `/mod-builder config <option> <value>` changes one (for example `/mod-builder config logging verbose`). They're also in `/config`.
@@ -154,7 +155,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
-| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. |
+| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (the streamed test's child is killed). |
 | Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |

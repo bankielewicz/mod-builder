@@ -98,6 +98,7 @@ Set them on the install options screen, or in `/config`.
 | Mods folder (`modsDir`) | the `mods/` next to the plugin's marketplace | The folder Mod Lab tracks. Set it to your project's `mods/`. |
 | `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide) |
 | `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |
+| `testTimeoutMinutes` | 3 | Minutes a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10) |
 | `logging` | normal | `off` · `normal` (errors, session start, check results) · `verbose` (+ reports, scans, processes, commands) · `debug` (+ expected misses, lights, process output). Log: `~/.claude/mod-builder-data/logs/` |
 
 `/mod-builder config` lists these and the log file; `/mod-builder config logging verbose` changes one.

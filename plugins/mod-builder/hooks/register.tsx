@@ -22,6 +22,10 @@ const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
 const GENERATIONS_KEY = 'modlab:generations'
 const FRAME_MS = 250
+/** How long a check may run, in minutes: the default, and the most `$.process.run` allows. */
+const RUN_MINUTES = 3
+const RUN_MINUTES_MAX = 10
+const RUN_WATCH_MS = 5000
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
 const NARROW_TOAST = '◆ Mod Lab needs a wider window. Widen it, or watch the status line.'
@@ -56,6 +60,7 @@ type StoredResults = Record<string, Lab.Results>
 let configuredDir = ''
 let autoOpen = false
 let autoRerun = true
+let runMinutes = RUN_MINUTES
 let clock: Timer | null = null
 let lastTickMs = 0
 let scanning: Promise<void> | null = null
@@ -398,9 +403,17 @@ async function noteProgress($: Engine, entry: Run, counts: { passed: number; fai
   await update($, runs, all => all.map(one => (one.mod === entry.mod && one.kind === entry.kind ? { ...one, ...counts } : one)))
 }
 
+/** A check ended at its time limit; the message is its summary. */
+class RunTimeout extends Error {}
+
+/** The time limit of a check, from `testTimeoutMinutes`. */
+const runLimitMs = (): number => runMinutes * 60_000
+
+const timeoutOf = (): RunTimeout => new RunTimeout(`timed out after ${runMinutes} minute${runMinutes === 1 ? '' : 's'}`)
+
 async function runToEnd($: Engine, argv: readonly string[], dir: string): Promise<{ exitCode: number; output: string }> {
   const startedAt = Date.now()
-  const out = await $.process.run(argv, { cwd: dir, timeoutMs: 180_000 })
+  const out = await $.process.run(argv, { cwd: dir, timeoutMs: runLimitMs() })
   const output = `${out.stdout}\n${out.stderr}`
   logProcess($, argv, out.exitCode, Date.now() - startedAt, output)
   return { exitCode: out.exitCode, output }
@@ -415,7 +428,8 @@ function logProcess($: Engine, argv: readonly string[], exitCode: number, durati
 /**
  * Runs validate or tsc to the end; streams test so the band fills on real
  * progress. A stream that cannot start (it rejects its first pull) falls back
- * to running the tests to the end.
+ * to running the tests to the end. A stream still going at the time limit is
+ * stopped, which kills the child, and the run ends as a RunTimeout.
  */
 async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: number; output: string }> {
   const argv = Lab.argvOf(entry.kind, dir)
@@ -423,9 +437,18 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   let output = ''
   let seen = 0
   let hasStarted = false
+  let isTimedOut = false
+  let timer: Timer | null = null
   const startedAt = Date.now()
   try {
     const stream = $.process.spawn({ argv, cwd: dir })
+    let elapsed = 0
+    timer = $.clock.every(RUN_WATCH_MS, () => {
+      elapsed += RUN_WATCH_MS
+      if (elapsed < runLimitMs()) return
+      isTimedOut = true
+      void stream.return?.(undefined as never)?.catch?.(() => undefined)
+    })
     for await (const piece of stream) {
       hasStarted = true
       output += piece.text
@@ -435,19 +458,25 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
         await noteProgress($, entry, counts)
       }
     }
+    if (isTimedOut) throw timeoutOf()
     const ended = await stream.result
     logProcess($, argv, ended.code ?? 1, Date.now() - startedAt, output)
     return { exitCode: ended.code ?? 1, output }
   } catch (error) {
+    if (isTimedOut) throw timeoutOf()
     if (hasStarted) throw error
     // Expected under `claude plugin test`, where process.spawn has no stub.
     logCaught($, 'execute.spawn', error, 'verbose', { argv, fallback: 'process.run' })
     return runToEnd($, argv, dir)
+  } finally {
+    timer?.cancel()
   }
 }
 
 async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
-  if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind)) return
+  // A row older than the time limit is an orphan (its run died with a reload), so it blocks nothing.
+  const now = await $.clock.now()
+  if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind && now - one.startedAt <= runLimitMs())) return
   const dir = `${modsDirOf($)}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
   const hasTypes =
@@ -463,29 +492,36 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   const startedAt = await $.clock.now()
   const last = (await resultsOf($))[mod]?.Test?.tests
   const entry: Run = { mod, kind, startedAt, passed: 0, failed: 0, total: last ? last.passed + last.failed : null }
-  await update($, runs, all => [...all, entry])
-  startClock($)
-  await scan($, false)
-
-  const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
-  const codeSig = factsByMod.get(mod)?.codeSig
-  let result: Lab.RunResult
+  await update($, runs, all => [...all.filter(one => !(one.mod === mod && one.kind === kind)), entry])
+  // From here the row is this run's alone to remove: whatever throws, it goes.
+  let toast = ''
   try {
-    const { exitCode, output } = await execute($, entry, dir)
-    const endedAt = await $.clock.now()
-    result = Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
-  } catch (error) {
-    const endedAt = await $.clock.now()
-    result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary: 'could not run', errors: [String(error).slice(0, 200)] }
-    logCaught($, 'run', error, 'normal', { mod, kind })
+    startClock($)
+    await scan($, false)
+
+    const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
+    const codeSig = factsByMod.get(mod)?.codeSig
+    let result: Lab.RunResult
+    try {
+      const { exitCode, output } = await execute($, entry, dir)
+      const endedAt = await $.clock.now()
+      result = Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
+    } catch (error) {
+      const endedAt = await $.clock.now()
+      const summary = error instanceof RunTimeout ? error.message : 'could not run'
+      result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary, errors: [String(error).slice(0, 200)] }
+      logCaught($, 'run', error, 'normal', { mod, kind })
+    }
+    if (codeSig !== undefined) result = { ...result, codeSig }
+    logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
+    const results = await resultsOf($)
+    await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
+    logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind })
+    toast = Lab.toastOfRun(mod, result)
+  } finally {
+    await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind && one.startedAt === startedAt)))
   }
-  if (codeSig !== undefined) result = { ...result, codeSig }
-  logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
-  const results = await resultsOf($)
-  await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
-  logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind })
-  await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
-  $.ui.toast(Lab.toastOfRun(mod, result))
+  $.ui.toast(toast)
   await scan($, true)
 }
 
@@ -632,6 +668,8 @@ export const register: Register = (on, options) => {
   configuredDir = String(config.modsDir ?? '').trim()
   autoOpen = config.autoOpen === true
   autoRerun = config.autoRerun !== false
+  const minutes = Number(config.testTimeoutMinutes)
+  runMinutes = Number.isFinite(minutes) && minutes > 0 ? Math.min(minutes, RUN_MINUTES_MAX) : RUN_MINUTES
   logLevel = Lab.logLevelOf(config.logging)
 
   on('session.start', async ($, e, next) => {
