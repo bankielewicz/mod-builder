@@ -1032,7 +1032,7 @@ Where the build differs from the approved text above, and why:
   replaces (a second start asks instead of refusing; the demo's `elsewhere` state). `6ca5316` fixes
   four of this change's own red tests (a line wider than the pane, the demo counter, a missing
   `session.end` stub, a seed on the wrong branch).
-- **Checks:** `claude plugin test mods/issue-forge` 203 pass. `tsc` is clean. `claude plugin validate`
+- **Checks:** `claude plugin test mods/issue-forge` 205 pass, two of them added after review: the driving session ends its own drive when another session stops or takes over its run (both fail with `watch` disabled). `tsc` is clean. `claude plugin validate`
   passes, with `.catch` on every gating hook and on `session.end`. Logic coverage: `issue-forge-logic.ts`
   lines 100%, branches 99.54% (origin/main 99.46%), with every changed line and branch covered. All
   logic files together: 97.79% / 93.79% (origin/main 97.63% / 93.29%).
