@@ -1305,7 +1305,7 @@ export const register: Register = (on, options) => {
       // Read the working directory now, not at the last scan, so a /cd shows at once and matches what F writes.
       const shown = current.isDemo ? current.path : `${Lab.displayPathOf(`${shownDir}/${current.name}`, await cwdOf($))}/`
       const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), shown].filter(Boolean).join(' · ')
-      const note = current.isPlaceholder ? `folder not written yet: ${Lab.shortPath(shownDir)}/${current.name}/` : null
+      const note = isPlaceholder ? `folder not written yet: ${Lab.shortPath(shownDir)}/${current.name}/` : null
       detail.push(
         <Box key="d-head" justifyContent="space-between">
           <Text>
