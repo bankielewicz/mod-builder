@@ -725,7 +725,7 @@ describe('commands and view', () => {
       const d = demoRun(s, 0)
       return viewOf(d.run, d.isDriving)
     })
-    expect(views).toEqual(['empty', 'running', 'running', 'running', 'blocked', 'interrupted', 'ready', 'done'])
+    expect(views).toEqual(['empty', 'running', 'running', 'running', 'blocked', 'interrupted', 'elsewhere', 'ready', 'done'])
     expect(nextDemoState('done')).toBe('empty')
     expect(nextDemoState('empty')).toBe('running')
   })

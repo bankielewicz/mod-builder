@@ -318,7 +318,7 @@ describe('demo and drawing', () => {
     const w = engine(on)
     await start($)
     const { text } = await run($, 'demo')
-    expect(text).toContain('[ Next state ] steps through empty, running, gate, failed, blocked, interrupted, ready, done')
+    expect(text).toContain('[ Next state ] steps through empty, running, gate, failed, blocked, interrupted, elsewhere, ready, done')
     const copy: [string, RegExp][] = [
       ['empty', /No run here\. \/issue-forge <issue number> starts one/],
       ['running', /attempt 1\/3 · agent working/],
@@ -326,6 +326,7 @@ describe('demo and drawing', () => {
       ['failed', /gate G: diff branch 91\.30% < 95/],
       ['blocked', /blocked at baseline: tests fail before any change/],
       ['interrupted', /interrupted during green; \/issue-forge resume restarts it/],
+      ['elsewhere', /runs in another session \(for .*\); \/issue-forge resume 16 takes it over/],
       ['ready', /Push issue-16-mod-lab-fix-prompt-and-path-header-hardc/],
       ['done', /pull request opened/],
     ]
@@ -409,9 +410,11 @@ describe('starting a run', () => {
     expect(await ui.find({ type: 'Text', text: /✕ blocked at preflight: the checkout is busy \(1 changed file\)/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /next: set "workspace" to "worktree" or "ask"/ })).toBeDefined()
     await ui.unmount()
+    // 0.3.0: another run no longer refuses a start; the session is asked what to do (Cancel here).
+    w.answer = 'Cancel'
     const again = (await run($, '17')).text ?? ''
-    expect(again).toContain('a run is already active here.')
-    expect(again).toContain('blocked at preflight')
+    expect(w.asked.at(-1)).toBe('#16 is active in this repository: blocked at preflight. What should this session do?')
+    expect(again).toBe('cancelled; nothing started.')
     expect(w.argv.some(a => a.includes('17'))).toBe(false)
     expect((await run($, 'stop')).text).toContain('stopped #16')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
