@@ -423,14 +423,16 @@ describe('review admission', () => {
       const answers = (await Promise.all([review(), review()])).map(r => r.text)
       await started
       await seen.clock.settle()
-      expect(answers.filter(text => /^Codex review started/.test(text)).length).toBe(1)
-      expect(answers.filter(text => text.includes(`Codex review not started: ${LIMIT}`)).length).toBe(1)
+      // The process count and the toasts come first: they are what 6148aa6 and 56c0832 fixed. Hooks from before #5 also
+      // answer "started" for a refused review, which the answer checks below would report instead.
       expect(seen.argv.length).toBe(1)
       expect(seen.toasts).toEqual([`d2 review refused: ${LIMIT}`])
       const third = await review()
       await seen.clock.settle()
       expect(seen.argv.length).toBe(1)
       expect(seen.toasts).toEqual([`d2 review refused: ${LIMIT}`, `d3 review refused: ${LIMIT}`])
+      expect(answers.filter(text => /^Codex review started/.test(text)).length).toBe(1)
+      expect(answers.filter(text => text.includes(`Codex review not started: ${LIMIT}`)).length).toBe(1)
       expect(third.text).toContain(`Codex review not started: ${LIMIT}`)
       // The running review keeps its own row; the refusals are rows of their own.
       const ui = await pane()
