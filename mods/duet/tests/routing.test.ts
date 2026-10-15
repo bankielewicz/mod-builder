@@ -863,6 +863,16 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     expect(sandboxOf(seen.argv[0])).toBe('read-only')
   })
 
+  test('an editing agent demoted to read-only by a cut-short search still waits in background mode, so Claude reads the note before it goes on (PR #48 review)', { options: { ...options, codexRunMode: 'background' } }, async ($, on) => {
+    const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/other.md': agent('someone', READS, 'Nine deep.'), '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
+    await start($, IN)
+    const r: any = await $.tool.call(call({ subagent_type: 'editor' }) as never)
+    expect(r.result?.status).toBe('completed')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+    expect((r.result?.content ?? []).map((c: { text?: string }) => c.text ?? '').join('\n')).toMatch(/cut short at 8 folders deep.*read-only/)
+    expect(seen.submitted.length).toBe(0)
+  })
+
   test('a search cut short runs the agent read-only, since a definition past the limit may forbid edits, and the note says so (PR #48 review)', { options }, async ($, on) => {
     // Claude reads this read-only general-purpose definition 9 folders down; duet stops at 8, and its fallback, the built-in, edits.
     const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/gp.md': agent('general-purpose', READS, 'Nine deep.') } })
