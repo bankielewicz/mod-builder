@@ -42,6 +42,8 @@ write the code yourself. Never copy-paste their code, and never install, `--plug
    `.claude-plugin/marketplace.json`. That folder is the marketplace root, and the mods folder is
    `<root>/mods/` (entries read `"source": "./mods/<name>"`). If there is none, ask
    once where mods should live, and offer to create a folder marketplace there (`ci/marketplace.json`).
+   When the request or the repository's instructions put the work in a git worktree the session
+   isn't in (edited by absolute path), walk up from that worktree instead: `<mods>` is its `mods/`.
 3. Run `claude --version` and record it as the "built on" version.
 4. If `mcp__mod-builder__lab_report` is among your tools, Mod Lab is running. Report each stage
    with `{ mod, stage, status, note?, path }`, where status is `running` when you start it and `passed`
