@@ -681,6 +681,13 @@ describe('the time limit, testTimeoutMinutes (PR #55 review)', () => {
     for (const raw of [undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY, true, '', 'soon', {}]) expect(Logic.runLimitMsOf(raw)).toBe(180_000)
   })
 
+  test('a check that ran for its whole time limit is over it', () => {
+    expect(typeof Logic.isOverLimit).toBe('function')
+    expect(Logic.isOverLimit(60_000, 60_000)).toBe(true)
+    expect(Logic.isOverLimit(61_000, 60_000)).toBe(true)
+    expect(Logic.isOverLimit(59_999, 60_000)).toBe(false)
+  })
+
   test('the timeout summary names the limit in minutes', () => {
     expect(typeof Logic.timeoutText).toBe('function')
     expect(Logic.timeoutText(60_000)).toBe('timed out after 1 minute')

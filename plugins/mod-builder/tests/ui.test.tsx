@@ -554,6 +554,25 @@ describe('a run that does not end', () => {
     expect(seen.argv.slice(3).map(argv => argv[2])).toEqual(['validate', 'test'])
   })
 
+  test('a Validate that process.run stops at the time limit reads as timed out; one refused sooner could not run', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(MINUTE + 1000)
+    release()
+    await clock.advance(10)
+    expect(seen.toasts).toContain('✕ git-branch: timed out after 1 minute. Press F in Mod Lab to fix')
+    await ui.unmount()
+    const again = await mountPane($)
+    await again.press({ key: 'validate' })
+    await clock.advance(10)
+    expect(seen.toasts.at(-1)).toBe('✕ git-branch: could not run. Press F in Mod Lab to fix')
+  })
+
   test('a Test run is given testTimeoutMinutes as its time limit', { options: { modsDir: MODS, testTimeoutMinutes: 5 } }, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
     await start($)
