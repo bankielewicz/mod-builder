@@ -1267,7 +1267,7 @@ export type View = 'empty' | 'running' | 'interrupted' | 'elsewhere' | 'blocked'
 export function viewOf(run: Run | null, isDriving: boolean, me = ''): View {
   if (!run) return 'empty'
   if (run.step === 'blocked') return 'blocked'
-  if (!isDriving && isElsewhere(run, me)) return 'elsewhere'
+  if (!isDriving && isDrivenElsewhere(run, me)) return 'elsewhere'
   if (run.step === 'ready') return 'ready'
   if (run.step === 'done') return 'done'
   if (run.step === 'stopped') return 'stopped'
@@ -1349,11 +1349,8 @@ export function coverageLine(run: Run, layout: Layout = 'full'): string | null {
 /** The status-line badge while a run is live: `#16 green 2/3 · 4m02s`. */
 export function badgeOf(run: Run, now: number): string {
   const phase = phaseOf(run.step)
-  if (phase === 'red' || phase === 'green' || phase === 'refactor') {
-    const t = run.times[phase]
-    return `#${run.issue} ${phase} ${Math.max(1, run.used[phase])}/${attemptsOf(run, phase)}${t ? ` · ${elapsed(now - t.startedAt)}` : ''}`
-  }
-  return `#${run.issue} ${run.step}`
+  const t = phase === 'red' || phase === 'green' || phase === 'refactor' ? run.times[phase] : undefined
+  return `#${run.issue} ${stepLabel(run)}${t ? ` · ${elapsed(now - t.startedAt)}` : ''}`
 }
 
 /** `/issue-forge status` as text; `others` are the repository's other active runs (Change 0.3.0). */
@@ -1529,7 +1526,7 @@ export function commonDirOf(top: string, out: string): string | null {
 
 /** The store keys of this repository's runs. */
 export function repoRunKeys(keys: readonly string[], repo: string): string[] {
-  const prefix = runKey(repo, 0).replace(/0$/, '')
+  const prefix = `${RUN_PREFIX}${repo}#`
   return keys.filter(key => key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length)))
 }
 
@@ -1563,8 +1560,8 @@ function stepLabel(run: Run): string {
   return phase === 'red' || phase === 'green' || phase === 'refactor' ? `${phase} ${Math.max(1, run.used[phase])}/${attemptsOf(run, phase)}` : run.step
 }
 
-/** Another session drives the run, and it is under way there (working or waiting at ready). */
-function isElsewhere(run: Run, me: string): boolean {
+/** Another session drives the run, and it is under way there (working or waiting at ready): resume, publish and stop ask first. */
+export function isDrivenElsewhere(run: Run, me: string): boolean {
   return !!run.driver && run.driver.session !== me && (isWorking(run.step) || run.step === 'ready')
 }
 
@@ -1574,14 +1571,14 @@ function drivenFor(run: Run, now: number): string {
 
 /** How the start menu describes another run. */
 function stateOf(run: Run, me: string, now: number): string {
-  if (isElsewhere(run, me)) return `${stepLabel(run)}, driven by another session for ${drivenFor(run, now)}`
+  if (isDrivenElsewhere(run, me)) return `${stepLabel(run)}, driven by another session for ${drivenFor(run, now)}`
   if (run.step === 'blocked') return `blocked at ${run.blocked?.at ?? 'an unknown step'}`
   if (run.step === 'ready') return 'ready to publish'
   return `interrupted during ${run.step}`
 }
 
 function shortStateOf(run: Run, me: string): string {
-  if (isElsewhere(run, me)) return 'in another session'
+  if (isDrivenElsewhere(run, me)) return 'in another session'
   if (run.step === 'blocked' || run.step === 'ready') return run.step
   return 'interrupted'
 }
@@ -1626,7 +1623,7 @@ export function startChoices(ctx: StartContext): StartMenu | null {
   const where = ctx.workspace === 'here' ? 'here' : `in a new worktree from origin/${ctx.base}`
   const start = { label: `Start #${issue} ${where} (Recommended)`, action: { kind: 'start' } as StartAction }
   const o = other.issue
-  const middle: StartMenu['options'] = isElsewhere(other, me)
+  const middle: StartMenu['options'] = isDrivenElsewhere(other, me)
     ? [{ label: `Take over #${o} here (its session stops it, or has crashed)`, action: { kind: 'takeOver', issue: o } }]
     : [
         { label: `Resume #${o} here (${stateOf(other, me, now)})`, action: { kind: 'resume', issue: o } },
@@ -1661,19 +1658,14 @@ export function elsewhereLine(run: Run, now: number): string {
   return `runs in another session (for ${drivenFor(run, now)}); /issue-forge resume ${run.issue} takes it over`
 }
 
-/** Whether a run is under way in another session, so resume, publish and stop ask before taking it over. */
-export function isDrivenElsewhere(run: Run, me: string): boolean {
-  return isElsewhere(run, me)
-}
-
-export type Pick = { kind: 'run'; run: Run } | { kind: 'several'; runs: Run[] } | { kind: 'none' }
+export type RunPick = { kind: 'run'; run: Run } | { kind: 'several'; runs: Run[] } | { kind: 'none' }
 export type PickQuery = { issue: number | null; focus: number | null; root: string; needActive: boolean }
 
 /**
  * Which run a command means: the issue named; else the focused one; else the repository's only active run.
  * Several active runs are listed. For status, the newest run started from this checkout comes last.
  */
-export function pickRun(runs: readonly Run[], q: PickQuery): Pick {
+export function pickRun(runs: readonly Run[], q: PickQuery): RunPick {
   if (q.issue !== null) {
     const named = runs.find(r => r.issue === q.issue)
     return named ? { kind: 'run', run: named } : { kind: 'none' }
@@ -1693,7 +1685,7 @@ export type LineContext = { me: string; drivingId: string | null; now: number }
 export function lineOf(run: Run, ctx: LineContext): string {
   if (run.id === ctx.drivingId) return badgeOf(run, ctx.now)
   if (run.step === 'blocked') return `#${run.issue} blocked at ${run.blocked?.at ?? 'an unknown step'}`
-  if (isElsewhere(run, ctx.me)) return `#${run.issue} ${run.step} (another session)`
+  if (isDrivenElsewhere(run, ctx.me)) return `#${run.issue} ${run.step} (another session)`
   if (run.step === 'ready' || run.step === 'done' || run.step === 'stopped') return `#${run.issue} ${run.step}`
   return `#${run.issue} interrupted at ${run.step}`
 }
@@ -1704,7 +1696,7 @@ export function severalText(runs: readonly Run[], verb: string, ctx: LineContext
 
 /** The repository's other active runs, newest first, for the also line. */
 export function othersOf(runs: readonly Run[], ctx: LineContext & { shownId: string | null }): OtherRun[] {
-  return newestFirst(runs.filter(r => isActive(r) && r.id !== ctx.shownId)).map(r => ({ issue: r.issue, step: r.step, line: lineOf(r, ctx), isElsewhere: isElsewhere(r, ctx.me) }))
+  return newestFirst(runs.filter(r => isActive(r) && r.id !== ctx.shownId)).map(r => ({ issue: r.issue, step: r.step, line: lineOf(r, ctx), isElsewhere: isDrivenElsewhere(r, ctx.me) }))
 }
 
 export function othersLine(others: readonly OtherRun[]): string {

@@ -96,7 +96,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { CheckoutState, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Pick, Profile, Run, RunEvent, StashRef, Step, Tone } from './issue-forge-logic'
+import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -1030,7 +1030,7 @@ async function statusFor($: EngineInterface, run: Run, runs: readonly Run[]): Pr
 }
 
 /** The run a command means (Change 0.3.0), with the repository's runs as read for it. */
-async function pickFor($: EngineInterface, at: Repo, issue: number | null, needActive: boolean): Promise<{ pick: Pick; runs: Run[] }> {
+async function pickFor($: EngineInterface, at: Repo, issue: number | null, needActive: boolean): Promise<{ pick: RunPick; runs: Run[] }> {
   const runs = await runsOf($, at.repo)
   return { pick: pickRun(runs, { issue, focus: await read($, focusAtom), root: at.root, needActive }), runs }
 }
@@ -1199,9 +1199,7 @@ async function handOff($: EngineInterface): Promise<Step | null> {
   if (!d) return null
   endLocalDrive()
   $.ui.status(undefined)
-  const now = await $.clock.now()
-  const run = await updateRun($, d.key, stored => (stored?.id === d.runId ? advance(stored, { type: 'release', session: sessionId }, now) : null))
-  return run?.step ?? null
+  return ((await releaseDriver($, d)) ?? drivenLast)?.step ?? null
 }
 
 async function handOffRun($: EngineInterface, issue: number | null): Promise<string> {
@@ -1252,13 +1250,33 @@ async function endDemo($: EngineInterface): Promise<void> {
   await update($, demoAtom, () => null)
 }
 
+type RunCommand = Extract<Command, { kind: 'start' | 'status' | 'resume' | 'publish' | 'stop' | 'handoff' }>
+
+/** A command about a run, by the issue it names (Change 0.3.0). */
+async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand): Promise<string> {
+  if (cmd.kind === 'start') return startRun($, at, cmd.issue)
+  const issue = cmd.issue ?? null
+  switch (cmd.kind) {
+    case 'status':
+      return statusOf($, at, issue)
+    case 'resume':
+      return resumeRun($, at, issue)
+    case 'publish':
+      return publishRun($, at, issue)
+    case 'stop':
+      return stopRun($, at, issue)
+    default:
+      return handOffRun($, issue)
+  }
+}
+
 /** A button acts on the run the pane shows (a demo only ends or ignores it), then the also line is read again. */
-async function press($: EngineInterface, button: 'stop' | 'resume' | 'publish' | 'handoff'): Promise<void> {
-  if (await read($, demoAtom)) return button === 'stop' ? endDemo($) : undefined
+async function press($: EngineInterface, kind: 'stop' | 'resume' | 'publish' | 'handoff'): Promise<void> {
+  if (await read($, demoAtom)) return kind === 'stop' ? endDemo($) : undefined
   const at = await repoOf($)
-  const issue = await read($, focusAtom)
-  const text = button === 'stop' ? await stopRun($, at, issue) : button === 'resume' ? await resumeRun($, at, issue) : button === 'publish' ? await publishRun($, at, issue) : await handOffRun($, null)
-  $.ui.toast(truncate(text, 80))
+  // Hand off acts on this session's drive, whichever run the pane shows.
+  const issue = kind === 'handoff' ? undefined : ((await read($, focusAtom)) ?? undefined)
+  $.ui.toast(truncate(await runCommand($, at, { kind, ...(issue === undefined ? {} : { issue }) }), 80))
   if (at) await refreshOthers($, at.repo)
 }
 
@@ -1405,19 +1423,7 @@ export const register: Register = (on, raw) => {
         case 'stop':
         case 'handoff': {
           const at = await repoOf($)
-          const issue = cmd.kind === 'start' ? cmd.issue : (cmd.issue ?? null)
-          const text =
-            cmd.kind === 'start'
-              ? await startRun($, at, cmd.issue)
-              : cmd.kind === 'status'
-                ? await statusOf($, at, issue)
-                : cmd.kind === 'resume'
-                  ? await resumeRun($, at, issue)
-                  : cmd.kind === 'publish'
-                    ? await publishRun($, at, issue)
-                    : cmd.kind === 'stop'
-                      ? await stopRun($, at, issue)
-                      : await handOffRun($, issue)
+          const text = await runCommand($, at, cmd)
           // Every command reads the repository's runs again for the also line (Change 0.3.0).
           if (at) await refreshOthers($, at.repo).catch(() => undefined)
           return { text }
