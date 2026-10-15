@@ -683,6 +683,7 @@ export function repoOfView(stdout: string): string | null {
   return host && typeof view.nameWithOwner === 'string' && /^[^/]+\/[^/]+$/.test(view.nameWithOwner) ? `${host.toLowerCase()}/${view.nameWithOwner}` : null
 }
 
+// The host is group 1 in an https:// or ssh:// URL, group 2 in the scp-like form; then owner (3) and repository (4).
 const REMOTE_URL = /^(?:(?:https|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
 
 /**
@@ -701,8 +702,8 @@ export function isSameRepo(a: string | null, b: string | null): boolean {
 
 /** The same owner and repository on any host: an SSH alias from ~/.ssh/config stands in for the host. */
 export function isSameOwnerRepo(a: string | null, b: string | null): boolean {
-  const rest = (repo: string | null) => repo?.slice(repo.indexOf('/') + 1)
-  return a !== null && b !== null && rest(a)?.toLowerCase() === rest(b)?.toLowerCase()
+  const ownerRepo = (repo: string) => repo.slice(repo.indexOf('/') + 1).toLowerCase()
+  return a !== null && b !== null && ownerRepo(a) === ownerRepo(b)
 }
 
 /** Whether an issue's url is a pull request's: `gh issue view` answers for both. */

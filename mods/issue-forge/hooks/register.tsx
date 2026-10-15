@@ -469,11 +469,11 @@ async function issueCheck($: EngineInterface, run: Run, repo: string | null): Pr
 }
 
 /** The GitHub repository gh resolves in `root` (`host/owner/repo`), or why it can't say. */
-async function ghRepoOf($: EngineInterface, root: string): Promise<{ repo: string } | { reason: string; next: string }> {
+async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { repo: string }> {
   const view = await $.process.run(['gh', 'repo', 'view', '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
-  if (!view || view.exitCode !== 0) return { reason: `could not tell which GitHub repository this checkout belongs to: ${firstLine(view?.stderr ?? 'gh repo view did not finish')}`, next: 'give the checkout a GitHub remote named origin' }
+  if (!view || view.exitCode !== 0) return block(`could not tell which GitHub repository this checkout belongs to: ${firstLine(view?.stderr ?? 'gh repo view did not finish')}`, 'give the checkout a GitHub remote named origin')
   const repo = repoOfView(view.stdout)
-  return repo ? { repo } : { reason: "could not read gh repo view's output", next: 'check gh' }
+  return repo ? { repo } : block("could not read gh repo view's output", 'check gh')
 }
 
 /**
@@ -487,7 +487,7 @@ async function remoteRepo($: EngineInterface, root: string, remote: string, isPu
   if (parsed === null) return { other: null }
   if (isSameOwnerRepo(parsed, repo)) return 'match'
   const view = await $.process.run(['gh', 'repo', 'view', parsed, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
-  const canonical = view && view.exitCode === 0 ? repoOfView(view.stdout) : null
+  const canonical = view?.exitCode === 0 ? repoOfView(view.stdout) : null
   return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? parsed }
 }
 
@@ -654,7 +654,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   if (unauthed) return unauthed
   // Every gh call of the run names this repository, and origin must be it (#25).
   const resolved = run.ghRepo ? { repo: run.ghRepo } : await ghRepoOf($, run.root)
-  if (!('repo' in resolved)) return block(resolved.reason, resolved.next)
+  if ('type' in resolved) return resolved
   const { repo } = resolved
   const stray = await originCheck($, run.root, repo)
   if (stray) return stray
@@ -1150,7 +1150,7 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number, name
   let ghRepo: string | undefined
   if (named) {
     const resolved = await ghRepoOf($, at.root)
-    if (!('repo' in resolved)) return resolved.reason
+    if ('type' in resolved) return resolved.reason
     if (!isSameRepo(named, resolved.repo)) return `${repoLabel(named)}#${issue} is in another repository: this checkout's GitHub repository is ${repoLabel(resolved.repo)}. Start Claude Code in a clone of ${repoLabel(named)}.`
     ghRepo = resolved.repo
   }
@@ -1210,7 +1210,7 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   await update($, demoAtom, () => null)
   void openPane($).catch(() => undefined)
   startDrive($, claimed)
-  return `starting ${ghRepo ? repoLabel(ghRepo) : ''}#${issue}; the pane shows progress. Nothing is pushed until you say yes.`
+  return `starting ${issueLabel(run)}; the pane shows progress. Nothing is pushed until you say yes.`
 }
 
 /**
