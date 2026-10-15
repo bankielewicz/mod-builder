@@ -481,25 +481,7 @@ describe('a run that does not end', () => {
     expect(seen.argv.length).toBe(2)
   })
 
-  test('a row older than the ceiling is an orphan: a new Test replaces it, a younger row still blocks', OPTIONS, async ($, on) => {
-    const hold = new Promise<void>(() => undefined)
-    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
-    await start($)
-    await clock.advance(10)
-    await reportTest($)
-    await clock.advance(10)
-    expect(seen.argv.length).toBe(1)
-    await clock.advance(MINUTE)
-    await reportTest($)
-    await clock.advance(10)
-    expect(seen.argv.length).toBe(1)
-    await clock.advance(2 * MINUTE + 5000)
-    await reportTest($)
-    await clock.advance(10)
-    expect(seen.argv.length).toBe(2)
-  })
-
-  test('testTimeoutMinutes sets how old a row must be to count as an orphan', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
+  test('a row older than testTimeoutMinutes plus 30 s is an orphan: a new Test replaces it, a younger row still blocks', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
     const hold = new Promise<void>(() => undefined)
     const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
     await start($)
@@ -511,7 +493,12 @@ describe('a run that does not end', () => {
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(1)
-    await clock.advance(MINUTE)
+    // Past the time limit but inside the grace: the run may still be ending (its scan, its store write).
+    await clock.advance(MINUTE / 2 + 5000)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(MINUTE / 2)
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(2)
