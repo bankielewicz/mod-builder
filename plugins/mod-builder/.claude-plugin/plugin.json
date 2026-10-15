@@ -1,6 +1,6 @@
 {
   "name": "mod-builder",
-  "version": "0.2.17",
+  "version": "0.2.19",
   "description": "Build Claude Code mods spec-first (interview \u2192 SPEC \u2192 approve \u2192 build \u2192 verify), and watch them come together in Mod Lab: a pane, band, status line and toasts tracking every mod's pipeline.",
   "author": {
     "name": "Bryan Ankielewicz"
@@ -16,8 +16,8 @@
     },
     "autoOpen": {
       "type": "boolean",
-      "title": "Open Mod Lab when a build starts",
-      "description": "Open the Mod Lab pane when a mod's files start changing, if the window is wide enough.",
+      "title": "Open Mod Lab when Claude reports a build stage",
+      "description": "Open the Mod Lab pane when a skill reports a running stage. Claude Code shows it then only in a window at least 144 columns wide (110 once you have opened Mod Lab yourself). Typing /mod-builder:build or /mod-builder:edit opens Mod Lab whatever this is set to.",
       "default": false
     },
     "autoRerun": {
