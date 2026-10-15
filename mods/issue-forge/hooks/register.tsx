@@ -49,6 +49,7 @@ import {
   keptWorktreePlan,
   layoutOf,
   lcovFileOf,
+  legacyAgentsKey,
   lineOf,
   mergeLine,
   migrationPlan,
@@ -1311,7 +1312,7 @@ async function migrate($: EngineInterface, at: Repo): Promise<void> {
 
 /** The 0.2 list of a checkout's agents joins the moved run's list, so they stay refused. */
 async function mergeLegacyAgents($: EngineInterface, root: string, repo: string, issue: number): Promise<void> {
-  const from = `issue-forge:agents:${root}`
+  const from = legacyAgentsKey(root)
   const old = (await $.store.get(from)) as string[] | undefined
   if (!old) return
   const to = agentsKey(repo, issue)

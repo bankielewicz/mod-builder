@@ -1487,8 +1487,10 @@ function demoShown(state: DemoState, now: number): { run: Run | null; isDriving:
 export const KEEP_FINISHED = 20
 export const TAKE_OVER = 'Take over'
 
-const RUN_PREFIX = 'issue-forge:run:'
-const AGENTS_PREFIX = 'issue-forge:agents:'
+const RUN_PREFIX = 'issue-forge:repo-run:'
+const AGENTS_PREFIX = 'issue-forge:repo-agents:'
+const LEGACY_RUN_PREFIX = 'issue-forge:run:'
+const LEGACY_AGENTS_PREFIX = 'issue-forge:agents:'
 
 /** A run's store key: git's common folder (every worktree of the repository shares it) and the issue. */
 export function runKey(repo: string, issue: number): string {
@@ -1502,20 +1504,28 @@ export function agentsKey(repo: string, issue: number): string {
 
 export type ParsedKey = { kind: 'run' | 'agents'; repo: string; issue: number } | { kind: 'legacyRun' | 'legacyAgents'; root: string }
 
-/** A 0.3.0 key ends in `#<issue>`; anything else under the prefix is the 0.2 form, keyed by the checkout. */
+/**
+ * A 0.3.0 key has a prefix of its own and ends in `#<issue>`. Everything under the 0.2 prefixes is keyed by a
+ * checkout, whatever its name ends in (a folder may be called `project#2`: Codex 4278707570).
+ */
 export function parseRunKey(key: string): ParsedKey | null {
   const forms = [
-    [RUN_PREFIX, 'run', 'legacyRun'],
-    [AGENTS_PREFIX, 'agents', 'legacyAgents'],
+    [RUN_PREFIX, 'run'],
+    [AGENTS_PREFIX, 'agents'],
   ] as const
-  for (const [prefix, kind, legacy] of forms) {
-    if (!key.startsWith(prefix)) continue
-    const rest = key.slice(prefix.length)
-    const m = rest.match(/^(.*)#(\d+)$/)
+  for (const [prefix, kind] of forms) {
+    const m = key.startsWith(prefix) ? key.slice(prefix.length).match(/^(.*)#(\d+)$/) : null
     // Both groups always take part in a match.
-    return m ? { kind, repo: m[1] as string, issue: Number(m[2]) } : { kind: legacy, root: rest }
+    if (m) return { kind, repo: m[1] as string, issue: Number(m[2]) }
   }
+  if (key.startsWith(LEGACY_RUN_PREFIX)) return { kind: 'legacyRun', root: key.slice(LEGACY_RUN_PREFIX.length) }
+  if (key.startsWith(LEGACY_AGENTS_PREFIX)) return { kind: 'legacyAgents', root: key.slice(LEGACY_AGENTS_PREFIX.length) }
   return null
+}
+
+/** The 0.2 key of a checkout's agents list, which migration merges into the moved run's. */
+export function legacyAgentsKey(root: string): string {
+  return `${LEGACY_AGENTS_PREFIX}${root}`
 }
 
 /** `git rev-parse --git-common-dir` run in the top level: relative there in the main checkout, absolute in a linked one. */
