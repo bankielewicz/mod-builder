@@ -603,6 +603,16 @@ export function consentText(cwd: string, sandbox: Sandbox): string {
   return `Send this task to Codex (OpenAI)? Codex can read any file your user account can read, not only ${cwd}, and sends what it reads to OpenAI under your Codex sign-in. ${writes} Allow for the rest of this session?`
 }
 
+/**
+ * Why consent wasn't given when `$.ui.ask` rejected. On Esc (or a hook denying the question) it rejects with
+ * `$.ui.ask: no answer (…)`, and the next call asks again; under `claude -p` there is nobody to ask at all.
+ */
+export function consentRefusal(err: unknown): string {
+  const message = String((err as { message?: unknown } | undefined)?.message ?? err)
+  if (message.includes('$.ui.ask: no answer')) return 'the consent question was dismissed; it is asked again next time'
+  return 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
+}
+
 /** Rules the handoff asks Codex to follow. A request to the model: only the sandbox enforces anything. */
 export const PROHIBITED = [
   'no git commits, pushes, merges, rebases, resets or branch changes',

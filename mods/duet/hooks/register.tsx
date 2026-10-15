@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  codexRunning, consentRefusal, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -409,8 +409,8 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   let answer = ''
   try {
     answer = await $.ui.ask(consentText(cwd, options.sandbox), [YES, NO])
-  } catch {
-    return 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
+  } catch (err) {
+    return consentRefusal(err)
   }
   const ok = answer === YES
   await update($, consent, () => (ok ? 'yes' : 'no'))
@@ -581,25 +581,29 @@ async function measureClaude($: EngineInterface, e: AgentCall, result: unknown, 
 
 // ── Review ───────────────────────────────────────────────────────────────
 
-async function review($: EngineInterface, target: ReviewTarget): Promise<void> {
-  const id = ''
+type ReviewStart = { started: boolean; reason: string }
+
+/** The gate: consent, then admission. Refused, it leaves a refused row and a toast and says why; admitted, it detaches the run and says started. */
+async function startReview($: EngineInterface, target: ReviewTarget): Promise<ReviewStart> {
   const label = target.kind === 'uncommitted' ? '--uncommitted' : `--${target.kind} ${target.ref}`
-  const task: Task = { id, provider: 'codex', kind: 'review', subagentType: label, model: options.model, status: 'running', startedAt: Date.now(), endedAt: null, tokens: 0, description: `review ${label}`, detail: '', envelope: null }
+  const startedAt = Date.now()
+  const rowOf = (id: string): Task => ({ id, provider: 'codex', kind: 'review', subagentType: label, model: options.model, status: 'running', startedAt, endedAt: null, tokens: 0, description: `review ${label}`, detail: '', envelope: null })
   const cwd = await $.session.cwd()
-  const blocked = await ensureConsent($, cwd)
-  if (blocked) {
-    const row = await addRefused($, newId => ({ ...task, id: newId, status: 'refused', endedAt: Date.now(), detail: blocked }))
-    $.ui.toast(`${row.id} review refused: ${blocked}`.slice(0, 80))
-    return
-  }
-  const admitted = await admit($, newId => ({ ...task, id: newId }))
-  if (!admitted) {
-    const why = limitText(codexRunning(await read($, tasks)), options.maxConcurrent)
-    const row = await addRefused($, newId => ({ ...task, id: newId, status: 'refused', endedAt: Date.now(), detail: why }))
+  const refuse = async (why: string): Promise<ReviewStart> => {
+    const row = await addRefused($, id => ({ ...rowOf(id), status: 'refused', endedAt: Date.now(), detail: why }))
     $.ui.toast(`${row.id} review refused: ${why}`.slice(0, 80))
-    return
+    return { started: false, reason: why }
   }
-  Object.assign(task, { id: admitted.id })
+  const blocked = await ensureConsent($, cwd)
+  if (blocked) return refuse(blocked)
+  const admitted = await admit($, rowOf)
+  if (!admitted) return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
+  void finishReview($, admitted, target, cwd).catch(() => undefined)
+  return { started: true, reason: '' }
+}
+
+/** Runs Codex for an admitted review and records the outcome: row, log line, saved text, toast. */
+async function finishReview($: EngineInterface, task: Task, target: ReviewTarget, cwd: string): Promise<void> {
   let done: Task
   let text = ''
   try {
@@ -846,7 +850,8 @@ export const register: Register = (on, raw) => {
       if (sub === 'review') {
         const target = parseReviewArgs(rest.join(' '))
         if (!target) return { text: 'Usage: /duet review [--base <branch> | --commit <sha>]  (default: uncommitted changes)' }
-        void review($, target).catch(() => undefined)
+        const { started, reason } = await startReview($, target)
+        if (!started) return { text: `Codex review not started: ${reason}` }
         return { text: 'Codex review started (read-only). Its verdict lands in the pane and a toast; /duet show <id> prints it in full.' }
       }
       if (sub === 'show') {
@@ -941,7 +946,7 @@ export const register: Register = (on, raw) => {
         <Text dimColor>{'─'.repeat(width)}</Text>
         {layout !== 'compact' && routesLines(options).map((line, i) => <Text key={`routes-${i}`} dimColor>{line.slice(0, width)}</Text>)}
         <Box gap={2}>
-          <Button key="review" label="Review diff" hotkey="r" variant="primary" onPress={() => void review($, { kind: 'uncommitted' }).catch(() => undefined)} />
+          <Button key="review" label="Review diff" hotkey="r" variant="primary" onPress={() => void startReview($, { kind: 'uncommitted' }).catch(() => undefined)} />
           <Button key="stats" label={mode === 'stats' ? 'Tasks' : 'Stats'} hotkey="s" plain onPress={() => void toggleStats($).catch(() => undefined)} />
           <Button key="next" label="Next" hotkey="j" plain onPress={() => void move($, 1).catch(() => undefined)} />
           <Button key="prev" label="Prev" hotkey="k" plain onPress={() => void move($, -1).catch(() => undefined)} />
