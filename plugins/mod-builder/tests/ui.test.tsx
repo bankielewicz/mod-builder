@@ -90,10 +90,10 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
-  const files = Object.keys(disk)
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
-    for (const path of files) {
+    // The disk as it is now: a test may add files after the world is made.
+    for (const path of Object.keys(disk)) {
       if (!path.startsWith(`${dir}/`)) continue
       const [head, ...tail] = path.slice(dir.length + 1).split('/')
       names.set(head!, tail.length ? 'dir' : 'file')
@@ -851,6 +851,45 @@ describe('edit', () => {
     await clock.advance(10)
     const stale = await mountPane($)
     expect(await stale.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+})
+
+describe('edit: Spec running arrives while another hook\'s scan is listing (#10)', () => {
+  const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
+  // Validate and Test passed in an earlier session: the files' mtime is 1000, the results are stamped 5000.
+  const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate'), Test: ok('Test') } } }
+  const reportSpec = ($: Engine, status: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+
+  test('the edit is tracked: a state read after the scan the report waits for sees what that scan wrote', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    // git-branch, checked in an earlier session, appears on disk after the startup scan ended.
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan (its own hook), and the scan waits at the mods folder.
+    let release = () => {}
+    seen.holdList = { path: MODS, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: git-branch is in no list yet, so the report waits for that scan.
+    const reporting = reportSpec($, 'running')
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed')
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
   })
 })
 
