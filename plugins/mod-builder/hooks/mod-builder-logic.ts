@@ -956,6 +956,8 @@ export function factsOf(read: FolderRead): FileFacts | null {
   // Named by folder, so a file moved between folders without a new mtime still changes the signature.
   const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
     entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  // The one file at the top that validate reads; the SPEC and README are read by neither validate nor test.
+  const mcp = read.top.filter(entry => entry.kind === 'file' && entry.name === '.mcp.json')
   const code = [
     ...inFolder('.claude-plugin', manifest),
     ...inFolder('hooks', read.hooks),
@@ -964,7 +966,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     ...inFolder('agents', read.agents ?? []),
     ...inFolder('commands', read.commands ?? []),
     ...inFolder('skills', read.skills ?? []),
-    ...read.top.filter(entry => entry.kind === 'file' && entry.name === '.mcp.json'),
+    ...mcp,
     ...(read.nested ?? []).filter(entry => entry.kind === 'file'),
   ]
   const all = [...read.top.filter(entry => entry.kind === 'file'), ...code]
