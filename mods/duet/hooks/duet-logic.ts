@@ -1182,6 +1182,12 @@ export function appendLog(existing: string, line: RunLine, keep = 2000): string 
   return lines.slice(-keep).join('\n') + '\n'
 }
 
+/** Several run logs (the legacy one, each session's) as one: their non-blank lines, so a log with no final newline can't swallow the next one's first. */
+export function mergeLogs(texts: string[]): string {
+  const lines = texts.flatMap(t => t.split('\n').filter(l => l.trim()))
+  return lines.length ? lines.join('\n') + '\n' : ''
+}
+
 function median(xs: number[]): number {
   if (!xs.length) return 0
   const s = [...xs].sort((a, b) => a - b)

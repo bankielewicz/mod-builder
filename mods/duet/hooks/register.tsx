@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
+  mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -147,7 +147,7 @@ async function sessionDir($: EngineInterface): Promise<string> {
   return `${await dataDir($)}/sessions/${sessionFolderOf(id)}`
 }
 
-// Appends to runs.jsonl one at a time within this session (it is read, appended and rewritten).
+// Appends to this session's runs.jsonl one at a time (it is read, appended and rewritten); no other session writes it.
 let logChain: Promise<void> = Promise.resolve()
 
 async function readText($: EngineInterface, path: string): Promise<string> {
@@ -159,7 +159,7 @@ async function readText($: EngineInterface, path: string): Promise<string> {
 }
 
 async function appendRun($: EngineInterface, task: Task): Promise<void> {
-  const path = `${await dataDir($)}/runs.jsonl`
+  const path = `${await sessionDir($)}/runs.jsonl`
   await $.fs.write(path, appendLog(await readText($, path), runLineOf(task)))
 }
 
@@ -626,8 +626,15 @@ async function finishReview($: EngineInterface, task: Task, target: ReviewTarget
 
 // ── Commands ─────────────────────────────────────────────────────────────
 
+/** Every run log there is: the legacy shared one, then each session folder's own (a folder with no log reads as empty). */
+async function readRunLogs($: EngineInterface): Promise<string[]> {
+  const data = await dataDir($)
+  const sessions = await $.fs.list(`${data}/sessions`).catch(() => [])
+  return Promise.all([`${data}/runs.jsonl`, ...sessions.map(e => `${data}/sessions/${e.name}/runs.jsonl`)].map(path => readText($, path)))
+}
+
 async function showStats($: EngineInterface): Promise<string> {
-  const text = statsText(summarize(await readText($, `${await dataDir($)}/runs.jsonl`)))
+  const text = statsText(summarize(mergeLogs(await readRunLogs($))))
   await update($, statsAtom, () => text)
   return text
 }
