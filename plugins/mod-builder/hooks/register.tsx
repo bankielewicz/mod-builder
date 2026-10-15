@@ -890,6 +890,8 @@ export const register: Register = (on, options) => {
     await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
+    // A running report kept from before a reload has no clock in this module: start one, so it can expire (#19).
+    if (await hasRunningReport($, await $.clock.now()).catch(() => false)) startClock($)
     return next(e)
   })
 
