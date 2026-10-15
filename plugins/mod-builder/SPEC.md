@@ -682,4 +682,19 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **The #10 held-scan tests also run with `path`.** The pin's `$.state.set` comes before the #10/#79 scan in the `lab_report` hook, and the d.ts and `gotchas.md` only say a `get` fixes a dispatch's moment. The two "Spec running arrives while another hook's scan is listing" tests have copies whose reports carry `path`, and both pass, so the edit is still tracked.
   - **Build's step 0.2** says: when the work is in a git worktree the session isn't in, `<mods>` is that worktree's `mods/`. Otherwise the skill would pass the main folder's `path` in exactly #92's case.
   - The test for a pin restored after a reload was also written after green, and checked by mutation (the restore disabled: it fails).
+- **Review (PR #95, round 1: the owner's `/code-review` at xhigh, which re-checked Codex's three P2s):** 14 findings, each checked against the code.
+  - **Owner decisions:**
+    - **`path` is confined:** a report pins only a folder that is a marketplace's `mods/` (its parent holds `.claude-plugin/marketplace.json`) under the session's project root. `lab_report` needs no Bash permission, and a Validate or Test report runs `claude plugin test` on that folder, so an unconfined `path` let a steered model run tests anywhere. A pin therefore needs a readable root. A worktree outside the project needs the person's `/cd`.
+    - **A set `modsDir` wins over a build's pin:** while it's set, `path` is ignored and the report is handled there, as in 0.2.16. With `modsDir` empty and a pin kept, `/mod-builder config` shows `a build's folder (<folder>)` in place of `default (…)`.
+    - **A malformed or refused `path` no longer refuses the report:** the report is recorded as if `path` were absent, and the reply says `path` was ignored and why.
+  - **Fixes:**
+    - **Overlapping reports (Codex P2):** each report is handled in the folder its own `path` named, not whatever `pin` holds by the time its awaited write returns.
+    - **No marketplace above the root:** the walk then tries the working directory, then the plugin's own `mods/`. A session started in a parent folder (`~`) works again.
+    - **The pinned folder is gone:** the pin drops when its marketplace file is gone (a worktree removed after its PR merged).
+    - **Same-named mods in two folders:** a row takes a report only when it was made in that row's folder. A report with no folder, from before 0.2.16, still counts.
+    - **Windows roots (Codex P2):** two roots on a drive or UNC share are compared without case.
+    - **Fewer calls:** an unchanged pin isn't written again, and a set `modsDir` reads no root.
+    - **Docs (Codex P2, wider):** `plugin.json`'s `modsDir` description, CLAUDE.md, `docs/use-in-your-project.md`, `docs/troubleshooting.md`, the design prompt, the `pluginModsDirOf` comment and `gotchas.md` say the folder comes from the project root, a build's reported folder, or a set `modsDir`. "What gets touched" above also leaves out the `$.state.set` write and the `plugin.json` description; this round touches both.
+    - **Refactor:** one walk shared by `currentModsDir` and `defaultModsDir`. The `modsDirFor` comment no longer says a set `modsDir` "always wins".
+  - **Not changed, process:** the reload test (`f273e27`) and the draw guard's test (`4ab53d4`) were written after their code. Each was checked by mutation, but neither had the red run the repo's TDD rule asks for. Every fix in this round starts red.
 - **Version:** 0.2.20 in `plugin.json` and the marketplace entry. This change was drafted as 0.2.18. PR #93 (#90) merged first with 0.2.18, and PR #85 (#20) with 0.2.19. Merged from `main` after each: after #93, only the README rows, `docs/mod-lab.md` and this SPEC conflicted; after #85, only the version and this SPEC.
