@@ -1863,6 +1863,31 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))).toBe(false)
   })
 
+  // With extensions.worktreeConfig, a linked worktree's config.worktree can give origin another pushurl than the
+  // checkout's (probed, git 2.53): origin is checked in the folder git fetches and pushes from.
+  test('publish of a worktree run checks origin in the worktree that pushes (PR #68 review 2)', async ($, on) => {
+    const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+    const w = engine(on, { head: BRANCH, worktrees: [WT], wtHead: BRANCH }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0', workRoot: WT }) })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    expect(w.calls.filter(c => c.argv.join(' ') === 'git remote get-url --push --all origin').map(c => c.cwd)).toEqual([WT])
+  })
+
+  test('resume of a worktree run at preflight checks origin in its kept worktree too, before it fetches there (PR #68 review 2)', async ($, on) => {
+    const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] })
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, worktrees: [WT], wtHead: BRANCH }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const pushUrlCwds = w.calls.filter(c => c.argv.join(' ') === 'git remote get-url --push --all origin').map(c => c.cwd)
+    expect(pushUrlCwds).toEqual([ROOT, WT])
+    const checked = w.calls.findIndex(c => c.cwd === WT && c.argv.join(' ') === 'git remote get-url --push --all origin')
+    const fetched = w.calls.findIndex(c => c.cwd === WT && c.argv[1] === 'fetch')
+    expect(checked >= 0 && checked < fetched).toBe(true)
+  })
+
   test('publish blocks when origin now pushes elsewhere, though it still fetches from the run\'s repository', async ($, on) => {
     const w = engine(on, { head: BRANCH, pushUrl: 'https://github.com/me/r.git' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { ghRepo: 'github.com/o/r', greenCommit: 'c2', gatedHead: 'c0' }) })
     await start($)
