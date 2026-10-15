@@ -25,6 +25,7 @@ the pane lights up live.
 
 - **Status and time** follow a run as it streams (`running tests · 7 of 12`).
 - **The selection follows the active build.** <kbd>J</kbd>/<kbd>P</kbd> still move it.
+- **A mod appears as soon as a build reports it,** before its folder exists. Until the folder is written its row shows the reported stage running and `folder not written yet`, with no Validate, Test, Type-check or README buttons, and counts as building; the next scan that finds the folder replaces it.
 
 ## The eight stages
 

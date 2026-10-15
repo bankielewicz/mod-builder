@@ -27,7 +27,7 @@ as they pass. Section numbers like §3 refer to that document.
 | --- | --- | --- | --- |
 | name (kebab-case, = plugin name = pane id) | REQUIRED | `issue-forge` | §7.1 |
 | archetype | REQUIRED | `pane-command` (primary) + by hand: `turn.complete`, `agent.offer` ×3, `tool.call` (stale-agent guard) | §7.1; guard **decided here** |
-| triggers (events it hooks) | REQUIRED | `session.start`, `command.run {command:'issue-forge'}`, `turn.complete`, `agent.offer {agent:'issue-forge:red'}` / `:green` / `:refactor`, `tool.call` (all tools; denies calls from this mod's retired agents), `prompt.submit` (drops only its own agents' hand-backs; added after C0), `ui.render {component:'Pane', requestId:'issue-forge'}` | §7.1 + C0 |
+| triggers (events it hooks) | REQUIRED | `session.start`, `command.run {command:'issue-forge'}`, `turn.complete`, `agent.offer {agent:'issue-forge:red'}` / `:green` / `:refactor`, `tool.call` (all tools; denies calls from this mod's retired agents), `prompt.submit` (drops only its own agents' hand-backs; added after C0), `session.receive` (consumes only its own named agents' hand-backs; Change 0.4.1), `ui.render {component:'Pane', requestId:'issue-forge'}` | §7.1 + C0 |
 | commands | REQUIRED | `/issue-forge` (toggle pane), `/issue-forge <N or issue URL>`, `status`, `resume`, `publish`, `stop`, `demo` | §7.1 + house toggle |
 | states drawn | REQUIRED | empty · phase running · gate running · gate failed · blocked · interrupted · ready · done · folded · too-narrow (focus: hotkeys only) | §7.1 + ui-states.md |
 | done means | REQUIRED | checkpoint C8 (below) | §9 |
@@ -192,8 +192,10 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N or issue URL>` or
    - When a phase agent finishes, its report is handed back to the main loop as a `peer` prompt
      `<agent-message from="<name or agentId>">`, which would start a main-model turn after every
      phase. A `prompt.submit` hook drops exactly those (the run's own names and ids) with
-     `issue-forge: <phase> finished; the pane has the result.`. Every other prompt passes untouched.
-     It carries `.catch` (passes the prompt through).
+     `issue-forge: a phase agent finished; the pane has the result.`. Every other prompt passes untouched.
+     It carries `.catch` (passes the prompt through). This holds for an unnamed agent, and for a named one
+     with agent teams off. With them on, a named agent is a teammate and its report is not a prompt:
+     see Change 0.4.1.
    - A spawn that resolves with no local loop (another plugin answered in-line, `model` starting
      `codex`) ends the phase when it resolves, with no answer text.
    - The mod needs an interactive session. Plain `claude -p "/issue-forge 16"` exits as the command
@@ -1218,3 +1220,72 @@ preflight (`#68 is a pull request, not an issue`) with the masthead and `/issue-
 origin and its masthead still read `#69`. Both runs were stopped; the clone kept only `main`, no worktree, and a
 clean tree. Fix 1 needs a run driven to `ready` in a worktree with its own config, so it is shown by the UI tests
 (the `cwd` of `git remote get-url --push --all origin`), not live.
+
+## Change 0.4.1 (2026-10-15)
+
+> issue-forge: consume the hand-back of a run's named agent in `session.receive` (#27)
+
+**Why.** The `prompt.submit` drop of Change C0 never saw the red agent's report in run #2 (Claude Code
+2.1.296, agent teams on). A named `$.agent.spawn` is then a teammate, and when it finishes its report is an
+agent-team mailbox delivery: a `session.receive` with origin `{ kind: 'peer', teammate: '<name>',
+isVerified: true }`, no `agentId`, and text `{"type":"idle_notification",…,"result":"<answer>"}`. No
+`prompt.submit` fires for it, so the driving session's model got a turn per phase. The probe (P4, above, and
+`gotchas.md`) answered the issue's two candidate causes: neither the text shape nor the origin kind of a
+`prompt.submit` was at fault, since there is none; and answering that `session.receive` with `{ consumed }`
+kept the main model idle with no re-delivery in 78 s, so fix (a) of the issue applies.
+
+**What changes.**
+1. **`on('session.receive')`** answers `{ consumed: 'issue-forge: a phase agent finished; the pane has the
+   result.' }` when the origin carries a `teammate` that is in `knownRefs` (every name and id of every run of
+   the repository, stopped runs and earlier runs included). Anything else passes with `next(e)`: another
+   teammate, the lead, a `peer` or `bridge` delivery without a `teammate`, a delivery with no origin, and
+   text that merely names a run's agent. `isVerified` is ignored: consuming can only hide a delivery from
+   the model, never add text to it. It carries `.catch` (passes the delivery through); `claude plugin validate`
+   lists it as a gating hook.
+2. **`prompt.submit` is unchanged** and still drops the `<agent-message from="…">` of an unnamed agent, or of
+   a named one with agent teams off. The reason string is one constant for both hooks.
+3. **No change to the logic module.** `isOwnHandback` keeps its one shape; the mailbox delivery is keyed on
+   the origin's `teammate` field, not on text, so widening the regex (the issue's fix (b)) was not needed.
+4. **Docs.** The README's "What it reaches" hooks and gating rows, and its agent-teams limit, say the
+   hand-back is consumed; the trigger row above lists the hook.
+
+**Tests** (red, `tests/ui.test.tsx`; `engine()` gains the pass-through `session.receive` stub):
+- the run's own agents' mailbox deliveries are consumed, verified or not;
+- another teammate, an unknown `issue-forge-99-…` name, the lead (`coordinator`), and a `bridge`, `peer`
+  or origin-less delivery whose text names the run's agent all pass through unchanged.
+
+**Not covered here.** The re-delivery check was run once (78 s) in P4; green and refactor were not captured
+separately (the issue's `[field]` note), so they rest on the same origin and name.
+
+### PR #86 review round 1 (2026-10-15)
+
+Codex's P2 and the owner's `/code-review` (9 findings, each checked against the code and the 2.1.300 d.ts).
+The owner asked for an advisor consult on the hook's scope, and it recommended the narrow hook, which this
+round takes. It supersedes items 1 and 3 above.
+
+- **Only the idle notice is consumed** (Codex P2, review 1). `{ consumed }` keeps a delivery out of the
+  queue and the transcript, and leaves only a log line (d.ts). So the hook takes only the delivery the
+  pane already has a copy of: the idle notice, whose `result` is the final answer `turn.complete` gave
+  the mod. `isOwnMailboxHandback` (logic module, review 4) requires all of these:
+  - no `agentId`, so the delivery is for the main conversation (review 3);
+  - origin `peer`;
+  - a `teammate` that the run knows;
+  - text that parses as `{"type":"idle_notification",…}`.
+
+  A message the agent writes, a protocol reply, and anything that isn't the notice pass on to the model.
+  `isVerified` is still not required, since hiding a spoofed notice only hides it.
+- **Names** (reviews 2 and 6). The name the mod asks for joins `knownRefs` before `$.agent.spawn`, so a
+  notice that arrives before the spawn returns is still consumed. `spawnRefs` also records the name in
+  the spawn's `teammateId` (`<name>@<team>`): a team that already has the name gives a suffixed one
+  (`scout-2`, d.ts, not probed).
+- **Prompt rule.** Every phase prompt, both the registered agent's and the spawn task (so a custom red
+  type gets it), now says to report only in the final answer. In this PR's own run, refactor-1 sent its
+  report as a message as well as the idle notice. **Accepted leak:** an agent that still messages its
+  report wakes the main session once. The live check shows whether the rule stops it.
+- **Comment** (review 7): a `consumed` reason is logged, not shown; only `prompt.submit`'s drop is shown.
+- **Tests** (review 8): the duplicated mailbox tests are folded, and the new pass-through cases join them.
+- **Version** (review 9): open PR #87 takes issue-forge to 0.5.0. Whichever merges second re-bumps
+  plugin.json, marketplace.json and this heading to the next free number (the owner's merge-time rule).
+- **Not done:** withholding SendMessage through `disallowedTools`. The teammate had it although the
+  agent's `tools` list leaves it out, and whether `disallowedTools` removes it isn't probed.
+- **Live check** (review 5): still the merge gate.
