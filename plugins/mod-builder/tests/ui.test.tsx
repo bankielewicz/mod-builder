@@ -55,6 +55,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     sessionId: 's1-session',
     cwd: '/m' as string | null,
     failReads: [] as string[],
+    /** Every path `$.fs.exists` was asked about. */
+    probed: [] as string[],
     denySet: '',
     /** A store key whose writes are refused. */
     denyStoreSet: '',
@@ -103,7 +105,11 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     if (seen.failReads.includes(path)) return { deny: 'EIO: read failed' }
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
   })
-  on('fs.exists', ($, e) => ({ value: (e as { path: string }).path in disk }) as never)
+  on('fs.exists', ($, e) => {
+    const path = (e as { path: string }).path
+    seen.probed.push(path)
+    return { value: path in disk } as never
+  })
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
@@ -1133,6 +1139,19 @@ describe('logging (Change 0.2.2)', () => {
     // The change line reaches the file before the set, which reloads the plugin.
     expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"verbose"}')
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
+  })
+})
+
+describe('modsDir set', () => {
+  test('a set modsDir is never walked: no marketplace is looked for at start, at a scan or in /mod-builder config (PR #57 review round 2)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), ['/m/.claude-plugin/marketplace.json']: '{ "plugins": [] }' })
+    seen.cwd = '/m/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })
+    await $.turn.complete({ answer: 'done' } as never)
+    await clock.advance(1000)
+    expect(seen.probed.filter(path => path.endsWith('/.claude-plugin/marketplace.json'))).toEqual([])
   })
 })
 
