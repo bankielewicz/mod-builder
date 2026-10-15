@@ -1556,3 +1556,7 @@ export function foreignChange(stored: Run | null, runId: string, me: string): 's
 export function checkoutWorkspaceOf(text: string | null): Workspace {
   return text ? 'worktree' : 'worktree'
 }
+
+export function releasesOnEnd(reason: string): boolean {
+  return reason === ''
+}

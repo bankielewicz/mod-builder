@@ -75,6 +75,7 @@ import {
   pickRun,
   prBody,
   pruneKeys,
+  releasesOnEnd,
   profileProblems,
   profileStatusText,
   publishQuestion,
@@ -1400,6 +1401,11 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(checkoutWorkspaceOf('{"workspace":"nope"}')).toBe('ask')
     expect(checkoutWorkspaceOf('{')).toBe('ask')
     expect(checkoutWorkspaceOf(null)).toBe('ask')
+  })
+
+  test('releasesOnEnd: a session that ends lets go of its run; /clear and /resume keep the process, and the drive, going', () => {
+    for (const reason of ['prompt_input_exit', 'logout', 'other']) expect(releasesOnEnd(reason)).toBe(true)
+    for (const reason of ['clear', 'resume']) expect(releasesOnEnd(reason)).toBe(false)
   })
 
   test('the demo shows a run driven elsewhere, and the also line while running', () => {
