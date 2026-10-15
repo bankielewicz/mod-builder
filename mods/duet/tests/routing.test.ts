@@ -15,11 +15,11 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
-type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; clock: any }
+type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void> } = {}): Seen {
-  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, clock: null }
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void } = {}): Seen {
+  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
   on('prompt.submit', ($: any, e: any) => (seen.submitted.push(e.text), { text: e.text }))
@@ -97,9 +97,13 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     seen.argv.push(argv)
     seen.stdin.push(e.init?.stdin ?? '')
     seen.env.push(e.init?.env ?? {})
+    seen.timeouts.push(e.init?.timeoutMs)
+    o.onCodex?.()
     if (o.codex === 'missing') return { deny: 'spawn codex ENOENT' }
     if (o.codex === 'fail') return { value: { exitCode: 1, stdout: '', stderr: 'Error: not logged in', isStdoutTruncated: false, isStderrTruncated: false } }
-    return { value: { exitCode: 0, stdout: OK_JSONL, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    const ok = { value: { exitCode: 0, stdout: OK_JSONL, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    // `codexHold`: the Codex run stays in flight until that promise settles; `onCodex` fires as it starts.
+    return o.codexHold ? o.codexHold.then(() => ok) : ok
   })
   // `askDeny`: the dialog was dismissed (Esc) or a hook denied it, so `$.ui.ask` rejects with `$.ui.ask: no answer (…)`.
   // `noAsk`: there is no AskUserQuestion tool to ask with, as under `claude -p`, so `$.ui.ask` rejects some other way.
@@ -1158,5 +1162,51 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     const outFile = seen.files[launched.result.outputFile]
     expect(outFile).toMatch(/failed on Codex: codex not found on PATH/)
     expect(outFile).toMatch(/the search for the bgreader agent definition was cut short at 8 folders deep/)
+  })
+})
+
+describe('issue 6: a running fallback run says the engine stops it at 10 minutes', () => {
+  const NOTE = /fallback: stops at 10m \(timeoutMinutes 20\)/
+  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const pane = ($: any) => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+
+  /** A Codex run held in flight: `started` settles once its process.run is called, `release` lets it finish. */
+  function held() {
+    let release!: () => void
+    let begun!: () => void
+    const gate = new Promise<void>(r => (release = r))
+    const started = new Promise<void>(r => (begun = r))
+    return { gate, started, release, begun }
+  }
+
+  test('a waited agent run on timeoutMinutes 20 caps the one-shot run at 600000 ms and shows the note on its running row', { options: { codexAgents: 'general-purpose', codexConsent: 'allow', codexRunMode: 'wait', timeoutMinutes: 20 } }, async ($: any, on: any) => {
+    const h = held()
+    const seen = engine(on, { codexHold: h.gate, onCodex: h.begun })
+    await start($)
+    const running = $.tool.call(call() as never)
+    await h.started
+    const ui = await pane($)
+    const note = await ui.find({ type: 'Text', text: NOTE })
+    await ui.unmount()
+    h.release()
+    await running
+    expect(seen.timeouts[0]).toBe(600_000)
+    expect(note).toBeDefined()
+  })
+
+  test('a review on timeoutMinutes 20 shows the note on its running row', { options: { codexConsent: 'allow', timeoutMinutes: 20 } }, async ($: any, on: any) => {
+    const h = held()
+    const seen = engine(on, { codexHold: h.gate, onCodex: h.begun })
+    await start($)
+    await review($)
+    await seen.clock.advance(1000)
+    await h.started
+    const ui = await pane($)
+    const note = await ui.find({ type: 'Text', text: NOTE })
+    await ui.unmount()
+    h.release()
+    await seen.clock.advance(1000)
+    expect(seen.timeouts[0]).toBe(600_000)
+    expect(note).toBeDefined()
   })
 })
