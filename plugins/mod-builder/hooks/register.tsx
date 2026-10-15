@@ -234,14 +234,20 @@ async function nestedFiles($: Engine, at: string, folder: string, entries: reado
   return found.flat()
 }
 
-const resultsOf = async ($: Engine): Promise<StoredResults> =>
-  ((await $.store.get(RESULTS_KEY)) ?? {}) as StoredResults
+/**
+ * The store key of one mods folder's records. One install serves every folder the working
+ * directory leads to, and $.store is shared between sessions, so a mod's name alone is not enough.
+ */
+const keyOf = (base: string, modsDir: string): string => `${base}:${modsDir}`
+
+const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
+  ((await $.store.get(keyOf(RESULTS_KEY, modsDir))) ?? {}) as StoredResults
 
 /** When each mod's current edit started (a build generation), for mods being edited. */
 type Generation = { since: number; fromVersion: string | null }
-const generationsOf = async ($: Engine): Promise<Record<string, Generation>> =>
+const generationsOf = async ($: Engine, modsDir: string): Promise<Record<string, Generation>> =>
   Object.fromEntries(
-    Object.entries(((await $.store.get(GENERATIONS_KEY)) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
+    Object.entries(((await $.store.get(keyOf(GENERATIONS_KEY, modsDir))) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
       mod,
       typeof gen === 'number' ? { since: gen, fromVersion: null } : gen,
     ]),
@@ -281,8 +287,8 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const dir = await resolveModsDir($)
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
   const marketplace = (await readText($, `${dir}/../.claude-plugin/marketplace.json`)) ?? ''
-  const results = await resultsOf($)
-  const generations = await generationsOf($)
+  const results = await resultsOf($, dir)
+  const generations = await generationsOf($, dir)
   const cwd = await cwdOf($)
   const inFlight = await read($, runs)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
@@ -332,7 +338,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
       ),
     )
-  const newlyGreen = await announceGreen($, judge([]), isAnnounced)
+  const newlyGreen = await announceGreen($, judge([]), isAnnounced, dir)
   const freshNames = [...new Set([...(await read($, fresh)), ...newlyGreen])]
   if (newlyGreen.length) await update($, fresh, () => freshNames)
   const next = judge(freshNames)
@@ -341,7 +347,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   if (finished.length) {
     const remaining = { ...generations }
     for (const view of finished) delete remaining[view.name]
-    await $.store.set(GENERATIONS_KEY, remaining)
+    await $.store.set(keyOf(GENERATIONS_KEY, dir), remaining)
   }
   await update($, views, () => next)
   logEvent($, 'verbose', 'scan', `${folders.length} folders, ${next.length} mods in ${Date.now() - scanStartedAt}ms`, { modsDir: dir })
@@ -356,8 +362,9 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
  * The first time a mod turns all green at its current code: a toast and a
  * notification (when announced). Returns the mods that just turned green.
  */
-async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean): Promise<string[]> {
-  const done = ((await $.store.get(DONE_KEY)) ?? {}) as Record<string, number | string>
+async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean, modsDir: string): Promise<string[]> {
+  const doneKey = keyOf(DONE_KEY, modsDir)
+  const done = ((await $.store.get(doneKey)) ?? {}) as Record<string, number | string>
   const newly: string[] = []
   let isChanged = false
   for (const view of judged) {
@@ -371,8 +378,8 @@ async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced:
     void $.ui.notify(`${view.name} is ready to share`, { title: 'Mod Lab' }).catch((error: unknown) => logCaught($, 'announceGreen.notify', error))
   }
   if (isChanged) {
-    await $.store.set(DONE_KEY, done)
-    logEvent($, 'debug', 'store.set', DONE_KEY)
+    await $.store.set(doneKey, done)
+    logEvent($, 'debug', 'store.set', doneKey)
   }
   return newly
 }
@@ -482,7 +489,9 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
 
 async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind)) return
-  const dir = `${modsDirOf($)}/${mod}`
+  // The folder the run starts in keeps its result, even if a /cd moves the next scan elsewhere.
+  const modsDir = modsDirOf($)
+  const dir = `${modsDir}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
   const hasTypes = kind !== 'Typecheck' || (await exists($, typesPath))
   if (!hasTypes) {
@@ -490,7 +499,7 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
     return
   }
   const startedAt = await $.clock.now()
-  const last = (await resultsOf($))[mod]?.Test?.tests
+  const last = (await resultsOf($, modsDir))[mod]?.Test?.tests
   const entry: Run = { mod, kind, startedAt, passed: 0, failed: 0, total: last ? last.passed + last.failed : null }
   await update($, runs, all => [...all, entry])
   startClock($)
@@ -510,9 +519,9 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   }
   if (codeSig !== undefined) result = { ...result, codeSig }
   logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
-  const results = await resultsOf($)
-  await $.store.set(RESULTS_KEY, { ...results, [mod]: { ...results[mod], [kind]: result } })
-  logEvent($, 'debug', 'store.set', RESULTS_KEY, { mod, kind })
+  const results = await resultsOf($, modsDir)
+  await $.store.set(keyOf(RESULTS_KEY, modsDir), { ...results, [mod]: { ...results[mod], [kind]: result } })
+  logEvent($, 'debug', 'store.set', keyOf(RESULTS_KEY, modsDir), { mod, kind })
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
   $.ui.toast(Lab.toastOfRun(mod, result))
   await scan($, true)
@@ -529,7 +538,7 @@ async function rerunStale($: Engine): Promise<void> {
   for (const view of await read($, views)) {
     const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
     if (plan.includes('Validate')) await run($, view.name, 'Validate')
-    const validated = (await resultsOf($))[view.name]?.Validate
+    const validated = (await resultsOf($, modsDirOf($)))[view.name]?.Validate
     if (plan.includes('Test') && validated?.ok) await run($, view.name, 'Test')
   }
 }
@@ -590,7 +599,7 @@ async function moveSelection($: Engine, by: number): Promise<void> {
 }
 
 async function fillFix($: Engine, view: ModView): Promise<void> {
-  const failed = (await resultsOf($))[view.name]?.Test?.tests?.failed ?? 1
+  const failed = (await resultsOf($, modsDirOf($)))[view.name]?.Test?.tests?.failed ?? 1
   const path = Lab.displayPathOf(`${modsDirOf($)}/${view.name}`, await cwdOf($))
   await $.prompt.fill({ text: Lab.fixPromptOf(view.name, view.failedStage ?? 'Test', view.errors, failed, path) })
 }
@@ -759,8 +768,9 @@ export const register: Register = (on, options) => {
       known = (await read($, views)).find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      await $.store.set(GENERATIONS_KEY, { ...(await generationsOf($)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
-      logEvent($, 'debug', 'store.set', GENERATIONS_KEY, { mod, edit: 'started' })
+      const modsDir = modsDirOf($)
+      await $.store.set(keyOf(GENERATIONS_KEY, modsDir), { ...(await generationsOf($, modsDir)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
+      logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {
