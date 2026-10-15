@@ -54,11 +54,24 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     cwd: '/m' as string | null,
     failReads: [] as string[],
     denySet: '',
+    /** A store key whose writes are refused. */
+    denyStoreSet: '',
     /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
     holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  mock.store(on, {})
+  // The store in memory, as mock.store keeps it (values read back as JSON), with writes that can be refused.
+  const stored = new Map<string, string>()
+  on('store.get', ($, e) => {
+    const text = stored.get((e as { key: string }).key)
+    return { value: text === undefined ? undefined : JSON.parse(text) } as never
+  })
+  on('store.set', ($, e) => {
+    const { key, value } = e as { key: string; value: unknown }
+    if (seen.denyStoreSet === key) return { deny: 'EIO: store write failed' }
+    stored.set(key, JSON.stringify(value))
+    return { value: undefined } as never
+  })
   const files = Object.keys(disk)
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
@@ -690,6 +703,20 @@ describe('two runs finishing together', () => {
     const ui = await mountPane($)
     const next = (await ui.findAll({ type: 'Text', text: /^next: / })).map((n: any) => String(n.text).trim())
     expect(next).toEqual(['next: Test', 'next: Test'])
+  })
+})
+
+describe('a results write that fails', () => {
+  test('still ends the run: the row stops showing it, and its result is toasted', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean } })
+    await start($)
+    await clock.advance(10)
+    seen.denyStoreSet = 'modlab:results'
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ next: Validate$/)
+    expect(seen.toasts.some(text => text.startsWith('✓ git-branch: '))).toBe(true)
   })
 })
 
