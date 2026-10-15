@@ -141,13 +141,14 @@ async function dataDir($: EngineInterface): Promise<string> {
   return `${(await homeDir($)) || '.'}/.claude/duet-data`
 }
 
-/** This session's own folder, for per-task files: ids restart at d1 in every session. */
+/** This session's own folder, for per-task files and its run log: ids restart at d1 in every session. */
 async function sessionDir($: EngineInterface): Promise<string> {
   const id = await $.session.id().catch(() => 'unknown')
   return `${await dataDir($)}/sessions/${sessionFolderOf(id)}`
 }
 
-// Appends to this session's runs.jsonl one at a time (it is read, appended and rewritten); no other session writes it.
+// Appends to this session's runs.jsonl one at a time (it is read, appended and rewritten); no other session writes it,
+// except that sessions whose id can't be read share the folder `unknown`.
 let logChain: Promise<void> = Promise.resolve()
 
 async function readText($: EngineInterface, path: string): Promise<string> {
@@ -166,6 +167,14 @@ async function appendRun($: EngineInterface, task: Task): Promise<void> {
 function logRun($: EngineInterface, task: Task): Promise<void> {
   logChain = logChain.catch(() => undefined).then(() => appendRun($, task))
   return logChain
+}
+
+/** Every run log there is: the legacy shared one, then each session folder's own (a folder with no log reads as empty). */
+async function readRunLogs($: EngineInterface): Promise<string[]> {
+  const data = await dataDir($)
+  const folders = await $.fs.list(`${data}/sessions`).catch(() => [])
+  const paths = [`${data}/runs.jsonl`, ...folders.map(e => `${data}/sessions/${e.name}/runs.jsonl`)]
+  return Promise.all(paths.map(path => readText($, path)))
 }
 
 /** How many folders deep below a `.claude/agents` folder duet's own search goes. */
@@ -625,13 +634,6 @@ async function finishReview($: EngineInterface, task: Task, target: ReviewTarget
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────
-
-/** Every run log there is: the legacy shared one, then each session folder's own (a folder with no log reads as empty). */
-async function readRunLogs($: EngineInterface): Promise<string[]> {
-  const data = await dataDir($)
-  const sessions = await $.fs.list(`${data}/sessions`).catch(() => [])
-  return Promise.all([`${data}/runs.jsonl`, ...sessions.map(e => `${data}/sessions/${e.name}/runs.jsonl`)].map(path => readText($, path)))
-}
 
 async function showStats($: EngineInterface): Promise<string> {
   const text = statsText(summarize(mergeLogs(await readRunLogs($))))
