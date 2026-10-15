@@ -807,6 +807,30 @@ describe('auto re-run', () => {
     expect(seen.argv.slice(2).map(argv => argv[2])).toEqual(['validate', 'test'])
   })
 
+  // validate also reads these (#17): a file in one, or the root .mcp.json, edited after a pass makes the checks stale.
+  for (const file of ['agents/helper.md', 'commands/go.md', 'skills/review/SKILL.md', 'agents/team/lead.md', '.mcp.json']) {
+    test(`${file} edited after a pass: the end of the turn re-runs Validate, then Test (#17)`, OPTIONS, async ($, on) => {
+      const mtime: Mtimes = { ms: 1000 }
+      const disk = { ...modFiles('git-branch'), [`${MODS}/git-branch/${file}`]: '' }
+      const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+      await start($)
+      await clock.advance(10)
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await clock.advance(500)
+      await ui.press({ key: 'test' })
+      await clock.advance(500)
+      await ui.unmount()
+      await $.turn.complete({ answer: 'nothing yet' } as never)
+      await clock.advance(1000)
+      expect(seen.argv).toHaveLength(2)
+      mtime.byPath = { [`${MODS}/git-branch/${file}`]: 5000 }
+      await $.turn.complete({ answer: 'edited' } as never)
+      await clock.advance(1000)
+      expect(seen.argv.slice(2).map(argv => argv[2])).toEqual(['validate', 'test'])
+    })
+  }
+
   test('nothing changed: the end of the turn runs nothing', OPTIONS, async ($, on) => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean } })
     await start($)
