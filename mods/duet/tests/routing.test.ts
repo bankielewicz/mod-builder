@@ -454,6 +454,24 @@ describe('issue 5: /duet review answers for what happened', () => {
   })
 })
 
+describe('PR #52 review: a dismissed consent dialog says so', () => {
+  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const ESC = "The user doesn't want to proceed with this tool use. The tool use was rejected"
+
+  test('Esc on the consent dialog answers not started because it was dismissed, not because nobody could be asked; Codex never runs and the next review asks again', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const seen = engine(on, { askDeny: ESC })
+    await start($)
+    const first = await review($)
+    await seen.clock.advance(1000)
+    expect(first.text).toBe('Codex review not started: the consent question was dismissed; it is asked again next time')
+    expect(seen.toasts[0]).toMatch(/^d1 review refused: the consent question was dismissed/)
+    const second = await review($)
+    expect(second.text).toBe(first.text)
+    expect(seen.asked).toBe(2)
+    expect(seen.argv).toEqual([])
+  })
+})
+
 describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
   const WRITER = (name: string) => `---\nname: ${name}\ndescription: Writes files.\ntools: Read, Write, Edit\n---\nWrite files.`
   const agents = {

@@ -946,3 +946,19 @@ describe('issue 44: a search cut short runs read-only (PR #48 review)', () => {
     expect(effectiveSandbox('workspace-write', editor, 'e')).toBe('workspace-write')
   })
 })
+
+describe('PR #52 review: a dismissed consent question is not "nobody could be asked"', () => {
+  // What $.ui.ask rejects with, probed live on 2.1.300: on Esc, and under claude -p.
+  const ESC = new Error("duet: $.ui.ask: no answer (The user doesn't want to proceed with this tool use. The tool use was rejected)")
+  const HEADLESS = new Error('duet: $.tool.call: no tool named "AskUserQuestion" in this session')
+  const NOBODY = 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
+  const refusal = (err: unknown) => ((logic as Record<string, unknown>).consentRefusal as ((e: unknown) => string) | undefined)?.(err)
+
+  test('a question that got no answer was dismissed and is asked again; one that could not be asked says how to allow headless runs', () => {
+    expect(refusal(ESC)).toBe('the consent question was dismissed; it is asked again next time')
+    expect(refusal(HEADLESS)).toBe(NOBODY)
+    expect(refusal(new Error('no implementation for tool.call'))).toBe(NOBODY)
+    expect(refusal('not an error')).toBe(NOBODY)
+    expect(refusal(undefined)).toBe(NOBODY)
+  })
+})
