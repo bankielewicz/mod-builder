@@ -201,7 +201,18 @@ export const register: Register = (on, raw) => {
     if (line === null) return ran
     $.ui.toast(line)
     return { ...ran, context: [...(ran.context ?? []), line] }
-  }).catch(($, e, next) => next(e))
+  }).catch(($, e, next) => {
+    // The agent still runs (or keeps what it gave): a broken check never stops one. But the person hears it went unchecked.
+    const type = e.subagent_type?.trim() ?? ''
+    if (protectedGlobs(type).length > 0) {
+      try {
+        $.ui.toast(`tdd-guard: ${type}'s test files could not be checked (the check failed)`)
+      } catch {
+        // Re-entry: this handler's own $ calls reject.
+      }
+    }
+    return next(e)
+  })
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) await finish($, e.agentId).catch(() => undefined)
