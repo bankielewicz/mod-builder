@@ -1455,6 +1455,20 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(w.commits).toEqual([])
   })
 
+  test("the branch and worktree preflight made don't land on a run another session took over meanwhile (Codex 4278707576)", async ($, on) => {
+    let release: () => void = () => undefined
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { baseProfile: WORKTREE, worktreeAddHold: new Promise<void>(r => (release = r)), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a[1] === 'worktree' && a[2] === 'add'), 'the worktree add')
+    store[key(16)] = { ...(store[key(16)] as any), driver: { session: OTHER, since: 1 } }
+    release()
+    for (let i = 0; i < 20; i++) await w.clock.advance(5)
+    expect(store[key(16)]).toMatchObject({ branch: '', driver: { session: OTHER, since: 1 } })
+    expect((store[key(16)] as any).workRoot).toBeUndefined()
+  })
+
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
     await start($)
