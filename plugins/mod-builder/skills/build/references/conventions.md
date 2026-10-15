@@ -98,5 +98,6 @@ Declare `userConfig` in `plugin.json`, with a `title`, `description` and `defaul
 ## README and release
 
 - Every README has: what it does (one screen), the install line, `/name demo`, the options, a
-  "What it reaches" table generated from `claude plugin validate`, and "built on <version>".
+  "What it reaches" table generated from `claude plugin validate` (plus any command hook or MCP
+  server, which validate doesn't list), and "built on <version>".
 - Version is semver in `plugin.json` *and* the marketplace entry, bumped together.

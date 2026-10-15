@@ -45,9 +45,10 @@ Changes load with `/reload-plugins` or a new session.
 ## What it reaches
 
 Mods are not sandboxed. They run with your access and skip Claude's permission prompts, so this
-table lists everything this one can touch. It is generated from `claude plugin validate`.
+table lists everything this one can touch. It is generated from `claude plugin validate`, plus
+any command hook or MCP server, which validate doesn't list.
 
-<!-- Fill from the validate output's hooks / calls / gating lines: -->
+<!-- Fill from the validate output's hooks / calls / gating lines. Then read hooks/hooks.json (entries besides "modules"), .mcp.json and plugin.json's hooks and mcpServers, and add a row for each entry, naming its command: -->
 
 | Reach | Detail |
 | --- | --- |

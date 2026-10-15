@@ -8,6 +8,10 @@ import {
   clockOf,
   countsOf,
   countStreamed,
+  EMPTY_STREAM,
+  streamOutput,
+  streamPiece,
+  type TestStream,
   demoClockOf,
   demoLengthMs,
   demoTimeline,
@@ -856,5 +860,68 @@ describe('a run that does not end well (PR #55 review)', () => {
     const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
     const other: Run = { ...row(5), kind: 'Validate' }
     expect(Logic.withProgress([row(5), row(9), other], row(5), { passed: 2, failed: 1 })).toEqual([{ ...row(5), passed: 2, failed: 1 }, row(9), other])
+  })
+})
+
+describe('a streamed test run keeps bounded output (#9, Codex P2 on PR #65)', () => {
+  const feed = (text: string, size: number): TestStream => {
+    let s = EMPTY_STREAM
+    for (let at = 0; at < text.length; at += size) s = streamPiece(s, text.slice(at, at + size))
+    return s
+  }
+  const noise = Array.from({ length: 10_000 }, (_, i) => `log line ${i} ${'x'.repeat(200)}`).join('\n')
+
+  test('fed in pieces of any size, it counts and judges as the whole output does', () => {
+    for (const whole of [testPass, testFail]) {
+      for (const size of [1, 3, 7, 64, whole.length]) {
+        const s = feed(whole, size)
+        expect({ passed: s.passed, failed: s.failed }).toEqual(countStreamed(whole))
+        expect(parseTest(streamOutput(s), 1)).toEqual(parseTest(whole, 1))
+      }
+    }
+  })
+
+  test('megabytes of printing between tests keep the output small, and the summary and failure still parse', () => {
+    const whole = testFail.replace('(pass) try-notes-logic > lists', `${noise}\n(pass) try-notes-logic > lists`)
+    expect(whole.length).toBeGreaterThan(2_000_000)
+    const s = feed(whole, 16_384)
+    expect(200_000).toBeGreaterThan(streamOutput(s).length)
+    expect({ passed: s.passed, failed: s.failed }).toEqual({ passed: 3, failed: 1 })
+    expect(parseTest(streamOutput(s), 1)).toEqual(parseTest(whole, 1))
+  })
+
+  test('a line that never ends keeps the output small', () => {
+    let s = EMPTY_STREAM
+    for (let i = 0; i < 256; i += 1) s = streamPiece(s, 'y'.repeat(16_384))
+    expect(200_000).toBeGreaterThan(streamOutput(s).length)
+    s = streamPiece(s, `\n${testPass}`)
+    expect(200_000).toBeGreaterThan(streamOutput(s).length)
+    expect(parseTest(streamOutput(s), 0)).toMatchObject({ ok: true, passed: 4, failed: 0 })
+  })
+
+  test('stderr printing that arrives after the stdout summary keeps the summary (found live: "0 tests passed")', () => {
+    let s = EMPTY_STREAM
+    s = streamPiece(s, testPass, 'stdout')
+    for (let at = 0; at < noise.length; at += 16_384) s = streamPiece(s, noise.slice(at, at + 16_384), 'stderr')
+    expect(200_000).toBeGreaterThan(streamOutput(s).length)
+    expect(parseTest(streamOutput(s), 0)).toEqual(parseTest(testPass, 0))
+  })
+
+  test('a stderr piece cut mid-line does not join the stdout line after it', () => {
+    let s = EMPTY_STREAM
+    s = streamPiece(s, 'noise without its end', 'stderr')
+    s = streamPiece(s, '(pass) t > one [1.00ms]\n', 'stdout')
+    s = streamPiece(s, ' still noise\n', 'stderr')
+    expect({ passed: s.passed, failed: s.failed }).toEqual({ passed: 1, failed: 0 })
+  })
+
+  test('many failures among the noise: the first ones, which a result shows, are kept with their detail', () => {
+    const fails = Array.from({ length: 40 }, (_, i) => `(fail) t > case ${i} [1.00ms]\n  AssertionError: case ${i}`).join('\n')
+    const whole = `${fails}\n${noise}\n\n 0 pass\n 40 fail\nRan 40 tests across 1 file. [0.50s]\n`
+    const s = feed(whole, 16_384)
+    expect(200_000).toBeGreaterThan(streamOutput(s).length)
+    expect(s.failed).toBe(40)
+    expect(parseTest(streamOutput(s), 1)).toEqual(parseTest(whole, 1))
+    expect(parseTest(streamOutput(s), 1).failures[1]).toBe('  AssertionError: case 0')
   })
 })

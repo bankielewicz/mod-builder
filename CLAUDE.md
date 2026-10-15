@@ -159,7 +159,8 @@ not in the marketplace). Each has the same layout and its own `SPEC.md` with dat
 
 - **Our own code only:** community mods (read under the gitignored `tmp/`) are for ideas; never copy,
   install or run them.
-- Every mod README has a "What it reaches" table generated from `claude plugin validate` output.
+- Every mod README has a "What it reaches" table generated from `claude plugin validate` output,
+  plus any command hook or MCP server, which validate doesn't list (`gotchas.md`).
 - Bump `version` in both the plugin's `plugin.json` and its `.claude-plugin/marketplace.json` entry on
   every release (Mod Lab's Share stage checks they match).
 - New engine findings go in `gotchas.md` with a source tag: `[d.ts]`, `[probe]` (verified live) or

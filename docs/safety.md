@@ -10,15 +10,38 @@ mod-builder follows two rules:
 - **Every mod says what it reaches.** Each mod's README carries a "What it reaches" table generated
   from `claude plugin validate`: hooks, processes, files, network, model calls, and gating hooks.
   Read it before you install a mod. Mod Lab's own is in
-  [its README](../plugins/mod-builder/README.md#what-it-reaches).
+  [its README](../plugins/mod-builder/README.md#what-it-reaches). Validate doesn't list a
+  settings-style command hook or an MCP server, so the table adds those by hand. For a mod from
+  elsewhere, also look in its `hooks/hooks.json`, `.mcp.json` and `plugin.json` (`hooks`,
+  `mcpServers`). No plugin in this repo has either today: each `hooks/hooks.json` holds only
+  `modules`, and none has a `.mcp.json`.
 - **Our own code only.** Community mods are read for ideas. They are never installed or copied.
 
 Mod Lab re-runs a mod's checks on its own (`autoRerun`) when the mod's code changes. That's
 `claude plugin validate`, which only reads the files, and `claude plugin test`, whose test
-environment has no file system, network or process access (per Claude Code's API declarations).
-It only re-runs mods you have already validated or tested in this install. To turn it off, set
-`autoRerun` to off in `/config`. Separately, when a skill's `lab_report` says a Validate or Test
-stage finished, Mod Lab runs that check on the mod the report names.
+environment has no file system, network or process access. Claude Code's API declarations say so,
+and probes in this repo agree (each in
+[gotchas.md](../plugins/mod-builder/skills/build/references/gotchas.md#testing-and-checking)):
+
+- On 2.1.296, test code found no `process`, `require`, `fetch` or `Bun`, and a test file that
+  imports `node:fs` or uses `import()` didn't load.
+- On 2.1.300, neither command started a `SessionStart` command hook in `hooks/hooks.json` or a
+  `.mcp.json` server, the two shapes probed. A live `claude --plugin-dir` session started both.
+
+Those are the builds checked; Claude Code changes between builds. Mod Lab only re-runs mods you
+have already validated or tested in this install. To turn it off, set `autoRerun` to off in
+`/config`. Separately, when a skill's `lab_report` says a Validate or Test stage finished, Mod Lab
+runs that check on the mod the report names.
+
+What the sandbox doesn't stop is a test that loops or uses up memory. It runs until
+`testTimeoutMinutes` (3 minutes by default) and is then killed. Mod Lab keeps only the lines of its
+output it reads, so a test that prints without end doesn't fill Mod Lab's memory.
+
+The own-code-only rule is stricter than that sandbox, and stays: installing a mod or opening a
+session with it runs its hooks with your full access. `autoRerun` does run tests on code someone
+else changed, such as a collaborator's edit to a mod you tested before, which that rule forbids for
+mods from elsewhere. It's on by default because the probed builds sandbox the test. If others push
+to your mods folder, turn it off: `/mod-builder config autoRerun off`.
 
 What the skills do for safety:
 
