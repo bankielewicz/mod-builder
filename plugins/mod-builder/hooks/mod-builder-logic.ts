@@ -809,18 +809,26 @@ export type Entry = { name: string; kind: 'file' | 'dir' | 'other'; mtimeMs: num
 
 /** Resolves `.` and `..` segments in a `/`-separated path. */
 export function normalizePath(path: string): string {
-  const isAbsolute = path.startsWith('/')
+  const slashed = path.replace(/\\/g, '/')
+  const root = rootOf(slashed)
   const parts: string[] = []
-  for (const part of path.replace(/\\/g, '/').split('/')) {
+  for (const part of slashed.slice(root.length).split('/')) {
     if (part === '' || part === '.') continue
     if (part === '..') {
       if (parts.length && parts[parts.length - 1] !== '..') parts.pop()
-      else if (!isAbsolute) parts.push('..')
+      else if (!root) parts.push('..')
     } else {
       parts.push(part)
     }
   }
-  return (isAbsolute ? '/' : '') + parts.join('/')
+  return root + parts.join('/')
+}
+
+/** A `/`-separated path's root: `//` for a UNC path, `/`, a drive (`C:/`), or '' when it is relative. */
+function rootOf(slashed: string): string {
+  if (/^\/\/[^/]/.test(slashed)) return '//'
+  if (slashed.startsWith('/')) return '/'
+  return /^[A-Za-z]:(\/|$)/.test(slashed) ? `${slashed.slice(0, 2)}/` : ''
 }
 
 /**
@@ -843,14 +851,20 @@ const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
 
 /**
  * The marketplace file `cwd` would have if it were a marketplace, then that of every folder above
- * it, nearest first, down to the filesystem root. `cwd` is an absolute path.
+ * it, nearest first, down to its root: `/`, a drive (`C:/`) or a UNC share (`//server/share`).
+ * A relative `cwd` names no folder to walk, so it has none.
  */
 export function marketplaceCandidatesOf(cwd: string): string[] {
-  const parts = normalizePath(cwd).split('/').filter(Boolean)
+  const path = normalizePath(cwd)
+  const root = rootOf(path)
+  if (!root) return []
+  const parts = path.slice(root.length).split('/').filter(Boolean)
+  // A UNC path's server and share are its root folder; nothing sits above them.
+  const top = root === '//' ? Math.min(2, parts.length) : 0
   const candidates: string[] = []
-  for (let depth = parts.length; depth >= 0; depth--) {
-    const folder = parts.slice(0, depth).map(part => `/${part}`).join('')
-    candidates.push(folder + MARKETPLACE_FILE)
+  for (let depth = parts.length; depth >= top; depth--) {
+    const folder = root + parts.slice(0, depth).join('/')
+    candidates.push(folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE)
   }
   return candidates
 }
