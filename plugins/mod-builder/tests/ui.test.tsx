@@ -747,6 +747,49 @@ describe('a scan that read the generations before an edit began', () => {
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-inbox-zero' }))?.text).toMatch(/ edit · update Spec for this change$/)
   })
+
+  test('an edit reported while the scan is held starts from the version on disk', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    // Every file is newer than the edit below.
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, { ms: Date.parse('2027-01-01T00:00:00Z') })
+    await start($)
+    await clock.advance(10)
+    const redo = async () => {
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await clock.advance(500)
+      await ui.press({ key: 'test' })
+      await clock.advance(500)
+      await ui.unmount()
+    }
+    const report = (status: string) => $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+
+    // git-branch is green, listed at 0.1.0.
+    await redo()
+    // A scan has started over the mods folder and waits at git-branch's folder.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'done' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Meanwhile git-branch's edit begins, at version 0.1.0.
+    await report('running')
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    await report('passed')
+    await clock.advance(10)
+    // Checked again, but neither bumped nor re-listed: Share is what the edit still needs.
+    await redo()
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
+  })
 })
 
 describe('command', () => {
