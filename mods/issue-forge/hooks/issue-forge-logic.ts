@@ -1722,9 +1722,12 @@ export function isLockError(text: string): boolean {
   return /cannot lock ref|unable to create '[^']*\.lock'|could not lock|\.lock': file exists/i.test(text)
 }
 
-/** An LCOV file outside the run's folder is one file for every run: refused while another run is being driven. */
-export function sharedLcovBlock(p: Profile, others: readonly Run[], workRoot = ''): { reason: string; next: string } | null {
-  if (!isAbsolutePath(p.lcovPath) || relativeTo(workRoot, p.lcovPath) !== null) return null
+/**
+ * An absolute LCOV path is one file for every run, wherever it points (inside one run's folder it is still the other's
+ * file too): refused while another run of the repository is driven. A relative one is per folder (Codex 4278707573).
+ */
+export function sharedLcovBlock(p: Profile, others: readonly Run[]): { reason: string; next: string } | null {
+  if (!isAbsolutePath(p.lcovPath)) return null
   const running = others.find(r => isWorking(r.step) && !!r.driver)
   return running ? { reason: `lcovPath ${p.lcovPath} is shared by every run and #${running.issue} is running`, next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov' } : null
 }

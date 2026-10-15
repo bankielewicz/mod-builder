@@ -619,9 +619,6 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     await setActivity($, `reading ${PROFILE_FILE} from origin/${made.base}`)
     const trusted = await loadProfile($, made.workRoot)
     if (!trusted.profile) return { ...block(`origin/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
-    // One LCOV file for every run can't serve two at once (Change 0.3.0).
-    const shared = sharedLcovBlock(trusted.profile, (await runsOf($, run.repo ?? run.root)).filter(r => r.id !== run.id), made.workRoot)
-    if (shared) return { ...block(shared.reason, shared.next), keep: made }
     return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot }
   } catch (err) {
     if (err instanceof Stopped) throw err
@@ -630,10 +627,21 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
 }
 
 /**
+ * Before each step that runs coverage (baseline, gates G and F), on a fresh start or a resume: one LCOV file can't
+ * serve two runs at once (Change 0.3.0; Codex 4278707573).
+ */
+async function lcovShared($: EngineInterface, run: Run, p: Profile): Promise<Blocked | null> {
+  const shared = sharedLcovBlock(p, (await runsOf($, run.repo ?? run.root)).filter(r => r.id !== run.id))
+  return shared ? block(shared.reason, shared.next) : null
+}
+
+/**
  * Step 3. A branch with no commits of its own first catches up with the base (so "fix main, then resume"
  * works), and the merge base is computed afresh every time, so a blocked baseline never leaves a stale one.
  */
 async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
+  const shared = await lcovShared($, run, p)
+  if (shared) return shared
   const root = workOf(run)
   const unfetched = await fetchBase($, root, run.base)
   if (unfetched) return unfetched
@@ -754,6 +762,8 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
 
 /** Gates G and F (§3 steps 5–6): G1–G7 over facts gathered here, judged in the logic module. */
 async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 'F'): Promise<RunEvent> {
+  const shared = await lcovShared($, run, p)
+  if (shared) return shared
   const root = workOf(run)
   const redCommit = run.redCommit ?? run.mergeBase
   const away = await offBranch($, run)
