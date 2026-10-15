@@ -221,6 +221,58 @@ describe('mod-builder-logic', () => {
     expect(manifestOf(null)).toEqual({ version: null, description: null })
   })
 
+  test('hasPlaceholder: a code span may wrap onto the next line, so <word> inside it is not a placeholder (#20)', () => {
+    // The span starts on one line and ends on the next; CommonMark allows line endings in a span.
+    expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep the work.\n')).toBe(false)
+    // The `<word>` is on the first line of the wrapped span.
+    expect(hasPlaceholder('# x\nRun `git stash <message>\nand then pop` here.\n')).toBe(false)
+    // A real placeholder outside the span is still found, before or after it.
+    expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep <files>.\n')).toBe(true)
+    expect(hasPlaceholder('# x\nStage <files> with `git add\n-A` first.\n')).toBe(true)
+    // Unwrapped notation is unchanged: `<files>` in plain prose is a placeholder.
+    expect(hasPlaceholder('# x\nStage <files> first.\n')).toBe(true)
+    // A span does not cross a paragraph: an unclosed backtick before a blank line leaves the next paragraph's
+    // placeholder visible, even when a later backtick pair exists.
+    expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged.\n')).toBe(true)
+    expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged with `git add`.\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: a code span may hold several line endings, as long as no blank line falls inside it (#20)', () => {
+    // Shaped like mods/issue-forge/SPEC.md: a quoted message that wraps twice.
+    expect(hasPlaceholder('# x\n- preflight blocks with `lcovPath <path> is shared by every\n  run and #44 is running; make it relative to the repository, as\n  coverage/issue-forge.lcov`.\n')).toBe(false)
+    // A placeholder after that span is still found.
+    expect(hasPlaceholder('# x\nRun `cat\nlist\n| sort` on <files>.\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: a span over two line endings leaves no backtick unpaired for the rest of the paragraph (#20)', () => {
+    // If the first span is not removed, its opening backtick pairs with the next one and every later
+    // pair in the paragraph shifts, so `<c>` reads as prose.
+    expect(hasPlaceholder('# x\nsay `one\ntwo\nthree` and `a`\nthen `b` and `<c>`\n')).toBe(false)
+  })
+
+  test('hasPlaceholder: a code span ends at the start of another block, so an unclosed backtick hides nothing there (#20)', () => {
+    // A heading or list item starts a new block even without a blank line before it, and CommonMark pairs
+    // backticks within one block only.
+    expect(hasPlaceholder('# x\nAn unmatched `\n# Fill <files> with `git add`\n')).toBe(true)
+    expect(hasPlaceholder('# x\n- an unmatched ` tick\n- stage <files> with `git add`\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: an escaped backtick opens no code span (#20)', () => {
+    // CommonMark reads \` as a literal backtick, so it can't pair with the opener of `git add`.
+    expect(hasPlaceholder('# x\nliteral \\`\n<files> and then `git add`\n')).toBe(true)
+    // An escaped backslash leaves the backtick after it free to open a span.
+    expect(hasPlaceholder('# x\npath \\\\`cmd\n<arg>` ok\n')).toBe(false)
+  })
+
+  test('hasPlaceholder: a heading or quote indented four spaces is paragraph text, so it ends no span (#20)', () => {
+    // CommonMark allows at most three spaces before `#` or `>`; the span runs to `end`, and <files> after it is prose.
+    expect(hasPlaceholder('# x\nText `cmd\n    # foo\nend` <files>\nthen `x`\n')).toBe(true)
+    expect(hasPlaceholder('# x\nText `cmd\n    > foo\nend` <files>\nthen `x`\n')).toBe(true)
+    // Three spaces still start a heading; a nested list item ends a span at any indent.
+    expect(hasPlaceholder('# x\nAn unmatched `\n   # Fill <files> with `git add`\n')).toBe(true)
+    expect(hasPlaceholder('# x\n- a\n  - b\n    - c with ` tick\n    - stage <files> with `git add`\n')).toBe(true)
+  })
+
   test('validate: a clean report from real output', () => {
     const report = parseValidate(validateClean, 0)
     expect(report.ok).toBe(true)
