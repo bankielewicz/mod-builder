@@ -14,6 +14,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `await $.process.run(['/bin/sleep','1'])` ×12 survives; `await $.clock.sleep(1000)` ×12 times
   out. To wait inside a hook (for example, holding a tool call until a slot frees), wait on a `$`
   call that isn't the clock, or return and do the work in the background.
+- **[probe]** Awaiting a promise that other hooks' work settles counts as the hook's own time. On
+  2.1.300, Mod Lab's `lab_report` hook awaited a scan that another hook had started (single flight)
+  plus the pass it queued, a wait that would have lasted about 18 s. It failed 10.0 s after it began with
+  `{"kind":"timeout"}`, and its `.catch` answered. So a hook that joins shared background work
+  needs that work to end well inside its 10 s, or must return first (PR #74's SPEC, Change 0.2.14).
 - **[d.ts]** A `.catch` handler gets a fresh 1 s. Keep it trivial.
 - **[d.ts]** After an abort (Esc, a hook above settling first), a hook may linger 5 s before it's
   reported. Pass `next.signal` to `$.clock.sleep` so the wait ends with the dispatch. `$.ui.ask` takes
@@ -114,6 +119,17 @@ Re-check [field] items against the d.ts after a Claude Code update.
   different keys over the same 0.7 s, and all 400 were there afterwards. Writes to the same key: the
   last one wins. So give each session's records their own key (issue-forge: one per repository and
   issue) rather than a list that two sessions would both rewrite.
+- **[d.ts]** Every `$.state.get` of one dispatch reads one moment, "whatever is written meanwhile". A
+  hook that awaits another hook's write (a scan it waits for) and then reads the atom again gets the
+  old value, not the write.
+- **[probe]** The moment is fixed at the dispatch's first `get`, of any atom, not at its start and not per
+  atom. In `claude plugin test` (2.1.300, Change 0.2.14's held test) a `lab_report` hook whose first read
+  came before the scan it then awaited re-read the same empty list. Live, on 2.1.300 with a throwaway
+  `claude -p --plugin-dir` mod whose command awaits a nested `$.tool.call` that another hook answers with
+  a state write: a re-read of an atom that hook had written read the old value (0, written to 1); an atom
+  written before the dispatch's first `get` read the new value on that first `get`; an atom first read
+  after another atom's `get` and its own write read the old value. So decide whether to wait for a scan
+  before the first read: from module state, or from what the hook itself holds.
 - **[d.ts]** `session.end` also fires on `/clear` and `/resume` (`e.reason` `clear`, `resume`), and
   the process goes on under a new `$.session.id()`. A mod that lets go of something at session end
   checks the reason; its background work keeps running.
@@ -241,9 +257,35 @@ Re-check [field] items against the d.ts after a Claude Code update.
 
   Validate and test passed, and neither marker appeared (run twice). Control: `claude -p
   --plugin-dir <probe> "hi"` created both, so the shapes are live ones. Not probed: hooks or
-  `mcpServers` declared in `plugin.json`, other hook events and types, `lspServers`, an agent's
-  `mcpServers`, shell in skill or command bodies. Mod Lab's `autoRerun` relies on this, so re-run
-  the probe after a Claude Code update.
+  `mcpServers` declared in `plugin.json`, other hook events and types, `lspServers`. An agent's
+  `mcpServers` and shell in skill or command bodies were probed later without a control (next
+  entry). Mod Lab's `autoRerun` relies on this, so re-run the probe after a Claude Code update.
+- **[probe]** `claude plugin validate` and `claude plugin test` ran no shell in a command or skill
+  body and started no server from an agent's `mcpServers`. Probed on 2.1.300 (PR #76) on a copy of
+  git-branch, with a `markers/` folder made beforehand, and these three, each touching a marker:
+  - `commands/run.md`: frontmatter `description: probe`, body ``Run: !`touch <abs>/markers/cmd` ``
+  - `skills/s/SKILL.md`: frontmatter `name: s`, `description: probe`, body ``Run: !`touch <abs>/markers/skill` ``
+  - `agents/a.md`: frontmatter `name: a`, `description: probe`, `mcpServers: { probe: { command: touch, args: ["<abs>/markers/agentmcp"] } }`
+
+  Validate passed, test passed (7), and no marker appeared (each run twice). **No control was run**,
+  so this doesn't show that these shapes run in a live session. The control needs the owner's OK: a
+  session with the plugin that invokes the command, the skill and the agent.
+- **[probe]** What `claude plugin validate` reads, beyond the manifest and `hooks/`. Probed on 2.1.300
+  (PR #76) on copies of git-branch, one file per copy:
+
+  | File | Result |
+  |---|---|
+  | empty `agents/x.md`, `commands/x.md`, `commands/sub/x.md`, `skills/x/SKILL.md` | "passed with warnings" (`frontmatter: No frontmatter block found`) |
+  | empty `skills/x/references/y.md`, beside a valid `SKILL.md` | "passed", no warning |
+  | `{ not json` as the root `.mcp.json` | "Validation failed" (`json: Invalid JSON syntax`) |
+  | `{ not json` in a file named by `plugin.json`'s `"mcpServers": "./servers.json"` | "Validation failed", naming `servers.json` |
+  | empty `cmds/x.md` with `plugin.json`'s `"commands": "./cmds"` | "passed", no `Validating command:` line |
+  | frontmatter `description: [broken` and `name: [broken`, in `agents/`, `commands/` and `skills/x/SKILL.md` | "passed", no warning (issue #17's probe of `name: [broken` in `agents/` warned on 2.1.296) |
+
+  Validate prints a `Validating <kind>: <path>` header only for a file with a finding, so a file that
+  passes leaves no trace. Mod Lab's code signature (0.2.15) covers `agents/`, `commands/`,
+  `skills/` (3 levels down) and the root `.mcp.json`. It doesn't cover a `plugin.json`
+  `mcpServers` path.
 - **[d.ts] [probe]** The d.ts header (2.1.296, unchanged on 2.1.299 and 2.1.300) says `claude plugin
   test` runs test files "in an environment like the one a plugin's hooks run in (no fs, network or
   process)". Issue #9's audit run probed it on 2.1.296 (not re-run since): in test code, `process`,

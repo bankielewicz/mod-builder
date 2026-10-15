@@ -39,11 +39,14 @@ export type FileFacts = {
   readmeHasReaches: boolean
   /** The marketplace beside the mods folder lists this mod. */
   isListed: boolean
-  /** Newest mtime of what validate and test read: manifest, hooks/, tests/, types/ and their subfolders. */
+  /**
+   * Newest mtime of what validate and test read: the manifest, hooks/, tests/, types/, agents/,
+   * commands/ and skills/ with their subfolders, and the root .mcp.json.
+   */
   codeMtimeMs: number
   /**
-   * A signature of every code file's path and mtime, subfolders up to 3 deep: changes on an
-   * edit, an add, a delete, a rename or a move between folders.
+   * A signature of every code file's path and mtime (the files `codeMtimeMs` covers, subfolders
+   * up to 3 deep): changes on an edit, an add, a delete, a rename or a move between folders.
    */
   codeSig: string
   /** Oldest and newest mtime of anything in the folder, for the build span. */
@@ -917,7 +920,11 @@ export type FolderRead = {
   hooks: readonly Entry[]
   tests: readonly Entry[]
   types: readonly Entry[]
-  /** Files in subfolders of hooks/, tests/ and types/, named by their path from the mod folder (`hooks/lib/parser.ts`). */
+  /** Top-level listings of agents/, commands/ and skills/, which validate reads. Optional: absent reads as empty. */
+  agents?: readonly Entry[]
+  commands?: readonly Entry[]
+  skills?: readonly Entry[]
+  /** Files in subfolders of hooks/, tests/, types/, agents/, commands/ and skills/, named by their path from the mod folder (`hooks/lib/parser.ts`). */
   nested?: readonly Entry[]
   spec: string | null
   readme: string | null
@@ -959,12 +966,18 @@ export function factsOf(read: FolderRead): FileFacts | null {
   // Named by folder, so a file moved between folders without a new mtime still changes the signature.
   const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
     entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  // The one file at the top that validate reads; the SPEC and README are read by neither validate nor test.
+  const mcp = read.top.filter(entry => entry.kind === 'file' && entry.name === '.mcp.json')
   const nested = read.nested ?? []
   const code = [
     ...inFolder('.claude-plugin', manifest),
     ...inFolder('hooks', read.hooks),
     ...inFolder('tests', read.tests),
     ...inFolder('types', read.types),
+    ...inFolder('agents', read.agents ?? []),
+    ...inFolder('commands', read.commands ?? []),
+    ...inFolder('skills', read.skills ?? []),
+    ...mcp,
     ...nested.filter(entry => entry.kind === 'file'),
   ]
   const all = [...read.top.filter(entry => entry.kind === 'file'), ...code]

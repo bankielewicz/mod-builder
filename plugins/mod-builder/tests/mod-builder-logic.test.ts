@@ -669,6 +669,63 @@ describe('mod-builder-logic', () => {
     expect(factsOf({ ...read, nested: [{ name: 'hooks/lib/deeper', kind: 'dir' as const, mtimeMs: 900 }, ...read.nested] })!.codeSig).toBe(before.codeSig)
   })
 
+  // validate also reads agents/, commands/, skills/ and the root .mcp.json (#17), so editing them must make Validate stale.
+  const FOLDER_READ = {
+    name: 'x',
+    top: [{ name: 'SPEC.md', kind: 'file' as const, mtimeMs: 100 }, { name: 'README.md', kind: 'file' as const, mtimeMs: 300 }],
+    manifestDir: [{ name: 'plugin.json', kind: 'file' as const, mtimeMs: 100 }],
+    hooks: [{ name: 'register.tsx', kind: 'file' as const, mtimeMs: 100 }],
+    tests: [{ name: 'x.test.ts', kind: 'file' as const, mtimeMs: 100 }],
+    types: [],
+    spec: '# x',
+    readme: '# x\n\n## What it reaches\n',
+    manifest: null,
+    marketplace: '',
+  }
+  const factsWith = (extra: Record<string, unknown>) => factsOf({ ...FOLDER_READ, ...extra } as Parameters<typeof factsOf>[0])!
+
+  for (const folder of ['agents', 'commands', 'skills']) {
+    test(`the signature sees a file in ${folder}/ (#17)`, () => {
+      const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, mtimeMs })
+      const none = factsWith({})
+      const added = factsWith({ [folder]: [file('x.md', 100)] })
+      expect(added.codeSig).not.toBe(none.codeSig)
+      const edited = factsWith({ [folder]: [file('x.md', 900)] })
+      expect(edited.codeSig).not.toBe(added.codeSig)
+      expect(edited.codeMtimeMs).toBe(900)
+      // README.md (300) is now older than the newest code.
+      expect(added.isReadmeStale).toBe(false)
+      expect(edited.isReadmeStale).toBe(true)
+      // A folder inside it is no file of its own: only the files in it count.
+      expect(factsWith({ [folder]: [file('x.md', 100), { name: 'sub', kind: 'dir' as const, mtimeMs: 900 }] }).codeSig).toBe(added.codeSig)
+    })
+  }
+
+  test('a file moved between agents/, commands/ and skills/ without a new mtime changes the signature (#17)', () => {
+    const file = { name: 'x.md', kind: 'file' as const, mtimeMs: 100 }
+    const inAgents = factsWith({ agents: [file] })
+    const inCommands = factsWith({ commands: [file] })
+    const inSkills = factsWith({ skills: [file] })
+    expect(new Set([inAgents.codeSig, inCommands.codeSig, inSkills.codeSig]).size).toBe(3)
+  })
+
+  test('the signature sees the root .mcp.json, and no other file at the top (#17)', () => {
+    const top = (mcp: number, readme: number) => [
+      { name: 'SPEC.md', kind: 'file' as const, mtimeMs: 100 },
+      { name: 'README.md', kind: 'file' as const, mtimeMs: readme },
+      ...(mcp ? [{ name: '.mcp.json', kind: 'file' as const, mtimeMs: mcp }] : []),
+    ]
+    const none = factsWith({ top: top(0, 300) })
+    const added = factsWith({ top: top(100, 300) })
+    expect(added.codeSig).not.toBe(none.codeSig)
+    const edited = factsWith({ top: top(900, 300) })
+    expect(edited.codeSig).not.toBe(added.codeSig)
+    expect(edited.codeMtimeMs).toBe(900)
+    expect(edited.isReadmeStale).toBe(true)
+    // The README and the SPEC are read by neither validate nor test: editing them leaves the signature.
+    expect(factsWith({ top: top(100, 950) }).codeSig).toBe(added.codeSig)
+  })
+
   test('during an edit, Share needs a version different from the one the edit started from', () => {
     const listed: FileFacts = { ...FULL, version: '0.1.0', listedVersion: '0.1.0' }
     expect(lightsOf(listed, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
