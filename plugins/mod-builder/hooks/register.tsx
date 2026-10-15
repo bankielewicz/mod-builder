@@ -189,24 +189,27 @@ const exists = ($: Engine, path: string): Promise<boolean> =>
 /** The mods folder of the plugin's own marketplace: `modsDir`'s default when nothing is found from the working directory. */
 const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
 
-/** A set `modsDir`, normalized, else `fallback`. */
-const configuredDirOr = (fallback: string): string => Lab.modsDirFor(configuredDir, null, [], fallback)
-
 /**
  * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the working
  * directory (the one /mod-builder:build writes to, a worktree's own in a worktree), else the
- * plugin's own. The working directory is read now, so a `/cd` is followed.
+ * plugin's own. The working directory is read now, so a `/cd` is followed. Candidates are probed
+ * nearest first and the first one found ends the walk (each probe is slow on /mnt/c).
  */
 async function defaultModsDir($: Engine): Promise<string> {
   const cwd = await cwdOf($)
   const candidates = cwd === null ? [] : Lab.marketplaceCandidatesOf(cwd)
-  const isThere = await Promise.all(candidates.map(path => exists($, path)))
-  return Lab.modsDirFor('', cwd, candidates.filter((_, at) => isThere[at]), pluginModsDirOf($))
+  let nearest: string[] = []
+  for (const path of candidates) {
+    if (!(await exists($, path))) continue
+    nearest = [path]
+    break
+  }
+  return Lab.modsDirFor('', cwd, nearest, pluginModsDirOf($))
 }
 
 /** The mods folder the working directory leads to now. A set `modsDir` wins, so nothing is walked. */
 async function currentModsDir($: Engine): Promise<string> {
-  return configuredDir ? configuredDirOr(pluginModsDirOf($)) : defaultModsDir($)
+  return configuredDir ? Lab.normalizePath(configuredDir) : defaultModsDir($)
 }
 
 /**
@@ -646,13 +649,15 @@ async function configure($: Engine, words: string[]): Promise<string> {
     const why = await setOption($, command.name, command.value)
     if (why) return `Could not change ${command.name}: ${why}`
   }
-  const defaultDir = await defaultModsDir($)
+  // What `default` means is only needed while modsDir is empty, or when it is being set.
+  const needsDefault = !configuredDir || (command.kind === 'set' && command.name === 'modsDir')
+  const defaultDir = needsDefault ? await defaultModsDir($) : ''
   const values: Lab.OptionValues = {
     logging: logLevel,
     autoRerun,
     autoOpen,
     modsDir: configuredDir,
-    modsDirShown: Lab.shortPath(configuredDirOr(defaultDir)),
+    modsDirShown: Lab.shortPath(configuredDir ? Lab.normalizePath(configuredDir) : defaultDir),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
   if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, defaultDir))
