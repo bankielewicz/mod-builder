@@ -142,7 +142,7 @@ switch, Validate and Test show `○` until you press V and T once.
 | `modsDir` | empty: the `mods/` next to the plugin's marketplace | The folder whose child folders Mod Lab tracks. In your own project, set it to your `mods/`. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
 | `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
-| `testTimeoutMinutes` | `3` | How long a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10; fractions are fine). A check still shown as running 30 s past this lost its run (a reload ended it), so it stops counting: V, T and K light again and the auto re-run goes on |
+| `testTimeoutMinutes` | `3` | How long a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10; fractions are fine). When Mod Lab loads, it clears checks a reload left shown as running. One still shown as running 30 s past this stops counting: V, T and K light again and the auto re-run goes on |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
 
 `/mod-builder config` lists these with their current values and this session's log file; `/mod-builder config <option> <value>` changes one (for example `/mod-builder config logging verbose`). They're also in `/config`.
