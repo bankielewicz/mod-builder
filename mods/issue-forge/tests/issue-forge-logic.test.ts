@@ -1578,6 +1578,13 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
     expect(remoteVerdict('http://github-work/o/r.git', 'github.com/o/r')).toEqual({ kind: 'other', repo: 'github-work/o/r' })
   })
 
+  test('repoOfRemoteUrl (PR #68 review): a query or fragment never becomes part of the name passed to gh; such a URL is unread', () => {
+    const repoOfRemoteUrl = helper<[string], string | null>('repoOfRemoteUrl')
+    for (const url of ['https://github.com/o/r?x=1', 'https://github.com/o/r.git#main', 'https://github.com/o?x/r', 'git@github.com:o/r#x']) {
+      expect(repoOfRemoteUrl(url)).toBeNull()
+    }
+  })
+
   test('isPullUrl is true for a /<owner>/<repo>/pull/<N> path on any host, and for no issue URL', () => {
     const isPullUrl = helper<[string], boolean>('isPullUrl')
     expect(isPullUrl('https://github.com/o/r/pull/16')).toBe(true)
