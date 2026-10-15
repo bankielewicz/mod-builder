@@ -240,6 +240,13 @@ describe('mod-builder-logic', () => {
     expect(hasPlaceholder('# x\nsay `one\ntwo\nthree` and `a`\nthen `b` and `<c>`\n')).toBe(false)
   })
 
+  test('hasPlaceholder: a code span ends at the start of another block, so an unclosed backtick hides nothing there (#20)', () => {
+    // A heading or list item starts a new block even without a blank line before it, and CommonMark pairs
+    // backticks within one block only.
+    expect(hasPlaceholder('# x\nAn unmatched `\n# Fill <files> with `git add`\n')).toBe(true)
+    expect(hasPlaceholder('# x\n- an unmatched ` tick\n- stage <files> with `git add`\n')).toBe(true)
+  })
+
   test('validate: a clean report from real output', () => {
     const report = parseValidate(validateClean, 0)
     expect(report.ok).toBe(true)
