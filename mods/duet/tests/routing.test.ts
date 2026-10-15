@@ -855,6 +855,37 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
   })
 
+  test('a link past the limit that leads nowhere, to a file not named .md, or back into a searched folder does not cut the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, {
+      cwd: IN,
+      agents: { [`${nine}/gone`]: 'x', [`${nine}/readme.txt`]: 'x', [`${nine}/loop`]: 'x', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') },
+      links: [`${nine}/gone`, `${nine}/readme.txt`, `${nine}/loop`],
+      real: { [`${nine}/gone`]: null, [`${nine}/readme.txt`]: '/elsewhere/readme.txt', [`${nine}/loop`]: '/w/pkg/.claude/agents' },
+      kinds: { [`${nine}/readme.txt`]: 'file' },
+    })
+    await start($, IN)
+    const text = await resultText($, 'editor')
+    expect(text).not.toMatch(/cut short/i)
+    expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
+  })
+
+  test('a link past the limit that leads to a folder not yet searched cuts the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, { cwd: IN, agents: { [`${nine}/more`]: 'x', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') }, links: [`${nine}/more`], real: { [`${nine}/more`]: '/elsewhere/agents' } })
+    await start($, IN)
+    expect(await resultText($, 'editor')).toMatch(/cut short at 8 folders deep/)
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
+  test('a link past the limit named .md that leads to a file cuts the search short (PR #48 review)', { options }, async ($, on) => {
+    const nine = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9'
+    const seen = engine(on, { cwd: IN, agents: { [`${nine}/agent.md`]: 'x', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') }, links: [`${nine}/agent.md`], real: { [`${nine}/agent.md`]: '/elsewhere/agent.md' }, kinds: { [`${nine}/agent.md`]: 'file' } })
+    await start($, IN)
+    expect(await resultText($, 'editor')).toMatch(/cut short at 8 folders deep/)
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
+  })
+
   test('a folder past the limit that holds only a subfolder still cuts the search short: what lies below it was not looked at (PR #48 review)', { options }, async ($, on) => {
     const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/10/notes.txt': 'Not an agent.', '/home/u/.claude/agents/ed.md': agent('editor', EDITS, 'User level.') } })
     await start($, IN)
