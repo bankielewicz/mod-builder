@@ -1237,6 +1237,14 @@ export function isOwnHandback(text: string, refs: readonly string[]): boolean {
   return !!m?.[1] && refs.includes(m[1])
 }
 
+/** A `session.receive` delivery, as much of it as the hand-back check reads. */
+export type Delivery = { origin?: { kind: string; teammate?: string }; text: string; agentId?: string }
+
+/** Whether a mailbox delivery is the hand-back of one of these agents (#27). */
+export function isOwnMailboxHandback(d: Delivery, refs: readonly string[]): boolean {
+  return !!d.origin?.teammate && refs.includes(d.origin.teammate)
+}
+
 function gateTable(g: Gate | undefined): string[] {
   if (!g) return []
   return g.checks.map(c => `| ${g.gate} | ${c.id} | ${c.passed ? 'pass' : 'FAIL'} | ${c.detail.replace(/\|/g, '\\|')} |`)

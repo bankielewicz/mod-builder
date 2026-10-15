@@ -43,6 +43,7 @@ import {
   isDrivenElsewhere,
   isLockError,
   isOwnHandback,
+  isOwnMailboxHandback,
   isPrunable,
   isPullUrl,
   isSameRepo,
@@ -1551,7 +1552,7 @@ export const register: Register = (on, raw) => {
 
   // With agent teams on, a named phase agent is a teammate: its report is a mailbox delivery from its name, and no prompt.submit fires (#27, P4).
   on('session.receive', async ($, e, next) => {
-    if (e.origin && 'teammate' in e.origin && knownRefs.has(e.origin.teammate)) return { consumed: HANDBACK_DROP }
+    if (isOwnMailboxHandback(e, [...knownRefs])) return { consumed: HANDBACK_DROP }
     return next(e)
   }).catch(($, e, next) => next(e))
 

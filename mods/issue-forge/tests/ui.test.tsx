@@ -842,6 +842,16 @@ describe('reloads, resume and stop', () => {
     expect(await $.session.receive({ text: quoted } as never)).toEqual({ text: quoted })
   })
 
+  test("the run's agent's other deliveries still reach the model: a message it wrote, one for another agent (PR #86 review)", async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const ui = await pane($)
+    await ui.unmount()
+    const wrote = { origin: { kind: 'peer', teammate: 'issue-forge-16-green-1', isVerified: true }, text: 'Which test glob covers mods/x?' }
+    expect(await $.session.receive(wrote as never)).toEqual({ text: wrote.text })
+    expect(await $.session.receive({ ...(mailbox('issue-forge-16-green-1') as object), agentId: 'a7' } as never)).toEqual({ text: idle('issue-forge-16-green-1') })
+  })
+
   test('resume re-checks HEAD, then restarts the step with its attempts reset; stop ends it', async ($, on) => {
     const blocked = storedRun('blocked', { blocked: { at: 'green', reason: 'gate G failed after 3 attempts: tests fail (exit 1)', next: 'fix it by hand on the branch' }, used: { red: 1, green: 3, refactor: 0 } })
     const w = engine(on, { head: 'main' }, { [`issue-forge:run:${ROOT}`]: blocked })

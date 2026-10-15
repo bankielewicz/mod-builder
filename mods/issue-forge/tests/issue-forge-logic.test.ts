@@ -44,6 +44,7 @@ import {
   isLockError,
   isSafeBranch,
   isOwnHandback,
+  isOwnMailboxHandback,
   isWorking,
   keepText,
   keptWorktreePlan,
@@ -659,6 +660,25 @@ describe('prompts, commits, stashes, hand-backs', () => {
     expect(isOwnHandback('<agent-message from="a1">\nx', ['issue-forge-16-red-1', 'a1'])).toBe(true)
     expect(isOwnHandback('<agent-message from="someone-else">\nx', ['a1'])).toBe(false)
     expect(isOwnHandback('please run <agent-message from="a1">', ['a1'])).toBe(false)
+  })
+
+  // The pane already has a stopped agent's final answer, and only its idle notice carries a copy of it (#27, PR #86 review).
+  test("a mailbox hand-back is the run's agent's idle notice to the main conversation, and nothing else it sends", () => {
+    const refs = ['issue-forge-16-red-1', 'a1']
+    const idle = '{"type":"idle_notification","from":"issue-forge-16-red-1","idleReason":"available","result":"Five new tests."}'
+    const from = (teammate: string, extra: Record<string, unknown> = {}) => ({ origin: { kind: 'peer', teammate, isVerified: true }, text: idle, ...extra })
+    expect(isOwnMailboxHandback(from('issue-forge-16-red-1'), refs)).toBe(true)
+    expect(isOwnMailboxHandback({ origin: { kind: 'peer', teammate: 'issue-forge-16-red-1', isVerified: false }, text: idle }, refs)).toBe(true)
+    // Whatever else the run's agent sends reaches the model: a message it wrote, a protocol message, text that isn't the notice.
+    for (const text of ['Refactor done: moved HANDBACK_DROP.', '{"type":"shutdown_response","approve":true}', '{"type":"idle_notification"', 'null']) {
+      expect(isOwnMailboxHandback(from('issue-forge-16-red-1', { text }), refs)).toBe(false)
+    }
+    // A delivery for another of the session's agents, one not from a teammate, or from a name the run doesn't know.
+    expect(isOwnMailboxHandback(from('issue-forge-16-red-1', { agentId: 'a7' }), refs)).toBe(false)
+    expect(isOwnMailboxHandback({ origin: { kind: 'coordinator', teammate: 'issue-forge-16-red-1' }, text: idle }, refs)).toBe(false)
+    expect(isOwnMailboxHandback(from('researcher'), refs)).toBe(false)
+    expect(isOwnMailboxHandback({ origin: { kind: 'peer' }, text: idle }, refs)).toBe(false)
+    expect(isOwnMailboxHandback({ text: idle }, refs)).toBe(false)
   })
 
   test('the PR body holds every gate result, the coverage numbers and Closes #N', () => {
