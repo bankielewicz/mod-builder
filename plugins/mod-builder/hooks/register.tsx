@@ -560,7 +560,7 @@ function logProcess($: Engine, argv: readonly string[], exitCode: number, durati
 async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: number; output: string }> {
   const argv = Lab.argvOf(entry.kind, dir)
   if (entry.kind !== 'Test') return runToEnd($, argv, dir)
-  let output = ''
+  let kept = Lab.EMPTY_STREAM
   let seen = 0
   let hasStarted = false
   let isTimedOut = false
@@ -577,15 +577,15 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
     })
     for await (const piece of stream) {
       hasStarted = true
-      output += piece.text
-      const counts = Lab.countStreamed(output)
-      if (counts.passed + counts.failed !== seen) {
-        seen = counts.passed + counts.failed
-        await noteProgress($, entry, counts)
+      kept = Lab.streamPiece(kept, piece.text)
+      if (kept.passed + kept.failed !== seen) {
+        seen = kept.passed + kept.failed
+        await noteProgress($, entry, { passed: kept.passed, failed: kept.failed })
       }
     }
     if (isTimedOut) throw timeoutOf()
     const ended = await stream.result
+    const output = Lab.streamOutput(kept)
     logProcess($, argv, ended.code ?? 1, Date.now() - startedAt, output)
     return { exitCode: ended.code ?? 1, output }
   } catch (error) {

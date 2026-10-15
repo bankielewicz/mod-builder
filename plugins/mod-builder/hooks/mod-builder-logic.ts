@@ -1069,6 +1069,21 @@ export function countStreamed(text: string): { passed: number; failed: number } 
   return { passed, failed }
 }
 
+/** A streamed `claude plugin test` run so far: its output and its counts. */
+export type TestStream = { output: string; passed: number; failed: number }
+export const EMPTY_STREAM: TestStream = { output: '', passed: 0, failed: 0 }
+
+/** The stream once one more piece of output arrived. */
+export function streamPiece(s: TestStream, text: string): TestStream {
+  const output = s.output + text
+  return { output, ...countStreamed(output) }
+}
+
+/** The output a finished stream is judged and logged from. */
+export function streamOutput(s: TestStream): string {
+  return s.output
+}
+
 // ── lab_report ────────────────────────────────────────────────────────────
 
 /** The model tool's input schema, as `$.tool.register` takes it. */
