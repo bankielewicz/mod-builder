@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; askHold?: Promise<void> } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void> } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -101,10 +101,12 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     if (o.codex === 'fail') return { value: { exitCode: 1, stdout: '', stderr: 'Error: not logged in', isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: OK_JSONL, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  // `askDeny`: the question can't be asked (no UI, as under `claude -p`), so `$.ui.ask` rejects. `askHold`: the dialog stays
-  // open until that promise settles.
+  // `askDeny`: the dialog was dismissed (Esc) or a hook denied it, so `$.ui.ask` rejects with `$.ui.ask: no answer (…)`.
+  // `noAsk`: there is no AskUserQuestion tool to ask with, as under `claude -p`, so `$.ui.ask` rejects some other way.
+  // `askHold`: the dialog stays open until that promise settles.
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     seen.asked++
+    if (o.noAsk) throw new Error('no tool named "AskUserQuestion" in this session')
     const q = e.questions[0].question
     const answer = o.askDeny ? { deny: o.askDeny } : { result: { questions: e.questions, answers: { [q]: o.answer ?? 'Yes, send to Codex' } } }
     return o.askHold ? o.askHold.then(() => answer) : answer
@@ -418,7 +420,7 @@ describe('issue 5: /duet review answers for what happened', () => {
   })
 
   test('with nobody to ask (claude -p) the answer says not started and why; Codex never runs and the refusal toast stays', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
-    const seen = engine(on, { askDeny: 'no UI' })
+    const seen = engine(on, { noAsk: true })
     await start($)
     const { text } = await review($)
     await seen.clock.advance(1000)
