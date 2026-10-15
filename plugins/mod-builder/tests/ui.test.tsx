@@ -856,3 +856,111 @@ describe('logging (Change 0.2.2)', () => {
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
   })
 })
+
+describe('modsDir not set: the mods folder follows the working directory', () => {
+  const WT = '/w/wt'
+  const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+  const startedLine = (seen: { logs: string[] }) => seen.logs.find(line => line.includes('Mod Lab started')) ?? ''
+
+  test('a session in a worktree lists that worktree\'s mods', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /…\/wt\/mods/ })).toBeDefined()
+  })
+
+  test('Validate runs against the worktree\'s mod folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'validate' })).toBeDefined()
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    expect(seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${WT}/mods/alpha`]])
+  })
+
+  test('a worktree inside the main checkout lists the worktree\'s mods, not the main checkout\'s', async ($, on) => {
+    const inner = '/w/main/scratch/wt'
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/main'),
+      ...modFiles('alpha', '/w/main/mods'),
+      ...marketplaceAt(inner),
+      ...modFiles('beta', `${inner}/mods`),
+    })
+    seen.cwd = `${inner}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+  })
+
+  test('a /cd into another worktree takes effect at the next scan', async ($, on) => {
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await before.find({ type: 'Text', text: /beta/ })).toBeUndefined()
+    await before.unmount()
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await after.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+  })
+
+  test('a /cd out of every marketplace goes back to the plugin\'s own mods folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const inside = await mountPane($)
+    expect(await inside.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    await inside.unmount()
+    seen.cwd = '/elsewhere'
+    await command($, 'alpha')
+    await clock.advance(10)
+    const outside = await mountPane($)
+    expect(await outside.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+    expect(await outside.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeDefined()
+  })
+
+  test('the session-start log line names the worktree\'s mods folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    expect(startedLine(seen)).toContain(`"modsDir":"${WT}/mods"`)
+  })
+
+  test('the session-start log line names the main checkout\'s mods folder when the session starts there', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt('/w/main'), ...modFiles('alpha', '/w/main/mods') })
+    seen.cwd = '/w/main'
+    await start($)
+    await clock.advance(10)
+    expect(startedLine(seen)).toContain('"modsDir":"/w/main/mods"')
+  })
+
+  test('/mod-builder config lists the worktree\'s mods folder as the default', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const listed = ((await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }).text ?? ''
+    expect(listed).toContain('modsDir    default (…/wt/mods)')
+  })
+})

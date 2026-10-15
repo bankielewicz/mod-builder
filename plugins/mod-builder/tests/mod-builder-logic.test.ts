@@ -89,6 +89,17 @@ import { validateMissing } from './fixtures/validate-missing'
 const displayPathOf = (path: string, cwd: string | null): string | undefined =>
   (Logic as unknown as { displayPathOf?: (path: string, cwd: string | null) => string }).displayPathOf?.(path, cwd)
 
+/** The mods folder rules, read the same way: a missing rule fails its assertion, not the import. */
+const marketplaceCandidatesOf = (cwd: string): string[] | undefined =>
+  (Logic as unknown as { marketplaceCandidatesOf?: (cwd: string) => string[] }).marketplaceCandidatesOf?.(cwd)
+const modsDirFor = (configured: string, cwd: string | null, existing: readonly string[], fallback: string): string | undefined =>
+  (Logic as unknown as { modsDirFor?: (configured: string, cwd: string | null, existing: readonly string[], fallback: string) => string }).modsDirFor?.(
+    configured,
+    cwd,
+    existing,
+    fallback,
+  )
+
 const EMPTY: FileFacts = {
   name: 'git-branch',
   hasSpec: false,
@@ -373,6 +384,62 @@ describe('mod-builder-logic', () => {
   test('displayPathOf: with no working directory to compare, the path stays absolute', () => {
     expect(displayPathOf('/m/mods/foo', null)).toBe('/m/mods/foo')
     expect(displayPathOf('/m/./mods//foo', null)).toBe('/m/mods/foo')
+  })
+
+  test('marketplaceCandidatesOf: the marketplace file of the working directory and of every folder above it, nearest first, down to the root', () => {
+    expect(marketplaceCandidatesOf('/w/wt/plugins/x')).toEqual([
+      '/w/wt/plugins/x/.claude-plugin/marketplace.json',
+      '/w/wt/plugins/.claude-plugin/marketplace.json',
+      '/w/wt/.claude-plugin/marketplace.json',
+      '/w/.claude-plugin/marketplace.json',
+      '/.claude-plugin/marketplace.json',
+    ])
+    expect(marketplaceCandidatesOf('/')).toEqual(['/.claude-plugin/marketplace.json'])
+  })
+
+  test('marketplaceCandidatesOf: a working directory written with ".", "..", "//" or a trailing slash is read as the folder it names', () => {
+    expect(marketplaceCandidatesOf('/w//wt/./plugins/../')).toEqual([
+      '/w/wt/.claude-plugin/marketplace.json',
+      '/w/.claude-plugin/marketplace.json',
+      '/.claude-plugin/marketplace.json',
+    ])
+  })
+
+  test('modsDirFor: the mods/ of the nearest folder above the working directory that holds a marketplace', () => {
+    const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/wt/plugins/x', marketplace, '/main/mods')).toBe('/w/wt/mods')
+    expect(modsDirFor('', '/w/wt', marketplace, '/main/mods')).toBe('/w/wt/mods')
+  })
+
+  test('modsDirFor: a worktree inside the main checkout uses the worktree, the nearer marketplace', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/main/scratch/wt/plugins/x', both, '/p/mods')).toBe('/w/main/scratch/wt/mods')
+    expect(modsDirFor('', '/w/main/plugins/x', both, '/p/mods')).toBe('/w/main/mods')
+  })
+
+  test('modsDirFor: the order of the existing list does not matter, only how near the folder is', () => {
+    const farFirst = ['/w/.claude-plugin/marketplace.json', '/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/wt/plugins/x', farFirst, '/p/mods')).toBe('/w/wt/mods')
+  })
+
+  test('modsDirFor: with no marketplace above the working directory it is the fallback, normalized', () => {
+    expect(modsDirFor('', '/w/wt/plugins/x', [], '/p/plugins/mod-builder/../../mods')).toBe('/p/mods')
+    expect(modsDirFor('', '/w/wt/plugins/x', ['/other/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/p/mods')
+  })
+
+  test('modsDirFor: with no working directory to walk from it is the fallback, even if a marketplace exists', () => {
+    expect(modsDirFor('', null, ['/w/wt/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/p/mods')
+  })
+
+  test('modsDirFor: a marketplace at the filesystem root gives /mods', () => {
+    expect(modsDirFor('', '/w/x', ['/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/mods')
+  })
+
+  test('modsDirFor: a set modsDir always wins, normalized', () => {
+    const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('/chosen/mods', '/w/wt/plugins/x', marketplace, '/p/mods')).toBe('/chosen/mods')
+    expect(modsDirFor('/chosen/./sub/../mods/', '/w/wt/plugins/x', marketplace, '/p/mods')).toBe('/chosen/mods')
+    expect(modsDirFor('/chosen/mods', null, [], '/p/mods')).toBe('/chosen/mods')
   })
 
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {
