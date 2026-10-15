@@ -2781,16 +2781,17 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect((await listed($)).names).toEqual(['gamma'])
   })
 
-  test('a root that cannot be read keeps the pin across a cwd move', async ($, on) => {
+  test('a report while the root cannot be read pins nothing, and the walk follows the cwd', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN
     seen.root = null
     await start($)
-    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    const { result } = (await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })) as { result: string }
+    expect(result).toContain('path ignored')
     seen.cwd = OTHER
-    await command($, 'beta')
+    await command($, 'gamma')
     await clock.advance(10)
-    expect((await listed($)).names).toEqual(['beta'])
+    expect((await listed($)).names).toEqual(['gamma'])
   })
 
   test('with no pin, a Bash cd into a worktree leaves the pane on the root\'s mods', async ($, on) => {

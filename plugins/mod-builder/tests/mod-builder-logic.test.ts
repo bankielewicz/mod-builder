@@ -1218,13 +1218,14 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(reportOf({ mod: 'foo', ...running, path: '/r/wt/../mods/./foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
   })
 
-  test('reportOf: a relative, non-string or misnamed path is refused; no path is unchanged', () => {
-    const notAbsolute = { error: "path must be the absolute path of the mod's folder." }
+  test('reportOf: a relative, non-string or misnamed path is ignored, and the report kept; no path is unchanged', () => {
+    const kept = { mod: 'foo', report: { ...running, since: 5 } }
+    const notAbsolute = { ...kept, pathIgnored: "path must be the absolute path of the mod's folder" }
     expect(reportOf({ mod: 'foo', ...running, path: 'mods/foo' }, 5)).toEqual(notAbsolute)
     expect(reportOf({ mod: 'foo', ...running, path: '' }, 5)).toEqual(notAbsolute)
     expect(reportOf({ mod: 'foo', ...running, path: 42 }, 5)).toEqual(notAbsolute)
-    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/bar' }, 5)).toEqual({ error: "path must end with the mod's folder name, foo." })
-    expect(reportOf({ mod: 'foo', ...running }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 } })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/bar' }, 5)).toEqual({ ...kept, pathIgnored: "path must end with the mod's folder name, foo" })
+    expect(reportOf({ mod: 'foo', ...running }, 5)).toEqual(kept)
   })
 
   test('the config listing names a build\'s kept folder while modsDir is empty (PR #95 review)', () => {
@@ -1246,8 +1247,6 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(watchedDirOf(pin, '/w/main', '/chosen/mods', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/chosen/mods', pin })
     expect(watchedDirOf(pin, '/w/main/', '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
     expect(watchedDirOf(pin, null, '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
-    const rootless = { modsDir: '/w/wt/mods', root: null }
-    expect(watchedDirOf(rootless, '/elsewhere', '', '/elsewhere', [], '/p/mods')).toEqual({ dir: '/w/wt/mods', pin: rootless })
   })
 
   test('watchedDirOf: a changed root drops the pin, and modsDir or the walk decides', () => {
