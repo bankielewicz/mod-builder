@@ -11,7 +11,7 @@
 - "the red-phase test writer should write only tests": a type with `+` globs is refused every other path.
 - "the green developer and refactorer should never touch tests": a type with `-` globs is refused those paths.
 - "The integrity check catches them **after** the agent finishes, and reports them; it doesn't prevent them." The README says detection, not prevention.
-- A call with no `agentId` (the main loop) and a call whose `agentId` isn't listed by `$.agent.list()` always pass.
+- A call with no `agentId` (the main loop) always passes. A call whose `agentId` isn't listed by `$.agent.list()` passes while the `rules` option parses; a malformed option holds every subagent write, listed or not (the owner's choice on PR #81: a guard fails closed).
 
 ## Slots
 

@@ -352,3 +352,31 @@ describe('test-file integrity', () => {
     expect(seen.reads).toContain('/w/tests/a.test.ts')
   })
 })
+
+const MALFORMED = { rules: 'green-developer=tests/**' }
+const HELD_BY_RULES = 'tdd-guard: malformed rule "green-developer=tests/**" (expected <type>=+glob,-glob, each glob led by + or -); subagent writes are held until the rules option is fixed'
+
+describe('a malformed rules option', () => {
+  test('every subagent write is held with the parse message, an unlisted agent\'s too; the main loop passes', { options: MALFORMED }, async ($, on) => {
+    const seen = engine(on, { agents: GREEN })
+    await start($)
+    const listed: any = await $.tool.call(write('/w/src/x.ts', { agentId: 'a1' }) as never)
+    expect(listed.deny).toBe(HELD_BY_RULES)
+    const unlisted: any = await $.tool.call(write('/w/src/x.ts', { agentId: 'fork-9' }) as never)
+    expect(unlisted.deny).toBe(HELD_BY_RULES)
+    expect(seen.ran).toEqual([])
+    const main: any = await $.tool.call(write('/w/tests/a.test.ts') as never)
+    expect(main.deny).toBeUndefined()
+    expect(seen.ran).toEqual([{ tool: 'Write', path: '/w/tests/a.test.ts' }])
+  })
+
+  test('an Agent call is not checked: no folder is listed, no file read, nothing reported', { options: MALFORMED }, async ($, on) => {
+    const seen = engine(on, { during: TAMPER })
+    await start($)
+    const r: any = await $.tool.call(GREEN_RUN as never)
+    expect(r.result).toEqual(DONE)
+    expect(r.context ?? []).toEqual([])
+    expect(seen.listed).toEqual([])
+    expect(seen.reads).toEqual([])
+  })
+})
