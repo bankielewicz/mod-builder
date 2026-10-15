@@ -60,19 +60,33 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denySet: '',
     /** A store key whose writes are refused. */
     denyStoreSet: '',
+    /** A store key whose reads are refused. */
+    denyStoreGet: '',
+    /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
+    holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
     holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
+    timeouts: [] as (number | undefined)[],
+    /** While set, a test run never ends, as a Test that hangs does. */
+    stallTests: false,
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  // The store in memory, as mock.store keeps it (values read back as JSON), with writes that can be refused.
+  // The store in memory, as mock.store keeps it (values read back as JSON), with reads and writes that can be refused.
   const stored = new Map<string, string>(Object.entries(seeded).map(([key, value]) => [key, JSON.stringify(value)]))
   on('store.get', ($, e) => {
-    const text = stored.get((e as { key: string }).key)
+    const key = (e as { key: string }).key
+    if (seen.denyStoreGet === key) return { deny: 'EIO: store read failed' }
+    const text = stored.get(key)
     return { value: text === undefined ? undefined : JSON.parse(text) } as never
   })
-  on('store.set', ($, e) => {
+  on('store.set', async ($, e) => {
     const { key, value } = e as { key: string; value: unknown }
     if (seen.denyStoreSet === key) return { deny: 'EIO: store write failed' }
+    const held = seen.holdStoreSet
+    if (held?.key === key && !held.isReached) {
+      held.isReached = true
+      await held.until
+    }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
@@ -117,14 +131,16 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
-  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
+  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging', 'testTimeoutMinutes'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
   on('config.set', ($, e) => seen.denySet ? { deny: seen.denySet } : (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
   // streaming process.spawn, so Mod Lab's fallback answers instead.
   on('process.run', async ($, e) => {
     seen.argv.push([...e.argv])
+    seen.timeouts.push(e.init?.timeoutMs)
     if (hold) await hold
+    if (seen.stallTests && e.argv[2] === 'test') await new Promise<void>(() => undefined)
     const out = (e.argv.includes('validate') ? outputs.validate : outputs.test) ?? { exitCode: 0, stdout: '' }
     if (out.throws) throw new Error('could not start')
     return { value: { ...out, stderr: out.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -472,6 +488,264 @@ describe('progress', () => {
     await clock.advance(10)
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /next: Test/ })).toBeDefined()
+  })
+})
+
+describe('a run that does not end', () => {
+  const MINUTE = 60_000
+  /** testTimeoutMinutes 0.1: a 6 s limit keeps these tests quick (the clock ticks every 250 ms). */
+  const SHORT = { options: { modsDir: MODS, testTimeoutMinutes: 0.1 } }
+  const LIMIT = 6000
+  const GRACE = 30_000
+  const reportTest = ($: Engine) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Test', status: 'passed' } as never)
+
+  test('a failure after the tests ran does not leave the row: the next Test starts', OPTIONS, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    seen.denyStoreSet = `modlab:results:${MODS}`
+    release()
+    await clock.advance(500)
+    seen.denyStoreSet = ''
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a row older than testTimeoutMinutes plus 30 s is an orphan: a new Test replaces it, a younger row still blocks', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(LIMIT / 2)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    // Past the time limit but inside the grace: the run may still be ending (its scan, its store write).
+    await clock.advance(LIMIT / 2 + 5000)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(GRACE)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('an orphan row leaves the band and the pane: T starts a new Test', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'band below' }) as never)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    const during = await mountBand($)
+    expect(await during.find({ type: 'Text', text: /^git-branch$/ })).toBeDefined()
+    await during.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const after = await mountBand($)
+    expect(await after.find({ type: 'Text', text: /^git-branch$/ })).toBeUndefined()
+    await after.unmount()
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('an orphan row is dropped by the clock and the stage stops reading running, with nothing else happening', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    const during = await mountPane($)
+    expect(await during.find({ type: 'Text', text: /running tests/ })).toBeDefined()
+    await during.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
+  })
+
+  test('a fresh load clears the rows its module before left: T starts at once', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    // A reload fires session.start for the fresh module; the old module's continuations went with it.
+    await start($)
+    await clock.advance(10)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a run whose row was replaced while its scan stalled starts no process', SHORT, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdList.isReached).toBe(true)
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    release()
+    await clock.advance(500)
+    expect(seen.argv.length).toBe(1)
+  })
+
+  test('a run whose row was replaced while its result was being saved toasts nothing', SHORT, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    let release = () => {}
+    seen.holdStoreSet = { key: `modlab:results:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdStoreSet.isReached).toBe(true)
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+    release()
+    await clock.advance(500)
+    expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
+  })
+
+  test('a run whose row was replaced while its process ran neither saves nor toasts its result', SHORT, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+    release()
+    await clock.advance(500)
+    expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
+  })
+
+  test('an orphan row does not hold back the auto re-run', SHORT, async ($, on) => {
+    const mtime = { ms: 1000 }
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    seen.stallTests = true
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv).toHaveLength(3)
+    await clock.advance(LIMIT + GRACE + 5000)
+    seen.stallTests = false
+    mtime.ms = 5000
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.slice(3).map(argv => argv[2])).toEqual(['validate', 'test'])
+  })
+
+  test('a run whose scan throws says so, and the pane stops showing it running', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    // The run's own scan stops at the mod's folder; reading modlab:done after it then fails.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdList.isReached).toBe(true)
+    seen.denyStoreGet = `modlab:done:${MODS}`
+    release()
+    await clock.advance(10)
+    seen.denyStoreGet = ''
+    await clock.advance(500)
+    expect(seen.toasts.some(text => text.startsWith('✕ git-branch: Test stopped before its result was saved ('))).toBe(true)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
+  })
+
+  test('a Validate that process.run stops at the time limit reads as timed out; one refused sooner could not run', SHORT, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(LIMIT + 1000)
+    release()
+    await clock.advance(10)
+    expect(seen.toasts).toContain('✕ git-branch: timed out after 0.1 minutes. Press F in Mod Lab to fix')
+    await ui.unmount()
+    const again = await mountPane($)
+    await again.press({ key: 'validate' })
+    await clock.advance(10)
+    expect(seen.toasts.at(-1)).toBe('✕ git-branch: could not run. Press F in Mod Lab to fix')
+  })
+
+  test('a Test run is given testTimeoutMinutes as its time limit', { options: { modsDir: MODS, testTimeoutMinutes: 5 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.timeouts).toEqual([5 * MINUTE])
+  })
+
+  test('the time limit of a Test run stops at the engine\'s ten minutes', { options: { modsDir: MODS, testTimeoutMinutes: 30 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.timeouts).toEqual([10 * MINUTE])
   })
 })
 
@@ -1128,17 +1402,42 @@ describe('logging (Change 0.2.2)', () => {
     await clock.advance(3000)
     const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
     const listed = (await run('config')).text ?? ''
-    expect(listed).toContain('logging    normal')
-    expect(listed).toContain('modsDir    /m/mods')
+    expect(listed).toContain('logging            normal')
+    expect(listed).toContain('modsDir            /m/mods')
     expect(listed).toMatch(/Log file: \/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log/)
     const changed = (await run('config logging verbose')).text ?? ''
     expect(changed).toStartWith('logging is now verbose.')
-    expect(changed).toContain('logging    verbose')
+    expect(changed).toContain('logging            verbose')
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
     expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
     // The change line reaches the file before the set, which reloads the plugin.
     expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"verbose"}')
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
+  })
+})
+
+describe('testTimeoutMinutes in /mod-builder config (PR #55 review)', () => {
+  test('the listing shows the time limit; a change writes its /config row', { options: { modsDir: MODS, testTimeoutMinutes: 2 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    expect((await run('config')).text).toContain('testTimeoutMinutes 2 minutes')
+    const changed = (await run('config testTimeoutMinutes 5')).text ?? ''
+    expect(changed).toStartWith('testTimeoutMinutes is now 5.')
+    expect(changed).toContain('testTimeoutMinutes 5 minutes')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: 5 }])
+  })
+
+  test('default clears its /config row, and the listing shows the default it then means', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    const changed = (await run('config testTimeoutMinutes default')).text ?? ''
+    expect(changed).toStartWith('testTimeoutMinutes is now default.')
+    expect(changed).toContain('testTimeoutMinutes 3 minutes')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: '' }])
   })
 })
 
@@ -1259,7 +1558,7 @@ describe('modsDir not set: the mods folder follows the working directory', () =>
     await start($)
     await clock.advance(10)
     const listed = ((await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }).text ?? ''
-    expect(listed).toContain('modsDir    default (…/wt/mods)')
+    expect(listed).toContain('modsDir            default (…/wt/mods)')
   })
 })
 

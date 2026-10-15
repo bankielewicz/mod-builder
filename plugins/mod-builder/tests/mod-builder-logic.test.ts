@@ -743,7 +743,7 @@ describe('logging and /mod-builder config', () => {
     expect(parseConfigCommand(['modsDir', 'default'])).toEqual({ kind: 'set', name: 'modsDir', value: '' })
     const unknown = parseConfigCommand(['colour', 'red'])
     expect(unknown.kind).toBe('error')
-    expect((unknown as { text: string }).text).toStartWith('No option "colour". Options: logging, autoRerun, autoOpen, modsDir.')
+    expect((unknown as { text: string }).text).toStartWith('No option "colour". Options: logging, autoRerun, autoOpen, modsDir, testTimeoutMinutes.')
   })
 
   test("a /config row is mod-builder's own when its owner is mod-builder or mod-builder@<source>", () => {
@@ -762,13 +762,99 @@ describe('logging and /mod-builder config', () => {
   })
 
   test('the listing shows each value and the log file, or why there is none', () => {
-    const values = { logging: 'verbose' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods' }
+    const values = { logging: 'verbose' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods', testTimeoutMinutes: 3 }
     const text = configListText(values, '/home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
-    expect(text).toContain('logging    verbose')
-    expect(text).toContain('autoRerun  on')
-    expect(text).toContain('modsDir    default (…/ClaudeMod/mods)')
+    expect(text).toContain('logging            verbose')
+    expect(text).toContain('autoRerun          on')
+    expect(text).toContain('modsDir            default (…/ClaudeMod/mods)')
     expect(text).toContain('Log file: /home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
     expect(configListText({ ...values, logging: 'off' }, '')).toContain('Log file: none (logging is off)')
     expect(configListText(values, '')).toContain('Log file: not written yet this session')
+  })
+})
+
+describe('runs in flight (PR #55 review)', () => {
+  const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+
+  test('a row older than the time limit plus 30 s lost its run: it no longer counts', () => {
+    expect(typeof Logic.liveRuns).toBe('function')
+    expect(Logic.RUN_GRACE_MS).toBe(30_000)
+    const limit = 60_000
+    const rows = [row(0), row(1000)]
+    expect(Logic.liveRuns(rows, limit + 30_000, limit)).toEqual(rows)
+    expect(Logic.liveRuns(rows, limit + 30_001, limit)).toEqual([row(1000)])
+    expect(Logic.liveRuns([], 0, limit)).toEqual([])
+  })
+})
+
+describe('the time limit, testTimeoutMinutes (PR #55 review)', () => {
+  test('a number of minutes above 0, at most ten, in whole milliseconds; anything else is three minutes', () => {
+    expect(typeof Logic.runLimitMsOf).toBe('function')
+    expect(Logic.runLimitMsOf(5)).toBe(300_000)
+    expect(Logic.runLimitMsOf(' 1.5 ')).toBe(90_000)
+    expect(Logic.runLimitMsOf(30)).toBe(600_000)
+    expect(Logic.runLimitMsOf(1.00001)).toBe(60_001)
+    expect(Logic.runLimitMsOf(0.00001)).toBe(1000)
+    for (const raw of [undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY, true, '', 'soon', {}]) expect(Logic.runLimitMsOf(raw)).toBe(180_000)
+  })
+
+  test('a check that ran for its whole time limit is over it', () => {
+    expect(typeof Logic.isOverLimit).toBe('function')
+    expect(Logic.isOverLimit(60_000, 60_000)).toBe(true)
+    expect(Logic.isOverLimit(61_000, 60_000)).toBe(true)
+    expect(Logic.isOverLimit(59_999, 60_000)).toBe(false)
+  })
+
+  test('the timeout summary names the limit in minutes', () => {
+    expect(typeof Logic.timeoutText).toBe('function')
+    expect(Logic.timeoutText(60_000)).toBe('timed out after 1 minute')
+    expect(Logic.timeoutText(180_000)).toBe('timed out after 3 minutes')
+    expect(Logic.timeoutText(30_000)).toBe('timed out after 0.5 minutes')
+    expect(Logic.timeoutText(60_001)).toBe('timed out after 1 minute')
+  })
+
+  test('/mod-builder config takes testTimeoutMinutes: minutes above 0 and at most ten, or default', () => {
+    expect(parseConfigCommand(['testTimeoutMinutes', '5'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 5 } as never)
+    expect(parseConfigCommand(['testtimeoutminutes', '1.5'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 1.5 } as never)
+    // default clears the row, as for modsDir, so the manifest's default applies.
+    expect(parseConfigCommand(['testTimeoutMinutes', 'Default'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: '' } as never)
+    for (const bad of ['0', '-1', '11', 'soon']) {
+      expect(parseConfigCommand(['testTimeoutMinutes', bad])).toEqual({ kind: 'error', text: 'testTimeoutMinutes must be a number of minutes above 0, at most 10.' })
+    }
+    expect(valuesAfterSet('testTimeoutMinutes' as never, 5 as never, '/p/mods')).toEqual({ testTimeoutMinutes: 5 } as never)
+    expect(valuesAfterSet('testTimeoutMinutes', '', '/p/mods')).toEqual({ testTimeoutMinutes: 3 })
+    // The listing shows the limit in use, rounded as the timeout summary rounds it: 0.001 is the 1 s floor.
+    expect(valuesAfterSet('testTimeoutMinutes', 0.001, '/p/mods')).toEqual({ testTimeoutMinutes: 0.02 })
+  })
+
+  test('the listing shows the time limit, and its name column fits the longest name', () => {
+    const values = { logging: 'normal' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods', testTimeoutMinutes: 1 }
+    const text = configListText(values, '')
+    expect(text).toContain('  testTimeoutMinutes 1 minute ')
+    expect(text).toContain('  logging            normal')
+  })
+})
+
+describe('a run that does not end well (PR #55 review)', () => {
+  test('a run that threw before its result was stored: the toast names the check and the error', () => {
+    expect(typeof Logic.toastOfRunError).toBe('function')
+    expect(Logic.toastOfRunError('m', 'Typecheck', new Error('EIO'))).toBe('✕ m: Type-check stopped before its result was saved (Error: EIO)')
+    expect(Logic.toastOfRunError('m', 'Test', 'x'.repeat(300))).toBe(`✕ m: Test stopped before its result was saved (${'x'.repeat(119)}…)`)
+  })
+
+  test('a run still has its row only while one with its mod, kind and start is in runs', () => {
+    expect(typeof Logic.hasRun).toBe('function')
+    const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+    expect(Logic.hasRun([row(5), row(9)], row(5))).toBe(true)
+    expect(Logic.hasRun([row(9)], row(5))).toBe(false)
+    expect(Logic.hasRun([{ ...row(5), kind: 'Validate' }], row(5))).toBe(false)
+    expect(Logic.hasRun([{ ...row(5), mod: 'n' }], row(5))).toBe(false)
+  })
+
+  test('streamed progress lands on its own run, not on a newer run of the same check', () => {
+    expect(typeof Logic.withProgress).toBe('function')
+    const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+    const other: Run = { ...row(5), kind: 'Validate' }
+    expect(Logic.withProgress([row(5), row(9), other], row(5), { passed: 2, failed: 1 })).toEqual([{ ...row(5), passed: 2, failed: 1 }, row(9), other])
   })
 })

@@ -59,6 +59,8 @@ type StoredResults = Record<string, Lab.Results>
 let configuredDir = ''
 let autoOpen = false
 let autoRerun = true
+/** A check's time limit in ms, from `testTimeoutMinutes`. */
+let runLimit = Lab.runLimitMsOf(undefined)
 let clock: Timer | null = null
 let lastTickMs = 0
 let scanning: Promise<void> | null = null
@@ -367,7 +369,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const results = await resultsOf($, dir)
   const generations = await generationsOf($, dir)
   const cwd = await cwdOf($)
-  const inFlight = await read($, runs)
+  const inFlight = await liveRunsOf($)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
   const found = new Map<string, Lab.FileFacts>()
   for (const folder of folders) {
@@ -461,6 +463,14 @@ async function refreshStatus($: Engine): Promise<void> {
 
 // ── The clock: runs only while something is live ─────────────────────────
 
+/**
+ * session.start fires once per fresh load of this module (claude-code.d.ts), and the runs atom
+ * outlives the module that wrote it. So at that moment no row has a live run: clear them all.
+ */
+async function clearLeftRuns($: Engine): Promise<void> {
+  if ((await read($, runs)).length) await update($, runs, () => [])
+}
+
 function startClock($: Engine): void {
   if (clock) return
   clock = $.clock.every(FRAME_MS, () => void tick($).catch((error: unknown) => logCaught($, 'tick', error)))
@@ -484,13 +494,24 @@ async function tick($: Engine): Promise<void> {
   }
   await refreshStatus($)
 
+  // An orphan that aged out is dropped and the mods rescanned, so its stage stops reading running.
+  const all = await read($, runs)
+  const live = Lab.liveRuns(all, now, runLimit)
+  if (live.length < all.length) {
+    await update($, runs, rows => Lab.liveRuns(rows, now, runLimit))
+    void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
+  }
+
+  // runs is read again here: a run may have started during the awaits above.
   const isLive =
-    (await read($, runs)).length > 0 ||
+    (await liveRunsOf($)).length > 0 ||
     (await read($, demoStartedAt)) !== null ||
     Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
   if (!isLive) {
     clock?.cancel()
     clock = null
+    // A run that started after that read found the clock still set and didn't start one: start it again.
+    if ((await liveRunsOf($)).length) startClock($)
   }
 }
 
@@ -498,14 +519,29 @@ async function tick($: Engine): Promise<void> {
 
 /** Records streamed test progress on the run in flight, which redraws the row and band. */
 async function noteProgress($: Engine, entry: Run, counts: { passed: number; failed: number }): Promise<void> {
-  await update($, runs, all => all.map(one => (one.mod === entry.mod && one.kind === entry.kind ? { ...one, ...counts } : one)))
+  await update($, runs, all => Lab.withProgress(all, entry, counts))
 }
 
+/** A check ended at its time limit; the message is its summary. */
+class RunTimeout extends Error {}
+
+/** The error a check ends with at its time limit: "timed out after 3 minutes". */
+const timeoutOf = (): RunTimeout => new RunTimeout(Lab.timeoutText(runLimit))
+
+/** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
+async function liveRunsOf($: Engine): Promise<Run[]> {
+  return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimit)
+}
+
+/** Runs a check to the end. `$.process.run` kills one still going at the time limit and rejects: that is a RunTimeout. */
 async function runToEnd($: Engine, argv: readonly string[], dir: string): Promise<{ exitCode: number; output: string }> {
-  const startedAt = Date.now()
-  const out = await $.process.run(argv, { cwd: dir, timeoutMs: 180_000 })
+  const startedAt = await $.clock.now()
+  const out = await $.process.run(argv, { cwd: dir, timeoutMs: runLimit }).catch(async (error: unknown) => {
+    // It also rejects when the command cannot start, which happens at once.
+    throw Lab.isOverLimit((await $.clock.now()) - startedAt, runLimit) ? timeoutOf() : error
+  })
   const output = `${out.stdout}\n${out.stderr}`
-  logProcess($, argv, out.exitCode, Date.now() - startedAt, output)
+  logProcess($, argv, out.exitCode, (await $.clock.now()) - startedAt, output)
   return { exitCode: out.exitCode, output }
 }
 
@@ -518,7 +554,8 @@ function logProcess($: Engine, argv: readonly string[], exitCode: number, durati
 /**
  * Runs validate or tsc to the end; streams test so the band fills on real
  * progress. A stream that cannot start (it rejects its first pull) falls back
- * to running the tests to the end.
+ * to running the tests to the end. A stream still going at the time limit is
+ * stopped, which kills the child, and the run ends as a RunTimeout.
  */
 async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: number; output: string }> {
   const argv = Lab.argvOf(entry.kind, dir)
@@ -526,9 +563,18 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   let output = ''
   let seen = 0
   let hasStarted = false
+  let isTimedOut = false
+  let timer: Timer | null = null
   const startedAt = Date.now()
   try {
     const stream = $.process.spawn({ argv, cwd: dir })
+    // One shot at the limit: a poll overshoots any limit that isn't a multiple of its period.
+    timer = $.clock.after(runLimit, () => {
+      isTimedOut = true
+      // A stream closed before its end rejects its result (claude-code.d.ts, HookStream); nothing reads it then.
+      stream.result.catch(() => undefined)
+      void stream.return?.(undefined as never)?.catch?.(() => undefined)
+    })
     for await (const piece of stream) {
       hasStarted = true
       output += piece.text
@@ -538,14 +584,41 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
         await noteProgress($, entry, counts)
       }
     }
+    if (isTimedOut) throw timeoutOf()
     const ended = await stream.result
     logProcess($, argv, ended.code ?? 1, Date.now() - startedAt, output)
     return { exitCode: ended.code ?? 1, output }
   } catch (error) {
+    if (isTimedOut) throw timeoutOf()
     if (hasStarted) throw error
     // Expected under `claude plugin test`, where process.spawn has no stub.
     logCaught($, 'execute.spawn', error, 'verbose', { argv, fallback: 'process.run' })
     return runToEnd($, argv, dir)
+  } finally {
+    timer?.cancel()
+  }
+}
+
+/** Whether a newer run took this run's row (it outlived the limit and the grace): then it must not start or save anything. */
+async function isSuperseded($: Engine, entry: Run): Promise<boolean> {
+  if (Lab.hasRun(await read($, runs), entry)) return false
+  logEvent($, 'normal', 'run', `${entry.mod} ${entry.kind} superseded`, { startedAt: entry.startedAt })
+  return true
+}
+
+/** Runs a check and judges it. One that throws fails: as timed out at its time limit, else as "could not run". */
+async function resultOfRun($: Engine, entry: Run, dir: string, stamp: number): Promise<Lab.RunResult> {
+  const { mod, kind, startedAt } = entry
+  try {
+    const { exitCode, output } = await execute($, entry, dir)
+    const endedAt = await $.clock.now()
+    return Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
+  } catch (error) {
+    const endedAt = await $.clock.now()
+    const summary = error instanceof RunTimeout ? error.message : 'could not run'
+    const result: Lab.RunResult = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary, errors: [String(error).slice(0, 200)] }
+    logCaught($, 'run', error, 'normal', { mod, kind })
+    return result
   }
 }
 
@@ -554,7 +627,7 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
  * result stay with that folder, even if a /cd moves the scans it triggers elsewhere.
  */
 async function run($: Engine, mod: string, kind: RunKind, modsDir: string): Promise<void> {
-  if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind)) return
+  if ((await liveRunsOf($)).some(one => one.mod === mod && one.kind === kind)) return
   const dir = `${modsDir}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
   const hasTypes = kind !== 'Typecheck' || (await exists($, typesPath))
@@ -565,33 +638,39 @@ async function run($: Engine, mod: string, kind: RunKind, modsDir: string): Prom
   const startedAt = await $.clock.now()
   const last = (await resultsOf($, modsDir))[mod]?.Test?.tests
   const entry: Run = { mod, kind, startedAt, passed: 0, failed: 0, total: last ? last.passed + last.failed : null }
-  await update($, runs, all => [...all, entry])
-  startClock($)
-  await scan($, false)
-
-  const facts = await modFactsOf($, modsDir, mod, await marketplaceOf($, modsDir))
-  const stamp = facts?.codeMtimeMs ?? startedAt
-  const codeSig = facts?.codeSig
-  let result: Lab.RunResult
+  await update($, runs, all => [...all.filter(one => !(one.mod === mod && one.kind === kind)), entry])
+  // From here the row is this run's alone to remove: whatever throws, it goes.
+  let toast = ''
   try {
-    const { exitCode, output } = await execute($, entry, dir)
-    const endedAt = await $.clock.now()
-    result = Lab.resultOf(kind, exitCode, output, stamp, endedAt - startedAt, endedAt)
+    startClock($)
+    await scan($, false)
+    if (await isSuperseded($, entry)) return
+
+    const facts = await modFactsOf($, modsDir, mod, await marketplaceOf($, modsDir))
+    const stamp = facts?.codeMtimeMs ?? startedAt
+    const codeSig = facts?.codeSig
+    let result = await resultOfRun($, entry, dir, stamp)
+    if (await isSuperseded($, entry)) return
+    if (codeSig !== undefined) result = { ...result, codeSig }
+    logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
+    // A refused write loses this result, but the run still ends and says how it went.
+    const resultsKey = keyOf(RESULTS_KEY, modsDir)
+    await updateStore($, RESULTS_KEY, modsDir, (stored: StoredResults) => ({ ...stored, [mod]: { ...stored[mod], [kind]: result } })).then(
+      () => logEvent($, 'debug', 'store.set', resultsKey, { mod, kind }),
+      (error: unknown) => logCaught($, 'store.set', error, 'normal', { key: resultsKey, mod, kind }),
+    )
+    // A newer run may have taken the row while the write waited its turn. Its later write wins the
+    // store, since the writes are chained, so this result is not the one to announce.
+    if (await isSuperseded($, entry)) return
+    toast = Lab.toastOfRun(mod, result)
   } catch (error) {
-    const endedAt = await $.clock.now()
-    result = { kind, ok: false, stampMs: stamp, durationMs: endedAt - startedAt, atMs: endedAt, summary: 'could not run', errors: [String(error).slice(0, 200)] }
+    // No result came of it (a scan or reading the mod threw): say so, and rescan below so the stage stops reading running.
     logCaught($, 'run', error, 'normal', { mod, kind })
+    toast = Lab.toastOfRunError(mod, kind, error)
+  } finally {
+    await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind && one.startedAt === startedAt)))
   }
-  if (codeSig !== undefined) result = { ...result, codeSig }
-  logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
-  // A refused write loses this result, but the run still ends and says how it went.
-  const resultsKey = keyOf(RESULTS_KEY, modsDir)
-  await updateStore($, RESULTS_KEY, modsDir, (stored: StoredResults) => ({ ...stored, [mod]: { ...stored[mod], [kind]: result } })).then(
-    () => logEvent($, 'debug', 'store.set', resultsKey, { mod, kind }),
-    (error: unknown) => logCaught($, 'store.set', error, 'normal', { key: resultsKey, mod, kind }),
-  )
-  await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
-  $.ui.toast(Lab.toastOfRun(mod, result))
+  $.ui.toast(toast)
   await scan($, true)
 }
 
@@ -605,7 +684,7 @@ async function rerunStale($: Engine): Promise<void> {
   // The folder these views were judged in, read with them: each run's scans may move elsewhere.
   const verdict = await read($, judged)
   const modsDir = verdict.modsDir ?? (await currentModsDir($))
-  const inFlight = await read($, runs)
+  const inFlight = await liveRunsOf($)
   for (const view of verdict.views) {
     const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
     if (plan.includes('Validate')) await run($, view.name, 'Validate', modsDir)
@@ -706,10 +785,12 @@ async function configure($: Engine, words: string[]): Promise<string> {
     autoOpen,
     modsDir: configuredDir,
     modsDirShown: Lab.shortPath(configuredDir ? Lab.normalizePath(configuredDir) : defaultDir),
+    testTimeoutMinutes: Lab.limitMinutesOf(runLimit),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
   if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, defaultDir))
-  const shown = (value: string | boolean): string => (typeof value === 'boolean' ? (value ? 'on' : 'off') : value || 'default')
+  const shown = (value: string | boolean | number): string =>
+    typeof value === 'boolean' ? (value ? 'on' : 'off') : typeof value === 'number' ? String(value) : value || 'default'
   const head = command.kind === 'set' ? `${command.name} is now ${shown(command.value)}.\n` : ''
   return head + Lab.configListText(values, logFile)
 }
@@ -719,7 +800,7 @@ async function configure($: Engine, words: string[]): Promise<string> {
  * Changing a plugin's options reloads it (types), which empties this module's log buffer, so
  * the line about the change is written to the file before the set.
  */
-async function setOption($: Engine, name: Lab.OptionName, value: string | boolean): Promise<string> {
+async function setOption($: Engine, name: Lab.OptionName, value: string | boolean | number): Promise<string> {
   // A plugin option's row is keyed `<plugin>.<field>`; its owner names the install, e.g.
   // `mod-builder@claudemod` or `mod-builder@inline` under --plugin-dir (seen live, 2026-10-13).
   const key = `${$.plugin.name}.${name}`
@@ -744,6 +825,7 @@ export const register: Register = (on, options) => {
   configuredDir = String(config.modsDir ?? '').trim()
   autoOpen = config.autoOpen === true
   autoRerun = config.autoRerun !== false
+  runLimit = Lab.runLimitMsOf(config.testTimeoutMinutes)
   logLevel = Lab.logLevelOf(config.logging)
 
   on('session.start', async ($, e, next) => {
@@ -765,6 +847,7 @@ export const register: Register = (on, options) => {
         inputSchema: Lab.REPORT_SCHEMA,
       })
       .catch((error: unknown) => logCaught($, 'session.start.tool', error))
+    await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
     return next(e)
@@ -923,7 +1006,7 @@ export const register: Register = (on, options) => {
     const doc = await read($, readme)
     // The folder `all` was judged in: what the header names and the buttons act on.
     const shownDir = await shownModsDir($)
-    const inFlight = await read($, runs)
+    const inFlight = await liveRunsOf($)
     const demoStart = await read($, demoStartedAt)
     const isDemoRunning = demoStart !== null
 
@@ -1375,7 +1458,7 @@ export const register: Register = (on, options) => {
       const started = await read($, demoStartedAt)
       const demo = started === null ? null : { view: Lab.demoViewAt(Math.max(0, now - started)), since: started }
       const entries = Lab.bandEntriesOf(
-        await read($, runs),
+        await liveRunsOf($),
         Lab.liveReports(await read($, reported), now),
         demo,
         (await read($, judged)).views,
