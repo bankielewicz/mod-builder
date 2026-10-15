@@ -1767,6 +1767,31 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
   })
 
+  test('an https origin on another host blocks though its owner and repository match, and gh is not asked about that host (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://ghe.example.com/o/r.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from ghe.example.com/o/r, ${BUT}`)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('an ssh origin on another host, for another repository, blocks without asking gh about that host (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'git@some-host:x/y.git' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin fetches from some-host/x/y, ${BUT}`)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+  })
+
+  test('an ssh:// origin through an alias of the host passes for the same owner and repository, as the scp-like form does', async ($, on) => {
+    const w = engine(on, { originUrl: 'ssh://git@github-work/o/r.git' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
+  })
+
   test("the number of a pull request is refused as an issue", async ($, on) => {
     const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
     await start($)

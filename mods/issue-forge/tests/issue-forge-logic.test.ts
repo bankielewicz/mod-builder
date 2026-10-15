@@ -1549,6 +1549,24 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
     expect(isSameOwnerRepo('github.com/o/r', null)).toBe(false)
   })
 
+  test('remoteVerdict (PR #68 review): an https origin names the host itself, an ssh one may name an alias of it, and gh is asked only on the pinned host', () => {
+    const remoteVerdict = helper<[string, string], unknown>('remoteVerdict')
+    const PIN = 'github.com/o/r'
+    for (const url of ['https://github.com/o/r.git', 'https://GitHub.com/O/R', 'git@github.com:o/r.git', 'ssh://git@github.com/o/r.git']) {
+      expect(remoteVerdict(url, PIN)).toEqual({ kind: 'match' })
+    }
+    // git hands the host of either ssh form to ssh, and ~/.ssh/config may alias it.
+    expect(remoteVerdict('git@github-work:o/r.git', PIN)).toEqual({ kind: 'match' })
+    expect(remoteVerdict('ssh://git@github-work/o/r.git', PIN)).toEqual({ kind: 'match' })
+    expect(remoteVerdict('https://ghe.example.com/o/r.git', PIN)).toEqual({ kind: 'other', repo: 'ghe.example.com/o/r' })
+    // Another owner or repository may be the pinned one renamed: gh is asked, but only on the pinned host.
+    expect(remoteVerdict('https://github.com/old/r.git', PIN)).toEqual({ kind: 'ask', repo: 'github.com/old/r' })
+    expect(remoteVerdict('git@GitHub.com:old/r.git', PIN)).toEqual({ kind: 'ask', repo: 'github.com/old/r' })
+    expect(remoteVerdict('git@some-host:x/y.git', PIN)).toEqual({ kind: 'other', repo: 'some-host/x/y' })
+    expect(remoteVerdict('https://ghe.example.com/x/y.git', PIN)).toEqual({ kind: 'other', repo: 'ghe.example.com/x/y' })
+    expect(remoteVerdict('git://github.com/o/r.git', PIN)).toEqual({ kind: 'unrecognised' })
+  })
+
   test('isPullUrl is true for a /<owner>/<repo>/pull/<N> path on any host, and for no issue URL', () => {
     const isPullUrl = helper<[string], boolean>('isPullUrl')
     expect(isPullUrl('https://github.com/o/r/pull/16')).toBe(true)
