@@ -110,8 +110,8 @@ const modsDirFor = (configured: string, cwd: string | null, existing: readonly s
 type ReportedByMod = Parameters<typeof liveReports>[0]
 const placeholderFacts = (name: string): FileFacts | undefined =>
   (Logic as unknown as { placeholderFacts?: (name: string) => FileFacts }).placeholderFacts?.(name)
-const placeholderNames = (reports: ReportedByMod, factsNames: readonly string[]): string[] | undefined =>
-  (Logic as unknown as { placeholderNames?: (reports: ReportedByMod, factsNames: readonly string[]) => string[] }).placeholderNames?.(reports, factsNames)
+const placeholderNames = (reports: ReportedByMod, factsNames: readonly string[], dir?: string): string[] | undefined =>
+  (Logic as unknown as { placeholderNames?: (reports: ReportedByMod, factsNames: readonly string[], dir?: string) => string[] }).placeholderNames?.(reports, factsNames, dir)
 
 const EMPTY: FileFacts = {
   name: 'git-branch',
@@ -818,6 +818,13 @@ describe('a mod is listed as soon as a build reports it, before its folder exist
     const reports = { 'new-mod': running('Spec', 0) }
     expect(placeholderNames(liveReports(reports, REPORT_TTL_MS - 1), [])).toEqual(['new-mod'])
     expect(placeholderNames(liveReports(reports, REPORT_TTL_MS), [])).toEqual([])
+  })
+
+  test('placeholderNames: given a mods folder, only reports made in that folder get a row (Codex P2, PR #80)', () => {
+    const inOne = { ...running('Spec'), dir: '/w/one/mods' }
+    expect(placeholderNames({ 'new-mod': inOne }, [], '/w/one/mods')).toEqual(['new-mod'])
+    expect(placeholderNames({ 'new-mod': inOne }, [], '/w/two/mods')).toEqual([])
+    expect(placeholderNames({ 'new-mod': running('Spec') }, [], '/w/two/mods')).toEqual([])
   })
 
   test('placeholderFacts: the facts of a folder with nothing in it, under the reported name', () => {
