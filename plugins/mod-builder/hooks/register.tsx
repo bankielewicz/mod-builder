@@ -51,8 +51,8 @@ const hasWarnedNarrow = atom({ plugin: 'mod-builder', key: 'hasWarnedNarrow' } a
 type Engine = EngineInterface
 type StoredResults = Record<string, Lab.Results>
 
-// Module state: options, timer handles and in-flight guards only. A reload
-// starts it afresh; what must survive lives in atoms and $.store.
+// Module state: options, timer handles, in-flight guards and write chains only.
+// A reload starts it afresh; what must survive lives in atoms and $.store.
 let configuredDir = ''
 let autoOpen = false
 let autoRerun = true
@@ -61,6 +61,8 @@ let lastTickMs = 0
 let scanning: Promise<void> | null = null
 let isScanQueued = false
 let isQueuedAnnounced = false
+// Writes to the results and generations in $.store, in order (Change 0.2.8).
+let storeChain: Promise<void> = Promise.resolve()
 const factsByMod = new Map<string, Lab.FileFacts>()
 // Logging (Change 0.2.2): the level, this session's lines, its file once known, and writes in order.
 let logLevel: Lab.LogLevel = 'normal'
@@ -200,6 +202,8 @@ async function nestedFiles($: Engine, at: string, folder: string, entries: reado
   return found.flat()
 }
 
+// ── Store ─────────────────────────────────────────────────────────────────
+
 const resultsOf = async ($: Engine): Promise<StoredResults> =>
   ((await $.store.get(RESULTS_KEY)) ?? {}) as StoredResults
 
@@ -214,11 +218,13 @@ const generationsFrom = (stored: StoredGenerations): Record<string, Generation> 
 const generationsOf = async ($: Engine): Promise<Record<string, Generation>> =>
   generationsFrom(((await $.store.get(GENERATIONS_KEY)) ?? {}) as StoredGenerations)
 
-// Writes to RESULTS_KEY and GENERATIONS_KEY go one at a time through this chain: each reads the key
-// inside its turn, so two runs ending together cannot overwrite one another. It orders this session's
-// writes only; $.store is one file per plugin, and a second session can still race.
-let storeChain: Promise<void> = Promise.resolve()
-
+/**
+ * Sets a store key to `change` of its current value. Updates run one at a
+ * time, each reading the key in its turn, so two callers never overwrite each
+ * other's change. This orders this session's writes only: $.store is one file
+ * per plugin, and a second session's write can still race. A failed update
+ * rejects for its caller; the next one runs regardless.
+ */
 function updateStore<T>($: Engine, key: string, change: (current: T) => T): Promise<void> {
   storeChain = storeChain
     .catch(() => undefined)
@@ -226,6 +232,11 @@ function updateStore<T>($: Engine, key: string, change: (current: T) => T): Prom
       await $.store.set(key, change(((await $.store.get(key)) ?? {}) as T))
     })
   return storeChain
+}
+
+/** Updates the build generations, as `updateStore` does, from their current value. */
+function updateGenerations($: Engine, change: (current: Record<string, Generation>) => Record<string, Generation>): Promise<void> {
+  return updateStore($, GENERATIONS_KEY, (stored: StoredGenerations) => change(generationsFrom(stored)))
 }
 
 // ── Scanning ──────────────────────────────────────────────────────────────
@@ -321,8 +332,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
     // Drop only the generations this scan judged: one begun since is a new edit, and stays.
-    await updateStore($, GENERATIONS_KEY, (stored: StoredGenerations) => {
-      const remaining = generationsFrom(stored)
+    await updateGenerations($, remaining => {
       for (const view of finished) {
         if (remaining[view.name]?.since === generations[view.name]?.since) delete remaining[view.name]
       }
@@ -748,7 +758,7 @@ export const register: Register = (on, options) => {
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
       const fromVersion = factsByMod.get(mod)?.version ?? null
-      await updateStore($, GENERATIONS_KEY, (stored: StoredGenerations) => ({ ...generationsFrom(stored), [mod]: { since: now, fromVersion } }))
+      await updateGenerations($, all => ({ ...all, [mod]: { since: now, fromVersion } }))
       logEvent($, 'debug', 'store.set', GENERATIONS_KEY, { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
