@@ -476,13 +476,11 @@ async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { r
 }
 
 /**
- * Whether `remote` (its push URL when `isPush`) names `repo`. The URL itself is parsed here and never passed on: it can hold a
- * token. A renamed or transferred repository differs from the URL, so gh is asked for the name it gives `host/owner/repo`.
+ * Whether a remote URL names `repo`. The URL itself is parsed here and never passed on: it can hold a token. A renamed or
+ * transferred repository differs from the URL, so gh is asked for the name it gives `host/owner/repo`.
  */
-async function remoteRepo($: EngineInterface, root: string, remote: string, isPush: boolean, repo: string): Promise<'missing' | 'match' | { other: string | null }> {
-  const got = await git($, root, ['remote', 'get-url', ...(isPush ? ['--push'] : []), remote])
-  if (got.exitCode !== 0) return 'missing'
-  const verdict = remoteVerdict(got.stdout, repo)
+async function remoteRepo($: EngineInterface, root: string, url: string, repo: string): Promise<'match' | { other: string | null }> {
+  const verdict = remoteVerdict(url, repo)
   if (verdict.kind === 'match') return 'match'
   if (verdict.kind === 'unrecognised') return { other: null }
   if (verdict.kind === 'other') return { other: verdict.repo }
@@ -491,12 +489,19 @@ async function remoteRepo($: EngineInterface, root: string, remote: string, isPu
   return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? verdict.repo }
 }
 
-/** Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. */
+/**
+ * Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. git pushes to every push
+ * URL, so each is checked (PR #68 review), and one that is the fetch URL only once.
+ */
 async function originCheck($: EngineInterface, root: string, repo: string): Promise<Blocked | null> {
-  for (const isPush of [false, true]) {
-    const found = await remoteRepo($, root, 'origin', isPush, repo)
+  const fetched = await git($, root, ['remote', 'get-url', 'origin'])
+  const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
+  if (fetched.exitCode !== 0 || pushed.exitCode !== 0) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
+  const fetchUrl = fetched.stdout.trim()
+  const pushUrls = [...new Set(pushed.stdout.split('\n').map(u => u.trim()))].filter(u => u !== '' && u !== fetchUrl)
+  for (const [url, isPush] of [[fetchUrl, false] as const, ...pushUrls.map(u => [u, true] as const)]) {
+    const found = await remoteRepo($, root, url, repo)
     if (found === 'match') continue
-    if (found === 'missing') return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
     const label = found.other === null ? 'an unrecognised URL' : repoLabel(found.other)
     return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`)
   }
