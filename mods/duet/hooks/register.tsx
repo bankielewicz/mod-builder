@@ -210,10 +210,11 @@ async function listAgentFiles($: EngineInterface, dir: string, searched: Set<str
   if (real === undefined || searched.has(real)) return found
   if (depth > AGENT_DEPTH || found.length >= AGENT_FILES) {
     // A look inside, one level and no reads: only a folder that may hold a definition cuts the search short.
-    const inside = await $.fs.list(dir).catch(() => [])
-    if (inside.some(e => e.isLink || e.kind === 'dir' || (e.kind === 'file' && e.name.endsWith('.md')))) {
+    for (const e of await $.fs.list(dir).catch(() => [])) {
+      if (!(await mayHoldAgent($, `${dir}/${e.name}`, e, searched))) continue
       if (depth > AGENT_DEPTH) cut.depth = true
       else cut.files = true
+      break
     }
     return found
   }
@@ -231,6 +232,17 @@ async function listAgentFiles($: EngineInterface, dir: string, searched: Set<str
     if (e.kind === 'dir') await listAgentFiles($, `${dir}/${e.name}`, searched, cut, found, depth + 1)
   }
   return found
+}
+
+/**
+ * Whether an entry of a folder past a limit may hide a definition: a `.md` file or a folder. A link counts by where it
+ * leads, so one that leads nowhere, to a file not named `.md`, or back into a searched folder doesn't.
+ */
+async function mayHoldAgent($: EngineInterface, path: string, e: { name: string; kind: string; isLink: boolean }, searched: Set<string>): Promise<boolean> {
+  if (!e.isLink) return e.kind === 'dir' || (e.kind === 'file' && e.name.endsWith('.md'))
+  const to = await $.fs.stat(path, { resolve: true }).catch(() => undefined)
+  if (to?.kind === 'file') return e.name.endsWith('.md')
+  return to?.kind === 'dir' && !searched.has(to.realPath ?? path)
 }
 
 /** An agent file's text, from the cache while its size and time match the listing. */
