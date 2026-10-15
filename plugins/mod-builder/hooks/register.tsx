@@ -577,7 +577,7 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
     })
     for await (const piece of stream) {
       hasStarted = true
-      kept = Lab.streamPiece(kept, piece.text)
+      kept = Lab.streamPiece(kept, piece.text, piece.stream)
       if (kept.passed + kept.failed !== seen) {
         seen = kept.passed + kept.failed
         await noteProgress($, entry, { passed: kept.passed, failed: kept.failed })
