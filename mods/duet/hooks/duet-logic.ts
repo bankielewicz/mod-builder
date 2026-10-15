@@ -275,7 +275,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'codexSandbox', alias: 'sandbox', kind: 'text', choices: ['read-only', 'workspace-write'], fallback: 'read-only', help: 'workspace-write lets Codex write in the session folder and /tmp; both modes read any file you can' },
   { field: 'codexModel', alias: 'model', kind: 'text', fallback: '', help: "passed to codex as -m; empty = Codex's own configured model" },
   { field: 'maxConcurrent', alias: 'max', kind: 'number', fallback: 2, help: 'live Codex runs at once; a call beyond this is refused' },
-  { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: 'a Codex run past this is stopped' },
+  { field: 'timeoutMinutes', alias: 'timeout', kind: 'number', fallback: 20, help: "a Codex run past this is stopped. If duet has to fall back to a one-shot run (streaming couldn't start), that run stops at 10 minutes." },
   { field: 'codexConsent', alias: 'consent', kind: 'text', choices: ['ask', 'allow'], fallback: 'ask', help: 'ask once per session before the first handoff, or pre-approve' },
   { field: 'codexRunMode', alias: 'mode', kind: 'text', fallback: 'background', help: 'wait or background for codexAgents types, then overrides: advisor=background, Explore=wait (editing runs always wait)' },
   { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked through `codex exec` on Codex 0.162.1, Linux only (on macOS, the Codex source makes /tmp readable and writable, even under read-only), re-check after upgrading' },
@@ -1261,9 +1261,13 @@ export function rowText(t: Task, now: number, columns: number): string {
   return text.length > columns ? `${text.slice(0, Math.max(0, columns - 1))}…` : text
 }
 
-/** The dim line under a row: verdict, error, or description. */
+const FAILED_MARK: Record<string, string | undefined> = { error: '✕ ', refused: '✕ ' }
+
+/** The dim line under a row: error or refusal, a review's verdict, a running row's note, else the description. */
 export function subText(t: Task, columns: number): string {
-  const s = t.status === 'error' || t.status === 'refused' ? `✕ ${t.detail}` : t.kind === 'review' && t.detail ? t.detail : `"${t.description}"`
+  const mark = FAILED_MARK[t.status] ?? ''
+  const showsDetail = mark !== '' || ((t.kind === 'review' || t.status === 'running') && t.detail !== '')
+  const s = showsDetail ? `${mark}${t.detail}` : `"${t.description}"`
   return s.length > columns ? `${s.slice(0, Math.max(0, columns - 1))}…` : s
 }
 

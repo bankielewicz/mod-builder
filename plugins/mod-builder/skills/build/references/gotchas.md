@@ -87,6 +87,13 @@ Re-check [field] items against the d.ts after a Claude Code update.
   subfolders 9 and 12 deep are read. A file with a `name` but no `description` is left out, and so is one Claude
   can't read; a `name` or `description` on the next indented line, a `description: >` block, and a file with
   `bad: [` in another field are loaded (the `.git` stop and the unreadable file were probed on 2.1.299 only; the next-line `name`, the `>` block and a wrapped `description` on 2.1.300 only).
+- **[probe]** `$.process.spawn` of a binary that exists starts it: under `claude -p --plugin-dir` on 2.1.300,
+  `codex --version` resolved on the first pull (one stdout chunk, exit 0), also with an `env` map and with
+  `input`. The first pull rejects, after 0 chunks, only when the binary is missing: `$.process.spawn(<name>)
+  failed to start: ENOENT: Executable not found in $PATH: "<name>"`. So a mod's `$.process.run` fallback for a
+  spawn that could not start is rare in a live `claude -p` run (duet takes it only in `claude plugin test`,
+  where spawn can't be stubbed). `$.process.run` is capped at ten minutes [d.ts], so a streamed run's longer
+  timeout does not carry over to that fallback. Interactive sessions: not tested.
 - **[d.ts]** There's no Node, DOM or `require`. Every file is an ES module named `.ts/.tsx/.js/.mjs/…`,
   and anything else isn't loaded. The outside world is reached only through `$`.
 - **[field]** JSX compiles to `h(...)` and `Fragment`. A local variable named `h` breaks every

@@ -459,6 +459,8 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     if (started) return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
     // spawn could not start: try a one-shot run (also the path tests exercise)
     const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
+    // The engine stops a one-shot run at ten minutes, below a longer timeoutMinutes: say so on the row while it runs.
+    if (options.timeoutMs > FALLBACK_MAX_MS) await patchTask($, id, { detail: `fallback: stops at ${Math.round(FALLBACK_MAX_MS / 60_000)}m (timeoutMinutes ${Math.round(options.timeoutMs / 60_000)})` }).catch(() => undefined)
     const fallbackAt = Date.now()
     try {
       const r = await $.process.run(launch.argv, { env: launch.env, ...(launch.input !== undefined ? { stdin: launch.input } : {}), timeoutMs: cap })
