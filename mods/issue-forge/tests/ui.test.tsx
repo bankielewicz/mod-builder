@@ -55,6 +55,8 @@ type World = {
   /** When set, git push stays running until this settles. */
   pushHold?: Promise<void>
   fetchFails?: boolean
+  /** Runs when `gh issue view` is called: another session acting while resume checks the run (PR #51 review). */
+  beforeIssueView?: () => void
   /** `git fetch` fails this many times on a ref lock another process holds, then succeeds (0.3.0). */
   fetchLocks?: number
   /** `merge-base --is-ancestor HEAD origin/<base>`: true when the branch has no commits of its own. */
@@ -214,7 +216,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'sh') return ok('/usr/bin/x')
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
-      if (a[0] === 'issue') return ok(JSON.stringify({ ...ISSUE, body: world.issueBody }))
+      if (a[0] === 'issue') {
+        world.beforeIssueView?.()
+        return ok(JSON.stringify({ ...ISSUE, body: world.issueBody }))
+      }
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
@@ -1385,6 +1390,24 @@ describe('parallel runs (Change 0.3.0)', () => {
       // This session drives nothing now: a new start doesn't offer to keep or hand off #16.
       await run($, '17')
       expect(w.asked.at(-1) ?? '').not.toContain('This session is driving')
+    })
+  }
+
+  // PR #51 review (Codex 4278707565): resume spends seconds on gh and git before it writes; a run another
+  // session stopped or took in that time is left as that session wrote it.
+  for (const [what, head, change, stored] of [
+    ['stops it before resume drives it', BRANCH, (r: any) => ({ ...r, step: 'stopped' }), { step: 'stopped' }],
+    ['resumes it first', BRANCH, (r: any) => ({ ...r, step: 'green', driver: { session: OTHER, since: 1 } }), { driver: { session: OTHER, since: 1 } }],
+    ['stops it while resume finds it still blocked', 'main', (r: any) => ({ ...r, step: 'stopped' }), { step: 'stopped' }],
+  ] as const) {
+    test(`resume writes nothing when another session ${what}`, async ($, on) => {
+      const store: Record<string, unknown> = { [key(16)]: storedRun('blocked', { repo: `${ROOT}/.git`, blocked: { at: 'green', reason: 'r', next: 'n' } }) }
+      const w = engine(on, { head, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      w.beforeIssueView = () => (store[key(16)] = change(store[key(16)]))
+      await start($)
+      expect((await run($, 'resume')).text).toBe('#16 moved on before it could be resumed; /issue-forge status 16 says where it is.')
+      expect(store[key(16)]).toMatchObject(stored)
+      expect(w.spawned).toEqual([])
     })
   }
 
