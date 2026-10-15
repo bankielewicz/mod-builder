@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { decide, matchGlob, parseRules } from './tdd-guard-logic'
+import type { Rules } from './tdd-guard-logic'
 
 /**
  * Tdd Guard: limits which paths each subagent type may write. Archetype: guard.
@@ -20,12 +21,16 @@ const pending = atom({ plugin: 'tdd-guard', key: 'pending' } as const, {} as Rec
 /** Content hash by project-relative path. */
 type Files = Map<string, string>
 
-let parsed: ReturnType<typeof parseRules> = { rules: {} }
+/** The `rules` option, read at each load. A malformed one leaves no rules and its message in `rulesError`. */
+let rules: Rules = {}
+let rulesError: string | null = null
 /** The snapshots of guarded background runs by agent id; a plugin reload loses them. */
 const snapshots = new Map<string, { type: string; files: Files }>()
 
 const SKIPPED = new Set(['.git', 'node_modules'])
 const LAUNCHED = new Set(['async_launched', 'teammate_spawned'])
+/** What a subagent's write gets when the check itself broke: a guard fails closed. */
+const HELD = 'tdd-guard: the write check failed, so the write was held. Ask the person before retrying.'
 
 // ── Where a write lands ──────────────────────────────────────────────────
 
@@ -58,13 +63,13 @@ function relativeTo(root: string, real: string): string {
 /** Why this subagent may not write `path`, or null when it may. The main loop and agents the engine does not list are never guarded. */
 async function refusalOf($: EngineInterface, agentId: string | undefined, path: string): Promise<string | null> {
   if (agentId === undefined) return null
-  if ('error' in parsed) return `${parsed.error}; subagent writes are held until the rules option is fixed`
+  if (rulesError !== null) return `${rulesError}; subagent writes are held until the rules option is fixed`
   const type = (await $.agent.list()).find(agent => agent.id === agentId)?.type
-  if (type === undefined || !Object.hasOwn(parsed.rules, type)) return null
+  if (type === undefined || !Object.hasOwn(rules, type)) return null
   const real = await placed($, path)
   if (real === undefined) return `tdd-guard: ${type} may not write ${path} (tdd-guard cannot tell where it lands)`
   const rel = relativeTo(await rootOf($), real)
-  const verdict = decide(parsed.rules, type, rel)
+  const verdict = decide(rules, type, rel)
   return verdict.allow ? null : `tdd-guard: ${type} may not write ${rel} (${verdict.reason})`
 }
 
@@ -84,7 +89,7 @@ function hashOf(text: string): string {
 
 /** The `-` globs of a type: what a run of it must leave alone. None when the type is not guarded or the rules do not parse. */
 function protectedGlobs(type: string): string[] {
-  return 'rules' in parsed && Object.hasOwn(parsed.rules, type) ? parsed.rules[type]!.deny : []
+  return Object.hasOwn(rules, type) ? rules[type]!.deny : []
 }
 
 /** The folder a glob's matches sit under: its segments before the first wildcard (a glob with none: its folder). */
@@ -94,6 +99,7 @@ function folderOf(glob: string): string {
   return segments.slice(0, wild < 0 ? -1 : wild).join('/')
 }
 
+/** Hashes the files below `dir` that a glob matches. A file already hashed is skipped: globs like `tests/**` and `tests/sub/**` walk the same folder twice. */
 async function walk($: EngineInterface, root: string, dir: string, globs: string[], files: Files): Promise<void> {
   const entries = await $.fs.list(dir === '' ? root : `${root}/${dir}`).catch(() => [])
   for (const entry of entries) {
@@ -153,28 +159,24 @@ async function finish($: EngineInterface, agentId: string): Promise<void> {
 }
 
 export const register: Register = (on, raw) => {
-  parsed = parseRules(String((raw as { rules?: unknown } | undefined)?.rules ?? ''))
+  const option = parseRules(String((raw as { rules?: unknown } | undefined)?.rules ?? ''))
+  rules = 'rules' in option ? option.rules : {}
+  rulesError = 'error' in option ? option.error : null
 
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     const refusal = await refusalOf($, e.agentId, e.file_path)
     return refusal === null ? next(e) : { deny: refusal }
-  }).catch(($, e, next) =>
-    next.called || e.agentId === undefined ? next(e) : { deny: 'tdd-guard: the write check failed, so the write was held. Ask the person before retrying.' },
-  )
+  }).catch(($, e, next) => (next.called || e.agentId === undefined ? next(e) : { deny: HELD }))
 
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     const refusal = await refusalOf($, e.agentId, e.file_path)
     return refusal === null ? next(e) : { deny: refusal }
-  }).catch(($, e, next) =>
-    next.called || e.agentId === undefined ? next(e) : { deny: 'tdd-guard: the write check failed, so the write was held. Ask the person before retrying.' },
-  )
+  }).catch(($, e, next) => (next.called || e.agentId === undefined ? next(e) : { deny: HELD }))
 
   on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
     const refusal = await refusalOf($, e.agentId, e.notebook_path)
     return refusal === null ? next(e) : { deny: refusal }
-  }).catch(($, e, next) =>
-    next.called || e.agentId === undefined ? next(e) : { deny: 'tdd-guard: the write check failed, so the write was held. Ask the person before retrying.' },
-  )
+  }).catch(($, e, next) => (next.called || e.agentId === undefined ? next(e) : { deny: HELD }))
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const type = e.subagent_type?.trim() ?? ''

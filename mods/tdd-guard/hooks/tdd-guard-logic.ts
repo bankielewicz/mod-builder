@@ -46,8 +46,8 @@ export function matchGlob(glob: string, relPath: string): boolean {
 
 /** May this type write this path (relative to the project root; one starting with `../` is outside it)? */
 export function decide(rules: Rules, type: string, relPath: string): Decision {
-  const rule = Object.hasOwn(rules, type) ? rules[type]! : null
-  if (!rule) return { allow: true }
+  if (!Object.hasOwn(rules, type)) return { allow: true }
+  const rule = rules[type]!
   const isOutside = relPath.startsWith('../')
   if (rule.allow.length > 0 && (isOutside || !rule.allow.some(glob => matchGlob(glob, relPath)))) {
     return { allow: false, reason: `allowed only +${rule.allow.join(', +')}` }
