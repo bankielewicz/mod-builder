@@ -229,6 +229,20 @@ describe('write guards', () => {
     expect(seen.ran).toEqual([{ tool: 'Write', path: '/elsewhere/tests/x.test.ts' }])
   })
 
+  test('the default rules guard a tests or test folder at any depth, as nested layouts keep them', async ($, on) => {
+    const files = { ...FILES, '/w/mods/x/tests/a.test.ts': 'A', '/w/packages/y/test/b.test.ts': 'B', '/w/mods/x/hooks/x.ts': 'X' }
+    const seen = engine(on, { agents: [...GREEN, ...RED], files })
+    await start($)
+    for (const path of ['/w/mods/x/tests/a.test.ts', '/w/packages/y/test/b.test.ts', '/w/tests/a.test.ts']) {
+      const denied: any = await $.tool.call(write(path, { agentId: 'a1' }) as never)
+      expect(denied.deny).toStartWith(`tdd-guard: green-developer may not write ${path.slice(3)} (`)
+      const allowed: any = await $.tool.call(write(path, { agentId: 'a2' }) as never)
+      expect(allowed.deny).toBeUndefined()
+    }
+    const source: any = await $.tool.call(write('/w/mods/x/hooks/x.ts', { agentId: 'a2' }) as never)
+    expect(source.deny).toStartWith('tdd-guard: red-test-writer may not write mods/x/hooks/x.ts (')
+  })
+
   test('globs are relative to the project root, not to the folder the session works in', { options }, async ($, on) => {
     const seen = engine(on, { agents: GREEN, cwd: '/w/src' })
     await start($)
