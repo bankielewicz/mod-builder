@@ -762,7 +762,9 @@ export const register: Register = (on, options) => {
       known = (await read($, views)).find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      const fromVersion = factsByMod.get(mod)?.version ?? null
+      // The version on disk as the edit begins: a bump may land after the last scan.
+      const manifest = await readText($, `${modsDirOf($)}/${mod}/.claude-plugin/plugin.json`)
+      const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
       await updateGenerations($, all => ({ ...all, [mod]: { since: now, fromVersion } }))
       logEvent($, 'debug', 'store.set', GENERATIONS_KEY, { mod, edit: 'started' })
     }
