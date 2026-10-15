@@ -101,6 +101,8 @@ type World = {
   mergeThrows?: boolean
   /** Where the coverage command last ran: a real reporter names files under that folder. */
   lcovRoot?: string
+  /** What $.command.register was given. */
+  registered: { name: string; argumentHint?: string }[]
   /** Every process.run with the folder it ran in. */
   calls: { argv: string[]; cwd?: string; timeoutMs?: number }[]
   /** The command each Bash call reached beneath the mod with. */
@@ -140,6 +142,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     worktrees: [],
     wtHead: BRANCH,
     wtProfiles: {},
+    registered: [],
     calls: [],
     bash: [],
     argv: [],
@@ -170,7 +173,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   mock.env(on, { HOME: '/home/u' })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
-  on('command.register', () => ({ value: undefined }))
+  on('command.register', ($: any, e: any) => (world.registered.push(e), { value: undefined }))
   on('agent.register', ($: any, e: any) => ({ value: { agent: `issue-forge:${e.name}` } }))
   on('ui.open', ($: any, e: any) => (world.opened.push(e.id), { value: { isPlaced: world.isPlaced } }))
   on('ui.panes', () => ({ value: [] }))
@@ -1530,6 +1533,12 @@ describe('parallel runs (Change 0.3.0)', () => {
     engine(on, { worktreeListThrows: true }, { 'issue-forge:run:/elsewhere': storedRun('stopped', { id: 'x-1', root: '/elsewhere', issue: 9 }), [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) })
     await start($)
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-red' } as never)) as any).deny).toContain('issue-forge:')
+  })
+
+  test('the command offers handoff and the optional issue numbers in its hint (PR #51 review)', async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect(w.registered.map(r => r.argumentHint)).toEqual(['<issue> | status [N] | resume [N] | publish [N] | handoff [N] | stop [N] | demo'])
   })
 
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
