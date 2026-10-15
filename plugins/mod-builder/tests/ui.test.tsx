@@ -56,6 +56,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denySet: '',
     denyStoreSet: '',
     timeouts: [] as (number | undefined)[],
+    /** While set, a test run never ends, as a Test that hangs does. */
+    stallTests: false,
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   // The store from memory, as mock.store keeps it; `seen.denyStoreSet` makes every set reject.
@@ -107,6 +109,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     seen.argv.push([...e.argv])
     seen.timeouts.push(e.init?.timeoutMs)
     if (hold) await hold
+    if (seen.stallTests && e.argv[2] === 'test') await new Promise<void>(() => undefined)
     const out = (e.argv.includes('validate') ? outputs.validate : outputs.test) ?? { exitCode: 0, stdout: '' }
     if (out.throws) throw new Error('could not start')
     return { value: { ...out, stderr: out.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -502,6 +505,53 @@ describe('a run that does not end', () => {
     await reportTest($)
     await clock.advance(10)
     expect(seen.argv.length).toBe(2)
+  })
+
+  test('an orphan row leaves the band and the pane: T starts a new Test', { options: { modsDir: MODS, testTimeoutMinutes: 0.5 } }, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'band below' }) as never)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    const during = await mountBand($)
+    expect(await during.find({ type: 'Text', text: /^git-branch$/ })).toBeDefined()
+    await during.unmount()
+    await clock.advance(MINUTE + 5000)
+    const after = await mountBand($)
+    expect(await after.find({ type: 'Text', text: /^git-branch$/ })).toBeUndefined()
+    await after.unmount()
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('an orphan row does not hold back the auto re-run', { options: { modsDir: MODS, testTimeoutMinutes: 0.5 } }, async ($, on) => {
+    const mtime = { ms: 1000 }
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    seen.stallTests = true
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv).toHaveLength(3)
+    await clock.advance(MINUTE + 5000)
+    seen.stallTests = false
+    mtime.ms = 5000
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.slice(3).map(argv => argv[2])).toEqual(['validate', 'test'])
   })
 
   test('a Test run is given testTimeoutMinutes as its time limit', { options: { modsDir: MODS, testTimeoutMinutes: 5 } }, async ($, on) => {

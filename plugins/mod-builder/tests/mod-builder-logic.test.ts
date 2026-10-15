@@ -655,3 +655,17 @@ describe('logging and /mod-builder config', () => {
     expect(configListText(values, '')).toContain('Log file: not written yet this session')
   })
 })
+
+describe('runs in flight (PR #55 review)', () => {
+  const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+
+  test('a row older than the time limit plus 30 s lost its run: it no longer counts', () => {
+    expect(typeof Logic.liveRuns).toBe('function')
+    expect(Logic.RUN_GRACE_MS).toBe(30_000)
+    const limit = 60_000
+    const rows = [row(0), row(1000)]
+    expect(Logic.liveRuns(rows, limit + 30_000, limit)).toEqual(rows)
+    expect(Logic.liveRuns(rows, limit + 30_001, limit)).toEqual([row(1000)])
+    expect(Logic.liveRuns([], 0, limit)).toEqual([])
+  })
+})
