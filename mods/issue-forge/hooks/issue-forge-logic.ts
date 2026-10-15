@@ -692,12 +692,13 @@ export function newModGuidance(body: string): string[] | null {
   const lines = body.replace(/\r\n?/g, '\n').split('\n')
   const at = lines.findIndex(line => BUILD_WITH_MOD_BUILDER.test(line))
   if (at < 0) return null
-  const indent = LIST_ITEM.exec(lines[at] ?? '')?.[1]?.length ?? -1
-  const quote = [(lines[at] ?? '').trimEnd()]
+  const first = lines[at]!
+  const indent = LIST_ITEM.exec(first)?.[1]!.length ?? -1
+  const quote = [first.trimEnd()]
   for (const line of lines.slice(at + 1)) {
     if (line.trim() === '' || /^\s{0,3}#/.test(line)) break
     const item = LIST_ITEM.exec(line)
-    if (item && indent >= 0 && (item[1]?.length ?? 0) <= indent) break
+    if (item && indent >= 0 && item[1]!.length <= indent) break
     quote.push(line.trimEnd())
   }
   return capQuote(quote)
@@ -727,6 +728,7 @@ export function newPluginRefusal(path: string): string {
 }
 
 export type StartIssue = { issue: number; title: string; url: string; ghRepo?: string }
+/** A start always has the issue's guidance (it is why the start was refused); a gate's run may not. */
 export type NewPluginCase = { kind: 'start'; issue: StartIssue; guidance: string[] } | { kind: 'gate'; run: Run; guidance: string[] | null }
 
 function guidanceStep(issue: number, guidance: readonly string[]): string {
@@ -739,7 +741,7 @@ export function newPluginSteps(c: NewPluginCase): string[] {
     const { issue, title, url, ghRepo } = c.issue
     return [
       `Run /mod-builder:build and ask for the plugin #${issue} describes: "${title}" (${url}). Read it first with gh issue view ${issue}${ghRepo ? ` --repo ${ghRepo}` : ''}.`,
-      ...(c.guidance.length > 0 ? [guidanceStep(issue, c.guidance)] : []),
+      guidanceStep(issue, c.guidance),
       'Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
       `Open a pull request that closes #${issue}.`,
     ]
