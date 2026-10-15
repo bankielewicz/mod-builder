@@ -100,7 +100,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
-  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
+  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging', 'testTimeoutMinutes'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
   on('config.set', ($, e) => seen.denySet ? { deny: seen.denySet } : (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
@@ -971,16 +971,30 @@ describe('logging (Change 0.2.2)', () => {
     await clock.advance(3000)
     const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
     const listed = (await run('config')).text ?? ''
-    expect(listed).toContain('logging    normal')
-    expect(listed).toContain('modsDir    /m/mods')
+    expect(listed).toContain('logging            normal')
+    expect(listed).toContain('modsDir            /m/mods')
     expect(listed).toMatch(/Log file: \/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log/)
     const changed = (await run('config logging verbose')).text ?? ''
     expect(changed).toStartWith('logging is now verbose.')
-    expect(changed).toContain('logging    verbose')
+    expect(changed).toContain('logging            verbose')
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
     expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
     // The change line reaches the file before the set, which reloads the plugin.
     expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"verbose"}')
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
+  })
+})
+
+describe('testTimeoutMinutes in /mod-builder config (PR #55 review)', () => {
+  test('the listing shows the time limit; a change writes its /config row', { options: { modsDir: MODS, testTimeoutMinutes: 2 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    expect((await run('config')).text).toContain('testTimeoutMinutes 2 minutes')
+    const changed = (await run('config testTimeoutMinutes 5')).text ?? ''
+    expect(changed).toStartWith('testTimeoutMinutes is now 5.')
+    expect(changed).toContain('testTimeoutMinutes 5 minutes')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: 5 }])
   })
 })
