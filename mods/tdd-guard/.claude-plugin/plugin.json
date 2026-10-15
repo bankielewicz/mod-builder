@@ -11,7 +11,7 @@
       "type": "string",
       "title": "Paths each subagent type may write",
       "description": "type=glob,glob entries separated by ';'. +glob: the type may write only paths matching one of its + globs. -glob: the type may not write a path matching a - glob, and a run of it is checked afterwards for changed files under those globs. Globs are relative to the project root; * is one path segment, ** any depth. A type with no entry is not guarded. Empty: nothing is guarded.",
-      "default": "red-test-writer=+tests/**,+test/**; green-developer=-tests/**,-test/**; refactorer=-tests/**,-test/**"
+      "default": "red-test-writer=+**/tests/**,+**/test/**; green-developer=-**/tests/**,-**/test/**; refactorer=-**/tests/**,-**/test/**"
     }
   }
 }
