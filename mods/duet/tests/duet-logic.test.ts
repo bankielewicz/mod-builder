@@ -996,3 +996,20 @@ describe('issue 6 review: the fallback note appears only when the cap cuts timeo
     expect(note(5 * 60_000)).toBe('')
   })
 })
+
+describe('issue 6 review (Codex P2): the fallback cap is readable where the config shows it', () => {
+  const help = () => findConfigField('timeout')!.help
+  const timeoutRow = (raw: unknown) => logic.configText(raw).split('\n').find(l => l.includes('timeoutMinutes'))!
+
+  test('the help line fits the config pane uncut (opened at 76 columns, 74 for text) and says 10 minutes is a maximum', () => {
+    expect(('timeoutMinutes: ' + help()).length <= 74).toBe(true)
+    expect(help()).toMatch(/10 minutes (max|at most)/)
+  })
+
+  test('/duet config shows the cap on the timeoutMinutes row when the timeout is longer than it, and not otherwise', () => {
+    expect(timeoutRow(undefined)).toMatch(/one-shot fallback.*10 minutes/)
+    expect(timeoutRow({ timeoutMinutes: 20 })).toMatch(/one-shot fallback.*10 minutes/)
+    expect(timeoutRow({ timeoutMinutes: 10 })).not.toMatch(/one-shot/)
+    expect(timeoutRow({ timeoutMinutes: 5 })).not.toMatch(/one-shot/)
+  })
+})

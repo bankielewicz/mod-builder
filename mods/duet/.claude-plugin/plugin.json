@@ -38,7 +38,7 @@
     "timeoutMinutes": {
       "type": "number",
       "title": "Codex timeout (minutes)",
-      "description": "A Codex run past this is stopped and the call refused. If duet has to fall back to a one-shot run (streaming couldn't start), that run stops at 10 minutes.",
+      "description": "A Codex run past this is stopped and the call refused. If duet has to fall back to a one-shot run (streaming couldn't start), that run stops at 10 minutes at most.",
       "default": 20
     },
     "codexConsent": {
