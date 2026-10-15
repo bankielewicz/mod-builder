@@ -116,6 +116,8 @@ import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, 
 const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
 const GIT_TIMEOUT = 60_000
+/** Shown when a phase agent's report is kept from the main model (prompt.submit's drop, session.receive's consumed). */
+const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
 const COLORS: Record<Tone, string | undefined> = { success: '#7FB685', accent: '#D97757', warn: '#E0B15A', error: '#E06C6C', dim: undefined }
 
 const runAtom = atom({ plugin: 'issue-forge', key: 'run' } as const, null)
@@ -161,8 +163,6 @@ let liveWork: { root: string; workRoot: string } | null = null
  * can't be ended, only refused).
  */
 let knownRefs = new Set<string>()
-/** What the person is told when a phase agent's report is kept from the main model (prompt.submit's drop, session.receive's consumed). */
-const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
 /** The last run write queued: updateRun chains each one after it. */
 let runWrites: Promise<void> = Promise.resolve()
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
@@ -1543,13 +1543,13 @@ export const register: Register = (on, raw) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A phase agent's report reaches the main loop as a peer prompt; the pane already has it (C0).
+  // An unnamed phase agent's report (or a named one's, with agent teams off) reaches the main loop as a peer prompt; the pane already has it (C0).
   on('prompt.submit', async ($, e, next) => {
     if (e.origin?.kind === 'peer' && knownRefs.size > 0 && isOwnHandback(e.text, [...knownRefs])) return { drop: HANDBACK_DROP }
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A named agent is a teammate with agent teams on: its report is a mailbox delivery, which raises no prompt.submit (#27, probed on 2.1.296).
+  // With agent teams on, a named phase agent is a teammate: its report is a mailbox delivery from its name, and no prompt.submit fires (#27, P4).
   on('session.receive', async ($, e, next) => {
     if (e.origin && 'teammate' in e.origin && knownRefs.has(e.origin.teammate)) return { consumed: HANDBACK_DROP }
     return next(e)

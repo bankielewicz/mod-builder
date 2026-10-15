@@ -192,7 +192,7 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N or issue URL>` or
    - When a phase agent finishes, its report is handed back to the main loop as a `peer` prompt
      `<agent-message from="<name or agentId>">`, which would start a main-model turn after every
      phase. A `prompt.submit` hook drops exactly those (the run's own names and ids) with
-     `issue-forge: <phase> finished; the pane has the result.`. Every other prompt passes untouched.
+     `issue-forge: a phase agent finished; the pane has the result.`. Every other prompt passes untouched.
      It carries `.catch` (passes the prompt through). This holds for an unnamed agent, and for a named one
      with agent teams off. With them on, a named agent is a teammate and its report is not a prompt:
      see Change 0.4.1.
