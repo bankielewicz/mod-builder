@@ -234,24 +234,24 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   const at = `${modsDir}/${name}`
   const top = await list($, at)
   const has = (entry: string): boolean => top.some(one => one.name === entry)
-  const [manifestDir, hooks, tests, types] = await Promise.all([
-    has('.claude-plugin') ? list($, `${at}/.claude-plugin`) : Promise.resolve([]),
-    has('hooks') ? list($, `${at}/hooks`) : Promise.resolve([]),
-    has('tests') ? list($, `${at}/tests`) : Promise.resolve([]),
-    has('types') ? list($, `${at}/types`) : Promise.resolve([]),
+  const listIf = (folder: string): Promise<Lab.Entry[]> => (has(folder) ? list($, `${at}/${folder}`) : Promise.resolve([]))
+  const [manifestDir, hooks, tests, types, agents, commands, skills] = await Promise.all([
+    listIf('.claude-plugin'),
+    listIf('hooks'),
+    listIf('tests'),
+    listIf('types'),
+    listIf('agents'),
+    listIf('commands'),
+    listIf('skills'),
   ])
-  const nested = await Promise.all([
-    nestedFiles($, at, 'hooks', hooks),
-    nestedFiles($, at, 'tests', tests),
-    nestedFiles($, at, 'types', types),
-  ])
+  // Their subfolders are walked too; the manifest folder's are not.
+  const codeFolders = { hooks, tests, types, agents, commands, skills }
+  const nested = await Promise.all(Object.entries(codeFolders).map(([folder, entries]) => nestedFiles($, at, folder, entries)))
   return Lab.factsOf({
     name,
     top,
     manifestDir,
-    hooks,
-    tests,
-    types,
+    ...codeFolders,
     nested: nested.flat(),
     spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
     readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
