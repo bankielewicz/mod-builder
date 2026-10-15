@@ -885,6 +885,14 @@ export function modsDirFor(configured: string, cwd: string | null, existing: rea
   return found === undefined ? normalizePath(fallback) : `${found.slice(0, -MARKETPLACE_FILE.length)}/mods`
 }
 
+/**
+ * "Ready to share" marks as `<modsDir>/<name>`. Before 0.2.9 a mark was the bare name, of a mod
+ * in the one folder Mod Lab watched (`legacyDir`), so a bare one is read as that folder's.
+ */
+export function freshIdsOf(stored: readonly string[], legacyDir: string): string[] {
+  return stored.map(id => (id.includes('/') ? id : `${legacyDir}/${id}`))
+}
+
 /** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */
 export function shortPath(path: string): string {
   const parts = normalizePath(path).split('/').filter(Boolean)

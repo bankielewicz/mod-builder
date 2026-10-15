@@ -284,13 +284,13 @@ async function nestedFiles($: Engine, at: string, folder: string, entries: reado
  */
 const keyOf = (base: string, modsDir: string): string => `${base}:${modsDir}`
 
-/**
- * One folder's records under `base`. Before 0.2.9 one unkeyed set described the one folder Mod Lab
- * watched (a set `modsDir`, else the plugin's own), so that folder reads it until it has its own.
- */
+/** The one folder Mod Lab watched before 0.2.9 (a set `modsDir`, else the plugin's own): its records were unkeyed. */
+const legacyDirOf = ($: Engine): string => Lab.normalizePath(configuredDir || pluginModsDirOf($))
+
+/** One folder's records under `base`; the folder the unkeyed set described reads that until it has its own. */
 async function storedOf($: Engine, base: string, modsDir: string): Promise<unknown> {
   const own = await $.store.get(keyOf(base, modsDir))
-  if (own !== undefined || modsDir !== Lab.normalizePath(configuredDir || pluginModsDirOf($))) return own
+  if (own !== undefined || modsDir !== legacyDirOf($)) return own
   return $.store.get(base)
 }
 
@@ -392,8 +392,11 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
       ),
     )
   const newlyGreen = await announceGreen($, judge([]), isAnnounced, dir)
-  const freshIds = [...new Set([...(await read($, fresh)), ...newlyGreen.map(freshIdOf)])]
-  if (newlyGreen.length) await update($, fresh, () => freshIds)
+  const marks = await read($, fresh)
+  const kept = Lab.freshIdsOf(marks, legacyDirOf($))
+  const freshIds = [...new Set([...kept, ...newlyGreen.map(freshIdOf)])]
+  // Written when a mod just turned green, or when bare marks from before 0.2.9 moved to their folder.
+  if (newlyGreen.length || kept.some((id, at) => id !== marks[at])) await update($, fresh, () => freshIds)
   const next = judge(freshIds)
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
