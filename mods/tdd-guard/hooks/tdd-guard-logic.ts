@@ -105,9 +105,14 @@ export function changesOf(before: Files, after: Files): string[] {
   return changes.sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, kind]) => `${path} (${kind})`)
 }
 
+/** How many changes the report line names; the rest are counted. */
+const MAX_NAMED = 20
+
 /** The line the model reads, or null when nothing changed. */
 export function reportOf(type: string, changes: string[]): string | null {
-  return changes.length === 0 ? null : `tdd-guard: ${type} changed protected test files: ${changes.join(', ')}`
+  if (changes.length === 0) return null
+  const rest = changes.length - MAX_NAMED
+  return `tdd-guard: ${type} changed protected test files: ${changes.slice(0, MAX_NAMED).join(', ')}${rest > 0 ? `, and ${rest} more` : ''}`
 }
 
 /** The id of a subagent that answers later (background or teammate), else null. */
