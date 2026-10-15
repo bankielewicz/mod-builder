@@ -523,6 +523,8 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   try {
     const { def, note: searchNote } = role ? { def: roleDef(role), note: '' } : await agentDef($, cwd, type)
     const sandbox = effectiveSandbox(options.sandbox, def, type, searchNote !== '')
+    // The run mode follows the sandbox the agent would have had: a demoted editing agent still waits, so Claude reads the note before going on.
+    const uncut = effectiveSandbox(options.sandbox, def, type)
     const baseSha = await baseCommit($)
     const before = sandbox === 'read-only' ? '' : await porcelain($)
     const handoff = buildHandoff({ id, description: e.description, prompt: e.prompt, base: baseSha, cwd, sandbox, def, subagentType: type })
@@ -534,7 +536,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
     const dropped = named && writePaths ? named.filter(folder => !writePaths.includes(folder)) : []
     const job: Job = { ...scope, id, type, cwd, writePaths, dropped, searchNote, sandbox, baseSha, before, prompt: handoff.prompt, envelope: handoff.envelope, startedAt, task: { ...task, envelope: handoff.envelope } }
 
-    if (runsInBackground(options, sandbox, type, role)) {
+    if (runsInBackground(options, uncut, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
       await $.fs.write(outputFile, `duet ${id} (${type}) is running on Codex; its answer arrives as a message when it ends.\n`).catch(() => undefined)
       handedOff = true
