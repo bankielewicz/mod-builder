@@ -1231,6 +1231,11 @@ export function agentName(run: Run, phase: Phase): string {
   return `issue-forge-${run.issue}-${phase}-${run.agents.filter(a => a.phase === phase).length + 1}`
 }
 
+/** What a spawned agent is known by: its id and the name the mod asked for. */
+export function spawnRefs(agentId: string, name: string | undefined, teammateId: string | undefined): string[] {
+  return name ? [agentId, name] : [agentId]
+}
+
 /** Whether a prompt is the hand-back of one of these agents (`<agent-message from="…">`). */
 export function isOwnHandback(text: string, refs: readonly string[]): boolean {
   const m = text.match(/^<agent-message from="([^"]+)">/)

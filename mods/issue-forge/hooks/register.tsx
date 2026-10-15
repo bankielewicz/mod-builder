@@ -89,6 +89,7 @@ import {
   runKey,
   severalText,
   sharedLcovBlock,
+  spawnRefs,
   splitZ,
   stashApplyArgv,
   stashMessage,
@@ -800,12 +801,12 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
         liveAgent = null
         liveWork = null
       }
-      await rememberAgents($, run, name ? [agentId, name] : [agentId])
+      await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
     }
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
-  await rememberAgents($, run, name ? [agentId, name] : [agentId])
+  await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
   await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()), (run as Stamped).driveGen)
   await setActivity($, 'agent working')
   try {

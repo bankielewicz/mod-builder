@@ -852,6 +852,15 @@ describe('reloads, resume and stop', () => {
     expect(await $.session.receive({ ...(mailbox('issue-forge-16-green-1') as object), agentId: 'a7' } as never)).toEqual({ text: idle('issue-forge-16-green-1') })
   })
 
+  test("an agent that stops before its spawn returns still has its idle notice consumed: the name is known first (PR #86 review)", async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: new Promise<void>(() => undefined) }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'the spawn')
+    expect(w.spawned[0]!.name).toBe('issue-forge-16-green-2')
+    expect(await $.session.receive(mailbox('issue-forge-16-green-2'))).toEqual({ consumed: MAILBOX_DROP })
+  })
+
   test('resume re-checks HEAD, then restarts the step with its attempts reset; stop ends it', async ($, on) => {
     const blocked = storedRun('blocked', { blocked: { at: 'green', reason: 'gate G failed after 3 attempts: tests fail (exit 1)', next: 'fix it by hand on the branch' }, used: { red: 1, green: 3, refactor: 0 } })
     const w = engine(on, { head: 'main' }, { [`issue-forge:run:${ROOT}`]: blocked })

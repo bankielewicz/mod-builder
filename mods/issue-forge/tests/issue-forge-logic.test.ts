@@ -45,6 +45,7 @@ import {
   isSafeBranch,
   isOwnHandback,
   isOwnMailboxHandback,
+  spawnRefs,
   isWorking,
   keepText,
   keptWorktreePlan,
@@ -679,6 +680,14 @@ describe('prompts, commits, stashes, hand-backs', () => {
     expect(isOwnMailboxHandback(from('researcher'), refs)).toBe(false)
     expect(isOwnMailboxHandback({ origin: { kind: 'peer' }, text: idle }, refs)).toBe(false)
     expect(isOwnMailboxHandback({ text: idle }, refs)).toBe(false)
+  })
+
+  // A team that already has the name gives the teammate a suffixed one, which its hand-backs carry (d.ts; PR #86 review).
+  test('a spawned agent is known by its id, the name asked for, and the name its team gave it', () => {
+    expect(spawnRefs('aissue-forge-16-red-1-2-f00', 'issue-forge-16-red-1', 'issue-forge-16-red-1-2@session-x')).toEqual(['aissue-forge-16-red-1-2-f00', 'issue-forge-16-red-1', 'issue-forge-16-red-1-2'])
+    expect(spawnRefs('a1', 'issue-forge-16-red-1', 'issue-forge-16-red-1@session-x')).toEqual(['a1', 'issue-forge-16-red-1'])
+    expect(spawnRefs('a1', undefined, undefined)).toEqual(['a1'])
+    expect(spawnRefs('a1', 'issue-forge-16-red-1', '')).toEqual(['a1', 'issue-forge-16-red-1'])
   })
 
   test('the PR body holds every gate result, the coverage numbers and Closes #N', () => {
