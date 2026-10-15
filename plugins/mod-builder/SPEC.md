@@ -508,3 +508,12 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Live check (2.1.300):** a throwaway mod whose test prints 100,000 lines (7.8 MB) then passes, T in Mod Lab in an interactive `--plugin-dir` session: "2 tests passed in 1.0s", the process ending after 1.5 s. Before the per-stream fix it read "0 tests passed".
 - **Not changed:** nothing re-runs the probe (#69). It holds for the builds named, and Claude Code changes between builds; gotchas.md says to re-run it after an update.
 - **Version:** 0.2.11 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.12 (2026-10-15)
+
+> For issue #15: nested-only logic edits left the Logic stage stale (Codex's comment on PR #1, discussion_r4254194992).
+
+- **Fix:** `logicMtimeMs`, which the Logic stage compares against an edit generation's start, was the newest mtime of top-level `hooks/` logic modules and top-level `tests/` test files only. 0.2.1 made Validate and Test notice `hooks/lib/parser.ts`, so an edit that changed only nested logic re-ran both while the Logic light stayed stale and the mod never reached "ready to share". `Lab.factsOf` now also takes into account the nested files (`read.nested`) under `hooks/` that are logic modules (`Lab.isLogicModule` on the base name: no `register.*`, no `.d.ts`) and those under `tests/` that are test files (`Lab.isTestFile`), through `Lab.isNestedLogicOrTest`. Files under `types/` and other files in subfolders (data, helpers in `tests/`) still count for the code signature only.
+- **Amends 0.2.1's "Unchanged":** the rule that Logic and Register look only at files directly in `hooks/` and `tests/` now applies to **existence** only: `hasLogic`, `hasTests` and `hasRegister` stay top-level, so a nested `hooks/lib/x-logic.ts` still isn't the logic module. Freshness (`logicMtimeMs`) sees nested logic and test files.
+- **Tests:** `tests/mod-builder-logic.test.ts`, "logicMtimeMs sees nested logic and test files": a newer nested `hooks/` file, a nested `*.test.ts(x)` and one 3 levels down raise `logicMtimeMs` and leave `hasLogic` and `hasTests` as they were; `register.*`, `.d.ts`, data files, `types/` and helpers under `tests/` don't count. `tests/ui.test.tsx`, "nested logic edit during a generation": with SPEC, README, `plugin.json` and only `hooks/lib/parser.ts` saved, the edit reaches "ready to share" (a control with a top-level logic file also saved passes before and after). The nested-only test fails on 0.2.11.
+- **Version:** 0.2.12 in `plugin.json` and the marketplace entry.

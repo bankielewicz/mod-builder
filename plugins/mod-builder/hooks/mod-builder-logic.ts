@@ -320,6 +320,12 @@ export function isTestFile(file: string): boolean {
   return /\.test\.tsx?$/.test(file)
 }
 
+/** Whether a nested file (named by its path from the mod folder) is logic under hooks/ or a test under tests/. Freshness only: existence stays top-level. */
+export function isNestedLogicOrTest(path: string): boolean {
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  return path.startsWith('hooks/') ? isLogicModule(base) : path.startsWith('tests/') && isTestFile(base)
+}
+
 // ── Parsing what the commands print ───────────────────────────────────────
 
 /** Splits on commas outside braces and parentheses. */
@@ -981,9 +987,11 @@ export function factsOf(read: FolderRead): FileFacts | null {
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(
       0,
-      ...[...read.hooks.filter(entry => isLogicModule(entry.name)), ...read.tests.filter(entry => isTestFile(entry.name))].map(
-        entry => entry.mtimeMs,
-      ),
+      ...[
+        ...read.hooks.filter(entry => isLogicModule(entry.name)),
+        ...read.tests.filter(entry => isTestFile(entry.name)),
+        ...(read.nested ?? []).filter(entry => isNestedLogicOrTest(entry.name)),
+      ].map(entry => entry.mtimeMs),
     ),
     codeMtimeMs,
     codeSig,
