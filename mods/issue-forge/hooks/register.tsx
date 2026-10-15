@@ -300,6 +300,12 @@ async function recordMade($: EngineInterface, run: Run, made: Kept): Promise<voi
   await updateRun($, keyOf(run), stored => (stored?.id === run.id && !isTakenOver(stored) ? advance(stored, { type: 'made', keep: made }, now) : null))
 }
 
+/** A number start's repository, written onto the stored run at once, as recordMade writes the branch (PR #68 review 2). */
+async function recordPinned($: EngineInterface, run: Run, repo: string): Promise<void> {
+  const now = await $.clock.now()
+  await updateRun($, keyOf(run), stored => (stored?.id === run.id && !isTakenOver(stored) ? advance(stored, { type: 'pinned', repo }, now) : null))
+}
+
 /** Adds agents to the run's known list (memory and store); they are refused tools unless live. */
 async function rememberAgents($: EngineInterface, run: Run, refs: readonly string[]): Promise<void> {
   for (const ref of refs) knownRefs.add(ref)
@@ -664,6 +670,8 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   const { repo } = resolved
   const stray = await originCheck($, run.root, repo)
   if (stray) return stray
+  // Pinned once origin agrees, so a later block keeps it; an origin block leaves it open to a fix of the remotes.
+  if (!run.ghRepo) await recordPinned($, run, repo)
   const issue = await issueCheck($, run, repo)
   if ('type' in issue) return issue
   let made: Kept

@@ -757,6 +757,7 @@ export type RunEvent =
   | { type: 'block'; reason: string; next: string; keep?: Kept }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'made'; keep: Kept }
+  | { type: 'pinned'; repo: string }
   | { type: 'resume' }
   | { type: 'stop' }
   | { type: 'drive'; session: string }
@@ -836,6 +837,8 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   }
   // The branch and folder preflight made land at any step, a stopped one too, so a Stop never loses them.
   if (ev.type === 'made') return { ...run, ...ev.keep }
+  // A number start's repository, once origin agrees with it: kept over a block, so resume can't move the run (PR #68 review 2).
+  if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
   if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next) : run
   if (ev.type === 'resume') {
