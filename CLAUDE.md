@@ -124,7 +124,8 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
   It scans `modsDir`, judges 8 stages from **files on disk and exit codes** (a model's `lab_report`
   tool call only ever adds "running"), stores run results in `$.store`, re-runs stale checks at the end
   of each turn (`autoRerun`), and treats an edit as a **build generation** (evidence older than the edit
-  goes stale). Every write to `modlab:results` and `modlab:generations` goes through `updateStore` in
+  goes stale). Records are kept per mods folder (`modlab:results:<modsDir>`, `modlab:done:<modsDir>`,
+  `modlab:generations:<modsDir>`); every write to results and generations goes through `updateStore` in
   `register.tsx`, chained on one promise; that orders this session's writes only (#58). `SPEC.md`
   sections "Design" and "Edits" record why.
 
