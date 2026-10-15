@@ -1380,7 +1380,8 @@ async function restore($: EngineInterface): Promise<void> {
     await setFocus($, null)
     return
   }
-  await migrate($, at)
+  // One-time upgrade work: if it fails, the old keys wait for the next session start, and the guard still loads.
+  await migrate($, at).catch(() => undefined)
   const runs = await runsOf($, at.repo)
   const stored: string[] = []
   for (const key of repoAgentsKeys(await $.store.keys(), at.repo)) stored.push(...(((await $.store.get(key)) as string[] | undefined) ?? []))
