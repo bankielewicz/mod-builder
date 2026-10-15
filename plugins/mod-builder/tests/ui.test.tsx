@@ -1136,6 +1136,63 @@ describe('a scan that read the generations before an edit began', () => {
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Spec for this change$/)
   })
+
+  /**
+   * git-branch's edit is bumped to 0.1.1, redone and re-listed, and the scan that ends it is held after
+   * reading the generations. The next edit's Spec running arrives meanwhile, then its Spec passed.
+   */
+  async function secondEditInTheWindow($: Engine, on: On) {
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edits below.
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, { ms: Date.parse('2027-01-01T00:00:00Z') })
+    await start($)
+    await clock.advance(10)
+    await recheck($, clock)
+    await clock.advance(5000)
+    await reportSpec($, 'git-branch', 'running')
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(10)
+    await recheck($, clock)
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifestOf('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = listing('0.1.1')
+
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    await clock.advance(5000)
+    await reportSpec($, 'git-branch', 'running')
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(1000)
+    return clock
+  }
+
+  test('a second edit that begins while the scan ends the first starts from the version the first left', OPTIONS, async ($, on) => {
+    const clock = await secondEditInTheWindow($, on)
+    // Checked again, but not bumped past 0.1.1: Share is what the edit still needs.
+    await recheck($, clock)
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
+  })
+
+  // With autoRerun on, the end of the turn would run the stale checks again before the row is read.
+  test('a second edit that begins while the scan ends the first starts at its own report: earlier checks are stale', { options: { modsDir: MODS, autoRerun: false } }, async ($, on) => {
+    await secondEditInTheWindow($, on)
+
+    // Validate and Test last ran in the first edit, before this one began.
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ files changed · re-run Validate$/)
+  })
   test('an edit that begins before any scan has read a bump starts from the bumped version', OPTIONS, async ($, on) => {
     const disk: Disk = {
       ...modFiles('git-branch'),

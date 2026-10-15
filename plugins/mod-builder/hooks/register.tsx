@@ -408,10 +408,15 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
-    // Drop only the generations this scan judged: one begun or reported on since stays.
+    // Drop only the generations this scan judged: one begun since stays. A Spec running reported on one
+    // since was read after this scan's reports, so the edit was finished when it came: it begins the next.
     await updateGenerations($, dir, remaining => {
       for (const view of finished) {
-        if (isSameGeneration(remaining[view.name], generations[view.name])) delete remaining[view.name]
+        const [latest, read] = [remaining[view.name], generations[view.name]]
+        if (isSameGeneration(latest, read)) delete remaining[view.name]
+        else if (latest?.since === read?.since && latest?.repeatedAt !== undefined) {
+          remaining[view.name] = { since: latest.repeatedAt, fromVersion: found.get(view.name)?.version ?? null }
+        }
       }
       return remaining
     })
@@ -936,7 +941,7 @@ export const register: Register = (on, options) => {
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
       // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
-      // The stamp tells a scan that judged the edit finished before this report that it is not.
+      // The stamp tells a scan that judged the edit finished before this report that the next edit began here.
       let isStarted = false
       await updateGenerations($, modsDir, all => {
         const current = all[mod]
