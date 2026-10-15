@@ -472,6 +472,45 @@ describe('PR #52 review: a dismissed consent dialog says so', () => {
   })
 })
 
+describe('PR #52 review: the allowed case and the pane button go through the same gate', () => {
+  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const pane = ($: any) => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+
+  test('with codexConsent allow nobody is asked, the answer says started and Codex runs', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    const { text } = await review($)
+    expect(text).toMatch(/^Codex review started \(read-only\)/)
+    await seen.clock.advance(1000)
+    expect(seen.asked).toBe(0)
+    expect(seen.argv).toHaveLength(1)
+    expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+  })
+
+  test('the pane\'s Review diff button is refused at the limit with the same toast, and Codex never runs', { options: { maxConcurrent: 0, codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    const ui = await pane($)
+    await ui.press({ key: 'review' })
+    await seen.clock.advance(1000)
+    await ui.unmount()
+    expect(seen.argv).toEqual([])
+    expect(seen.toasts).toEqual(['d1 review refused: limit: 0 Codex runs already running (maxConcurrent 0)'])
+  })
+
+  test('the pane\'s Review diff button asks for consent, then runs Codex on the uncommitted changes', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const seen = engine(on)
+    await start($)
+    const ui = await pane($)
+    await ui.press({ key: 'review' })
+    await seen.clock.advance(1000)
+    await ui.unmount()
+    expect(seen.asked).toBe(1)
+    expect(seen.argv).toHaveLength(1)
+    expect(seen.argv[0]).toContain('--uncommitted')
+  })
+})
+
 describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
   const WRITER = (name: string) => `---\nname: ${name}\ndescription: Writes files.\ntools: Read, Write, Edit\n---\nWrite files.`
   const agents = {
