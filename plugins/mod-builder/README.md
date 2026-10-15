@@ -86,9 +86,9 @@ An edit starts a **build generation** with its first report. Everything that pas
 `◌` and turns green again as the change redoes it. The generation ends, and "ready to share"
 fires again, when all eight are green.
 
-**Checks re-run themselves.** With `autoRerun` on (it is off by default), at the end of each of Claude's
-turns Mod Lab rescans every mod. Edits made by any tool count, Bash included. Any mod whose
-Validate or Test went stale gets Validate re-run, then Test if Validate passes. Nothing runs
+**Checks re-run themselves.** At the end of each of Claude's turns Mod Lab rescans every mod.
+Edits made by any tool count, Bash included. With `autoRerun` on (it is off by default), any mod
+whose Validate or Test went stale gets Validate re-run, then Test if Validate passes. Nothing runs
 mid-turn or on a timer.
 
 ## Try it

@@ -54,9 +54,9 @@ the pane lights up live.
 
 ## Checks re-run themselves
 
-With `autoRerun` on (it is off by default), Mod Lab rescans every mod at the end of each of Claude's turns.
-Edits from any tool count, Bash included. A mod whose Validate or Test went stale gets Validate
-re-run, then Test if Validate passes. Nothing runs mid-turn or on a timer.
+Mod Lab rescans every mod at the end of each of Claude's turns. Edits from any tool count, Bash
+included. With `autoRerun` on (it is off by default), a mod whose Validate or Test went stale gets
+Validate re-run, then Test if Validate passes. Nothing runs mid-turn or on a timer.
 
 ## Edits
 

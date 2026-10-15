@@ -57,7 +57,7 @@ Choose **User** scope when asked, so it works in every project. Then:
 - **Mods that work the first time.** Five tested starting points (band, pane, guard, watcher,
   command). Logic is written first, with tests, and every mod passes `validate`, `test` and `tsc`
   before handoff.
-- **A live build pipeline.** Mod Lab tracks each mod through 8 stages, re-runs checks when code
+- **A live build pipeline.** Mod Lab tracks each mod through 8 stages, can re-run checks when code
   changes, and puts a **Fix with Claude** button on any failure.
 - **Changes that stay honest.** `/mod-builder:edit` appends to the SPEC, bumps the version, and
   shows exactly which stages the change still needs.
