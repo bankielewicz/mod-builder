@@ -620,6 +620,30 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Declined, one shared handler:** matchers must be string literals, so two `on(...)` calls stay. Each body is already one `openForSkill` call. Pulling out the two-line `.catch` would need the engine's generic `CatchHandler<F>` types.
   - **Filed as #94:** the pane-command archetype, duet and issue-forge open their `demo` panes after the hook returns. The archetype's `demo` was probed at 97 columns.
 
+## Change 0.2.19 (2026-10-15)
+
+> For issue #20: a code span that wraps a line was read as an unfilled SPEC placeholder.
+
+- **Bug, fixed:** `hasPlaceholder` removed inline code with a pattern that stops at a newline. A span that starts on one line and ends on the next (`it is in` on one line, `stash "<message>"` on the next, inside one pair of backticks) was left in the prose, and the `<message>` inside it read as an unfilled placeholder, so the Spec stage stayed at "next: Spec" on a SPEC that was complete (seen with `mods/issue-forge/SPEC.md`).
+- **Rule:** an inline code span may hold any number of line endings, until a blank line or a line that starts another block: an ATX heading, a list item or a block quote (`BLOCK_BREAK`). CommonMark pairs backticks within one block only, so a backtick left open doesn't swallow the next paragraph, heading or list item. A heading or quote ends a span only within three spaces of indent, as in CommonMark; a list item ends it at any indent, since nested items sit deeper. Inside a block, an unclosed backtick pairs with the next one, as in CommonMark. An escaped backtick opens no span, and an escaped backslash leaves the backtick after it free to (`ESCAPE_OR_SPAN`). Fenced blocks and HTML comments are handled as before. A `<files>` in plain prose is still a placeholder. The pattern, with `BLOCK_BREAK` written out (a match that starts with a backslash is kept, a span is removed):
+
+  ```
+  /\\[\\`]|`(?:[^`\n]|\n(?!(?:[ \t]*(?:\r?\n|$|[-*+][ \t]|\d{1,9}[.)][ \t])| {0,3}(?:#{1,6}(?:[ \t]|$)|>))))*`/g
+  ```
+
+- **Approximations:** this is a heuristic, not a CommonMark parser. Any `N.` line counts as a list item, though CommonMark lets only `1.` interrupt a paragraph, so a wrapped line that starts with `2.` ends a span early. A list marker ends a span at any indent, so a paragraph line indented four spaces or more that starts with `- ` does too (Codex suggested capping every marker at three spaces; the owner chose to keep nested items, 85 of which sit four or more spaces in across the repo's SPECs). The check also never sees a blank inside backticks: the template puts slots there on 12 lines, so an unfilled `` `/<name> demo` `` passes, as it did before this change.
+- **Stopping rule:** no backtick rule can be exact, so the heuristic stops here. Later findings about how `hasPlaceholder` pairs backticks are recorded on #91, which proposes a blank marker that written text never uses, found without Markdown parsing. Setext underlines, thematic breaks, HTML blocks and `~~~` fences aren't recognised, and double-backtick spans aren't paired: a span that holds a backtick shifts the pairing for the rest of its block.
+
+- **Why not the issue's rule:** the issue prescribed one line ending at most, and the run's green step used it:
+
+  ```
+  /`[^`\n]*(?:\n[^`\n]*)?`/g
+  ```
+
+  The refactor step found that it fixes neither spot in the origin file and adds a false positive. A span over two line endings stays in the prose, and its opening backtick pairs with the next one, so every later span in the paragraph shifts. On `mods/issue-forge/SPEC.md` at 94ae284 the original rule finds 15 placeholders, the one-line-ending rule 2 (line 528, from the shift after the span over lines 519–521, and line 929, a span over two line endings), and this rule 0. The SPECs of duet, git-branch and turn-counter read the same under all three rules. Codex's review of PR #85 found the same gap (4287613166), and a second one (4287613176): a span that may cross a line ending, under either rule, also crosses into a heading or list item that follows without a blank line, and hides a real placeholder there. `BLOCK_BREAK` closes that, and no SPEC in the repo reads differently for it. Codex's second round found two more (4287734627, an escaped backtick paired with a later one; 4287734636, a heading or quote indented four spaces ended a span), both closed the same way.
+- **Tests:** logic: a span wrapping once, with the `<word>` on either line, is no placeholder; `<files>` in prose before or after such a span, and in plain prose, still is; a placeholder after a blank line that follows an unclosed backtick is found, with or without a later backtick pair. A span over two line endings is no placeholder, and a placeholder after it still is; after such a span, a `<word>` in a later span of the same paragraph is no placeholder either. After an unclosed backtick, a `<files>` in a heading or list item on the next line is still found, with the heading indented three spaces too, and in a list item nested four spaces in. After an escaped backtick, a `<files>` on the next line is found; after an escaped backslash, the backtick opens a span. A heading or quote line indented four spaces stays inside a span. The wrap case fails on 0.2.15; the two-line-ending cases fail on the one-line-ending rule; the block cases fail on the blank-line-only rule; the escape and indent cases fail on c7a55fa.
+- **Version:** 0.2.19 in `plugin.json` and the marketplace entry (0.2.16 went to #19, PR #80, and 0.2.18 to #90, PR #93, which merged first; 0.2.17, this PR's first number, is skipped).
+
 ## Change 0.2.20 (2026-10-15)
 
 > For issue #92: "there are times a mod will be created in a worktree … use a variable that points to the 'working' folder so mod-lab works", as long as "the end user isn't required to provide a <path>".
@@ -658,4 +682,4 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **The #10 held-scan tests also run with `path`.** The pin's `$.state.set` comes before the #10/#79 scan in the `lab_report` hook, and the d.ts and `gotchas.md` only say a `get` fixes a dispatch's moment. The two "Spec running arrives while another hook's scan is listing" tests have copies whose reports carry `path`, and both pass, so the edit is still tracked.
   - **Build's step 0.2** says: when the work is in a git worktree the session isn't in, `<mods>` is that worktree's `mods/`. Otherwise the skill would pass the main folder's `path` in exactly #92's case.
   - The test for a pin restored after a reload was also written after green, and checked by mutation (the restore disabled: it fails).
-- **Version:** 0.2.20 in `plugin.json` and the marketplace entry. This change was drafted as 0.2.18. PR #93 (#90) merged first with 0.2.18, and PR #85 holds 0.2.19. Merged from `main` after #93: only the README rows, `docs/mod-lab.md` and this SPEC conflicted.
+- **Version:** 0.2.20 in `plugin.json` and the marketplace entry. This change was drafted as 0.2.18. PR #93 (#90) merged first with 0.2.18, and PR #85 (#20) with 0.2.19. Merged from `main` after each: after #93, only the README rows, `docs/mod-lab.md` and this SPEC conflicted; after #85, only the version and this SPEC.

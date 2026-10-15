@@ -247,6 +247,21 @@ export function isGreen(lights: readonly Light[]): boolean {
 // ── Reading files ─────────────────────────────────────────────────────────
 
 /**
+ * The start of a line that ends a paragraph: a blank line, or one that opens an
+ * ATX heading, a list item or a block quote. `$` is the end of the input (no
+ * `m` flag). A heading or quote takes at most three spaces of indent, as in
+ * CommonMark; a list item takes any, since nested items sit deeper. Any `N.`
+ * counts as an item, though CommonMark lets only `1.` interrupt a paragraph.
+ */
+const BLOCK_BREAK = String.raw`(?:[ \t]*(?:\r?\n|$|[-*+][ \t]|\d{1,9}[.)][ \t])| {0,3}(?:#{1,6}(?:[ \t]|$)|>))`
+
+/**
+ * An escaped `\` or backtick, which opens no span, or an inline code span: it
+ * may wrap over lines, but not into another block (CommonMark).
+ */
+const ESCAPE_OR_SPAN = new RegExp(String.raw`\\[\\\x60]|\x60(?:[^\x60\n]|\n(?!${BLOCK_BREAK}))*\x60`, 'g')
+
+/**
  * Whether a SPEC still holds a `<placeholder>`: an angle-bracketed phrase
  * outside fenced code, inline code and HTML comments.
  */
@@ -254,7 +269,7 @@ export function hasPlaceholder(spec: string): boolean {
   const prose = spec
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`\n]*`/g, '')
+    .replace(ESCAPE_OR_SPAN, m => (m.startsWith('\\') ? m : ''))
   return /<(?![/!])[^<>\n]{1,120}>/.test(prose)
 }
 
