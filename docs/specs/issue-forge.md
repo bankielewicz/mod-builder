@@ -72,7 +72,12 @@ profile (§4). Every command is an argument vector run in the run's folder (the 
 the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own command uses one.
 
 **Step 1: preconditions.** All must hold; otherwise the run stops in `blocked` with the first failure:
-1. `gh auth status` exits 0, and `gh issue view <N> --json number,title,body,state,url` shows `state: OPEN`.
+1. `gh auth status` exits 0. The repository is known: a run started from an issue URL is pinned to the
+   repository the URL names, which must be the one `gh repo view --json nameWithOwner,url` shows in the
+   checkout; any other run is pinned to what that command shows. `origin` fetches from and pushes to that
+   repository (`git remote get-url [--push] origin`; a renamed one is matched through `gh repo view`).
+   `gh issue view <N> --repo <host/owner/repo> --json number,title,body,state,url` shows `state: OPEN`
+   and a url that isn't a pull request's.
 2. The profile exists and validates (§4.2).
 3. `git fetch origin <base>` succeeds.
 4. Where the run works (`workspace`, read from `git show origin/<base>:.issue-forge.json`): a
@@ -128,9 +133,9 @@ red commit. On pass, commit `refactor(#<N>): <title>`. On fail after `attempts.r
 a rejected refactor doesn't block the pull request.
 
 **Step 7: confirm and publish.** Show the summary (§7.3, state `ready`) and ask: "Push
-`issue-<N>-<slug>` and open a pull request against `<base>`?". Then:
-- On yes: `git push origin issue-<N>-<slug>`, without `-u`, so it writes no tracking config. Then
-  `gh pr create --base <base> --head issue-<N>-<slug> --title "<title> (#<N>)" --body-file <data dir>/<run>/pr.md`.
+`issue-<N>-<slug>` and open a pull request against `<base>`?" (`on <owner>/<repo>` before `against`). Then:
+- On yes: check `origin` again, then `git push origin issue-<N>-<slug>`, without `-u`, so it writes no tracking config. Then
+  `gh pr create --base <base> --head issue-<N>-<slug> --title "<title> (#<N>)" --body-file <data dir>/<run>/pr.md --repo <host/owner/repo>`.
   The body holds the gate results, the coverage numbers and `Closes #<N>`. State `done`.
 - On no, or no answer possible (`claude -p`): state `ready`, with nothing pushed. `/issue-forge publish` resumes from here.
 
@@ -283,7 +288,7 @@ it doesn't, try `$.tool.call({ tool: 'Agent', … })` next, then run red on Clau
 | name | REQUIRED | `issue-forge` |
 | archetype | REQUIRED | `pane-command` (primary), plus `turn.complete` and `agent.offer` hooks by hand |
 | triggers | REQUIRED | `session.start`, `command.run {command: 'issue-forge'}`, `turn.complete`, `agent.offer` ×3, `ui.render {component: 'Pane', requestId: 'issue-forge'}` |
-| commands | REQUIRED | `/issue-forge <N>`, `/issue-forge status`, `/issue-forge resume`, `/issue-forge publish`, `/issue-forge stop`, `/issue-forge demo` |
+| commands | REQUIRED | `/issue-forge <N or issue URL>`, `/issue-forge status`, `/issue-forge resume`, `/issue-forge publish`, `/issue-forge stop`, `/issue-forge demo` |
 | states drawn | REQUIRED | empty (no run), phase running (agent and elapsed), gate running, gate failed (checks), blocked (reason and next command), ready (summary, awaiting confirm), done (PR link), too-narrow |
 | done means | REQUIRED | §9, checkpoint C8 |
 | state lifetime | ARCH | the run in `$.store` under `run:<repo root>`, so a reload or restart resumes; view state in atoms |
@@ -328,7 +333,7 @@ summary and `[ Publish ]`. `done` shows the PR URL.
 `idle → preflight → baseline → red → gateR → green → gateG → refactor → gateF → ready → publishing → done`,
 with `blocked` reachable from every step, holding the step to resume.
 
-The stored run is `{ issue, title, branch, base, mergeBase, redCommit?, greenCommit?, step, attempt, baseline, lastGate, startedAt }`.
+The stored run is `{ issue, ghRepo?, title, branch, base, mergeBase, redCommit?, greenCommit?, step, attempt, baseline, lastGate, startedAt }`.
 A second `/issue-forge <N>` while a run is active in the same repository answers with the active
 run's status and starts nothing.
 

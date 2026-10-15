@@ -669,13 +669,64 @@ export function failuresOf(g: Gate): string[] {
   return out
 }
 
+// ── Repository (#25) ──────────────────────────────────────────────────────
+
+/** `host/owner/repo` from `gh repo view --json nameWithOwner,url`: the host from the url (lowercased), the rest from nameWithOwner. */
+export function repoOfView(stdout: string): string | null {
+  let view: { nameWithOwner?: unknown; url?: unknown }
+  try {
+    view = JSON.parse(stdout) as typeof view
+  } catch {
+    return null
+  }
+  const host = typeof view?.url === 'string' ? /^https?:\/\/([^/@]+)\//.exec(view.url)?.[1] : undefined
+  return host && typeof view.nameWithOwner === 'string' && /^[^/]+\/[^/]+$/.test(view.nameWithOwner) ? `${host.toLowerCase()}/${view.nameWithOwner}` : null
+}
+
+const REMOTE_URL = /^(?:(?:https|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
+
+/**
+ * `host/owner/repo` from a git remote URL: https and ssh URLs (userinfo, port, `.git` and a trailing slash dropped, the host
+ * lowercased) and scp-like `[user@]host:owner/repo`. Any other form (git://, file://, a path) is null.
+ */
+export function repoOfRemoteUrl(url: string): string | null {
+  const m = REMOTE_URL.exec(url.trim())
+  return m ? `${String(m[1] ?? m[2]).toLowerCase()}/${m[3]}/${m[4]}` : null
+}
+
+/** The same host, owner and repository, in any case; a null side never matches. */
+export function isSameRepo(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
+}
+
+/** The same owner and repository on any host: an SSH alias from ~/.ssh/config stands in for the host. */
+export function isSameOwnerRepo(a: string | null, b: string | null): boolean {
+  const rest = (repo: string | null) => repo?.slice(repo.indexOf('/') + 1)
+  return a !== null && b !== null && rest(a)?.toLowerCase() === rest(b)?.toLowerCase()
+}
+
+/** Whether an issue's url is a pull request's: `gh issue view` answers for both. */
+export function isPullUrl(url: string): boolean {
+  return /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+$/.test(url)
+}
+
+/** `owner/repo` on github.com, `host/owner/repo` anywhere else. */
+export function repoLabel(repo: string): string {
+  return repo.replace(/^github\.com\//i, '')
+}
+
+/** `#16`, or `o/r#16` for a run pinned to a repository. */
+export function issueLabel(run: Run): string {
+  return `${run.ghRepo ? repoLabel(run.ghRepo) : ''}#${run.issue}`
+}
+
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
 /** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
 export type Kept = { branch: string; workRoot: string; base: string }
 
 export type RunEvent =
-  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string }
+  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
@@ -710,10 +761,12 @@ export function phaseOf(step: Step): Phase | 'publish' | 'setup' | null {
   return null
 }
 
-export function newRun(id: string, root: string, issue: number, now: number): Run {
+/** `ghRepo` (`host/owner/repo`) pins a run started from an issue URL to that repository (#25). */
+export function newRun(id: string, root: string, issue: number, now: number, ghRepo?: string): Run {
   return {
     id,
     root,
+    ...(ghRepo === undefined ? {} : { ghRepo }),
     issue,
     title: '',
     body: '',
@@ -777,7 +830,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   switch (run.step) {
     case 'preflight':
       if (ev.type !== 'preflighted') return run
-      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), step: 'baseline' }
+      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), ghRepo: ev.repo, step: 'baseline' }
     case 'baseline':
       if (ev.type !== 'baselined') return run
       return { ...run, baseline: ev.baseline, mergeBase: ev.mergeBase ?? run.mergeBase, step: 'red', times: start(run, 'red', now) }
@@ -1016,8 +1069,13 @@ export function mergeLine(run: Run): string | null {
   return run.merge ? mergeSaid(run.merge, { error: why => `merge check unavailable: ${why}`, clean: `merges cleanly with ${base}`, conflict: files => `conflicts with ${base}: ${files}` }) : null
 }
 
+/** The publish question without the merge check: the pane's ready line, and the question's head. */
+export function publishAsk(run: Run): string {
+  return `Push ${run.branch} and open a pull request${run.ghRepo ? ` on ${repoLabel(run.ghRepo)}` : ''} against ${run.base}?`
+}
+
 export function publishQuestion(run: Run): string {
-  const ask = `Push ${run.branch} and open a pull request against ${run.base}?`
+  const ask = publishAsk(run)
   return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with origin/${run.base} in: ${files}.` }) : ask
 }
 
@@ -1212,13 +1270,18 @@ export function prBody(run: Run): string {
 
 export type Command =
   | { kind: 'toggle' }
-  | { kind: 'start'; issue: number }
+  | { kind: 'start'; issue: number; repo?: string }
   | { kind: 'status' | 'resume' | 'publish' | 'stop' | 'handoff'; issue?: number }
   | { kind: 'demo'; state: DemoState | null }
   | { kind: 'unknown'; text: string }
 
+const ISSUE_URL = /^https:\/\/([A-Za-z0-9.-]+)\/([A-Za-z0-9_-]+)\/([A-Za-z0-9._-]+)\/issues\/([0-9]+)\/?(?:[?#].*)?$/
+
 export function parseCommand(args: string): Command {
   const words = args.trim().split(/\s+/).filter(Boolean)
+  // An issue URL names its repository (#25); its owner and repository keep their case, its host doesn't.
+  const url = ISSUE_URL.exec(words[0] ?? '')
+  if (url) return { kind: 'start', issue: Number(url[4]), repo: `${String(url[1]).toLowerCase()}/${url[2]}/${url[3]}` }
   const first = (words[0] ?? '').toLowerCase()
   if (first === '') return { kind: 'toggle' }
   if (/^#?\d+$/.test(first)) return { kind: 'start', issue: Number(first.replace('#', '')) }
@@ -1235,7 +1298,7 @@ export function parseCommand(args: string): Command {
   return { kind: 'unknown', text: args.trim() }
 }
 
-export const USAGE = '/issue-forge <issue number> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo'
+export const USAGE = '/issue-forge <issue number or URL> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo'
 
 // ── View (§7.3) ───────────────────────────────────────────────────────────
 
@@ -1357,7 +1420,7 @@ export function badgeOf(run: Run, now: number): string {
 export function statusText(run: Run | null, isDriving: boolean, now: number, me = '', others: readonly OtherRun[] = []): string {
   if (!run) return `No run in this repository. ${USAGE}`
   const view = viewOf(run, isDriving, me)
-  const head = `#${run.issue}${run.title ? ` ${run.title}` : ''}${run.branch ? ` · ${run.branch} → ${run.base}` : ''}`
+  const head = `${issueLabel(run)}${run.title ? ` ${run.title}` : ''}${run.branch ? ` · ${run.branch} → ${run.base}` : ''}`
   const lines = [head]
   if (view === 'blocked' && run.blocked) lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then /issue-forge resume`)
   else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
@@ -1424,7 +1487,7 @@ export function demoRun(state: DemoState, now: number): DemoView {
 function demoShown(state: DemoState, now: number): { run: Run | null; isDriving: boolean; activity: Activity | null } {
   if (state === 'empty') return { run: null, isDriving: false, activity: null }
   const base: Run = {
-    ...newRun('demo', '/demo', 16, now - 380_000),
+    ...newRun('demo', '/demo', 16, now - 380_000, 'github.com/bankielewicz/mod-builder'),
     title: 'Mod Lab: Fix prompt and path header hardcode mods/ instead of modsDir',
     url: 'https://github.com/bankielewicz/mod-builder/issues/16',
     branch: 'issue-16-mod-lab-fix-prompt-and-path-header-hardc',

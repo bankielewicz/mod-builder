@@ -1,6 +1,6 @@
 # Issue Forge
 
-Hand it a GitHub issue number and it comes back with a pull request, built test-first and
+Hand it a GitHub issue number or URL and it comes back with a pull request, built test-first and
 checked by commands rather than by the model's word. Three subagents work in turn: **red** writes
 tests that fail, **green** makes them pass, **refactor** tidies. Between phases the mod checks
 the work: only test files changed in red, the tests failed and then passed, nobody edited the
@@ -8,7 +8,7 @@ tests to make them pass, and at least 95% of the changed lines and branches are 
 is pushed until you say yes.
 
 ```
- I S S U E   F O R G E      #16 Mod Lab: Fix prompt and path header hardc…
+ I S S U E   F O R G E  bankielewicz/mod-builder#16 Mod Lab: Fix prompt a…
  ──────────────────────────────────────────────────────────────────────────
  ✓ red       3 test files, failing as intended · a1b2c3d             2m10s
  ● green     attempt 2/3 · gate G: diff branch 91.30% < 95           4m02s
@@ -29,7 +29,8 @@ Several sessions can each run an issue in the same repository at once, each in i
 /issue-forge demo
 ```
 
-- `/issue-forge <N>`: starts a run on issue N. If another run in the repository is active, or this
+- `/issue-forge <N or issue URL>`: starts a run on issue N, or on the issue a pasted URL names
+  ([Which repository a run uses](#which-repository-a-run-uses)). If another run in the repository is active, or this
   session is driving one, it asks first ([Parallel runs](#parallel-runs))
 - `/issue-forge status [N]`: where the run is (and its worktree), and the repository's other runs;
   with no run, whether `.issue-forge.json` validates
@@ -88,6 +89,25 @@ would conflict.
 This repository sets `"workspace": "worktree"`: the installed plugins load from the main folder's
 branch, so a run must never switch it.
 
+### Which repository a run uses
+
+A run works in the clone your session started in. Its issue and its pull request go to the repository
+`gh repo view` shows there, and every `gh` call of the run names it with `--repo`, so a stray `GH_REPO`
+or a second remote can't send the run elsewhere. The masthead and `/issue-forge status` name it
+(`o/r#16`; `host/o/r#16` on GitHub Enterprise).
+
+- `origin` must be that repository, for fetching and for pushing. A renamed or transferred repository
+  passes: when the URL's name differs, `gh` is asked what it calls it. A URL is never printed or passed on,
+  since it can hold a token. A fork clone, where `origin` is your fork, blocks the run before it fetches
+  or switches anything; forks are tracked in #26.
+- A pasted issue URL must name that same repository, or the command answers
+  `x/y#16 is in another repository: this checkout's GitHub repository is o/r. …` and starts nothing.
+  Only `https://<host>/<owner>/<repo>/issues/<N>` is read.
+- A pull request's number is refused (`#24 is a pull request, not an issue`), since `gh issue view`
+  answers for those too.
+- A run started by 0.3 or earlier has no repository recorded: it resumes and publishes as before, with no
+  `--repo` and no check of `origin`.
+
 ### Parallel runs
 
 Runs belong to the repository, not to the folder a session started in. Every worktree of a repository
@@ -96,7 +116,7 @@ shares git's common folder, and that keys the runs. So every session in the repo
 at a time. To work on two issues at once, open a second Claude Code session in the repository. With
 `"workspace": "worktree"`, each run gets a worktree of its own.
 
-`/issue-forge <N>` asks one question when it would meet another run:
+`/issue-forge <N>` (or an issue URL) asks one question when it would meet another run:
 
 | Situation | Choices (the first is the default) |
 | --- | --- |
@@ -130,7 +150,7 @@ Runs stored by 0.2 or earlier, keyed by the checkout, move to the repository's k
 first starts in that checkout or in another worktree git lists.
 
 A run needs an interactive session (`claude -p` exits before the agents finish), a checkout that
-isn't busy or a worktree run (above), `gh` signed in, and `<base>` on `origin`. If an issue names another base (a line
+isn't busy or a worktree run (above), `gh` signed in, `<base>` on `origin`, and `origin` is the repository `gh repo view` shows. If an issue names another base (a line
 `Base branch: <name>`), the run asks before using it, because the tests would run from that branch.
 A name git could read as an option or a forced refspec (starting with `-` or `+`, or holding `:`)
 is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refused.
@@ -216,7 +236,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, including `--git-common-dir` for each command, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, push), `gh` (auth status, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
+| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, including `--git-common-dir` for each command, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, remote get-url, push), `gh` (auth status, repo view, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
