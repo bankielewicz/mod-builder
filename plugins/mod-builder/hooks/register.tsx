@@ -541,12 +541,12 @@ async function tick($: Engine): Promise<void> {
   const isLive =
     (await liveRunsOf($)).length > 0 ||
     (await read($, demoStartedAt)) !== null ||
-    Object.values(liveNow).some(report => report.status === 'running')
+    (await hasRunningReport($, now))
   if (!isLive) {
     clock?.cancel()
     clock = null
-    // A run that started after that read found the clock still set and didn't start one: start it again.
-    if ((await liveRunsOf($)).length) startClock($)
+    // A run or report that started after those reads found the clock still set and didn't start one: start it again.
+    if ((await liveRunsOf($)).length || (await hasRunningReport($, now))) startClock($)
   }
 }
 
@@ -564,6 +564,11 @@ class RunTimeout extends Error {}
 const timeoutOf = (): RunTimeout => new RunTimeout(Lab.timeoutText(runLimit))
 
 /** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
+/** Whether any build still has a live running report, read now rather than from an earlier copy. */
+async function hasRunningReport($: Engine, now: number): Promise<boolean> {
+  return Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
+}
+
 async function liveRunsOf($: Engine): Promise<Run[]> {
   return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimit)
 }
