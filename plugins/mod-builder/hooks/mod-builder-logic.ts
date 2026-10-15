@@ -1111,7 +1111,7 @@ export const EMPTY_STREAM: TestStream = { passed: 0, failed: 0, lines: 0, partia
 /** The stream once one more piece of `stream` arrived: only the lines it finishes are counted and kept. */
 export function streamPiece(s: TestStream, text: string, stream = 'stdout'): TestStream {
   const parts = ((s.partials[stream] ?? '') + text).split('\n')
-  const partial = (parts.pop() ?? '').slice(0, STREAM_LINE_MAX)
+  const partial = parts.pop()!.slice(0, STREAM_LINE_MAX)   // split always returns one part
   let { passed, failed, lines, failsKept, after } = s
   const heads = [...s.heads]
   const summaries = [...s.summaries]
