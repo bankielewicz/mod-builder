@@ -1105,6 +1105,16 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   return `starting #${issue}; the pane shows progress. Nothing is pushed until you say yes.`
 }
 
+/**
+ * The run as resume read it: same run, step and driver. Resume spends seconds on gh and git before it writes, and a
+ * stop or a resume from another session in that time wins (PR #51, Codex 4278707565).
+ */
+function isAsRead(stored: Run | null, run: Run): boolean {
+  return !!stored && stored.id === run.id && stored.step === run.step && stored.driver?.session === run.driver?.session
+}
+
+const movedOn = (run: Run) => `#${run.issue} moved on before it could be resumed; /issue-forge status ${run.issue} says where it is.`
+
 /** Re-checks what may have changed while the run waited (SPEC 12), then drives it again. */
 async function resumeRun($: EngineInterface, at: Repo | null, issue: number | null, isTakeOver = false): Promise<string> {
   if (!at) return 'no run to resume here.'
@@ -1144,13 +1154,13 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
     if (why) {
       const now = await $.clock.now()
       // Still blocked: no session drives it (a driver taken over, or left by a reload, is cleared).
-      await updateRun($, key, stored => (stored?.id === run.id ? advance(advance(back, why, now), { type: 'release', session: back.driver?.session ?? '' }, now) : null))
-      return `still blocked: ${why.reason}.`
+      const kept = await updateRun($, key, stored => (isAsRead(stored, run) ? advance(advance(back, why, now), { type: 'release', session: back.driver?.session ?? '' }, now) : null))
+      return kept ? `still blocked: ${why.reason}.` : movedOn(run)
     }
   }
   const now = await $.clock.now()
-  const driven = await updateRun($, key, stored => (stored?.id === run.id ? advance(back, { type: 'drive', session: sessionId }, now) : null))
-  if (!driven) return `#${run.issue} moved on before it could be resumed; /issue-forge status ${run.issue} says where it is.`
+  const driven = await updateRun($, key, stored => (isAsRead(stored, run) ? advance(back, { type: 'drive', session: sessionId }, now) : null))
+  if (!driven) return movedOn(run)
   void openPane($).catch(() => undefined)
   startDrive($, driven)
   return `resuming #${back.issue} at ${back.step}.`
