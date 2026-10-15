@@ -247,15 +247,25 @@ export function isGreen(lights: readonly Light[]): boolean {
 // ── Reading files ─────────────────────────────────────────────────────────
 
 /**
+ * The start of a line that ends a paragraph: a blank line, or one that opens an
+ * ATX heading, a list item or a block quote. `$` is the end of the input (no
+ * `m` flag). Any `N.` counts as an item, though CommonMark lets only `1.`
+ * interrupt a paragraph.
+ */
+const BLOCK_BREAK = String.raw`[ \t]*(?:\r?\n|$|#{1,6}(?:[ \t]|$)|[-*+][ \t]|\d{1,9}[.)][ \t]|>)`
+
+/** An inline code span: it may wrap over lines, but not into another block (CommonMark). */
+const CODE_SPAN = new RegExp(String.raw`\x60(?:[^\x60\n]|\n(?!${BLOCK_BREAK}))*\x60`, 'g')
+
+/**
  * Whether a SPEC still holds a `<placeholder>`: an angle-bracketed phrase
- * outside fenced code, inline code and HTML comments. An inline code span may
- * wrap over any number of lines but not across a blank one (CommonMark).
+ * outside fenced code, inline code and HTML comments.
  */
 export function hasPlaceholder(spec: string): boolean {
   const prose = spec
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/`(?:[^`\n]|\n(?![ \t\r]*\n))*`/g, '')
+    .replace(CODE_SPAN, '')
   return /<(?![/!])[^<>\n]{1,120}>/.test(prose)
 }
 
