@@ -942,11 +942,12 @@ export const register: Register = (on, options) => {
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
       // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
       // The stamp tells a scan that judged the edit finished before this report that the next edit began here.
+      // It always moves on, even within one millisecond of the last, or that scan would read it as unchanged.
       let isStarted = false
       await updateGenerations($, modsDir, all => {
         const current = all[mod]
         isStarted = current === undefined
-        return { ...all, [mod]: current ? { ...current, repeatedAt: now } : { since: now, fromVersion } }
+        return { ...all, [mod]: current ? { ...current, repeatedAt: Math.max(now, (current.repeatedAt ?? 0) + 1) } : { since: now, fromVersion } }
       })
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
