@@ -1420,8 +1420,11 @@ describe('parallel runs (Change 0.3.0)', () => {
   })
 
   // PR #51 review: push and gh pr create can't be undone, so they don't wait for the 5 s watch.
+  // The take-over variant came after green: before it, the drive re-ran the step forever and hung the suite
+  // instead of failing an assertion.
   for (const [what, change] of [
     ['stops', (r: any) => ({ ...r, step: 'stopped' })],
+    ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 1 } })],
   ] as const) {
     test(`publish pushes nothing when another session ${what} the run during the merge check`, async ($, on) => {
       let release: () => void = () => undefined
