@@ -90,10 +90,10 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
-  const files = Object.keys(disk)
+  // Listed from `disk` at each call, so a test that writes a file mid-way is seen by the next scan.
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
-    for (const path of files) {
+    for (const path of Object.keys(disk)) {
       if (!path.startsWith(`${dir}/`)) continue
       const [head, ...tail] = path.slice(dir.length + 1).split('/')
       names.set(head!, tail.length ? 'dir' : 'file')
@@ -762,6 +762,70 @@ describe('selection', () => {
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /^ duet $/ })).toBeDefined()
     expect(await after.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+  })
+})
+
+describe('a mod reported before its folder exists (#19)', () => {
+  const report = ($: Engine, mod: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod, stage: 'Spec', status: 'running' } as never)
+  /** Every row named `new-mod`, picked (` new-mod `) or not (` new-mod`); the detail header is bare, so not counted. */
+  const rowsOf = async (ui: Awaited<ReturnType<typeof mountPane>>) => (await ui.findAll({ type: 'Text', text: /^ new-mod ?$/ })).length
+  const ACTIONS = ['validate', 'test', 'typecheck', 'readme', 'fix']
+
+  test('a Spec report for a mod with no folder adds its row: folder note, counted as building, no actions', OPTIONS, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /folder not written yet: .*new-mod\// })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^2 mods$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^1 building$/ })).toBeDefined()
+    for (const key of ACTIONS) expect(await ui.find({ key })).toBeUndefined()
+  })
+
+  test('/modlab <name> selects the placeholder row instead of saying there is no such mod', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    await command($, 'git-branch')
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /^ git-branch $/ })).toBeDefined()
+    await before.unmount()
+    await command($, 'new-mod')
+    await clock.advance(10)
+    expect(seen.toasts.filter(text => text.startsWith('No mod named'))).toEqual([])
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await after.find({ type: 'Text', text: /folder not written yet/ })).toBeDefined()
+  })
+
+  test('once the folder has its SPEC, the next scan shows the real row and the placeholder is gone', OPTIONS, async ($, on) => {
+    const disk: Disk = modFiles('git-branch')
+    const { clock } = world(on, disk)
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    const placeholder = await mountPane($)
+    expect(await placeholder.find({ type: 'Text', text: /folder not written yet/ })).toBeDefined()
+    expect(await placeholder.find({ key: 'validate' })).toBeUndefined()
+    expect(await rowsOf(placeholder)).toBe(1)
+    await placeholder.unmount()
+    Object.assign(disk, { [`${MODS}/new-mod/SPEC.md`]: '# new-mod\n| archetype | REQUIRED | band | x |\nDone.\n' })
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const real = await mountPane($)
+    expect(await real.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await real.find({ type: 'Text', text: /mods\/new-mod\// })).toBeDefined()
+    expect(await real.find({ type: 'Text', text: /folder not written yet/ })).toBeUndefined()
+    expect(await real.find({ key: 'validate' })).toBeDefined()
+    expect(await rowsOf(real)).toBe(1)
   })
 })
 
