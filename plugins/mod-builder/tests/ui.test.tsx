@@ -54,6 +54,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     cwd: '/m' as string | null,
     failReads: [] as string[],
     denySet: '',
+    /** Arm mid-test: the `after`-th fs.list call from now (0 is the next one) waits for `until`. */
+    holdList: null as { after: number; until: Promise<void> } | null,
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on, {})
@@ -74,6 +76,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   let lists = 0
   on('fs.list', async ($, e) => {
     if (listHold && lists++ === 0) await listHold
+    if (seen.holdList && seen.holdList.after-- === 0) await seen.holdList.until
     return { value: entriesOf((e as { path: string }).path) } as never
   })
   on('fs.read', ($, e) => {
@@ -665,6 +668,79 @@ describe('lab_report', () => {
     await start($)
     const { result } = (await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'Bad Name', stage: 'Logic', status: 'running' } as never)) as { result: string }
     expect(result).toStartWith('Mod Lab: mod must be')
+  })
+})
+
+describe('two runs finishing together', () => {
+  test('both Validate results are kept', OPTIONS, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { clock } = world(on, { ...modFiles('git-branch'), ...modFiles('inbox-zero') }, { validate: { exitCode: 0, stdout: validateClean } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Validate', status: 'passed' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'inbox-zero', stage: 'Validate', status: 'passed' } as never)
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    const ui = await mountPane($)
+    const next = (await ui.findAll({ type: 'Text', text: /^next: / })).map((n: any) => String(n.text).trim())
+    expect(next).toEqual(['next: Test', 'next: Test'])
+  })
+})
+
+describe('a scan that read the generations before an edit began', () => {
+  test('the edit reported while the scan is held is still tracked when it ends', OPTIONS, async ($, on) => {
+    const manifestOf = (version: string) => `{ "name": "git-branch", "version": "${version}", "description": "The git-branch mod." }`
+    const listing = (version: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version }] })
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      ...modFiles('inbox-zero'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edits below, except inbox-zero's SPEC.md.
+    const mtime: Mtimes = { ms: Date.parse('2027-01-01T00:00:00Z'), byPath: { [`${MODS}/inbox-zero/SPEC.md`]: 1000 } }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const redo = async () => {
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await clock.advance(500)
+      await ui.press({ key: 'test' })
+      await clock.advance(500)
+      await ui.unmount()
+    }
+    const report = (mod: string, status: string) =>
+      $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod, stage: 'Spec', status } as never)
+
+    // git-branch is green, then edited, redone and re-listed: every stage is green again, and its edit is about to end.
+    await redo()
+    await clock.advance(5000)
+    await report('git-branch', 'running')
+    await report('git-branch', 'passed')
+    await clock.advance(10)
+    await redo()
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifestOf('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = listing('0.1.1')
+
+    // The scan that ends it reads the generations, then waits at the first mod folder.
+    let release = () => {}
+    seen.holdList = { after: 1, until: new Promise<void>(resolve => (release = resolve)) }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(10)
+
+    // Meanwhile inbox-zero, built before, starts an edit of its own.
+    await report('inbox-zero', 'running')
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    await report('inbox-zero', 'passed')
+    await clock.advance(1000)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
   })
 })
 
