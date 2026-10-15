@@ -370,6 +370,20 @@ describe('a malformed rules option', () => {
     expect(seen.ran).toEqual([{ tool: 'Write', path: '/w/tests/a.test.ts' }])
   })
 
+  test('the person is told once, at session start, before anything is written', { options: MALFORMED }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await seen.clock.settle()
+    expect(seen.toasts).toEqual([HELD_BY_RULES])
+  })
+
+  test('a well-formed option says nothing at session start', { options }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await seen.clock.settle()
+    expect(seen.toasts).toEqual([])
+  })
+
   test('an Agent call is not checked: no folder is listed, no file read, nothing reported', { options: MALFORMED }, async ($, on) => {
     const seen = engine(on, { during: TAMPER })
     await start($)
