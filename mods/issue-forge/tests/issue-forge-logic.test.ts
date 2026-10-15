@@ -1638,3 +1638,77 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
     expect((demoRun('ready', 0).run as Run & { ghRepo?: string }).ghRepo).toBe('github.com/bankielewicz/mod-builder')
   })
 })
+
+// Issue #26: a fork clone, where origin is the contributor's fork and another remote is the project. A run keeps the
+// remote it fetches the base from (`baseRemote`) and the fork it pushes to (`headRepo`, `host/owner/repo`).
+describe('a fork clone: the base remote, the fork check and the pull request head (#26)', () => {
+  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  /** `gh repo view <fork> --json isFork,parent`, as gh prints it: the parent has an owner login and a name, no nameWithOwner. */
+  const view = (isFork: boolean, parent: { owner: string; name: string } | null) =>
+    JSON.stringify({ isFork, parent: parent === null ? null : { id: 'R_1', name: parent.name, owner: { id: 'U_1', login: parent.owner } } })
+  const PREFLIGHTED = { type: 'preflighted' as const, title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), repo: 'github.com/o/r' }
+
+  test('baseRemoteOf: the remotes whose fetch URL names the project are none, one (the base remote) or several (a block)', () => {
+    const baseRemoteOf = helper<[string[]], unknown>('baseRemoteOf')
+    expect(baseRemoteOf([])).toEqual({ kind: 'none' })
+    expect(baseRemoteOf(['upstream'])).toEqual({ kind: 'one', remote: 'upstream' })
+    expect(baseRemoteOf(['project', 'upstream'])).toEqual({ kind: 'several', remotes: ['project', 'upstream'] })
+    expect(baseRemoteOf(['a', 'b', 'c'])).toEqual({ kind: 'several', remotes: ['a', 'b', 'c'] })
+  })
+
+  test('isForkOf: a fork whose parent owner and name are the repository, in any case; every other answer is false', () => {
+    const isForkOf = helper<[string, string], boolean>('isForkOf')
+    const PIN = 'github.com/o/r'
+    expect(isForkOf(view(true, { owner: 'o', name: 'r' }), PIN)).toBe(true)
+    expect(isForkOf(view(true, { owner: 'O', name: 'R' }), PIN)).toBe(true)
+    expect(isForkOf(view(true, { owner: 'o', name: 'r' }), 'github.com/O/R')).toBe(true)
+    expect(isForkOf(`${view(true, { owner: 'o', name: 'r' })}\n`, PIN)).toBe(true)
+    // The host is the same by construction: gh prints none for the parent, so it is not compared.
+    expect(isForkOf(view(true, { owner: 'o', name: 'r' }), 'ghe.example.com/o/r')).toBe(true)
+    // Another owner or another name is another parent: a fork of o/x is no fork of o/r.
+    expect(isForkOf(view(true, { owner: 'x', name: 'r' }), PIN)).toBe(false)
+    expect(isForkOf(view(true, { owner: 'o', name: 'x' }), PIN)).toBe(false)
+    expect(isForkOf(view(false, null), PIN)).toBe(false)
+    expect(isForkOf(view(false, { owner: 'o', name: 'r' }), PIN)).toBe(false)
+    for (const stdout of ['', 'not json', '{}', '{"isFork":true}', '{"isFork":true,"parent":null}', '{"isFork":true,"parent":{"name":"r"}}', '{"isFork":true,"parent":{"name":"r","owner":null}}']) {
+      expect(isForkOf(stdout, PIN)).toBe(false)
+    }
+  })
+
+  test("headArg: a run with a fork names its owner as the head, `<owner>:<branch>`; a run without one names the branch alone", () => {
+    const headArg = helper<[string, string | undefined], string>('headArg')
+    expect(headArg('issue-16-fix-it', 'github.com/me/r')).toBe('me:issue-16-fix-it')
+    // A renamed fork is still the owner's.
+    expect(headArg('issue-16-fix-it', 'github.com/me/r-fork')).toBe('me:issue-16-fix-it')
+    expect(headArg('issue-16-fix-it', 'github.com/Me/r')).toBe('Me:issue-16-fix-it')
+    expect(headArg('issue-16-fix-it', 'ghe.example.com/me/r')).toBe('me:issue-16-fix-it')
+    expect(headArg('issue-16-fix-it', undefined)).toBe('issue-16-fix-it')
+  })
+
+  test("advance: 'preflighted' records the base remote and the fork, a block and a resume keep them, and a run preflighted without them has neither", () => {
+    type Forked = Run & { baseRemote?: string; headRepo?: string }
+    const event = { ...PREFLIGHTED, baseRemote: 'upstream', headRepo: 'github.com/me/r' }
+    const preflighted = advance(run(), event, 1) as Forked
+    expect(preflighted.baseRemote).toBe('upstream')
+    expect(preflighted.headRepo).toBe('github.com/me/r')
+    expect(preflighted.ghRepo).toBe('github.com/o/r')
+    expect(preflighted.step).toBe('baseline')
+    const blocked = advance(preflighted, { type: 'block', reason: 'r', next: 'n' }, 2) as Forked
+    expect(blocked.step).toBe('blocked')
+    expect(blocked.baseRemote).toBe('upstream')
+    expect(blocked.headRepo).toBe('github.com/me/r')
+    const resumed = advance(blocked, { type: 'resume' }, 3) as Forked
+    expect(resumed.baseRemote).toBe('upstream')
+    expect(resumed.headRepo).toBe('github.com/me/r')
+    // A run preflighted by 0.1.0's shape or #25's keeps neither: it fetches from and pushes to origin.
+    const plain = advance(run(), PREFLIGHTED, 1) as Forked
+    expect(plain.ghRepo).toBe('github.com/o/r')
+    expect(plain.baseRemote).toBeUndefined()
+    expect(plain.headRepo).toBeUndefined()
+  })
+})

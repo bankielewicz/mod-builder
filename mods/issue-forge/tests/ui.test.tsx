@@ -109,6 +109,14 @@ type World = {
   pushUrl?: string | string[] | { exitCode: number; stderr: string }
   /** What `gh repo view <host/owner/repo>` canonicalises an argument to (its nameWithOwner); absent, the argument itself (#25). */
   canonical?: Record<string, string>
+  /** Remotes other than origin, name to fetch URL: `git remote` lists origin and these, sorted; absent, origin alone (#26). */
+  remotes?: Record<string, string>
+  /** `gh repo view <host/owner/repo> --json isFork,parent`: the parent as `owner/name`, or null for a repository that isn't a fork; absent, a fork of o/r (#26). */
+  parentOf?: Record<string, string | null>
+  /** Owners `gh api users/<owner> --jq .type` calls an Organization; any other is a User (#26). */
+  orgOwners?: string[]
+  /** `git ls-remote --heads <remote>`: the branch names already on a remote; absent, none (#26). */
+  remoteHeads?: Record<string, string[]>
   /** The url `gh issue view` answers with; absent, ISSUE's (#25). */
   issueUrl?: string
   /** `gh issue view` exits 1 with this on stderr (#25). */
@@ -236,6 +244,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
       if (s === 'repo view --json nameWithOwner,url') return world.repoView ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.repoView } } : ok(JSON.stringify({ nameWithOwner: 'o/r', url: 'https://github.com/o/r' }))
+      if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'isFork,parent') {
+        const parent = world.parentOf && (a[2] ?? '') in world.parentOf ? world.parentOf[a[2] ?? ''] : 'o/r'
+        const [owner = '', name = ''] = (parent ?? '').split('/')
+        return ok(JSON.stringify(parent === null ? { isFork: false, parent: null } : { isFork: true, parent: { id: 'R_1', name, owner: { id: 'U_1', login: owner } } }))
+      }
+      if (a[0] === 'api' && (a[1] ?? '').startsWith('users/')) return ok(`${world.orgOwners?.includes((a[1] ?? '').slice('users/'.length)) ? 'Organization' : 'User'}\n`)
       if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'nameWithOwner,url') {
         const [host = '', owner = '', name = ''] = (a[2] ?? '').split('/')
         const nameWithOwner = world.canonical?.[a[2] ?? ''] ?? `${owner}/${name}`
@@ -255,6 +269,9 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       const url = (s === 'remote get-url origin' ? world.originUrl : (world.pushUrl ?? world.originUrl)) ?? 'https://github.com/o/r.git'
       return typeof url === 'string' ? ok(`${url}\n`) : Array.isArray(url) ? ok(url.map(u => `${u}\n`).join('')) : fail(url.stderr, url.exitCode)
     }
+    if (s === 'remote') return ok(`${['origin', ...Object.keys(world.remotes ?? {})].sort().join('\n')}\n`)
+    if (a[0] === 'remote' && a[1] === 'get-url' && a.length === 3 && world.remotes && (a[2] ?? '') in world.remotes) return ok(`${world.remotes[a[2] ?? '']}\n`)
+    if (a[0] === 'ls-remote') return ok((world.remoteHeads?.[a[2] ?? ''] ?? []).map(name => `0123abc\trefs/heads/${name}\n`).join(''))
     if (s === 'rev-parse --git-common-dir') return ok('.git\n')
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
@@ -2005,5 +2022,204 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await run($, 'status')
     const ui = await pane($)
     expect(await ui.find({ type: 'Text', text: /^\/issue-forge <issue number or URL> starts another\.$/ })).toBeDefined()
+  })
+})
+
+// Issue #26: a fork clone. Origin is the contributor's fork (me/r) and another remote is the project (o/r), which is
+// what gh resolves; the base is fetched from that remote, the branch is pushed to origin, and the pull request names
+// the fork's owner as its head. The pinned repository is `Run.ghRepo` (as in #25), the new fields `baseRemote` and
+// `headRepo` (`host/owner/repo` of origin).
+describe('a fork clone: origin is the contributor\'s fork and the project is another remote (#26)', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const FORK = { originUrl: 'https://github.com/me/r.git', remotes: { upstream: 'https://github.com/o/r.git' } }
+  const WATCH = { when: () => false, until: Promise.resolve() }
+  const FORK_VIEW = ['gh', 'repo', 'view', 'github.com/me/r', '--json', 'isFork,parent']
+  const forkRun = (extra: Record<string, unknown> = {}) => storedRun('ready', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', greenCommit: 'c2', gatedHead: 'c0', ...extra })
+  const isGitWrite = (a: string[]) => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch' || a[1] === 'worktree')
+  const isPublished = (w: World) => w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))
+  /** Starts #16 and waits for the first block: the origin block today, the kit's after the red spawn once forks are supported. */
+  async function started($: any, w: World): Promise<string> {
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    return (await run($, 'status')).text ?? ''
+  }
+
+  test('start: the base is fetched from the project remote, the branch is cut from it, and red is spawned', async ($, on) => {
+    const w = engine(on, FORK)
+    await start($)
+    await started($, w)
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.argv).toContainEqual(['git', 'switch', '--no-track', '-c', BRANCH, 'upstream/main'])
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+  })
+
+  test("start: the profile, the merge base and the catch-up all read the project remote's base, never origin's", async ($, on) => {
+    const w = engine(on, FORK)
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'show', 'upstream/main:.issue-forge.json'])
+    expect(w.argv).toContainEqual(['git', 'merge-base', 'HEAD', 'upstream/main'])
+    expect(w.argv).toContainEqual(['git', 'merge-base', '--is-ancestor', 'HEAD', 'upstream/main'])
+    expect(w.argv).toContainEqual(['git', 'merge', '--ff-only', '-q', 'upstream/main'])
+    expect(w.argv.flat().some(x => x.startsWith('origin/'))).toBe(false)
+  })
+
+  test('start in a new worktree: it is added from the project remote\'s base', async ($, on) => {
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'upstream/main'])
+    expect(w.argv.flat().some(x => x.startsWith('origin/'))).toBe(false)
+  })
+
+  test('start: a branch name taken on either remote is avoided, so origin and the project remote are both asked', async ($, on) => {
+    const w = engine(on, { ...FORK, remoteHeads: { origin: [BRANCH], upstream: [`${BRANCH}-2`] } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'ls-remote', '--heads', 'origin', 'issue-16*'])
+    expect(w.argv).toContainEqual(['git', 'ls-remote', '--heads', 'upstream', 'issue-16*'])
+    expect(w.argv).toContainEqual(['git', 'switch', '--no-track', '-c', `${BRANCH}-3`, 'upstream/main'])
+  })
+
+  test('start: the run is stored with the project remote and the fork, and stays pinned to the project', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { ...FORK, storeHold: WATCH }, store)
+    await start($)
+    await started($, w)
+    const stored = Object.entries(store).find(([k]) => k.startsWith('issue-forge:repo-run:') && k.endsWith('#16'))?.[1] as Record<string, unknown> | undefined
+    expect(stored?.issue).toBe(16)
+    expect(stored?.baseRemote).toBe('upstream')
+    expect(stored?.headRepo).toBe('github.com/me/r')
+    expect(stored?.ghRepo).toBe('github.com/o/r')
+  })
+
+  test("start: origin is checked to be a fork of the project and not an organization's, by host/owner/repo and before anything is fetched; a token in a URL goes nowhere", async ($, on) => {
+    const w = engine(on, { originUrl: 'https://x-access-token:SECRET@github.com/me/r.git', remotes: { upstream: 'https://x-access-token:SECRET@github.com/o/r.git' } })
+    await start($)
+    const status = await started($, w)
+    expect(w.argv).toContainEqual(FORK_VIEW)
+    expect(w.argv).toContainEqual(['gh', 'api', 'users/me', '--jq', '.type'])
+    const forkAt = w.argv.findIndex(a => a.join(' ') === FORK_VIEW.join(' '))
+    const ownerAt = w.argv.findIndex(a => a[0] === 'gh' && a[1] === 'api')
+    const fetchAt = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'fetch')
+    expect(fetchAt).toBeGreaterThan(forkAt)
+    expect(fetchAt).toBeGreaterThan(ownerAt)
+    expect(forkAt).toBeGreaterThanOrEqual(0)
+    expect(JSON.stringify([w.argv, w.toasts, w.asked, status])).not.toContain('SECRET')
+  })
+
+  test('start: a parent that is the project in another case still passes the fork check', async ($, on) => {
+    const w = engine(on, { ...FORK, parentOf: { 'github.com/me/r': 'O/R' } })
+    await start($)
+    await started($, w)
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+  })
+
+  test("start: an organization's fork blocks before anything is fetched or made, since gh pr create can't name it as the head", async ($, on) => {
+    const w = engine(on, { ...FORK, orgOwners: ['me'] })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain("blocked at preflight: gh pr create can't name an organization's fork as the head (cli/cli#10093)")
+    expect(w.argv).toContainEqual(['gh', 'api', 'users/me', '--jq', '.type'])
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test('start: two remotes that point at the project block, naming both and saying to remove one', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/me/r.git', remotes: { project: 'https://github.com/o/r.git', upstream: 'git@github.com:o/r.git' } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: remotes project and upstream both point at o/r')
+    expect(status).toContain('next: remove one of them')
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: an origin that isn't a fork blocks", async ($, on) => {
+    const w = engine(on, { ...FORK, parentOf: { 'github.com/me/r': null } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain("blocked at preflight: origin me/r isn't a fork of o/r")
+    expect(w.argv).toContainEqual(FORK_VIEW)
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: an origin that is a fork of another repository blocks", async ($, on) => {
+    const w = engine(on, { ...FORK, parentOf: { 'github.com/me/r': 'x/r' } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain("blocked at preflight: origin me/r isn't a fork of o/r")
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: a failed fetch of the base names the project remote", async ($, on) => {
+    const w = engine(on, { ...FORK, fetchFails: true })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: git fetch upstream main failed: fatal: unable to access origin')
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+  })
+
+  test("resume at the baseline fetches and catches up from the stored project remote", async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { ...FORK, head: BRANCH, fetchFails: true }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at baseline: git fetch upstream main failed: fatal: unable to access origin')
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+    w.fetchFails = false
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'merge', '--ff-only', '-q', 'upstream/main'])
+    expect(w.argv).toContainEqual(['git', 'merge-base', 'HEAD', 'upstream/main'])
+    expect(w.argv.flat().some(x => x.startsWith('origin/'))).toBe(false)
+  })
+
+  test("publish pushes to origin and opens the pull request on the project with the fork's owner as the head", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    expect((await run($, 'publish')).text).toBe(`publishing #16: pushing ${BRANCH} and opening a pull request against main.`)
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the PR or a block')
+    expect(w.toasts.some(t => t.startsWith('PR opened'))).toBe(true)
+    const pushUrl = w.argv.findIndex(a => a.join(' ') === 'git remote get-url --push --all origin')
+    const push = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'push')
+    expect(pushUrl >= 0 && pushUrl < push).toBe(true)
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
+    expect(w.argv.find(a => a[0] === 'gh' && a[1] === 'pr')).toEqual(['gh', 'pr', 'create', '--base', 'main', '--head', `me:${BRANCH}`, '--title', 'Fix the thing (#16)', '--body-file', '/home/u/.claude/issue-forge-data/16-1/pr.md', '--repo', 'github.com/o/r'])
+  })
+
+  test("publish checks the merge against the project remote's base, fetched there", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the PR or a block')
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+    expect(w.argv.find(a => a[1] === 'merge-tree')?.at(-1)).toBe('upstream/main')
+  })
+
+  test('publish blocks when origin now pushes to another repository than the fork the run was preflighted for: no push, no pull request', async ($, on) => {
+    const w = engine(on, { head: BRANCH, originUrl: 'https://github.com/other/r.git', remotes: { upstream: 'https://github.com/o/r.git' } }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(status).toContain('next: point origin back at it, or start a new run')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test('publish blocks when any of origin\'s push URLs is another repository than the fork, since git pushes to all of them', async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: ['https://github.com/me/r.git', 'git@github.com:other/r.git'] }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
   })
 })
