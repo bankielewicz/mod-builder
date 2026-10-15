@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { decide, matchGlob, parseRules } from '../hooks/tdd-guard-logic'
+import { changesOf, decide, folderOf, hashOf, launchedId, matchGlob, parseRules, relativeTo, reportOf, withoutId } from '../hooks/tdd-guard-logic'
 
 type Rules = Parameters<typeof decide>[0]
 type Refusal = { allow: false; reason: string }
@@ -137,5 +137,83 @@ describe('decide', () => {
     expect(decide(rules, 'red-test-writer', '../elsewhere/tests/x.test.ts')).toMatchObject({ allow: false })
     expect(decide(rules, 'green-developer', '../elsewhere/tests/x.test.ts')).toEqual({ allow: true })
     expect(decide(rules, 'refactorer', '../elsewhere/x.ts')).toEqual({ allow: true })
+  })
+})
+
+describe('relativeTo', () => {
+  test('a path under the root loses the root; one outside it starts with ../', () => {
+    expect(relativeTo('/w', '/w/tests/a.test.ts')).toBe('tests/a.test.ts')
+    expect(relativeTo('/w', '/elsewhere/tests/y.ts')).toBe('../elsewhere/tests/y.ts')
+    expect(relativeTo('/w', '/wider/x.ts')).toBe('../wider/x.ts')
+  })
+
+  test('backslashes read as /, so a Windows path is placed the same way', () => {
+    expect(relativeTo('C:/w', 'C:\\w\\tests\\a.test.ts')).toBe('tests/a.test.ts')
+  })
+})
+
+describe('hashOf', () => {
+  test('the same text gives the same hash, and any change gives another', () => {
+    expect(hashOf('A')).toBe(hashOf('A'))
+    expect(hashOf('A')).not.toBe(hashOf('B'))
+    expect(hashOf('AB')).not.toBe(hashOf('BA'))
+    expect(hashOf('')).toBe('0.811c9dc5.9e3779b9')
+  })
+})
+
+describe('folderOf', () => {
+  test("a glob's folder is its segments before the first wildcard", () => {
+    expect(folderOf('tests/**')).toBe('tests')
+    expect(folderOf('tests/unit/*.test.ts')).toBe('tests/unit')
+    expect(folderOf('**/*.test.ts')).toBe('')
+  })
+
+  test('a glob with no wildcard names one file: its folder', () => {
+    expect(folderOf('tests/fixtures/data.json')).toBe('tests/fixtures')
+    expect(folderOf('package.json')).toBe('')
+  })
+})
+
+describe('changesOf', () => {
+  test('names each file modified, deleted or new, in path order; an unchanged file is left out', () => {
+    const before = new Map([['tests/b.ts', '1'], ['tests/a.ts', '1'], ['tests/same.ts', '1']])
+    const after = new Map([['tests/a.ts', '2'], ['tests/same.ts', '1'], ['tests/0.ts', '1']])
+    expect(changesOf(before, after)).toEqual(['tests/0.ts (new)', 'tests/a.ts (modified)', 'tests/b.ts (deleted)'])
+  })
+
+  test('changes already in path order stay in it', () => {
+    const before = new Map([['tests/a.ts', '1'], ['tests/b.ts', '1'], ['tests/c.ts', '1']])
+    expect(changesOf(before, new Map())).toEqual(['tests/a.ts (deleted)', 'tests/b.ts (deleted)', 'tests/c.ts (deleted)'])
+  })
+
+  test('two equal snapshots have no changes', () => {
+    expect(changesOf(new Map([['tests/a.ts', '1']]), new Map([['tests/a.ts', '1']]))).toEqual([])
+  })
+})
+
+describe('reportOf', () => {
+  test('names the type and every change; nothing changed is no line', () => {
+    expect(reportOf('green-developer', ['tests/a.ts (modified)', 'tests/b.ts (deleted)'])).toBe(
+      'tdd-guard: green-developer changed protected test files: tests/a.ts (modified), tests/b.ts (deleted)',
+    )
+    expect(reportOf('green-developer', [])).toBeNull()
+  })
+})
+
+describe('launchedId', () => {
+  test('a background or teammate launch gives its agent id; a finished run, or one with no id, gives none', () => {
+    expect(launchedId({ status: 'async_launched', agentId: 'a7' })).toBe('a7')
+    expect(launchedId({ status: 'teammate_spawned', agentId: 't1' })).toBe('t1')
+    expect(launchedId({ status: 'completed', agentId: 'a1' })).toBeNull()
+    expect(launchedId({ status: 'async_launched' })).toBeNull()
+    expect(launchedId({})).toBeNull()
+    expect(launchedId(undefined)).toBeNull()
+  })
+})
+
+describe('withoutId', () => {
+  test("drops one agent's record and keeps the rest", () => {
+    expect(withoutId({ a7: 'green-developer', a8: 'refactorer' }, 'a7')).toEqual({ a8: 'refactorer' })
+    expect(withoutId({ a8: 'refactorer' }, 'a7')).toEqual({ a8: 'refactorer' })
   })
 })
