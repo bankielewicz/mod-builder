@@ -248,13 +248,14 @@ export function isGreen(lights: readonly Light[]): boolean {
 
 /**
  * Whether a SPEC still holds a `<placeholder>`: an angle-bracketed phrase
- * outside fenced code, inline code and HTML comments.
+ * outside fenced code, inline code and HTML comments. An inline code span may
+ * wrap onto the next line but not across a blank one (CommonMark).
  */
 export function hasPlaceholder(spec: string): boolean {
   const prose = spec
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`\n]*`/g, '')
+    .replace(/`[^`\n]*(?:\n[^`\n]*)?`/g, '')
   return /<(?![/!])[^<>\n]{1,120}>/.test(prose)
 }
 

@@ -572,3 +572,12 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - No test pins `nestedFiles`' depth of 3 or its skips. That gap dates from 0.2.1.
   - **Not changed:** Gap (3) stays deferred (the owner's call, with no follow-up issue). Gap (2)'s reproduction is the existing 0.2.8 test named above.
 - **Version:** 0.2.15 in `plugin.json` and the marketplace entry (0.2.12, 0.2.13 and 0.2.14 went to #15, #12 and #10, PRs #72, #73 and #74, which merged first).
+
+## Change 0.2.17 (2026-10-15)
+
+> For issue #20: a code span that wraps a line was read as an unfilled SPEC placeholder.
+
+- **Bug, fixed:** `hasPlaceholder` removed inline code with `` /`[^`\n]*`/g ``, which stops at a newline. A span that starts on one line and ends on the next (`` `it is in `` + newline + `` stash "<message>"` ``) was left in the prose, and the `<message>` inside it read as an unfilled placeholder, so the Spec stage stayed at "next: Spec" on a SPEC that was complete (seen with `mods/issue-forge/SPEC.md`).
+- **Rule:** an inline code span may hold one line ending and no more: `` /`[^`\n]*(?:\n[^`\n]*)?`/g ``. This is CommonMark: a code span can't cross a paragraph break, so a backtick left open before a blank line doesn't swallow the next paragraph. Fenced blocks and HTML comments are handled as before. A `<files>` in plain prose is still a placeholder.
+- **Tests:** logic: a span wrapping once, with the `<word>` on either line, is no placeholder; `<files>` in prose before or after such a span, and in plain prose, still is; a placeholder after a blank line that follows an unclosed backtick is found, with or without a later backtick pair. The wrap case fails on 0.2.15.
+- **Version:** 0.2.17 in `plugin.json` and the marketplace entry (0.2.16 is taken by #19, PR #80, still open).
