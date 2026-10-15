@@ -341,6 +341,36 @@ describe('test-file integrity', () => {
     expect(seen.toasts.length).toBe(1)
   })
 
+  test('background: a first turn that ends before the run is recorded is still checked, once, and never later called "reloaded"', { options }, async ($, on) => {
+    // Hold the first write of the pending record, so the agent's turn.complete arrives while it is in flight.
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    let isHolding = true
+    on('state.set', ($: any, e: any, next: any) => {
+      if (!isHolding || e.key !== 'pending') return next(e)
+      isHolding = false
+      return held.then(() => next(e))
+    })
+    const seen = engine(on, { agentAnswer: { result: LAUNCHED } })
+    await start($)
+    const call = $.tool.call(GREEN_RUN as never)
+    await seen.clock.settle()
+    expect(isHolding).toBe(false)
+    seen.files['/w/tests/a.test.ts'] = 'A, edited by a shell'
+    await ($ as any).turn.complete({ ...TURN, agentId: 'a7' })
+    await seen.clock.settle()
+    release()
+    await call
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(1)
+    expect(seen.submitted[0]).toContain(A_ONLY)
+
+    await ($ as any).turn.complete({ ...TURN, agentId: 'a7', turnId: 't2' })
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(1)
+    expect(seen.toasts.length).toBe(1)
+  })
+
   test('a check that fails before the run lets the agent run once, adds nothing to its result, and tells the person', { options }, async ($, on) => {
     let runs = 0
     const seen = engine(on, { rootFails: () => true, during: files => (runs++, TAMPER(files)) })
