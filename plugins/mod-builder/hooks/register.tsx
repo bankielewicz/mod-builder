@@ -39,6 +39,7 @@ const BACKGROUND = '#1A1918'
 const HOVER = '#2C2A27'
 
 const views = atom({ plugin: 'mod-builder', key: 'views' } as const, [])
+const judgedDir = atom({ plugin: 'mod-builder', key: 'modsDir' } as const, null)
 const selected = atom({ plugin: 'mod-builder', key: 'selected' } as const, null)
 const runs = atom({ plugin: 'mod-builder', key: 'runs' } as const, [])
 const reported = atom({ plugin: 'mod-builder', key: 'reported' } as const, {})
@@ -54,8 +55,6 @@ type StoredResults = Record<string, Lab.Results>
 // Module state: options, timer handles and in-flight guards only. A reload
 // starts it afresh; what must survive lives in atoms and $.store.
 let configuredDir = ''
-// The mods folder as of the last scan (or the session's first line); null until one has run.
-let resolvedDir: string | null = null
 let autoOpen = false
 let autoRerun = true
 let clock: Timer | null = null
@@ -193,9 +192,6 @@ const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
 /** A set `modsDir`, normalized, else `fallback`. */
 const configuredDirOr = (fallback: string): string => Lab.modsDirFor(configuredDir, null, [], fallback)
 
-/** The mods folder in use: the one the last scan resolved, else `modsDir` or the plugin's own. */
-const modsDirOf = ($: Engine): string => resolvedDir ?? configuredDirOr(pluginModsDirOf($))
-
 /**
  * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the working
  * directory (the one /mod-builder:build writes to, a worktree's own in a worktree), else the
@@ -208,12 +204,52 @@ async function defaultModsDir($: Engine): Promise<string> {
   return Lab.modsDirFor('', cwd, candidates.filter((_, at) => isThere[at]), pluginModsDirOf($))
 }
 
-/** Resolves the mods folder once, for a scan or the session's first line; the rest of the pass uses `modsDirOf`. */
-async function resolveModsDir($: Engine): Promise<string> {
-  // A set `modsDir` wins, so nothing is walked.
-  resolvedDir = configuredDir ? configuredDirOr(pluginModsDirOf($)) : await defaultModsDir($)
-  return resolvedDir
+/** The mods folder the working directory leads to now. A set `modsDir` wins, so nothing is walked. */
+async function currentModsDir($: Engine): Promise<string> {
+  return configuredDir ? configuredDirOr(pluginModsDirOf($)) : defaultModsDir($)
 }
+
+/**
+ * The folder the pane shows: the one the last scan judged (kept in state, so it survives a
+ * reload), else the current one before any scan. What the pane's buttons act on.
+ */
+async function shownModsDir($: Engine): Promise<string> {
+  return (await read($, judgedDir)) ?? currentModsDir($)
+}
+
+/** One mod folder's file facts, as a scan judges them; null when it isn't a mod. */
+async function modFactsOf($: Engine, modsDir: string, name: string, marketplace: string): Promise<Lab.FileFacts | null> {
+  const at = `${modsDir}/${name}`
+  const top = await list($, at)
+  const has = (entry: string): boolean => top.some(one => one.name === entry)
+  const [manifestDir, hooks, tests, types] = await Promise.all([
+    has('.claude-plugin') ? list($, `${at}/.claude-plugin`) : Promise.resolve([]),
+    has('hooks') ? list($, `${at}/hooks`) : Promise.resolve([]),
+    has('tests') ? list($, `${at}/tests`) : Promise.resolve([]),
+    has('types') ? list($, `${at}/types`) : Promise.resolve([]),
+  ])
+  const nested = await Promise.all([
+    nestedFiles($, at, 'hooks', hooks),
+    nestedFiles($, at, 'tests', tests),
+    nestedFiles($, at, 'types', types),
+  ])
+  return Lab.factsOf({
+    name,
+    top,
+    manifestDir,
+    hooks,
+    tests,
+    types,
+    nested: nested.flat(),
+    spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
+    readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
+    manifest: manifestDir.some(entry => entry.name === 'plugin.json') ? await readText($, `${at}/.claude-plugin/plugin.json`) : null,
+    marketplace,
+  })
+}
+
+/** The marketplace file beside a mods folder, or '' when there is none. */
+const marketplaceOf = async ($: Engine, modsDir: string): Promise<string> => (await readText($, `${modsDir}/../.claude-plugin/marketplace.json`)) ?? ''
 
 /**
  * The files in `folder`'s subfolders (from its `entries`), up to `depth` levels down, named by
@@ -284,9 +320,12 @@ async function scanPasses($: Engine, isAnnounced: boolean): Promise<void> {
 
 async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const scanStartedAt = Date.now()
-  const dir = await resolveModsDir($)
+  const dir = await currentModsDir($)
+  // A README open over another folder's list doesn't belong to this one.
+  const previous = await read($, judgedDir)
+  if (previous !== null && previous !== dir) await update($, readme, () => null)
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
-  const marketplace = (await readText($, `${dir}/../.claude-plugin/marketplace.json`)) ?? ''
+  const marketplace = await marketplaceOf($, dir)
   const results = await resultsOf($, dir)
   const generations = await generationsOf($, dir)
   const cwd = await cwdOf($)
@@ -294,54 +333,28 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
   factsByMod.clear()
   for (const folder of folders) {
-    const at = `${dir}/${folder.name}`
-    const top = await list($, at)
-    const has = (name: string): boolean => top.some(entry => entry.name === name)
-    const [manifestDir, hooks, tests, types] = await Promise.all([
-      has('.claude-plugin') ? list($, `${at}/.claude-plugin`) : Promise.resolve([]),
-      has('hooks') ? list($, `${at}/hooks`) : Promise.resolve([]),
-      has('tests') ? list($, `${at}/tests`) : Promise.resolve([]),
-      has('types') ? list($, `${at}/types`) : Promise.resolve([]),
-    ])
-    const nested = await Promise.all([
-      nestedFiles($, at, 'hooks', hooks),
-      nestedFiles($, at, 'tests', tests),
-      nestedFiles($, at, 'types', types),
-    ])
-    const facts = Lab.factsOf({
-      name: folder.name,
-      top,
-      manifestDir,
-      hooks,
-      tests,
-      types,
-      nested: nested.flat(),
-      spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
-      readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
-      manifest: manifestDir.some(entry => entry.name === 'plugin.json')
-        ? await readText($, `${at}/.claude-plugin/plugin.json`)
-        : null,
-      marketplace,
-    })
+    const facts = await modFactsOf($, dir, folder.name, marketplace)
     if (facts) factsByMod.set(facts.name, facts)
   }
-  const judge = (freshNames: readonly string[]): ModView[] =>
+  // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
+  const freshIdOf = (name: string): string => `${dir}/${name}`
+  const judge = (freshIds: readonly string[]): ModView[] =>
     [...factsByMod.values()].map(facts =>
       Lab.viewOf(
         facts,
         results[facts.name] ?? {},
         inFlight.filter(one => one.mod === facts.name),
         reports[facts.name] ?? null,
-        freshNames.includes(facts.name),
+        freshIds.includes(freshIdOf(facts.name)),
         generations[facts.name]?.since ?? null,
         generations[facts.name]?.fromVersion ?? null,
         Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
       ),
     )
   const newlyGreen = await announceGreen($, judge([]), isAnnounced, dir)
-  const freshNames = [...new Set([...(await read($, fresh)), ...newlyGreen])]
-  if (newlyGreen.length) await update($, fresh, () => freshNames)
-  const next = judge(freshNames)
+  const freshIds = [...new Set([...(await read($, fresh)), ...newlyGreen.map(freshIdOf)])]
+  if (newlyGreen.length) await update($, fresh, () => freshIds)
+  const next = judge(freshIds)
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
@@ -349,6 +362,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
     for (const view of finished) delete remaining[view.name]
     await $.store.set(keyOf(GENERATIONS_KEY, dir), remaining)
   }
+  await update($, judgedDir, () => dir)
   await update($, views, () => next)
   logEvent($, 'verbose', 'scan', `${folders.length} folders, ${next.length} mods in ${Date.now() - scanStartedAt}ms`, { modsDir: dir })
   logEvent($, 'debug', 'scan.lights', 'lights per mod', Object.fromEntries(next.map(view => [view.name, view.lights.join(' ')])))
@@ -487,10 +501,12 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   }
 }
 
-async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
+/**
+ * Runs one check of `mod` in `modsDir`, the folder its caller judged it in. Its evidence and its
+ * result stay with that folder, even if a /cd moves the scans it triggers elsewhere.
+ */
+async function run($: Engine, mod: string, kind: RunKind, modsDir: string): Promise<void> {
   if ((await read($, runs)).some(one => one.mod === mod && one.kind === kind)) return
-  // The folder the run starts in keeps its result, even if a /cd moves the next scan elsewhere.
-  const modsDir = modsDirOf($)
   const dir = `${modsDir}/${mod}`
   const typesPath = `${dir}/.claude-plugin/types/tsconfig.json`
   const hasTypes = kind !== 'Typecheck' || (await exists($, typesPath))
@@ -505,8 +521,9 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   startClock($)
   await scan($, false)
 
-  const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
-  const codeSig = factsByMod.get(mod)?.codeSig
+  const facts = await modFactsOf($, modsDir, mod, await marketplaceOf($, modsDir))
+  const stamp = facts?.codeMtimeMs ?? startedAt
+  const codeSig = facts?.codeSig
   let result: Lab.RunResult
   try {
     const { exitCode, output } = await execute($, entry, dir)
@@ -535,18 +552,20 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
 async function rerunStale($: Engine): Promise<void> {
   await scan($, true)
   if (!autoRerun) return
+  // The folder these views were judged in, read with them: each run's scans may move elsewhere.
+  const modsDir = await shownModsDir($)
   const inFlight = await read($, runs)
   for (const view of await read($, views)) {
     const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
-    if (plan.includes('Validate')) await run($, view.name, 'Validate')
-    const validated = (await resultsOf($, modsDirOf($)))[view.name]?.Validate
-    if (plan.includes('Test') && validated?.ok) await run($, view.name, 'Test')
+    if (plan.includes('Validate')) await run($, view.name, 'Validate', modsDir)
+    const validated = (await resultsOf($, modsDir))[view.name]?.Validate
+    if (plan.includes('Test') && validated?.ok) await run($, view.name, 'Test', modsDir)
   }
 }
 
-function runInBackground($: Engine, mod: string | null, kind: RunKind): void {
+function runInBackground($: Engine, mod: string | null, kind: RunKind, modsDir: string): void {
   if (!mod || mod === Lab.DEMO_NAME) return
-  void run($, mod, kind).catch((error: unknown) => logCaught($, 'runInBackground', error, 'normal', { mod, kind }))
+  void run($, mod, kind, modsDir).catch((error: unknown) => logCaught($, 'runInBackground', error, 'normal', { mod, kind }))
 }
 
 // ── The pane ──────────────────────────────────────────────────────────────
@@ -580,9 +599,9 @@ async function toggleDemo($: Engine): Promise<void> {
   else await stopDemo($)
 }
 
-async function showReadme($: Engine, mod: string | null): Promise<void> {
+async function showReadme($: Engine, mod: string | null, modsDir: string): Promise<void> {
   if (!mod || mod === Lab.DEMO_NAME) return
-  const text = await readText($, `${modsDirOf($)}/${mod}/README.md`)
+  const text = await readText($, `${modsDir}/${mod}/README.md`)
   if (text === null) {
     $.ui.toast(`${mod} has no README yet`)
     return
@@ -596,12 +615,12 @@ async function moveSelection($: Engine, by: number): Promise<void> {
   const current = names.indexOf((await read($, selected)) ?? '')
   const nextAt = (Math.max(0, current) + by + names.length) % names.length
   await update($, selected, () => names[nextAt] ?? null)
-  if (await read($, readme)) await showReadme($, names[nextAt] ?? null)
+  if (await read($, readme)) await showReadme($, names[nextAt] ?? null, await shownModsDir($))
 }
 
-async function fillFix($: Engine, view: ModView): Promise<void> {
-  const failed = (await resultsOf($, modsDirOf($)))[view.name]?.Test?.tests?.failed ?? 1
-  const path = Lab.displayPathOf(`${modsDirOf($)}/${view.name}`, await cwdOf($))
+async function fillFix($: Engine, view: ModView, modsDir: string): Promise<void> {
+  const failed = (await resultsOf($, modsDir))[view.name]?.Test?.tests?.failed ?? 1
+  const path = Lab.displayPathOf(`${modsDir}/${view.name}`, await cwdOf($))
   await $.prompt.fill({ text: Lab.fixPromptOf(view.name, view.failedStage ?? 'Test', view.errors, failed, path) })
 }
 
@@ -664,13 +683,12 @@ async function setOption($: Engine, name: Lab.OptionName, value: string | boolea
 /** The session's first line: plugin version, mods folder and level. */
 async function logStart($: Engine): Promise<void> {
   const manifest = Lab.manifestOf(await readText($, `${$.plugin.root}/.claude-plugin/plugin.json`))
-  logEvent($, 'normal', 'session.start', 'Mod Lab started', { version: manifest.version, modsDir: await resolveModsDir($), logging: logLevel })
+  logEvent($, 'normal', 'session.start', 'Mod Lab started', { version: manifest.version, modsDir: await currentModsDir($), logging: logLevel })
 }
 
 export const register: Register = (on, options) => {
   const config = (options ?? {}) as Record<string, unknown>
   configuredDir = String(config.modsDir ?? '').trim()
-  resolvedDir = null
   autoOpen = config.autoOpen === true
   autoRerun = config.autoRerun !== false
   logLevel = Lab.logLevelOf(config.logging)
@@ -734,7 +752,7 @@ export const register: Register = (on, options) => {
             await update($, readme, () => null)
             await openPane($)
           } else {
-            $.ui.toast(`No mod named ${name} in ${Lab.shortPath(modsDirOf($))}`)
+            $.ui.toast(`No mod named ${name} in ${Lab.shortPath(await shownModsDir($))}`)
           }
         })().catch((error: unknown) => logCaught($, 'modlab.select', error, 'normal', { mod: name }))
         return { text: `Mod Lab: ${name}.` }
@@ -762,6 +780,9 @@ export const register: Register = (on, options) => {
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
+    // The model reports on the folder the session is in now; judge it first if a /cd moved it.
+    const modsDir = await currentModsDir($)
+    if ((await read($, judgedDir)) !== modsDir) await scan($, false)
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
     let known = (await read($, views)).find(view => view.name === mod)
     if (!known && report.stage === 'Spec') {
@@ -769,7 +790,6 @@ export const register: Register = (on, options) => {
       known = (await read($, views)).find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      const modsDir = modsDirOf($)
       const generationsKey = keyOf(GENERATIONS_KEY, modsDir)
       await $.store.set(generationsKey, { ...(await generationsOf($, modsDir)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
       logEvent($, 'debug', 'store.set', generationsKey, { mod, edit: 'started' })
@@ -782,7 +802,7 @@ export const register: Register = (on, options) => {
       if (autoOpen && !(await isPaneOpen($))) void openPane($).catch((error: unknown) => logCaught($, 'lab_report.open', error))
     }
     if (report.status !== 'running' && (report.stage === 'Validate' || report.stage === 'Test')) {
-      runInBackground($, mod, report.stage)
+      runInBackground($, mod, report.stage, modsDir)
     } else {
       void scan($, true).catch((error: unknown) => logCaught($, 'lab_report.scan', error))
     }
@@ -846,6 +866,8 @@ export const register: Register = (on, options) => {
     const pick = await read($, selected)
     const current = all.find(view => view.name === pick) ?? all[0] ?? null
     const doc = await read($, readme)
+    // The folder `all` was judged in: what the header names and the buttons act on.
+    const shownDir = await shownModsDir($)
     const inFlight = await read($, runs)
     const demoStart = await read($, demoStartedAt)
     const isDemoRunning = demoStart !== null
@@ -912,7 +934,7 @@ export const register: Register = (on, options) => {
           ) : (
             <Text>
               {dim('modsDir')}
-              {`  ${Lab.shortPath(modsDirOf($))}`}
+              {`  ${Lab.shortPath(shownDir)}`}
             </Text>
           ))}
       </Box>
@@ -970,8 +992,8 @@ export const register: Register = (on, options) => {
       newMod: () => void $.prompt.fill({ text: '/mod-builder:build ' }).catch((error: unknown) => logCaught($, 'button.new', error)),
       next: () => void moveSelection($, 1).catch((error: unknown) => logCaught($, 'button.next', error)),
       prev: () => void moveSelection($, -1).catch((error: unknown) => logCaught($, 'button.prev', error)),
-      run: (kind: RunKind) => () => runInBackground($, current?.name ?? null, kind),
-      readme: () => void showReadme($, current?.name ?? null).catch((error: unknown) => logCaught($, 'button.readme', error)),
+      run: (kind: RunKind) => () => runInBackground($, current?.name ?? null, kind, shownDir),
+      readme: () => void showReadme($, current?.name ?? null, shownDir).catch((error: unknown) => logCaught($, 'button.readme', error)),
     }
 
     // README view (2g).
@@ -1123,7 +1145,7 @@ export const register: Register = (on, options) => {
     if (current && layout !== 'compact') {
       detail.push(blank('d-gap-0'), rule('d-rule'), blank('d-gap-1'))
       // Read the working directory now, not at the last scan, so a /cd shows at once and matches what F writes.
-      const shown = current.isDemo ? current.path : `${Lab.displayPathOf(`${modsDirOf($)}/${current.name}`, await cwdOf($))}/`
+      const shown = current.isDemo ? current.path : `${Lab.displayPathOf(`${shownDir}/${current.name}`, await cwdOf($))}/`
       const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), shown].filter(Boolean).join(' · ')
       detail.push(
         <Box key="d-head" justifyContent="space-between">
@@ -1190,7 +1212,7 @@ export const register: Register = (on, options) => {
               {dim('  · demo')}
             </Text>
           ) : (
-            <Box key="d-fix">{button('fix', 'f', 'Fix with Claude', () => void fillFix($, current).catch((error: unknown) => logCaught($, 'button.fix', error)), { primary: true })}</Box>
+            <Box key="d-fix">{button('fix', 'f', 'Fix with Claude', () => void fillFix($, current, shownDir).catch((error: unknown) => logCaught($, 'button.fix', error)), { primary: true })}</Box>
           ),
         )
       }

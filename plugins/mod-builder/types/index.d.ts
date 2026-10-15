@@ -68,6 +68,8 @@ declare module 'claude-code' {
     'mod-builder': {
       /** The mods on disk, scanned and judged; the demo is not among them. */
       views: ModView[]
+      /** The mods folder `views` were judged from; what the pane's buttons act on. Null before the first scan. */
+      modsDir: string | null
       /** The row the detail panel shows. */
       selected: string | null
       runs: Run[]
@@ -78,7 +80,7 @@ declare module 'claude-code' {
       demoStartedAt: number | null
       /** The README the pane shows in place of the list, or null. */
       readme: { name: string; text: string; isStale: boolean } | null
-      /** Mods that went all green this session (newest code stamp), for "ready to share". */
+      /** Mods that went all green this session (newest code stamp), for "ready to share", as `<modsDir>/<name>`. */
       fresh: string[]
       /** The "too narrow" toast fired for the current narrow spell; reset once wide again. */
       hasWarnedNarrow: boolean
