@@ -808,30 +808,26 @@ describe('reloads, resume and stop', () => {
   const idle = (from: string) => `{"type":"idle_notification","from":"${from}","idleReason":"available","result":"Five new tests are in place."}`
   const mailbox = (teammate: string, extra: Record<string, unknown> = {}) => ({ origin: { kind: 'peer', teammate, isVerified: true, ...extra }, text: idle(teammate) }) as never
 
-  test("a run's named agent finishing is consumed in session.receive, so the main model stays idle (#27)", async ($, on) => {
+  test("a run's named agent finishing is consumed in session.receive, whether or not the harness verified the sender, so the main model stays idle (#27)", async ($, on) => {
     engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
     await start($)
     const ui = await pane($)
     await ui.unmount()
     expect(await $.session.receive(mailbox('issue-forge-16-red-1'))).toEqual({ consumed: MAILBOX_DROP })
     expect(await $.session.receive(mailbox('issue-forge-16-green-1'))).toEqual({ consumed: MAILBOX_DROP })
-  })
-
-  test("a mailbox delivery from the run's agent is consumed whether or not the harness verified the sender (#27)", async ($, on) => {
-    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
-    await start($)
-    const ui = await pane($)
-    await ui.unmount()
     expect(await $.session.receive(mailbox('issue-forge-16-red-1', { isVerified: false }))).toEqual({ consumed: MAILBOX_DROP })
   })
 
-  test('every other delivery still reaches the model: another teammate, the lead, a delivery with no sender name (#27)', async ($, on) => {
+  test("every other delivery still reaches the model: the run's agent's own message or one for another agent, another teammate, the lead, no sender name (#27, PR #86 review)", async ($, on) => {
     engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
     await start($)
     const ui = await pane($)
     await ui.unmount()
-    // Consumed only for the run's own agent: the same text from a name the run doesn't know passes through untouched.
-    expect(await $.session.receive(mailbox('issue-forge-16-red-1'))).toEqual({ consumed: MAILBOX_DROP })
+    // From the run's own agent, only the idle notice to the main conversation is consumed.
+    const wrote = { origin: { kind: 'peer', teammate: 'issue-forge-16-green-1', isVerified: true }, text: 'Which test glob covers mods/x?' }
+    expect(await $.session.receive(wrote as never)).toEqual({ text: wrote.text })
+    expect(await $.session.receive({ ...(mailbox('issue-forge-16-green-1') as object), agentId: 'a7' } as never)).toEqual({ text: idle('issue-forge-16-green-1') })
+    // The same notice from a name the run doesn't know passes through untouched.
     expect(await $.session.receive(mailbox('researcher'))).toEqual({ text: idle('researcher') })
     expect(await $.session.receive(mailbox('issue-forge-99-red-1'))).toEqual({ text: idle('issue-forge-99-red-1') })
     expect(await $.session.receive({ origin: { kind: 'coordinator', teammate: 'team-lead', isVerified: true }, text: 'please look at #16' } as never)).toEqual({ text: 'please look at #16' })
@@ -840,16 +836,6 @@ describe('reloads, resume and stop', () => {
     expect(await $.session.receive({ origin: { kind: 'bridge' }, text: quoted } as never)).toEqual({ text: quoted })
     expect(await $.session.receive({ origin: { kind: 'peer' }, text: quoted } as never)).toEqual({ text: quoted })
     expect(await $.session.receive({ text: quoted } as never)).toEqual({ text: quoted })
-  })
-
-  test("the run's agent's other deliveries still reach the model: a message it wrote, one for another agent (PR #86 review)", async ($, on) => {
-    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
-    await start($)
-    const ui = await pane($)
-    await ui.unmount()
-    const wrote = { origin: { kind: 'peer', teammate: 'issue-forge-16-green-1', isVerified: true }, text: 'Which test glob covers mods/x?' }
-    expect(await $.session.receive(wrote as never)).toEqual({ text: wrote.text })
-    expect(await $.session.receive({ ...(mailbox('issue-forge-16-green-1') as object), agentId: 'a7' } as never)).toEqual({ text: idle('issue-forge-16-green-1') })
   })
 
   test("an agent that stops before its spawn returns still has its idle notice consumed: the name is known first (PR #86 review)", async ($, on) => {
