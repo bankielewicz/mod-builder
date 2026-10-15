@@ -1317,4 +1317,24 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(seen.reads.filter(p => p === LEGACY_LOG).length).toBe(1)
     expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
   })
+
+  test('PR #67 review: a run never overwrites a session log it could not read (no permission): the log keeps every line', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { unreadable: [logOf('s1')] })
+    const kept = runLine('claude', 'Plan', 'a') + runLine('claude', 'Plan', 'b') + runLine('claude', 'Plan', 'c')
+    seen.files[logOf('s1')] = kept
+    await start($)
+    await $.tool.call(call() as never)
+    expect(seen.files[logOf('s1')]).toBe(kept)
+  })
+
+  test('PR #67 review: a session log whose read fails once, as past the open-file limit, is read again and the run appended', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { flaky: [logOf('s1')] })
+    seen.files[logOf('s1')] = runLine('claude', 'Plan', 'a') + runLine('claude', 'Plan', 'b') + runLine('claude', 'Plan', 'c')
+    await start($)
+    await $.tool.call(call() as never)
+    const own = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean)
+    expect(own.map(l => JSON.parse(l).id).slice(0, 3)).toEqual(['a', 'b', 'c'])
+    expect(own.length).toBe(4)
+    expect(JSON.parse(own[3] ?? '{}').provider).toBe('codex')
+  })
 })

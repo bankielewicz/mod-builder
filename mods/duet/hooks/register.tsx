@@ -171,9 +171,15 @@ async function readIfThere($: EngineInterface, path: string): Promise<string | u
   }
 }
 
+/**
+ * Appends a run to this session's log, which is read and rewritten whole. A missing log starts a new one; a read that
+ * fails twice skips this run's line (every caller catches) rather than rewrite the log from nothing.
+ */
 async function appendRun($: EngineInterface, task: Task): Promise<void> {
   const path = `${await sessionDir($)}/runs.jsonl`
-  await $.fs.write(path, appendLog(await readText($, path), runLineOf(task)))
+  const text = (await readIfThere($, path)) ?? (await readIfThere($, path))
+  if (text === undefined) throw new Error(`duet: ${path} could not be read, so this run is not logged`)
+  await $.fs.write(path, appendLog(text, runLineOf(task)))
 }
 
 function logRun($: EngineInterface, task: Task): Promise<void> {
