@@ -42,6 +42,7 @@ import {
   parseTsc,
   parseValidate,
   reachesOf,
+  REPORT_SCHEMA,
   REPORT_TTL_MS,
   reportOf,
   signatureOf,
@@ -100,6 +101,19 @@ const freshIdsOf = (stored: readonly string[], legacyDir: string): string[] | un
   (Logic as unknown as { freshIdsOf?: (stored: readonly string[], legacyDir: string) => string[] }).freshIdsOf?.(stored, legacyDir)
 const modsDirFor = (configured: string, cwd: string | null, existing: readonly string[], fallback: string): string | undefined =>
   (Logic as unknown as { modsDirFor?: (configured: string, cwd: string | null, existing: readonly string[], fallback: string) => string }).modsDirFor?.(
+    configured,
+    cwd,
+    existing,
+    fallback,
+  )
+
+/** The pinned folder rule (#92), read the same way: a missing rule fails its assertion, not the import. */
+type Pin = { modsDir: string; root: string | null }
+type Watched = { dir: string; pin: Pin | null }
+const watchedDirOf = (pin: Pin | null, root: string | null, configured: string, cwd: string | null, existing: readonly string[], fallback: string): Watched | undefined =>
+  (Logic as unknown as { watchedDirOf?: (pin: Pin | null, root: string | null, configured: string, cwd: string | null, existing: readonly string[], fallback: string) => Watched }).watchedDirOf?.(
+    pin,
+    root,
     configured,
     cwd,
     existing,
@@ -1140,5 +1154,55 @@ describe('a streamed test run keeps bounded output (#9, Codex P2 on PR #65)', ()
     expect(s.failed).toBe(40)
     expect(parseTest(streamOutput(s), 1)).toEqual(parseTest(whole, 1))
     expect(parseTest(streamOutput(s), 1).failures[1]).toBe('  AssertionError: case 0')
+  })
+})
+
+describe('a build names its folder, and the session keeps it (#92)', () => {
+  const running = { stage: 'Logic', status: 'running' } as const
+
+  test('reportOf: a path gives the folder above it, normalized', () => {
+    expect(reportOf({ mod: 'foo', ...running, path: 'C:\\x\\mods\\foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: 'C:/x/mods' })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/foo/' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/wt/../mods/./foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
+  })
+
+  test('reportOf: a relative, non-string or misnamed path is refused; no path is unchanged', () => {
+    const notAbsolute = { error: "path must be the absolute path of the mod's folder." }
+    expect(reportOf({ mod: 'foo', ...running, path: 'mods/foo' }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: '' }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: 42 }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/bar' }, 5)).toEqual({ error: "path must end with the mod's folder name, foo." })
+    expect(reportOf({ mod: 'foo', ...running }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 } })
+  })
+
+  test('REPORT_SCHEMA lists path, and is still closed to other keys', () => {
+    expect((REPORT_SCHEMA.properties as Record<string, { type?: string }>).path?.type).toBe('string')
+    expect(REPORT_SCHEMA.additionalProperties).toBe(false)
+    expect([...REPORT_SCHEMA.required]).toEqual(['mod', 'stage', 'status'])
+  })
+
+  test('watchedDirOf: a pin wins over modsDir and the walk while the root is its own or unknown', () => {
+    const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
+    const main = ['/w/main/.claude-plugin/marketplace.json']
+    expect(watchedDirOf(pin, '/w/main', '/chosen/mods', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+    expect(watchedDirOf(pin, '/w/main/', '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+    expect(watchedDirOf(pin, null, '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+    const rootless = { modsDir: '/w/wt/mods', root: null }
+    expect(watchedDirOf(rootless, '/elsewhere', '', '/elsewhere', [], '/p/mods')).toEqual({ dir: '/w/wt/mods', pin: rootless })
+  })
+
+  test('watchedDirOf: a changed root drops the pin, and modsDir or the walk decides', () => {
+    const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
+    expect(watchedDirOf(pin, '/w/two', '', '/w/two', ['/w/two/.claude-plugin/marketplace.json'], '/p/mods')).toEqual({ dir: '/w/two/mods', pin: null })
+    expect(watchedDirOf(pin, '/w/two', '/chosen/mods', '/w/two', [], '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
+  })
+
+  test('watchedDirOf: with no pin the walk starts from the root, else from the working directory', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    // A Bash cd moved the working directory into the worktree; the root stayed.
+    expect(watchedDirOf(null, '/w/main', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/mods', pin: null })
+    expect(watchedDirOf(null, null, '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
+    expect(watchedDirOf(null, '/w/main', '/chosen/mods', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
+    expect(watchedDirOf(null, null, '', null, both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
   })
 })

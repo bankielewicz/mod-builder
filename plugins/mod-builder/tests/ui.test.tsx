@@ -54,6 +54,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     sets: [] as { key: string; value: unknown }[],
     sessionId: 's1-session',
     cwd: '/m' as string | null,
+    /** The session's project root (#92): undefined follows `cwd` (a `/cd` moves both); a string stays put (a Bash `cd` moves only `cwd`); null is refused. */
+    root: undefined as string | null | undefined,
     failReads: [] as string[],
     /** Every path `$.fs.exists` was asked about. */
     probed: [] as string[],
@@ -135,6 +137,10 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
   on('session.cwd', () => (seen.cwd === null ? { deny: 'cwd unavailable' } : ({ value: seen.cwd } as never)))
+  on('session.root', () => {
+    const root = seen.root === undefined ? seen.cwd : seen.root
+    return root === null ? { deny: 'root unavailable' } : ({ value: root } as never)
+  })
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
@@ -2472,5 +2478,118 @@ describe('a repeated Spec running during an edit (#12)', () => {
     // No bump, so the one thing left for the edit is Share. The Spec stage is what the second report would break.
     const r = await scenario($, on, false)
     expect(r.row).toMatch(/ edit · bump the version and re-list it$/)
+  })
+})
+
+describe('a build names its folder, and the session keeps it (#92)', () => {
+  const MAIN = '/w/main'
+  const WT = '/w/main/scratch/wt'
+  const OTHER = '/w/other'
+  const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+  // alpha in the main checkout, beta in a worktree under it, gamma in a third marketplace.
+  const disk = (): Disk => ({
+    ...marketplaceAt(MAIN),
+    ...modFiles('alpha', `${MAIN}/mods`),
+    ...marketplaceAt(WT),
+    ...modFiles('beta', `${WT}/mods`),
+    ...marketplaceAt(OTHER),
+    ...modFiles('gamma', `${OTHER}/mods`),
+  })
+  const report = ($: Engine, args: Record<string, unknown>) => $.tool.call({ tool: 'mcp__mod-builder__lab_report', ...args } as never)
+  const listed = async ($: Engine) => {
+    const ui = await mountPane($)
+    const names = []
+    for (const name of ['alpha', 'beta', 'gamma']) if (await ui.find({ type: 'Text', text: new RegExp(name) })) names.push(name)
+    return { ui, names }
+  }
+
+  test('a report with path lists that folder with the report running, and Validate runs there', async ($, on) => {
+    const { seen, clock } = world(on, disk(), { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', note: 'writing beta', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const { ui, names } = await listed($)
+    expect(names).toEqual(['beta'])
+    expect(await ui.find({ type: 'Text', text: /writing beta/ })).toBeDefined()
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    expect(seen.argv).toContainEqual(['claude', 'plugin', 'validate', '--json', `${WT}/mods/beta`])
+  })
+
+  test('after a pin, a Bash cd to another marketplace and a report without path stay on the pinned folder', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    seen.root = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    seen.cwd = OTHER
+    await report($, { mod: 'beta', stage: 'Register', status: 'running', note: 'wiring beta' })
+    await command($, 'beta')
+    await clock.advance(10)
+    const { ui, names } = await listed($)
+    expect(names).toEqual(['beta'])
+    expect(await ui.find({ type: 'Text', text: /wiring beta/ })).toBeDefined()
+  })
+
+  test('a new root drops the pin, and the next scan follows the walk', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const before = await listed($)
+    expect(before.names).toEqual(['beta'])
+    await before.ui.unmount()
+    // A /cd: the root moves with the working directory.
+    seen.cwd = OTHER
+    await command($, 'gamma')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['gamma'])
+  })
+
+  test('a root that cannot be read keeps the pin across a cwd move', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    seen.root = null
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    seen.cwd = OTHER
+    await command($, 'beta')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
+  test('with no pin, a Bash cd into a worktree leaves the pane on the root\'s mods', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    seen.root = MAIN
+    await start($)
+    await clock.advance(10)
+    seen.cwd = WT
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    seen.cwd = WT
+    await command($, 'beta')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
+  test('guard: a root that cannot be read leaves the walk on the working directory', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = WT
+    seen.root = null
+    await start($)
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
   })
 })
