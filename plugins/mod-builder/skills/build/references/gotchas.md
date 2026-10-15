@@ -231,6 +231,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   detail header: after `/cd mods` the header switched to the path relative to the new folder, with no
   rescan, so a `/cd` also redraws the pane; after `!cd mods` the header didn't change. A path shown
   relative to the working directory should be worked out when drawing, not cached at scan time.
+- **[probe]** On 2.1.301 the model's own Bash `cd` does move `$.session.cwd()`, unlike the person's `!cd`
+  above: after `cd scratch/wt && pwd` it read the worktree, and still did at the next Bash call. A `cd` out of
+  the project reset it to the project root. `$.session.root()` stayed at the project root throughout
+  (`/cd` and a worktree move change it, per the d.ts). Probed headless with a throwaway mod whose tool
+  returned both values (#92). So a mod that must not follow Claude's shell walks from the root; Mod Lab
+  does, from 0.2.18. 2.1.296's binary also defines `$.session.root` (`root:()=>t("session.root",{})`).
 - **[probe]** With a relative `--plugin-dir` (`claude --plugin-dir plugins/mod-builder`), after `/cd`
   the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
   installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
