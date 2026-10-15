@@ -1392,4 +1392,15 @@ describe('testTimeoutMinutes in /mod-builder config (PR #55 review)', () => {
     expect(changed).toContain('testTimeoutMinutes 5 minutes')
     expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: 5 }])
   })
+
+  test('default clears its /config row, and the listing shows the default it then means', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    const changed = (await run('config testTimeoutMinutes default')).text ?? ''
+    expect(changed).toStartWith('testTimeoutMinutes is now default.')
+    expect(changed).toContain('testTimeoutMinutes 3 minutes')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: '' }])
+  })
 })

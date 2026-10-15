@@ -699,11 +699,15 @@ describe('the time limit, testTimeoutMinutes (PR #55 review)', () => {
   test('/mod-builder config takes testTimeoutMinutes: minutes above 0 and at most ten, or default', () => {
     expect(parseConfigCommand(['testTimeoutMinutes', '5'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 5 } as never)
     expect(parseConfigCommand(['testtimeoutminutes', '1.5'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 1.5 } as never)
-    expect(parseConfigCommand(['testTimeoutMinutes', 'Default'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 3 } as never)
+    // default clears the row, as for modsDir, so the manifest's default applies.
+    expect(parseConfigCommand(['testTimeoutMinutes', 'Default'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: '' } as never)
     for (const bad of ['0', '-1', '11', 'soon']) {
       expect(parseConfigCommand(['testTimeoutMinutes', bad])).toEqual({ kind: 'error', text: 'testTimeoutMinutes must be a number of minutes above 0, at most 10.' })
     }
     expect(valuesAfterSet('testTimeoutMinutes' as never, 5 as never, '/p/mods')).toEqual({ testTimeoutMinutes: 5 } as never)
+    expect(valuesAfterSet('testTimeoutMinutes', '', '/p/mods')).toEqual({ testTimeoutMinutes: 3 })
+    // The listing shows the limit in use, rounded as the timeout summary rounds it: 0.001 is the 1 s floor.
+    expect(valuesAfterSet('testTimeoutMinutes', 0.001, '/p/mods')).toEqual({ testTimeoutMinutes: 0.02 })
   })
 
   test('the listing shows the time limit, and its name column fits the longest name', () => {
