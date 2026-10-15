@@ -1231,9 +1231,9 @@ exists.` and the next step `see /issue-forge status`. The evidence (git 2.43.0, 
 
 **What changes.**
 1. **`gitWrite`** (`register.tsx`) runs an index-writing call and, when a held lock caused its failure, waits a second
-   and tries again, five attempts in all (4 s of waiting). `commit` (`commitAll`), `stash push` (`stashAll`),
-   `stash apply` (gate R's restore), `switch` (preflight) and `merge --ff-only` (the catch-up) use it; `gitWriteOut`
-   wraps it for `add -A` (gates R, G and F), throwing as `gitOut` does. The stash and commit calls no longer use
+   and tries again, five attempts in all (4 s of waiting). `stash apply` (gate R's restore), `switch` (preflight) and
+   `merge --ff-only` (the catch-up) use it; `gitWriteOut` wraps it for `add -A` (gates R, G and F), `commit`
+   (`commitAll`) and `stash push` (`stashAll`), throwing as `gitOut` does. The stash and commit calls no longer use
    `gitRetry`, whose two immediate retries a second-long lock would outlast; the two fetches keep it.
 2. **A lock failure** is a non-zero exit with `isIndexLockError(stderr)` (the pure rule in `issue-forge-logic.ts`:
    `Unable to create '…index.lock': File exists`), or with the lock file present (`$.fs.exists` of the path
