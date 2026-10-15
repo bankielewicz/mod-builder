@@ -54,14 +54,16 @@ the pane lights up live.
 
 ## Checks re-run themselves
 
-With `autoRerun` on (the default), Mod Lab rescans every mod at the end of each of Claude's turns.
-Edits from any tool count, Bash included. A mod whose Validate or Test went stale gets Validate
-re-run, then Test if Validate passes. Nothing runs mid-turn or on a timer.
+At the end of each of Claude's turns (not a subagent's), Mod Lab rescans every mod. Edits from any
+tool count, Bash included. With `autoRerun` on (the default), it then re-runs what went stale: a
+stale Validate runs again, followed by Test if Validate passes and Test has run before; a stale
+Test alone runs again if Validate passed. Nothing runs mid-turn or on a timer.
 
 ## Edits
 
-`/mod-builder:edit` starts a **build generation** with its first report. Everything that passed
-before the edit turns `◌`, then green again as the change redoes it (see the table above). Each
+`/mod-builder:edit` starts a **build generation** with its first report. Every stage that passed
+before the edit turns `◌`, except Scaffold and Register, which stay green, then green again as the
+change redoes it (see the table above). Each
 stage the skill reports lights `◐`, even one that was green. The generation ends, and "ready to
 share" fires again, when all eight are green.
 

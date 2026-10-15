@@ -35,13 +35,16 @@ Several sessions can each run an issue in the same repository at once, each in i
   with no run, whether `.issue-forge.json` validates
 - `/issue-forge resume [N]`: restarts a blocked or interrupted step
 - `/issue-forge publish [N]`: pushes the run's branch and opens the pull request
-- `/issue-forge handoff`: ends this session's drive but keeps the step, so any session can resume it
+- `/issue-forge handoff [N]`: ends this session's drive but keeps the step, so any session can resume
+  it (with `N`, only when this session drives #N)
 - `/issue-forge stop [N]`: ends the run; its branch and commits are kept
 - `/issue-forge demo [state]`: every state of the pane, with nothing real running
 - `/issue-forge`: opens or closes the pane
 
 Without `N`, a command means the run the pane shows, even a finished one. If the pane shows none, it
 means the repository's only active run; with several, it lists them and asks you to name one.
+With no active run, `status` and `publish` mean the newest run started from this checkout, even a
+finished one.
 
 Give the pane the keyboard with `ctrl+x tab`. Its keys are `p` publish, `r` resume, `h` hand off,
 `s` stop, `t` status, and in the demo `n` next and `e` end.
@@ -72,7 +75,7 @@ from `origin/<base>`'s copy before anything is switched or created:
 
 | Field | Default | What it does |
 | --- | --- | --- |
-| `workspace` | `"ask"` | `"here"`: branch the checkout you start from; if it's *busy* (uncommitted changes, or not on the base), block. `"ask"`: the same when it isn't busy; when it is, ask whether to use a new worktree (no answer blocks). `"worktree"`: always add a new worktree from `origin/<base>` and never touch your checkout |
+| `workspace` | `"ask"` | `"here"`: branch the checkout you start from; if it's *busy* (uncommitted changes, not on the base, or another run working there), block. `"ask"`: the same when it isn't busy; when it is, ask whether to use a new worktree (no answer blocks). `"worktree"`: always add a new worktree from `origin/<base>` and never touch your checkout |
 | `worktreeDir` | `"scratch/issue-forge"` | where new worktrees go, relative to the repository root. It must be gitignored |
 
 A worktree run lives in `<worktreeDir>/<branch>/`. `/issue-forge status` names it, with the
@@ -169,6 +172,7 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - If two sessions start the same issue at the same moment, the second write wins, and the other
   session's run stops at its next step.
 - A crashed session leaves its run marked as driven until another session answers Take over.
+- After `/clear` and then a reload, your own interrupted run reads as if another session drove it.
 - Profile commands must leave the tree as they found it: a gate that sees files changed after staging
   (a formatter, a snapshot update) blocks rather than commit bytes it didn't test. The run's branch is cut from `origin/<base>`, so
 the profile and anything its commands use must already be there.
@@ -220,8 +224,9 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
-| Model calls | three subagents per run (`$.agent.spawn`), plus one per retry, up to `attempts` in the profile (6 more by default) |
-| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit and Write outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents; a teammate's arrives as `session.receive` and isn't dropped yet, #27) |
+| Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
+| Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, and publish (unless `confirmPublish` is off) |
+| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents; a teammate's arrives as `session.receive` and isn't dropped yet, #27) |
 
 The agents read the issue body, which anyone who can file an issue writes. Run it only on
 repositories and issues you trust. The agents are told to treat the issue as requirements, never

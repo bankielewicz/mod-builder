@@ -26,6 +26,6 @@ Both skills build on Claude Code's built-in `plugin-authoring` skill for the API
 - **House conventions** that settle every choice the public mods disagree on.
 - **A UI-state checklist:** empty, idle, live, done, error, folded, too narrow, survey, focus.
 - **14 patterns**, each pointing at a public mod to read for the idea.
-- **[43 engine gotchas](../plugins/mod-builder/skills/build/references/gotchas.md)**, each tagged
+- **[65 engine gotchas](../plugins/mod-builder/skills/build/references/gotchas.md)**, each tagged
   by how it was verified: `[d.ts]` from the API declarations, `[probe]` measured live, or
   `[field]` reported by mod authors.
