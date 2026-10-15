@@ -1411,6 +1411,14 @@ describe('parallel runs (Change 0.3.0)', () => {
     })
   }
 
+  test('stop with no number means the run the pane shows: once it has stopped, a second stop leaves the other run alone', async ($, on) => {
+    engine(on, {}, { [key(44)]: blocked44({ repo: `${ROOT}/.git`, startedAt: 1 }), [key(40)]: blocked44({ id: '40-1', issue: 40, repo: `${ROOT}/.git`, startedAt: 2 }) })
+    await start($)
+    expect((await run($, 'stop 40')).text).toContain('stopped #40')
+    expect((await run($, 'stop')).text).toBe('no active run here.')
+    expect((await run($, 'status 44')).text).toContain('blocked at gateG')
+  })
+
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
     await start($)

@@ -1311,7 +1311,8 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(pickRun(runs, { ...q, issue: 40 })).toEqual({ kind: 'run', run: r40 })
     expect(pickRun(runs, { ...q, issue: 7 })).toEqual({ kind: 'none' })
     expect(pickRun(runs, { ...q, focus: 44 })).toEqual({ kind: 'run', run: r44 })
-    expect(pickRun(runs, { ...q, focus: 16 })).toEqual({ kind: 'several', runs: [r40, r44] })
+    // The pane's run even when it has finished: the command then says it isn't active, never acts on another (PR #51 review).
+    expect(pickRun(runs, { ...q, focus: 16 })).toEqual({ kind: 'run', run: r16 })
     expect(pickRun(runs, { ...q, focus: 16, needActive: false })).toEqual({ kind: 'run', run: r16 })
     expect(pickRun(runs, q)).toEqual({ kind: 'several', runs: [r40, r44] })
     expect(pickRun([r44, r16], q)).toEqual({ kind: 'run', run: r44 })
