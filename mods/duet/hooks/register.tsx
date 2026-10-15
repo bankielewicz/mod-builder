@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  codexRunning, consentRefusal, consentText, fallbackFailure, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -409,8 +409,8 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   let answer = ''
   try {
     answer = await $.ui.ask(consentText(cwd, options.sandbox), [YES, NO])
-  } catch {
-    return 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
+  } catch (err) {
+    return consentRefusal(err)
   }
   const ok = answer === YES
   await update($, consent, () => (ok ? 'yes' : 'no'))
