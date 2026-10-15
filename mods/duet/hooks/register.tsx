@@ -208,9 +208,10 @@ async function agentRoots($: EngineInterface, cwd: string): Promise<string[]> {
 async function listAgentFiles($: EngineInterface, dir: string, searched: Set<string>, cut: AgentCut, found: AgentEntry[] = [], depth = 0): Promise<AgentEntry[]> {
   const real = await realPathOf($, dir)
   if (real === undefined || searched.has(real)) return found
+  const listing = await $.fs.list(dir).catch(() => [])
   if (depth > AGENT_DEPTH || found.length >= AGENT_FILES) {
     // A look inside, one level and no reads: only a folder that may hold a definition cuts the search short.
-    for (const e of await $.fs.list(dir).catch(() => [])) {
+    for (const e of listing) {
       if (!(await mayHoldAgent($, `${dir}/${e.name}`, e, searched))) continue
       if (depth > AGENT_DEPTH) cut.depth = true
       else cut.files = true
@@ -220,7 +221,7 @@ async function listAgentFiles($: EngineInterface, dir: string, searched: Set<str
   }
   searched.add(real)
   const entries = []
-  for (const e of [...(await $.fs.list(dir).catch(() => []))].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+  for (const e of [...listing].sort((a, b) => (a.name < b.name ? -1 : 1))) {
     entries.push(e.isLink ? { ...e, ...(await $.fs.stat(`${dir}/${e.name}`).catch(() => ({ kind: 'other' as const }))) } : e)
   }
   for (const e of entries) {
