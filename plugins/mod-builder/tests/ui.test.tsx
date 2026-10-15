@@ -54,9 +54,18 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     cwd: '/m' as string | null,
     failReads: [] as string[],
     denySet: '',
+    denyStoreSet: '',
+    timeouts: [] as (number | undefined)[],
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  mock.store(on, {})
+  // The store from memory, as mock.store keeps it; `seen.denyStoreSet` makes every set reject.
+  const stored = new Map<string, unknown>()
+  on('store.get', ($, e) => ({ value: stored.get((e as { key: string }).key) }) as never)
+  on('store.set', ($, e) => {
+    if (seen.denyStoreSet) return { deny: seen.denyStoreSet }
+    stored.set((e as { key: string }).key, JSON.parse(JSON.stringify((e as { value: unknown }).value)))
+    return { value: undefined } as never
+  })
   const files = Object.keys(disk)
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
@@ -96,6 +105,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   // streaming process.spawn, so Mod Lab's fallback answers instead.
   on('process.run', async ($, e) => {
     seen.argv.push([...e.argv])
+    seen.timeouts.push(e.init?.timeoutMs)
     if (hold) await hold
     const out = (e.argv.includes('validate') ? outputs.validate : outputs.test) ?? { exitCode: 0, stdout: '' }
     if (out.throws) throw new Error('could not start')
@@ -444,6 +454,87 @@ describe('progress', () => {
     await clock.advance(10)
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /next: Test/ })).toBeDefined()
+  })
+})
+
+describe('a run that does not end', () => {
+  const MINUTE = 60_000
+  const reportTest = ($: Engine) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Test', status: 'passed' } as never)
+
+  test('a failure after the tests ran does not leave the row: the next Test starts', OPTIONS, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    seen.denyStoreSet = 'EIO: store write failed'
+    release()
+    await clock.advance(500)
+    seen.denyStoreSet = ''
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a row older than the ceiling is an orphan: a new Test replaces it, a younger row still blocks', OPTIONS, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(MINUTE)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(2 * MINUTE + 5000)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('testTimeoutMinutes sets how old a row must be to count as an orphan', { options: { modsDir: MODS, testTimeoutMinutes: 1 } }, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(MINUTE / 2)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(MINUTE)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a Test run is given testTimeoutMinutes as its time limit', { options: { modsDir: MODS, testTimeoutMinutes: 5 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.timeouts).toEqual([5 * MINUTE])
+  })
+
+  test('the time limit of a Test run stops at the engine\'s ten minutes', { options: { modsDir: MODS, testTimeoutMinutes: 30 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.timeouts).toEqual([10 * MINUTE])
   })
 })
 
