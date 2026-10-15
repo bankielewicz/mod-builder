@@ -412,21 +412,25 @@ describe('review admission', () => {
   test('overlapping reviews at maxConcurrent 1: each refusal takes its own row id, the running review keeps d1, and only one Codex process starts (PR #1: 6148aa6, 56c0832)', { options: { maxConcurrent: 1, codexConsent: 'allow' } }, async ($: any, on: any) => {
     const LIMIT = 'limit: 1 Codex run already running (maxConcurrent 1)'
     let release!: () => void
-    const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)) })
+    let begun!: () => void
+    const started = new Promise<void>(resolve => (begun = resolve))
+    const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: begun })
     await start($)
     const review = () => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     const pane = () => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
     try {
-      const [first, second] = await Promise.all([review(), review()])
-      await seen.clock.advance(1000)
+      // Which of the two is admitted is the engine's order; one starts and one is refused either way.
+      const answers = (await Promise.all([review(), review()])).map(r => r.text)
+      await started
+      await seen.clock.settle()
+      expect(answers.filter(text => /^Codex review started/.test(text)).length).toBe(1)
+      expect(answers.filter(text => text.includes(`Codex review not started: ${LIMIT}`)).length).toBe(1)
       expect(seen.argv.length).toBe(1)
       expect(seen.toasts).toEqual([`d2 review refused: ${LIMIT}`])
       const third = await review()
-      await seen.clock.advance(1000)
+      await seen.clock.settle()
       expect(seen.argv.length).toBe(1)
       expect(seen.toasts).toEqual([`d2 review refused: ${LIMIT}`, `d3 review refused: ${LIMIT}`])
-      expect(first.text).toMatch(/^Codex review started/)
-      expect(second.text).toContain(`Codex review not started: ${LIMIT}`)
       expect(third.text).toContain(`Codex review not started: ${LIMIT}`)
       // The running review keeps its own row; the refusals are rows of their own.
       const ui = await pane()
@@ -442,7 +446,7 @@ describe('review admission', () => {
     } finally {
       release()
     }
-    await seen.clock.advance(1000)
+    await seen.clock.settle()
     expect(seen.argv.length).toBe(1)
   })
 })
