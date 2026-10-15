@@ -1272,13 +1272,18 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(keepText(40)).toBe('Open another Claude Code session in this repository and run /issue-forge 40 there; it gets its own worktree.')
   })
 
-  test('startAnswer: a label is its action; no answer or free text under Other is the fallback', () => {
+  test('startAnswer: a label is its action; Esc or free text under Other cancels; only nobody-to-ask (claude -p) takes the fallback (PR #51 review)', () => {
     const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving: null, others: [at(52, 'blocked', { blocked: BLOCKED })], me: ME, now: 0 })
     if (!menu) throw new Error('no menu')
-    expect(startAnswer(menu, 'Stop #52, then start #40')).toEqual({ kind: 'stopThenStart', issue: 52 })
-    expect(startAnswer(menu, 'Cancel')).toEqual({ kind: 'cancel' })
-    expect(startAnswer(menu, null)).toEqual({ kind: 'start' })
-    expect(startAnswer(menu, 'something typed')).toEqual({ kind: 'start' })
+    expect(startAnswer(menu, 'Stop #52, then start #40', true)).toEqual({ kind: 'stopThenStart', issue: 52 })
+    expect(startAnswer(menu, 'Cancel', true)).toEqual({ kind: 'cancel' })
+    expect(startAnswer(menu, null, false)).toEqual({ kind: 'start' })
+    expect(startAnswer(menu, null, true)).toEqual({ kind: 'cancel' })
+    expect(startAnswer(menu, 'something typed', true)).toEqual({ kind: 'cancel' })
+    const driving = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving: at(44, 'green', { driver: { session: ME, since: 0 } }), others: [], me: ME, now: 0 })
+    if (!driving) throw new Error('no menu')
+    expect(startAnswer(driving, null, false)).toEqual({ kind: 'keep' })
+    expect(startAnswer(driving, null, true)).toEqual({ kind: 'cancel' })
   })
 
   test("a drive writes its session as the run's driver; only that session's release clears it, and the step stays", () => {

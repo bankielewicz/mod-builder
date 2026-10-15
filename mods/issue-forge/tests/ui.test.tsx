@@ -293,8 +293,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   return world
 }
 
-async function start($: any) {
-  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ROOT })
+async function start($: any, isInteractive = true) {
+  await $.session.start({ surface: 'terminal', isInteractive, cwd: ROOT })
 }
 
 const run = ($: any, args: string) => $.command.run({ command: 'issue-forge', args, origin: COMPOSER, presentation: PRESENTATION })
@@ -1284,7 +1284,8 @@ describe('parallel runs (Change 0.3.0)', () => {
 
   test('nobody to answer (claude -p): the typed issue starts', async ($, on) => {
     const w = engine(on, { answer: null, baseProfile: WORKTREE }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
-    await start($)
+    // A -p run: no person at the prompt (PR #51 review: only then does a missing answer start the run).
+    await start($, false)
     expect((await run($, '16')).text).toContain('starting #16')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
   })
@@ -1298,8 +1299,9 @@ describe('parallel runs (Change 0.3.0)', () => {
     const keep = 'Open another Claude Code session in this repository and run /issue-forge 17 there; it gets its own worktree.'
     expect((await run($, '17')).text).toBe(keep)
     expect(w.asked.at(-1)).toBe('This session is driving #16 (red 1/2). What should it do with #17?')
+    // Esc on the menu in an interactive session cancels (PR #51 review).
     w.answer = null
-    expect((await run($, '17')).text).toBe(keep)
+    expect((await run($, '17')).text).toBe('cancelled; nothing started.')
     w.answer = 'Hand #16 off and start #17 here (any session can resume #16)'
     expect((await run($, '17')).text).toBe('handed off #16 at red; starting #17; the pane shows progress. Nothing is pushed until you say yes.')
     expect((await run($, 'status 16')).text).toContain('interrupted during red; /issue-forge resume restarts it')
@@ -1502,6 +1504,22 @@ describe('parallel runs (Change 0.3.0)', () => {
     release()
     for (let i = 0; i < 20; i++) await w.clock.advance(5)
     expect(w.commits).toHaveLength(1)
+  })
+
+  test('Esc on the start menu in an interactive session cancels; the run starts only where nobody can answer (PR #51 review)', async ($, on) => {
+    const w = engine(on, { answer: null, baseProfile: WORKTREE }, { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) })
+    await start($)
+    expect((await run($, '16')).text).toBe('cancelled; nothing started.')
+    expect(w.asked).toHaveLength(1)
+    expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
+  })
+
+  test('the session driving a run, under claude -p: no answer explains how to start the issue elsewhere', async ($, on) => {
+    const w = engine(on, { answer: null, baseProfile: WORKTREE, spawnHold: held() })
+    await start($, false)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect((await run($, '17')).text).toBe('Open another Claude Code session in this repository and run /issue-forge 17 there; it gets its own worktree.')
   })
 
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
