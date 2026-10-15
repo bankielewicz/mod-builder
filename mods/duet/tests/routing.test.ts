@@ -25,7 +25,7 @@ const runLine = (provider: 'codex' | 'claude', type: string, id = 'x') =>
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -40,6 +40,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   // `denyEnv`, read at call time: that variable's lookup fails, as a broken engine call would.
   on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   // `hold`: a read stays in flight for that many promise turns, and `maxReads` counts the most in flight at once.
+  // `missingText`: what reading a missing file rejects with, for an engine that words it without ENOENT.
   let reading = 0
   const failedOnce = new Set<string>()
   on('fs.read', ($: any, e: any) => {
@@ -49,7 +50,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     // fails as one past the process's open-file limit does, and later reads succeed.
     const isFlaky = o.flaky?.includes(e.path) && !failedOnce.has(e.path)
     if (isFlaky) failedOnce.add(e.path)
-    const answer = text === undefined ? { deny: 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
+    const answer = text === undefined ? { deny: o.missingText ?? 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
     if (!o.hold) return answer
     reading++
     seen.maxReads = Math.max(seen.maxReads, reading)
@@ -1336,5 +1337,24 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(own.map(l => JSON.parse(l).id).slice(0, 3)).toEqual(['a', 'b', 'c'])
     expect(own.length).toBe(4)
     expect(JSON.parse(own[3] ?? '{}').provider).toBe('codex')
+  })
+
+  test('PR #67 review: a session\'s first run starts its log even when the engine words a missing file without ENOENT', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { missingText: 'no such file or directory' })
+    await start($)
+    await $.tool.call(call() as never)
+    const own = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean)
+    expect(own.length).toBe(1)
+    expect(JSON.parse(own[0] ?? '{}').provider).toBe('codex')
+  })
+
+  test('PR #67 review: /duet stats reads a missing log once even when the engine words it without ENOENT', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { missingText: 'no such file or directory' })
+    seen.files[`${DATA}/sessions/s4/review-d1.md`] = 'a session that logged nothing'
+    seen.files[logOf('s2')] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p === logOf('s4')).length).toBe(1)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
   })
 })

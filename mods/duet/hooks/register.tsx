@@ -161,13 +161,15 @@ async function readText($: EngineInterface, path: string): Promise<string> {
 
 /**
  * A file's text, '' when it isn't there, or undefined when the read failed otherwise (too many open files, no
- * permission). The engine's error names the errno in its message (`… failed: ENOENT`) and carries no code.
+ * permission). The engine's error names the errno only in its message (`… failed: ENOENT`, 2.1.300) and carries no
+ * code, so any other failure asks whether the file exists: a rewording can't make a missing log look unreadable.
  */
 async function readIfThere($: EngineInterface, path: string): Promise<string | undefined> {
   try {
     return String(await $.fs.read(path))
   } catch (err) {
-    return /\bENOENT\b/.test(String(err)) ? '' : undefined
+    if (/\bENOENT\b/.test(String(err))) return ''
+    return (await $.fs.exists(path).catch(() => true)) ? undefined : ''
   }
 }
 
