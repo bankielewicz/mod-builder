@@ -1537,3 +1537,36 @@ describe('upgrade: records kept before 0.2.9, under one key for every folder (PR
     expect(await ui.find({ type: 'Text', text: /next: Validate/ })).toBeDefined()
   })
 })
+
+describe('the scan publishes its folder and its mods together (PR #57 review round 2)', () => {
+  test('every state write that carries mods carries the folder they were judged in, across a /cd', async ($, on) => {
+    const disk: Disk = {
+      ['/w/one/.claude-plugin/marketplace.json']: '{ "plugins": [] }',
+      ...modFiles('alpha', '/w/one/mods'),
+      ['/w/two/.claude-plugin/marketplace.json']: '{ "plugins": [] }',
+      ...modFiles('beta', '/w/two/mods'),
+    }
+    const { seen, clock } = world(on, disk)
+    // Watches Mod Lab's writes on their way to the kit's state, which answers beneath.
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($, e, next) => {
+      const { plugin, key, value } = e as unknown as { plugin: string; key: string; value: unknown }
+      if (plugin === 'mod-builder') writes.push({ key, value })
+      return next(e)
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const carryingMods = writes.filter(({ value }) => Array.isArray(value) ? value.some(one => (one as { lights?: unknown }).lights) : Array.isArray((value as { views?: unknown } | null)?.views))
+    expect(carryingMods.length).toBeGreaterThan(1)
+    const expected: Record<string, string[]> = { '/w/one/mods': ['alpha'], '/w/two/mods': ['beta'] }
+    for (const { value } of carryingMods) {
+      const verdict = value as { modsDir?: unknown; views?: { name: string }[] }
+      expect(typeof verdict.modsDir).toBe('string')
+      expect((verdict.views ?? []).map(view => view.name)).toEqual(expected[verdict.modsDir as string] ?? ['?'])
+    }
+  })
+})
