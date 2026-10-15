@@ -44,8 +44,10 @@ write the code yourself. Never copy-paste their code, and never install, `--plug
    once where mods should live, and offer to create a folder marketplace there (`ci/marketplace.json`).
 3. Run `claude --version` and record it as the "built on" version.
 4. If `mcp__mod-builder__lab_report` is among your tools, Mod Lab is running. Report each stage
-   with `{ mod, stage, status, note? }`, where status is `running` when you start it and `passed`
-   or `failed` when it ends. The stages map to steps: Spec → 2, Scaffold → 3.1, Logic → 3.2,
+   with `{ mod, stage, status, note?, path }`, where status is `running` when you start it and `passed`
+   or `failed` when it ends, and `path` is the mod folder's absolute path (`<mods>/<name>`, from 2).
+   Pass `path` on every report: Mod Lab then watches the folder you write to, even when the session's
+   working directory is somewhere else, such as a git worktree edited by path. The stages map to steps: Spec → 2, Scaffold → 3.1, Logic → 3.2,
    Register → 3.3–3.5, Validate and Test → 4, README and Share → 5. If the tool isn't there, skip
    reporting.
 
