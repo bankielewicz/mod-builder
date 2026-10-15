@@ -127,8 +127,15 @@ let sessionCwd = ''
 let home = ''
 /** This session's id, read once at session start: what a run's driver names (Change 0.3.0). */
 let sessionId = ''
-/** A drive: its run, the run's store key and issue, and whether it was stopped or handed off. */
-type Drive = { runId: string; key: string; issue: number; isStopped: boolean }
+/**
+ * A drive: its run, the run's store key and issue, whether it was stopped or handed off, and its generation. A new
+ * drive of the same run (a hand-off, then a resume) has a new one, so the old drive's step in flight fails every
+ * ownership check (PR #51 review).
+ */
+type Drive = { runId: string; key: string; issue: number; isStopped: boolean; gen: number }
+/** The run as a drive hands it to a step: stamped with the drive's generation (never stored). */
+type Stamped = Run & { driveGen: number }
+let drives = 0
 /** The run this module is driving (one per session); null after a reload (the run then reads as interrupted). */
 let driving: Drive | null = null
 /** The driven run as last written: the status line's badge. */
@@ -263,10 +270,15 @@ function isTakenOver(stored: Run): boolean {
   return !!stored.driver && stored.driver.session !== sessionId
 }
 
-/** Resolves to the run written, or null when the write was dropped: the drive then has nothing left to drive. */
-async function saveRun($: EngineInterface, run: Run): Promise<Run | null> {
-  // A stop wins every race, a write lands only on the same run, and never on one another session took over (Change 0.3.0).
-  return updateRun($, keyOf(run), stored => (!stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) ? null : run))
+/**
+ * A drive's write, by generation `gen`. Resolves to the run written, or null when it was dropped: the drive then has
+ * nothing left to drive. A stop wins every race, a write lands only on the same run, never on one another session
+ * took over (Change 0.3.0), and never from a drive that was stopped, handed off or replaced (PR #51 review).
+ */
+async function saveRun($: EngineInterface, run: Run, gen: number): Promise<Run | null> {
+  return updateRun($, keyOf(run), stored =>
+    !stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) || driving?.gen !== gen || driving.isStopped ? null : run,
+  )
 }
 
 /**
@@ -340,9 +352,9 @@ class Stopped extends Error {
   }
 }
 
-/** Whether this module is still driving `run`: false once it was stopped or another drive took it over. */
+/** Whether this module is still driving `run`: false once it was stopped, or another drive (a later one included) took it over. */
 function isDriving(run: Run): boolean {
-  return driving !== null && driving.runId === run.id && !driving.isStopped
+  return driving !== null && driving.runId === run.id && !driving.isStopped && (run as Partial<Stamped>).driveGen === driving.gen
 }
 
 function stillDriving(run: Run): void {
@@ -715,7 +727,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
   await rememberAgents($, run, name ? [agentId, name] : [agentId])
-  await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()))
+  await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()), (run as Stamped).driveGen)
   await setActivity($, 'agent working')
   try {
     return { type: 'agentDone', answer: answer ? await answer : '' }
@@ -912,7 +924,7 @@ async function doStep($: EngineInterface, run: Run): Promise<RunEvent | null> {
 async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<void> {
   const key = keyOf(first)
   const runId = first.id
-  const me: Drive = { runId, key, issue: first.issue, isStopped: false }
+  const me: Drive = { runId, key, issue: first.issue, isStopped: false, gen: ++drives }
   driving = me
   drivenLast = first
   let ticks = 0
@@ -937,13 +949,13 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, key)
         if (!now || now.id !== runId || now.step !== 'ready' || !isMine()) return
-        if (!(await saveRun($, advance(now, { type: 'publish' }, await $.clock.now())))) return
+        if (!(await saveRun($, advance(now, { type: 'publish' }, await $.clock.now()), me.gen))) return
         continue
       }
       if (!isWorking(run.step)) return
       let ev: RunEvent | null
       try {
-        ev = await doStep($, run)
+        ev = await doStep($, { ...run, driveGen: me.gen })
       } catch (err) {
         ev = block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
       }
@@ -951,7 +963,7 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
       const latest = (await loadRun($, key)) ?? run
       if (latest.id !== runId || latest.step === 'stopped') return
       // A write dropped (stopped, taken over or replaced elsewhere) ends the drive, or it would run the step again.
-      if (!(await saveRun($, advance(latest, ev, await $.clock.now())))) return
+      if (!(await saveRun($, advance(latest, ev, await $.clock.now()), me.gen))) return
     }
   } finally {
     ticker.cancel()
