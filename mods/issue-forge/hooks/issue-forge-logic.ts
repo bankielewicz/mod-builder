@@ -1238,11 +1238,19 @@ export function isOwnHandback(text: string, refs: readonly string[]): boolean {
 }
 
 /** A `session.receive` delivery, as much of it as the hand-back check reads. */
-export type Delivery = { origin?: { kind: string; teammate?: string }; text: string; agentId?: string }
+export type Delivery = { origin?: { kind: string; teammate?: string; isVerified?: boolean }; text: string; agentId?: string }
 
-/** Whether a mailbox delivery is the hand-back of one of these agents (#27). */
+/**
+ * Whether a mailbox delivery is the idle notice one of these agents sends the main conversation when it
+ * stops (#27): its `result` is the answer the pane already has. Anything else the agent sends reaches the model.
+ */
 export function isOwnMailboxHandback(d: Delivery, refs: readonly string[]): boolean {
-  return !!d.origin?.teammate && refs.includes(d.origin.teammate)
+  if (d.agentId || d.origin?.kind !== 'peer' || !d.origin.teammate || !refs.includes(d.origin.teammate)) return false
+  try {
+    return (JSON.parse(d.text) as { type?: unknown } | null)?.type === 'idle_notification'
+  } catch {
+    return false
+  }
 }
 
 function gateTable(g: Gate | undefined): string[] {
