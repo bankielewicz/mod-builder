@@ -756,15 +756,18 @@ async function openPane($: Engine): Promise<void> {
 
 /**
  * Opens the pane from the hook of the person's command, before it returns: an open after that is "unasked", and the
- * engine leaves it undrawn below 144 columns (#90). The scan runs on after the hook; the pane redraws when it lands.
+ * engine leaves it undrawn below 144 columns (#90).
  */
 async function showPane($: Engine): Promise<void> {
   await clearNarrowWarning($)
   await openPane($)
-  void scan($, false).catch((error: unknown) => logCaught($, 'modlab.scan', error))
 }
 
-/** Opens the pane for a typed build or edit skill, unless it is open; a failure is logged and never stops the skill. */
+/**
+ * Opens the pane for a typed build or edit skill, unless it is shown; a failure is logged and never stops the skill.
+ * It starts no scan: the skill's first report scans, and one that joined a scan started here would wait out an extra
+ * pass against its 10 s budget (PR #93 review, Codex).
+ */
 async function openForSkill($: Engine, command: string): Promise<void> {
   try {
     if (!(await isPaneShown($))) await showPane($)
@@ -965,6 +968,7 @@ export const register: Register = (on, options) => {
         return { text: 'Mod Lab folded to the status line. /modlab to reopen.' }
       }
       await showPane($)
+      void scan($, false).catch((error: unknown) => logCaught($, 'modlab.scan', error))
       return { text: 'Mod Lab opened.' }
     } catch (error) {
       logCaught($, 'modlab', error, 'normal', { args: e.args })

@@ -1851,6 +1851,20 @@ describe('the pane opens from the command itself (#90)', () => {
     expect(seen.opened).toEqual(['modlab'])
   })
 
+  test('a typed /mod-builder:build opens the pane without scanning (PR #93 review, Codex)', OPTIONS, async ($, on) => {
+    // The skill's first report scans; one that joined a scan started here would wait out an extra pass (#93, Codex P2).
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+    await start($)
+    await clock.advance(10)
+    const release = holdModsList(seen)
+    await typed($, 'mod-builder:build', 'a clock band')
+    await clock.advance(10)
+    expect(seen.opened).toEqual(['modlab'])
+    expect(seen.holdList!.isReached).toBe(false)
+    release()
+  })
+
   test('a refused open still runs the skill (guard: passes before #90)', OPTIONS, async ($, on) => {
     const { seen } = world(on, modFiles('git-branch'))
     on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
