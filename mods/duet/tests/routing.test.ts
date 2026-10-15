@@ -25,7 +25,7 @@ const runLine = (provider: 'codex' | 'claude', type: string, id = 'x') =>
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; readDelayMs?: number } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -41,6 +41,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   // `hold`: a read stays in flight for that many promise turns, and `maxReads` counts the most in flight at once.
   // `missingText`: what reading a missing file rejects with, for an engine that words it without ENOENT.
+  // `readDelayMs`: a read of a run log (runs.jsonl) answers that many ms later, with what the file held when the read began.
   let reading = 0
   const failedOnce = new Set<string>()
   on('fs.read', ($: any, e: any) => {
@@ -51,6 +52,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     const isFlaky = o.flaky?.includes(e.path) && !failedOnce.has(e.path)
     if (isFlaky) failedOnce.add(e.path)
     const answer = text === undefined ? { deny: o.missingText ?? 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
+    if (o.readDelayMs && String(e.path).endsWith('/runs.jsonl')) return new Promise(resolve => setTimeout(resolve, o.readDelayMs)).then(() => answer)
     if (!o.hold) return answer
     reading++
     seen.maxReads = Math.max(seen.maxReads, reading)
@@ -405,6 +407,43 @@ describe('review admission', () => {
     await seen.clock.advance(1000)
     expect(seen.argv.length).toBe(1)
     expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
+  })
+
+  test('overlapping reviews at maxConcurrent 1: each refusal takes its own row id, the running review keeps d1, and only one Codex process starts (PR #1: 6148aa6, 56c0832)', { options: { maxConcurrent: 1, codexConsent: 'allow' } }, async ($: any, on: any) => {
+    const LIMIT = 'limit: 1 Codex run already running (maxConcurrent 1)'
+    let release!: () => void
+    const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)) })
+    await start($)
+    const review = () => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    const pane = () => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+    try {
+      const [first, second] = await Promise.all([review(), review()])
+      await seen.clock.advance(1000)
+      expect(seen.argv.length).toBe(1)
+      expect(seen.toasts).toEqual([`d2 review refused: ${LIMIT}`])
+      const third = await review()
+      await seen.clock.advance(1000)
+      expect(seen.argv.length).toBe(1)
+      expect(seen.toasts).toEqual([`d2 review refused: ${LIMIT}`, `d3 review refused: ${LIMIT}`])
+      expect(first.text).toMatch(/^Codex review started/)
+      expect(second.text).toContain(`Codex review not started: ${LIMIT}`)
+      expect(third.text).toContain(`Codex review not started: ${LIMIT}`)
+      // The running review keeps its own row; the refusals are rows of their own.
+      const ui = await pane()
+      const rows = {
+        d1: await ui.find({ type: 'Text', text: /d1\s+codex\s.*running/ }),
+        d2: await ui.find({ type: 'Text', text: /d2\s+codex\s.*refused/ }),
+        d3: await ui.find({ type: 'Text', text: /d3\s+codex\s.*refused/ }),
+      }
+      await ui.unmount()
+      expect(rows.d1).toBeDefined()
+      expect(rows.d2).toBeDefined()
+      expect(rows.d3).toBeDefined()
+    } finally {
+      release()
+    }
+    await seen.clock.advance(1000)
+    expect(seen.argv.length).toBe(1)
   })
 })
 
@@ -1356,5 +1395,21 @@ describe('issue 7: each session keeps its own run log', () => {
     const { text } = await stats($)
     expect(seen.reads.filter(p => p === logOf('s4')).length).toBe(1)
     expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
+  })
+})
+
+describe('issue 8: run-log appends within a session are serialized', () => {
+  test('two routed Codex runs that finish together both land in the session log (PR #1: 56c0832)', { options: { codexAgents: '*', codexConsent: 'allow', codexRunMode: 'wait' } }, async ($: any, on: any) => {
+    // Reading the log takes 50 ms, so an append that doesn't wait for the one before it reads the log before that one has written.
+    const seen = engine(on, { readDelayMs: 50 })
+    await start($)
+    await Promise.all([$.tool.call(call() as never), $.tool.call(call() as never)])
+    await seen.clock.settle()
+    expect(seen.argv.length).toBe(2)
+    // Every run log the mod wrote, not only this session's, so hooks from before #7 (one shared log) fail here for the race and not for the path.
+    const logs = Object.keys(seen.files).filter(path => path.endsWith('/runs.jsonl'))
+    const rows = logs.flatMap(path => seen.files[path]!.split('\n').filter(Boolean).map(l => JSON.parse(l)))
+    expect(rows.map(r => r.id).sort()).toEqual(['d1', 'd2'])
+    expect(rows.every(r => r.provider === 'codex')).toBe(true)
   })
 })

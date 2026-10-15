@@ -103,4 +103,20 @@ describe('ui', () => {
     expect(await stats.find({ type: 'Text', text: /claude · Explore/ })).toBeDefined()
     await stats.unmount()
   })
+
+  test('the selection stops at the last drawn row: after more presses than rows, a row is still highlighted (PR #1: 6148aa6)', async ($, on) => {
+    engine(on, [])
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await $.command.run({ command: 'duet', args: 'demo', origin: COMPOSER, presentation: PRESENTATION })
+    // The demo lists 5 tasks; bodyRows 10 draws 2 of them (d5, d4).
+    const props = { ...PANE, scroll: { offset: 0, bodyRows: 10 } }
+    let ui = await mount($, 'terminal', props)
+    for (let press = 1; press <= 6; press++) {
+      await ui.press({ key: 'next' })
+      await ui.unmount()
+      ui = await mount($, 'terminal', props)
+      expect([press, (await ui.find({ type: 'Text', text: /▸ d4 / })) !== undefined]).toEqual([press, true])
+    }
+    await ui.unmount()
+  })
 })
