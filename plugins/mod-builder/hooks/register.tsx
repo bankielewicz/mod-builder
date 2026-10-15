@@ -301,8 +301,11 @@ async function storedOf($: Engine, base: string, modsDir: string): Promise<unkno
 const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
   ((await storedOf($, RESULTS_KEY, modsDir)) ?? {}) as StoredResults
 
-/** When each mod's current edit started (a build generation), for mods being edited. */
-type Generation = { since: number; fromVersion: string | null }
+/**
+ * When each mod's current edit started (a build generation), for mods being edited, and the
+ * version it started from. `repeatedAt` is when a Spec running last repeated during the edit.
+ */
+type Generation = { since: number; fromVersion: string | null; repeatedAt?: number }
 /** As stored: an older version wrote the bare start time. */
 type StoredGenerations = Record<string, number | Generation>
 const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
@@ -311,6 +314,9 @@ const generationsFrom = (stored: StoredGenerations): Record<string, Generation> 
   )
 const generationsOf = async ($: Engine, modsDir: string): Promise<Record<string, Generation>> =>
   generationsFrom(((await storedOf($, GENERATIONS_KEY, modsDir)) ?? {}) as StoredGenerations)
+/** Whether `latest` is still the generation `read` was: the same start, and no Spec running reported on it since. */
+const isSameGeneration = (latest: Generation | undefined, read: Generation | undefined): boolean =>
+  latest?.since === read?.since && latest?.repeatedAt === read?.repeatedAt
 
 /**
  * Sets one folder's records under `base` to `change` of their current value. Updates run one at
@@ -402,10 +408,15 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
-    // Drop only the generations this scan judged: one begun since is a new edit, and stays.
+    // Drop only the generations this scan judged: one begun since stays. A Spec running reported on one
+    // since was read after this scan's reports, so the edit was finished when it came: it begins the next.
     await updateGenerations($, dir, remaining => {
       for (const view of finished) {
-        if (remaining[view.name]?.since === generations[view.name]?.since) delete remaining[view.name]
+        const [latest, read] = [remaining[view.name], generations[view.name]]
+        if (isSameGeneration(latest, read)) delete remaining[view.name]
+        else if (latest?.since === read?.since && latest?.repeatedAt !== undefined) {
+          remaining[view.name] = { since: latest.repeatedAt, fromVersion: found.get(view.name)?.version ?? null }
+        }
       }
       return remaining
     })
@@ -926,11 +937,19 @@ export const register: Register = (on, options) => {
       known = (await read($, judged)).views.find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      // The version on disk as the edit begins: a bump may land after the last scan.
+      // The version on disk as the edit begins (a bump may land after the last scan); a repeat keeps its own.
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
-      await updateGenerations($, modsDir, all => ({ ...all, [mod]: { since: now, fromVersion } }))
-      logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
+      // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
+      // The stamp tells a scan that judged the edit finished before this report that the next edit began here.
+      // It always moves on, even within one millisecond of the last, or that scan would read it as unchanged.
+      let isStarted = false
+      await updateGenerations($, modsDir, all => {
+        const current = all[mod]
+        isStarted = current === undefined
+        return { ...all, [mod]: current ? { ...current, repeatedAt: Math.max(now, (current.repeatedAt ?? 0) + 1) } : { since: now, fromVersion } }
+      })
+      if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {
