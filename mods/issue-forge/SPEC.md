@@ -1289,3 +1289,175 @@ round takes. It supersedes items 1 and 3 above.
 - **Not done:** withholding SendMessage through `disallowedTools`. The teammate had it although the
   agent's `tools` list leaves it out, and whether `disallowedTools` removes it isn't probed.
 - **Live check** (review 5): still the merge gate.
+
+## Change 0.5.0 (2026-10-15)
+
+> generate an enhancement for issue-forge where it does not generate new mods. new mods are to be created with
+> mod-builder. […] the goal is to block claude mods from being built by issue-forge as it is meant to be built by
+> mod-builder. issue-forge is to generate a "next steps" for the end user to follow where it blocks resolving the
+> github incident. As part of the next steps, the next steps is to guide the end user to generate the claude mod.
+
+**Why.** A run on #18 (a new mod, `tdd-guard`) built a whole plugin with no SPEC approval, though the issue said
+"Build it with `/mod-builder:build` (SPEC first, one approval)". Red's tests could only fail at load ("no hooks
+module to load"), gate R's R3 took that as red (#83), and green scaffolded the plugin. PR #81 was closed.
+issue-forge fixes code test-first; a new Claude Code plugin is mod-builder's job, and its SPEC is the approval
+issue-forge has no way to hold.
+
+**The promise, exactly.** issue-forge never commits or pushes a new plugin manifest (`.claude-plugin/plugin.json`
+that isn't at the base), in any repository. An issue that asks for one by name never starts a run. A phase agent's
+file tools may not create one. A manifest a phase agent's shell created anyway is caught at the phase's gate,
+before the next commit. **Known gap:** an agent's `Bash` (which red and green need, to run the tests) can still
+create plugin files while its phase runs; issue-forge only sees them at the gate, and they stay, uncommitted, in
+the run's worktree (or the checkout, for a `here` run). issue-forge deletes nothing (spec §8).
+
+**What changes.**
+
+1. **A new-plugin issue is refused before a run exists.** `startRun` reads the issue once, after its
+   same-issue check (an active run of the issue is answered `has a run already`, as before) and before the start
+   menu (`startChoices`) and `begin`: `gh issue view <N> [--repo <host/owner/repo>] --json number,title,body,state,url`, the
+   argv preflight uses (a number start has no `--repo` yet and resolves as `gh` does, the same repository
+   preflight's `gh repo view` names). When `newModGuidance(body)` finds a line asking to build it with mod-builder,
+   the command replies with the next steps below and stores nothing: no run, branch, worktree, agent or pane. If
+   the read fails (no `gh`, signed out, not found), the start goes on and preflight reports the real problem, in
+   0.4.0's order.
+2. **What counts:** a line of the body on which the word `build` (any case; not the `build` of
+   `/mod-builder:build` itself, so not after a letter, digit, `:`, `/` or `-`) is followed by `with` and then
+   `/mod-builder:build`. Measured on all 52 of this repository's issues (`gh issue list --state all`): four bodies
+   name `/mod-builder:build`, and the rule matches only #18, the one new mod; #19, #20 and #23 (Mod Lab fixes that
+   name the skill in passing) don't. "I built it with `/mod-builder:build`" (a bug report about a built mod)
+   doesn't match, since `built` isn't `build`. A line like "the build skill works with `/mod-builder:build`" does,
+   wrongly; none of the 52 says that. Precise here; not proven general. The title isn't read. No override: an
+   issue the rule misreads can be reworded.
+3. **The phase prompts say it too.** Red's, green's and refactor's rules gain one line: don't create a new Claude
+   Code plugin (no new `.claude-plugin/plugin.json`); if the issue needs one, stop and say so. This narrows the
+   `Bash` gap; it doesn't close it.
+4. **The guard refuses creating a manifest.** The `tool.call` guard (Edit, Write, NotebookEdit of the live
+   agent) gains one rule beside the run-folder rule: a target whose last two segments are `.claude-plugin/plugin.json`
+   (`isPluginManifest`) and that `$.fs.stat` can't find is refused with `issue-forge: creating a new Claude Code
+   plugin (<path>) is mod-builder's job, not this run's. End your turn now; the run stops with next steps for the
+   person.` The run records the path (`newPlugin`). Editing a manifest that exists (a version bump) passes. A
+   failed check passes, as the guard's `.catch` does today; the gate catches what follows.
+5. **Gates R, G and F block a new plugin, final.** Each gate gains a check on the paths added since the merge
+   base (`git diff --cached --name-only --diff-filter=A -z <merge base>`): **R4** (gate R) and **G8** (gates G
+   and F) fail when an added path is a plugin manifest or the run has `newPlugin`. A failed R4 or G8 blocks the
+   run at once, with no retry (another attempt meets the same wall), as a **final block** with the next steps
+   below. Nothing past the red commit is committed; nothing is pushed.
+6. **Final blocks.** `Run.blocked` gains `steps?: string[]` and `isFinal?: boolean`. A final block's hint reads
+   `next: <next>, then /issue-forge stop <N>` (status and pane) in place of `, then /issue-forge resume`; the
+   pane offers Stop and Status, not Resume; `/issue-forge resume <N>` answers `#<N> can't be resumed: <reason>.
+   /issue-forge stop <N> ends it.` and changes nothing. `/issue-forge status` lists the steps under the `next:`
+   line; the pane shows `steps: /issue-forge status` when there are any. The pull-request block (`#N is a pull
+   request, not an issue`) and the closed-issue block become final too: resume could never clear them, and
+   0.4.0's suffix told the person to try.
+7. **The next steps** (one pure function, `newPluginSteps`, for both cases; plain words, no repository-specific
+   path). Shown here for the two cases.
+
+**What I should see.** `/issue-forge 18` in this repository:
+
+```
+#18 asks for a new Claude Code plugin. issue-forge doesn't build new plugins: it
+takes an issue to a fix, test-first. New plugins are built with mod-builder,
+whose SPEC is the one approval. Nothing was started.
+
+Next steps:
+1. Run /mod-builder:build and ask for the plugin #18 describes: "New mod
+   tdd-guard: limit which paths each TDD subagent type may write"
+   (https://github.com/bankielewicz/mod-builder/issues/18). Read it first with
+   gh issue view 18.
+2. Follow the issue's own guidance (quoted from #18 as its author wrote it):
+   > - **Build it with `/mod-builder:build`** (SPEC first, one approval), from
+   > the `guard` archetype (`plugins/mod-builder/skills/build/templates/archety…
+3. Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies
+   the plugin.
+4. Open a pull request that closes #18.
+```
+
+The quote is the matching line and the lines after it up to a blank line, a heading or the next list item at the
+same indent, each led by `> `, at most 12 lines and 1,200 characters (cut with `…`). The terminal wraps the lines;
+the mockup shows them wrapped at 80. A URL start's step 1 names the `--repo` form preflight uses.
+
+A run whose green created `mods/x/.claude-plugin/plugin.json` (worktree run), in the pane at 76 columns:
+
+```
+ issue-forge  bankielewicz/mod-builder#16 Fix the thing
+ ✕ blocked at gateG: a phase agent created a new Claude Code plugin (mods/x…
+ next: build it with /mod-builder:build, then /issue-forge stop 16
+ steps: /issue-forge status
+ [ Stop ]  [ Status ]
+```
+
+and in `/issue-forge status 16`, after the `blocked at` and `next:` lines:
+
+```
+1. Nothing past red's commit was committed, and nothing was pushed. This run's
+   worktree <path> holds red's tests at <red commit> and the phase's
+   uncommitted files.
+2. Stop this run: /issue-forge stop 16
+3. Build the plugin with /mod-builder:build in a clean checkout or a new
+   worktree from <base>, not in this run's worktree: its plugin folder already
+   holds files, and mod-builder's scaffold refuses a folder that does.
+4. Red's tests can serve the build's logic-first step as reference:
+   git show <red commit>
+5. When you no longer need this run's worktree, remove it from a plain shell:
+   git worktree remove <path>
+6. Open a pull request that closes #16.
+```
+
+A guard refusal with no file left says `a phase agent tried to create a new Claude Code plugin (<path>)` in step
+1's place of "created". A `here` run names its branch and the checkout instead of a worktree, says `git status`
+lists the uncommitted files, and has no step 5. At gate R there is no red commit yet: step 1 says nothing was
+committed, and step 4 is left out. The issue's guidance quote (item 2 above) is added as a step when the body has one.
+
+**What gets touched.**
+- Files: `mods/issue-forge/hooks/issue-forge-logic.ts` (`newModGuidance`, `newPluginSteps`, `isPluginManifest`,
+  R4 in `gateR`, G8 in `gateG`, final blocks in `advance` and `statusText`, the prompt line, the
+  pull-request and closed-issue blocks marked final), `hooks/register.tsx` (the start read in `startRun`, the
+  guard rule and `newPlugin`, the added-paths fact at each gate, the pane's final block), `types/index.d.ts`
+  (`blocked.steps?`, `blocked.isFinal?`, `Run.newPlugin?`), both test files, `README.md`, this SPEC, the version
+  in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (0.4.0 → 0.5.0), and
+  `docs/specs/issue-forge.md` (§3: the check before a run, R4, G8 and final blocks; the "unconstrained in green and
+  refactor" sentence at line 147 gains the manifest exception; §7 views; §8 the promise and the gap; line 568's
+  "#18 … not issue-forge" is now enforced).
+- Processes: one more `gh issue view` per start (read-only, before anything is stored), and one
+  `git diff --cached --name-only --diff-filter=A` per gate (read-only). `$.fs.stat` on a manifest path a phase
+  agent writes (read-only).
+- Not touched: hooks (the existing `tool.call` hook gains the rule), store keys, `.issue-forge.json` and its
+  keys, `userConfig`, demo states, phases, coverage rules, anything outside the repository. Runs stored before
+  0.5.0 have none of the new fields and behave as before. Costs: none new; a refused start spends no agent.
+- Not done (later, if wanted): a model classifier before the worktree (a model call per start, and untrusted text
+  deciding a block); issue labels (the `--json` fields and no project-safe place to name a label); refusing
+  `Bash` commands by their text (easy to get around).
+
+**Tests.** Logic (`issue-forge-logic.test.ts`):
+1. `newModGuidance`: #18's "Before you start" item matches and is quoted to its end; the lines naming
+   `/mod-builder:build` from #19, #20 and #23 don't; "I built it with `/mod-builder:build`" doesn't; "the build
+   skill works with `/mod-builder:build`" does, pinned as the known misread so a sharper rule shows up; the quote
+   stops at a blank line, a heading or the next item, and is cut at 12 lines and 1,200 characters.
+2. `newPluginSteps`: the start reply names the issue's number, title and URL, `/mod-builder:build`, the quote led by
+   `> `, and "closes #N"; the gate steps name the worktree, red's commit, the remove command and the stop command;
+   the `here` and gate-R variants; no step names `mods/`.
+3. `isPluginManifest`: `x/.claude-plugin/plugin.json` and `.claude-plugin/plugin.json` yes (`\` too);
+   `plugin.json`, `.claude-plugin/marketplace.json`, `x.claude-plugin/plugin.json` no.
+4. `gateR` R4 and `gateG` G8: an added manifest, or `newPlugin`, fails them; an edited manifest doesn't. `advance`
+   turns a failed R4 or G8 into a final block with steps and no retry.
+5. Final blocks: `statusText` prints the steps and `then /issue-forge stop <N>`; a non-final block keeps
+   `then /issue-forge resume`; the pull-request and closed-issue blocks carry `isFinal`. (Resume is tested in the
+   UI by its reply text, `can't be resumed`, since a resume that re-blocks would leave the step the same either way.)
+6. Each phase prompt holds the new-plugin line.
+
+UI (`ui.test.tsx`):
+7. `/issue-forge 16` with a #18-style body replies with the next steps and stores no run; no `git` command runs, no
+   agent is spawned, no pane opens.
+8. The same start with a fix's body (one naming `/mod-builder:build` in passing) starts as before.
+9. A failed start read (`gh issue view` fails) still starts, and preflight blocks as 0.4.0 does.
+10. The guard: the live agent's Write to a missing `x/.claude-plugin/plugin.json` is refused and recorded; a Write
+    to one that exists passes.
+11. A green that adds a manifest blocks final at gate G: the pane shows Stop and Status, not Resume; green isn't
+    spawned again; `/issue-forge resume` answers `#16 can't be resumed: …` and changes nothing. A pull-request
+    block answers resume the same way.
+12. A guard refusal with nothing added still blocks final at the gate.
+
+**Done means.** `/issue-forge 18` here answers with the next steps and leaves no run, worktree or branch; the person
+can follow them to `/mod-builder:build`. No issue-forge run can commit or push a new plugin. The live check:
+`claude -p --plugin-dir mods/issue-forge --settings '{"enabledPlugins":{"issue-forge@claudemod":false}}' "/issue-forge 18"`
+from this worktree prints the next steps, and `git worktree list` and the branch list are unchanged.
