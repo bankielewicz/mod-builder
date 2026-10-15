@@ -40,8 +40,8 @@ Several sessions can each run an issue in the same repository at once, each in i
 - `/issue-forge demo [state]`: every state of the pane, with nothing real running
 - `/issue-forge`: opens or closes the pane
 
-Without `N`, a command means the run the pane shows. If the pane shows none, it means the
-repository's only active run; with several, it lists them and asks you to name one.
+Without `N`, a command means the run the pane shows, even a finished one. If the pane shows none, it
+means the repository's only active run; with several, it lists them and asks you to name one.
 
 Give the pane the keyboard with `ctrl+x tab`. Its keys are `p` publish, `r` resume, `h` hand off,
 `s` stop, `t` status, and in the demo `n` next and `e` end.
@@ -104,14 +104,16 @@ at a time. To work on two issues at once, open a second Claude Code session in t
 | #44 is blocked, interrupted or ready, and no session drives it | Start #N in a new worktree · Resume #44 here · Stop #44, then start #N · Cancel |
 | This session drives #44 | Keep #44 (and start #N from another session) · Hand #44 off and start #N here · Cancel |
 
-With nobody to answer (`claude -p`), a start goes ahead with what you typed. In the session driving a
-run, it explains how to start #N elsewhere and starts nothing. If #N has an active run already, you get
+Esc, or text typed under Other, cancels. Only where nobody can answer (`claude -p`) does a start go
+ahead with what you typed; in a session driving a run, it then explains how to start #N elsewhere and
+starts nothing. If #N has an active run already, you get
 its status instead.
 
 A run records which session drives it. In any other session, Resume, Publish and Stop on that run ask
 `If that session has ended, take it over?` before they act. The mod can't tell a crashed session from a
 live one, so it asks rather than assumes. The driving session checks every 5 seconds and stops its
-drive when another session stopped or took over its run. A session that ends lets go of its run, but
+drive when another session stopped or took over its run; before a commit, a stash, the push and the pull
+request it checks at once. Resume writes only if the run is still as it read it. A session that ends lets go of its run, but
 `/clear` and `/resume` don't, because the process and the drive go on.
 
 Hand off (`/issue-forge handoff` or `h`) ends this session's drive at once, as Stop does, but keeps the
@@ -119,10 +121,10 @@ step: the run reads *interrupted* everywhere, and `/issue-forge resume <N>` cont
 A stopped run can't be resumed.
 
 Parallel runs share git's refs. A `git fetch`, `git stash` or `git commit` that finds another process
-holding a lock is retried twice. One coverage file can't serve two runs at once, so an `lcovPath`
-outside the run's folder blocks a run while another is being driven: make it relative (and gitignored),
-as this repository's `coverage/issue-forge.lcov` is. When a run starts, finished runs beyond the
-repository's 20 newest are deleted from the store.
+holding a lock is retried twice. One coverage file can't serve two runs at once, so an absolute `lcovPath`
+(wherever it points) blocks a run's baseline and gates while another run is being driven: make it
+relative (and gitignored), as this repository's `coverage/issue-forge.lcov` is. When a run starts, finished runs beyond the
+repository's 20 newest are deleted from the store; their agents stay on the guard's list.
 
 Runs stored by 0.2 or earlier, keyed by the checkout, move to the repository's keys when a session
 first starts in that checkout or in another worktree git lists.

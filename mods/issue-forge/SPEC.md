@@ -1051,3 +1051,42 @@ Where the build differs from the approved text above, and why:
     folders' 0.2 keys in that store were left alone, because the clone's git doesn't list those folders.
   - **Not as planned:** baseline took about 20 s on a Linux disk, so each run spawned its red agent
     before the stop reached it. The stops refused their tools, and both worktrees had no changed files.
+
+## Review: PR #51 (2026-10-15)
+
+The review was `/code-review` at xhigh effort on `74a1ef4`, with Codex's six threads checked against the code. Each fix
+is test-first (red → green). The owner chose (2026-10-15):
+- Esc or Other on the start menu cancels. Only a `claude -p` run, where nobody can answer, starts the
+  typed issue. This reverses the earlier "no answer starts".
+- Fix everything except the `/clear` + reload edge and the efficiency items, which go to one follow-up issue.
+
+| Sev | Finding | Fix |
+|---|---|---|
+| High | Resume wrote the snapshot it read before seconds of `gh` and `git` checks, checking only the id, so a stop from another session (or a second resume) in that window was overwritten (Codex 4278707565). | Resume writes only if the stored run still has the step and driver it read (`isAsRead`); otherwise `#N moved on before it could be resumed`. |
+| Medium | With the focused run finished, a command with no number fell through to the repository's only active run: a second `stop` stopped #44 for good. | The focused run is the command's run, finished or not. The pickRun assertion of the old fall-through changed with it. |
+| Medium | `git push` and `gh pr create` checked only the local stop flag, so a stop from another session waited up to 5 s for the watch. | Both call `stillOwned`. Found while testing: a write dropped by a take-over made the drive re-run the step forever. A dropped write now ends the drive. |
+| Medium | An absolute `lcovPath` inside one run's folder was exempt, so sharing depended on start order, and only preflight checked it (Codex 4278707573). | Any absolute `lcovPath` is shared. The check runs before each coverage run (baseline, gates G and F), so a resume checks it too. |
+| Medium-Low | `recordMade` wrote the branch and folder onto a run another session had taken over (Codex 4278707576). | It skips a taken-over run. |
+| Medium-Low | Pruning deleted from a stale listing, before the claim (Codex 4278707561). | Pruning happens after the claim, and each run is read again and deleted only if it is still the finished run listed (`isPrunable`). The store has no compare-and-set, so the window is narrowed, not closed. |
+| Low | A 0.2 key whose folder ends in `#<digits>` parsed as a 0.3 key (Codex 4278707570). | 0.3 keys are `issue-forge:repo-run:` and `issue-forge:repo-agents:`. Every `issue-forge:run:` key is a 0.2 one. |
+| Low | Pruning deleted a run's agents list, so its agents were no longer refused after a restart. | Agents lists are kept. `restore` loads every agents list of the repository (`repoAgentsKeys`). |
+| Low | Ownership was compared by run id only: after a hand-off and an immediate resume in the same session, the old drive's step in flight committed. | Each drive has a generation. A step carries it, and `stillDriving` and `saveRun` compare it. |
+| Low | Esc on the start menu started the run. | See the owner's choice above. `startAnswer(menu, answer, canAsk)`, where `canAsk` is `session.start`'s `isInteractive`. |
+| Low | A failed migration aborted `restore` before the known agents loaded. | Migration has its own catch. |
+| Low | The command's `argumentHint` lacked `handoff` and `[N]`. | Updated, and `docs/specs/issue-forge.md`'s MVP scope notes 0.3.0. |
+| — | Codex 4278707558: the session id changes on `/clear`, so a run would take itself over. | No merit as stated. The d.ts says `/clear` fires no `session.start`, so the saved id doesn't change. What remains (a reload after `/clear` makes your own run read "elsewhere") is in the follow-up issue. |
+
+**Deferred to a follow-up issue:**
+- After `/clear` and then a reload, your own interrupted run reads "elsewhere".
+- `repoOf` spawns two git processes per command (one call would do).
+- `refreshOthers` reads the store about 25 times every 5 s.
+- The plugin-wide 4 MiB store cap.
+
+The watch tests came after green (`9979c46`, checked by mutation), and that is already recorded.
+
+**Checks:**
+- `claude plugin test mods/issue-forge`: 222 pass.
+- `tsc` is clean, and `claude plugin validate` (the marketplace and issue-forge) passes.
+- `issue-forge-logic.ts`: lines 100%, branches 99.55%. All logic files: 97.81% / 93.82%.
+- Live check (2.1.300, the clone): `/issue-forge 42` was handed off at preflight. `/issue-forge 38` then asked, with Resume #42 and "Stop #42, then start #38". Esc answered `cancelled; nothing started.` and made no worktree, and `stop 42` stopped it. No agent was spawned.
+
