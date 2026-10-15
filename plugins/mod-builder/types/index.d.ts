@@ -50,6 +50,8 @@ export type ModView = {
   gates: Gate[]
   errors: string[]
   failedStage: Stage | null
+  /** Reported by a build before its folder exists: a row with no actions, until a scan finds the folder. */
+  isPlaceholder: boolean
 }
 
 /** A run in flight: which mod, which kind, since when, and how far it has got. */

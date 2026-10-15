@@ -711,6 +711,8 @@ export function viewOf(
     gates: validate?.gates ?? [],
     errors: failedRun?.errors ?? [],
     failedStage,
+    // factsOf never returns facts without a manifest or SPEC, so these are the placeholder's (#19).
+    isPlaceholder: !facts.hasSpec && !facts.hasManifest,
   }
 }
 
@@ -806,6 +808,7 @@ export function demoViewAt(elapsedMs: number, beats: readonly Beat[] = demoTimel
     gates: [],
     errors: testFailed ? DEMO_ERRORS : [],
     failedStage: testFailed ? 'Test' : null,
+    isPlaceholder: false,
   }
 }
 
@@ -1000,6 +1003,50 @@ export function factsOf(read: FolderRead): FileFacts | null {
     archetype: slots.archetype ?? null,
     builtOn: slots.built?.replace(/^Claude Code\s+/i, '') ?? null,
   }
+}
+
+/**
+ * The facts of a mod whose folder is not written yet (#19): nothing found, nothing read. Its row
+ * exists only because a build reported it; the next scan that finds the folder replaces it.
+ */
+export function placeholderFacts(name: string): FileFacts {
+  return {
+    name,
+    hasSpec: false,
+    specHasPlaceholder: false,
+    hasManifest: false,
+    hasHooksJson: false,
+    hasLogic: false,
+    hasTests: false,
+    hasRegister: false,
+    hasReadme: false,
+    readmeHasReaches: false,
+    isListed: false,
+    codeMtimeMs: 0,
+    codeSig: signatureOf([]),
+    firstMtimeMs: 0,
+    lastMtimeMs: 0,
+    archetype: null,
+    builtOn: null,
+    version: null,
+    description: null,
+    isReadmeStale: false,
+    specMtimeMs: 0,
+    logicMtimeMs: 0,
+    readmeMtimeMs: 0,
+    listedVersion: null,
+  }
+}
+
+/**
+ * The mods that get a placeholder row (#19): reported as running and found in no folder. `reports`
+ * are the live ones (see `liveReports`), so a running report the skill abandoned has expired, and a
+ * passed or failed one for a missing folder (a typo) never gets a row.
+ */
+export function placeholderNames(reports: Readonly<Record<string, Reported>>, factsNames: readonly string[]): string[] {
+  return Object.entries(reports)
+    .filter(([name, report]) => report.status === 'running' && !factsNames.includes(name))
+    .map(([name]) => name)
 }
 
 // ── Runs ──────────────────────────────────────────────────────────────────
