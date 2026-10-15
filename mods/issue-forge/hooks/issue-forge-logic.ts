@@ -756,8 +756,8 @@ export function baseRemoteOf(matching: readonly string[]): BaseRemote {
 
 /**
  * Whether `gh repo view <fork> --json isFork,parent` says a fork of `repo`: the parent's owner login and name are
- * `repo`'s, in any case. gh prints no host for the parent, so none is compared: it is the fork's own, which the caller
- * has found to be `repo`'s.
+ * `repo`'s, in any case. gh prints no host for the parent: it is the fork's own, which the caller has found to be
+ * `repo`'s, so `repo`'s host stands in for it.
  */
 export function isForkOf(stdout: string, repo: string): boolean {
   let view: { isFork?: unknown; parent?: { name?: unknown; owner?: { login?: unknown } | null } | null }
@@ -769,13 +769,12 @@ export function isForkOf(stdout: string, repo: string): boolean {
   const login = view?.parent?.owner?.login
   const name = view?.parent?.name
   if (view?.isFork !== true || typeof login !== 'string' || typeof name !== 'string') return false
-  const [, owner, project] = repo.split('/')
-  return `${login}/${name}`.toLowerCase() === `${owner}/${project}`.toLowerCase()
+  return isSameRepo(`${hostOf(repo)}/${login}/${name}`, repo)
 }
 
 /** The owner of a `host/owner/repo`. */
 export function ownerOf(repo: string): string {
-  return repo.split('/').slice(1, 2).join('')
+  return repo.slice(repo.indexOf('/') + 1, repo.lastIndexOf('/'))
 }
 
 /** `gh pr create --head`: `<owner>:<branch>` for a fork's branch (its owner is not the project's), the branch alone otherwise. */
@@ -783,9 +782,14 @@ export function headArg(branch: string, headRepo?: string): string {
   return headRepo === undefined ? branch : `${ownerOf(headRepo)}:${branch}`
 }
 
-/** The remote-tracking ref of the base: the project's remote in a fork clone, origin in every other run. */
+/** The remote a run fetches its base from: the project's in a fork clone, origin in every other run. */
+export function baseRemoteOfRun(run: { baseRemote?: string }): string {
+  return run.baseRemote ?? 'origin'
+}
+
+/** The remote-tracking ref of the base, `<remote>/<base>`. */
 export function baseRefOf(run: { base: string; baseRemote?: string }): string {
-  return `${run.baseRemote ?? 'origin'}/${run.base}`
+  return `${baseRemoteOfRun(run)}/${run.base}`
 }
 
 // ── State (§7.4) ──────────────────────────────────────────────────────────
