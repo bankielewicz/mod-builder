@@ -1673,15 +1673,16 @@ export type RunPick = { kind: 'run'; run: Run } | { kind: 'several'; runs: Run[]
 export type PickQuery = { issue: number | null; focus: number | null; root: string; needActive: boolean }
 
 /**
- * Which run a command means: the issue named; else the focused one; else the repository's only active run.
- * Several active runs are listed. For status, the newest run started from this checkout comes last.
+ * Which run a command means: the issue named; else the focused one (finished or not); else the repository's only
+ * active run. Several active runs are listed. For status, the newest run started from this checkout comes last.
  */
 export function pickRun(runs: readonly Run[], q: PickQuery): RunPick {
   if (q.issue !== null) {
     const named = runs.find(r => r.issue === q.issue)
     return named ? { kind: 'run', run: named } : { kind: 'none' }
   }
-  const focused = q.focus === null ? undefined : runs.find(r => r.issue === q.focus && (!q.needActive || isActive(r)))
+  // The pane's run, finished or not: a command never falls through to another run while the pane shows one.
+  const focused = q.focus === null ? undefined : runs.find(r => r.issue === q.focus)
   if (focused) return { kind: 'run', run: focused }
   const active = newestFirst(runs.filter(isActive))
   if (active.length === 1 && active[0]) return { kind: 'run', run: active[0] }
