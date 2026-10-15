@@ -52,8 +52,8 @@ const hasWarnedNarrow = atom({ plugin: 'mod-builder', key: 'hasWarnedNarrow' } a
 type Engine = EngineInterface
 type StoredResults = Record<string, Lab.Results>
 
-// Module state: options, timer handles and in-flight guards only. A reload
-// starts it afresh; what must survive lives in atoms and $.store.
+// Module state: options, timer handles, in-flight guards and write chains only.
+// A reload starts it afresh; what must survive lives in atoms and $.store.
 let configuredDir = ''
 let autoOpen = false
 let autoRerun = true
@@ -62,7 +62,10 @@ let lastTickMs = 0
 let scanning: Promise<void> | null = null
 let isScanQueued = false
 let isQueuedAnnounced = false
-const factsByMod = new Map<string, Lab.FileFacts>()
+// Writes to the results and generations in $.store, in order (Change 0.2.8).
+let storeChain: Promise<void> = Promise.resolve()
+// What the last finished scan read; a scan swaps in its own once it has read every folder (Change 0.2.8).
+let factsByMod = new Map<string, Lab.FileFacts>()
 // Logging (Change 0.2.2): the level, this session's lines, its file once known, and writes in order.
 let logLevel: Lab.LogLevel = 'normal'
 let logBuffer: Lab.LogBuffer = Lab.EMPTY_LOG
@@ -273,6 +276,8 @@ async function nestedFiles($: Engine, at: string, folder: string, entries: reado
   return found.flat()
 }
 
+// ── Store ─────────────────────────────────────────────────────────────────
+
 /**
  * The store key of one mods folder's records. One install serves every folder the working
  * directory leads to, and $.store is shared between sessions, so a mod's name alone is not enough.
@@ -294,13 +299,34 @@ const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
 
 /** When each mod's current edit started (a build generation), for mods being edited. */
 type Generation = { since: number; fromVersion: string | null }
-const generationsOf = async ($: Engine, modsDir: string): Promise<Record<string, Generation>> =>
+/** As stored: an older version wrote the bare start time. */
+type StoredGenerations = Record<string, number | Generation>
+const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
   Object.fromEntries(
-    Object.entries(((await storedOf($, GENERATIONS_KEY, modsDir)) ?? {}) as Record<string, number | Generation>).map(([mod, gen]) => [
-      mod,
-      typeof gen === 'number' ? { since: gen, fromVersion: null } : gen,
-    ]),
+    Object.entries(stored).map(([mod, gen]) => [mod, typeof gen === 'number' ? { since: gen, fromVersion: null } : gen]),
   )
+const generationsOf = async ($: Engine, modsDir: string): Promise<Record<string, Generation>> =>
+  generationsFrom(((await storedOf($, GENERATIONS_KEY, modsDir)) ?? {}) as StoredGenerations)
+
+/**
+ * Sets one folder's records under `base` to `change` of their current value. Updates run one at
+ * a time, each reading the key in its turn, so two callers never overwrite each other's change.
+ * This orders this session's writes only: $.store is one file per plugin, and a second session's
+ * write can still race. A failed update rejects for its caller; the next one runs regardless.
+ */
+function updateStore<T>($: Engine, base: string, modsDir: string, change: (current: T) => T): Promise<void> {
+  storeChain = storeChain
+    .catch(() => undefined)
+    .then(async () => {
+      await $.store.set(keyOf(base, modsDir), change(((await storedOf($, base, modsDir)) ?? {}) as T))
+    })
+  return storeChain
+}
+
+/** Updates one folder's build generations, as `updateStore` does, from their current value. */
+function updateGenerations($: Engine, modsDir: string, change: (current: Record<string, Generation>) => Record<string, Generation>): Promise<void> {
+  return updateStore($, GENERATIONS_KEY, modsDir, (stored: StoredGenerations) => change(generationsFrom(stored)))
+}
 
 // ── Scanning ──────────────────────────────────────────────────────────────
 
@@ -344,11 +370,12 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const cwd = await cwdOf($)
   const inFlight = await read($, runs)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
-  factsByMod.clear()
+  const found = new Map<string, Lab.FileFacts>()
   for (const folder of folders) {
     const facts = await modFactsOf($, dir, folder.name, marketplace)
-    if (facts) factsByMod.set(facts.name, facts)
+    if (facts) found.set(facts.name, facts)
   }
+  factsByMod = found
   // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
   const freshIdOf = (name: string): string => `${dir}/${name}`
   const judge = (freshIds: readonly string[]): ModView[] =>
@@ -371,9 +398,13 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   // An edit's generation ends when every stage is green again.
   const finished = next.filter(view => Lab.isGreen(view.lights) && generations[view.name] !== undefined)
   if (finished.length) {
-    const remaining = { ...generations }
-    for (const view of finished) delete remaining[view.name]
-    await $.store.set(keyOf(GENERATIONS_KEY, dir), remaining)
+    // Drop only the generations this scan judged: one begun since is a new edit, and stays.
+    await updateGenerations($, dir, remaining => {
+      for (const view of finished) {
+        if (remaining[view.name]?.since === generations[view.name]?.since) delete remaining[view.name]
+      }
+      return remaining
+    })
   }
   await update($, judgedDir, () => dir)
   await update($, views, () => next)
@@ -549,10 +580,12 @@ async function run($: Engine, mod: string, kind: RunKind, modsDir: string): Prom
   }
   if (codeSig !== undefined) result = { ...result, codeSig }
   logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
-  const results = await resultsOf($, modsDir)
+  // A refused write loses this result, but the run still ends and says how it went.
   const resultsKey = keyOf(RESULTS_KEY, modsDir)
-  await $.store.set(resultsKey, { ...results, [mod]: { ...results[mod], [kind]: result } })
-  logEvent($, 'debug', 'store.set', resultsKey, { mod, kind })
+  await updateStore($, RESULTS_KEY, modsDir, (stored: StoredResults) => ({ ...stored, [mod]: { ...stored[mod], [kind]: result } })).then(
+    () => logEvent($, 'debug', 'store.set', resultsKey, { mod, kind }),
+    (error: unknown) => logCaught($, 'store.set', error, 'normal', { key: resultsKey, mod, kind }),
+  )
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
   $.ui.toast(Lab.toastOfRun(mod, result))
   await scan($, true)
@@ -805,9 +838,11 @@ export const register: Register = (on, options) => {
       known = (await read($, views)).find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
-      const generationsKey = keyOf(GENERATIONS_KEY, modsDir)
-      await $.store.set(generationsKey, { ...(await generationsOf($, modsDir)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
-      logEvent($, 'debug', 'store.set', generationsKey, { mod, edit: 'started' })
+      // The version on disk as the edit begins: a bump may land after the last scan.
+      const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
+      const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
+      await updateGenerations($, modsDir, all => ({ ...all, [mod]: { since: now, fromVersion } }))
+      logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {
