@@ -15,10 +15,17 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
+const DATA = '/home/u/.claude/duet-data'
+/** The shared log that sessions wrote before each kept its own. */
+const LEGACY_LOG = `${DATA}/runs.jsonl`
+const logOf = (session: string) => `${DATA}/sessions/${session}/runs.jsonl`
+const runLine = (provider: 'codex' | 'claude', type: string, id = 'x') =>
+  JSON.stringify({ id, at: 0, provider, kind: 'agent', type, model: '', ms: 1000, tokens: 100, ok: true }) + '\n'
+
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -28,10 +35,12 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('command.register', () => ({ value: undefined }))
   // `cwd`: where the session started, below the repository root unless it is the root itself.
   on('session.cwd', () => ({ value: o.cwd ?? '/w' }))
-  on('session.id', () => ({ value: 's1' }))
+  // `noSessionId`: the id can't be read, as when the engine rejects `$.session.id()`.
+  on('session.id', () => (o.noSessionId ? { deny: 'no session id' } : { value: 's1' }))
   // `denyEnv`, read at call time: that variable's lookup fails, as a broken engine call would.
   on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   // `hold`: a read stays in flight for that many promise turns, and `maxReads` counts the most in flight at once.
+  // `missingText`: what reading a missing file rejects with, for an engine that words it without ENOENT.
   let reading = 0
   const failedOnce = new Set<string>()
   on('fs.read', ($: any, e: any) => {
@@ -41,7 +50,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     // fails as one past the process's open-file limit does, and later reads succeed.
     const isFlaky = o.flaky?.includes(e.path) && !failedOnce.has(e.path)
     if (isFlaky) failedOnce.add(e.path)
-    const answer = text === undefined ? { deny: 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
+    const answer = text === undefined ? { deny: o.missingText ?? 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
     if (!o.hold) return answer
     reading++
     seen.maxReads = Math.max(seen.maxReads, reading)
@@ -144,7 +153,8 @@ describe('routing', () => {
     expect(seen.stdin[0]).toContain('Task ID: d1')
     expect(seen.stdin[0]).toContain('List callers of parseConfig.')
     expect(seen.env[0]!.ANTHROPIC_API_KEY).toBe('')
-    expect(seen.files['/home/u/.claude/duet-data/runs.jsonl']).toContain('"provider":"codex"')
+    expect(seen.files[logOf('s1')] ?? '').toContain('"provider":"codex"')
+    expect(seen.files[LEGACY_LOG]).toBeUndefined()
   })
 
   test("a routed call blanks cloud-provider credentials in Codex's env and leaves what Codex needs", { options: { codexAgents: 'general-purpose', codexRunMode: 'wait' } }, async ($, on) => {
@@ -352,7 +362,8 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     await ($ as any).turn.complete(turn)
     await ($ as any).turn.complete({ ...turn, turnId: 't2' })
     await seen.clock.settle()
-    const rows = (seen.files['/home/u/.claude/duet-data/runs.jsonl'] ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))
+    expect(seen.files[LEGACY_LOG]).toBeUndefined()
+    const rows = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))
     expect(rows.length).toBe(1)
     expect(rows[0].provider).toBe('claude')
     expect(rows[0].type).toBe('Explore')
@@ -1208,5 +1219,142 @@ describe('issue 6: a running fallback run says the engine stops it at 10 minutes
     await seen.clock.advance(1000)
     expect(seen.timeouts[0]).toBe(600_000)
     expect(note).toBeDefined()
+  })
+})
+
+describe('issue 7: each session keeps its own run log', () => {
+  const OPTS = { codexAgents: 'general-purpose', codexRunMode: 'wait' } as const
+  const stats = ($: any) => $.command.run({ command: 'duet', args: 'stats', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const rowOf = (text: string, key: string) => text.split('\n').find(l => l.startsWith(key)) ?? ''
+
+  test('a finished run leaves the legacy log and another session\'s log byte for byte as they were', { options: OPTS }, async ($, on) => {
+    const seen = engine(on)
+    const legacy = runLine('claude', 'Plan', 'legacy')
+    const other = runLine('codex', 'Explore', 'other')
+    seen.files[LEGACY_LOG] = legacy
+    seen.files[logOf('s2')] = other
+    await start($)
+    await $.tool.call(call() as never)
+    expect(seen.files[LEGACY_LOG]).toBe(legacy)
+    expect(seen.files[logOf('s2')]).toBe(other)
+    const own = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean)
+    expect(own.length).toBe(1)
+    expect(JSON.parse(own[0] ?? '{}').provider).toBe('codex')
+  })
+
+  test('the 2000-line cap is per session: this session\'s log drops its oldest line and the other session\'s keeps all of its own', { options: OPTS }, async ($, on) => {
+    const seen = engine(on)
+    const other = runLine('codex', 'Explore', 'other')
+    seen.files[logOf('s1')] = Array.from({ length: 2000 }, (_, i) => runLine('claude', 'Plan', `old${i}`)).join('')
+    seen.files[logOf('s2')] = other
+    await start($)
+    await $.tool.call(call() as never)
+    const own = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean)
+    expect(own.length).toBe(2000)
+    expect(JSON.parse(own[0] ?? '{}').id).toBe('old1')
+    expect(JSON.parse(own[own.length - 1] ?? '{}').provider).toBe('codex')
+    expect(seen.files[logOf('s2')]).toBe(other)
+  })
+
+  test('sessions whose id can\'t be read share sessions/unknown/runs.jsonl, never the legacy file', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { noSessionId: true })
+    await start($)
+    await $.tool.call(call() as never)
+    expect(seen.files[LEGACY_LOG]).toBeUndefined()
+    expect(seen.files[logOf('unknown')] ?? '').toContain('"provider":"codex"')
+  })
+
+  test('/duet stats counts the legacy log, other sessions\' logs and this session\'s, and skips a session with no log or an unreadable one', { options: OPTS, }, async ($, on) => {
+    const seen = engine(on, { unreadable: [logOf('s3')] })
+    seen.files[LEGACY_LOG] = runLine('codex', 'Explore')
+    seen.files[logOf('s2')] = runLine('claude', 'Explore') + runLine('claude', 'Explore')
+    seen.files[logOf('s3')] = runLine('claude', 'Explore')
+    seen.files[`${DATA}/sessions/s4/review-d1.md`] = 'a session that logged nothing'
+    await start($)
+    await $.tool.call(call() as never)
+    const { text } = await stats($)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+2\s/)
+    expect(rowOf(text, 'codex · Explore')).toMatch(/^codex · Explore\s+1\s/)
+    expect(rowOf(text, 'codex · general-purpose')).toMatch(/^codex · general-purpose\s+1\s/)
+  })
+
+  test('/duet stats works with sessions\' logs alone, when no legacy log exists', { options: OPTS }, async ($, on) => {
+    const seen = engine(on)
+    seen.files[logOf('s2')] = runLine('claude', 'Explore')
+    await start($)
+    await $.tool.call(call() as never)
+    const { text } = await stats($)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
+    expect(rowOf(text, 'codex · general-purpose')).toMatch(/^codex · general-purpose\s+1\s/)
+  })
+
+  test('PR #67 review (Codex P2): /duet stats reads the session logs at most 16 at a time and counts every one', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { hold: () => 3 })
+    for (let i = 0; i < 40; i++) seen.files[logOf(`p${i}`)] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p.startsWith(`${DATA}/sessions/p`)).length).toBe(40)
+    expect(seen.maxReads).toBe(16)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+40\s/)
+  })
+
+  test('PR #67 review (Codex P2): a session log whose read fails once, as past the open-file limit, is read again and counted', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { flaky: [logOf('s2')] })
+    seen.files[logOf('s2')] = runLine('claude', 'Explore') + runLine('claude', 'Explore')
+    seen.files[logOf('s3')] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p === logOf('s2')).length).toBe(2)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+3\s/)
+  })
+
+  test('PR #67 review (Codex P2): a session folder with no log, or no legacy log, is read once: a missing file is not retried', { options: OPTS }, async ($, on) => {
+    const seen = engine(on)
+    seen.files[`${DATA}/sessions/s4/review-d1.md`] = 'a session that logged nothing'
+    seen.files[logOf('s2')] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p === logOf('s4')).length).toBe(1)
+    expect(seen.reads.filter(p => p === LEGACY_LOG).length).toBe(1)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
+  })
+
+  test('PR #67 review: a run never overwrites a session log it could not read (no permission): the log keeps every line', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { unreadable: [logOf('s1')] })
+    const kept = runLine('claude', 'Plan', 'a') + runLine('claude', 'Plan', 'b') + runLine('claude', 'Plan', 'c')
+    seen.files[logOf('s1')] = kept
+    await start($)
+    await $.tool.call(call() as never)
+    expect(seen.files[logOf('s1')]).toBe(kept)
+  })
+
+  test('PR #67 review: a session log whose read fails once, as past the open-file limit, is read again and the run appended', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { flaky: [logOf('s1')] })
+    seen.files[logOf('s1')] = runLine('claude', 'Plan', 'a') + runLine('claude', 'Plan', 'b') + runLine('claude', 'Plan', 'c')
+    await start($)
+    await $.tool.call(call() as never)
+    const own = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean)
+    expect(own.map(l => JSON.parse(l).id).slice(0, 3)).toEqual(['a', 'b', 'c'])
+    expect(own.length).toBe(4)
+    expect(JSON.parse(own[3] ?? '{}').provider).toBe('codex')
+  })
+
+  test('PR #67 review: a session\'s first run starts its log even when the engine words a missing file without ENOENT', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { missingText: 'no such file or directory' })
+    await start($)
+    await $.tool.call(call() as never)
+    const own = (seen.files[logOf('s1')] ?? '').split('\n').filter(Boolean)
+    expect(own.length).toBe(1)
+    expect(JSON.parse(own[0] ?? '{}').provider).toBe('codex')
+  })
+
+  test('PR #67 review: /duet stats reads a missing log once even when the engine words it without ENOENT', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { missingText: 'no such file or directory' })
+    seen.files[`${DATA}/sessions/s4/review-d1.md`] = 'a session that logged nothing'
+    seen.files[logOf('s2')] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p === logOf('s4')).length).toBe(1)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
   })
 })
