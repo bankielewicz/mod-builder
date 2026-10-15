@@ -45,6 +45,7 @@ const judged = atom({ plugin: 'mod-builder', key: 'judged' } as const, { modsDir
 const selected = atom({ plugin: 'mod-builder', key: 'selected' } as const, null)
 const runs = atom({ plugin: 'mod-builder', key: 'runs' } as const, [])
 const reported = atom({ plugin: 'mod-builder', key: 'reported' } as const, {})
+const building = atom({ plugin: 'mod-builder', key: 'building' } as const, {})
 const frame = atom({ plugin: 'mod-builder', key: 'frame' } as const, { n: 0, now: 0 })
 const demoStartedAt = atom({ plugin: 'mod-builder', key: 'demoStartedAt' } as const, null)
 const readme = atom({ plugin: 'mod-builder', key: 'readme' } as const, null)
@@ -387,8 +388,11 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   factsByMod = found
   // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
   const freshIdOf = (name: string): string => `${dir}/${name}`
-  const judge = (freshIds: readonly string[]): ModView[] =>
-    [...factsByMod.values()].map(facts =>
+  // A build that reported a mod before writing its folder gets a row of its own until the folder is found (#19).
+  const builds = Lab.liveReports((await read($, building))[dir] ?? {}, await $.clock.now())
+  const placeholders = Lab.placeholderNames(builds, [...found.keys()], dir)
+  const judge = (freshIds: readonly string[]): ModView[] => [
+    ...[...factsByMod.values()].map(facts =>
       Lab.viewOf(
         facts,
         results[facts.name] ?? {},
@@ -399,7 +403,20 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         generations[facts.name]?.fromVersion ?? null,
         Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
       ),
-    )
+    ),
+    ...placeholders.map(name =>
+      Lab.viewOf(
+        Lab.placeholderFacts(name),
+        {},
+        inFlight.filter(one => one.mod === name),
+        builds[name] ?? null,
+        false,
+        null,
+        null,
+        Lab.displayPathOf(`${dir}/${name}`, cwd),
+      ),
+    ),
+  ]
   const newlyGreen = await announceGreen($, judge([]), isAnnounced, dir)
   const marks = await read($, fresh)
   const kept = Lab.freshIdsOf(marks, legacyDirOf($))
@@ -516,16 +533,24 @@ async function tick($: Engine): Promise<void> {
     void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
   }
 
+  // A placeholder whose running report expired has no folder for a later scan to correct, so rescan now (#19).
+  const allBuilds = await read($, building)
+  const shown = await read($, judged)
+  const builds = Lab.liveReports(allBuilds[shown.modsDir ?? ''] ?? {}, now)
+  if (shown.views.some(view => view.isPlaceholder && builds[view.name]?.status !== 'running')) {
+    void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
+  }
+
   // runs is read again here: a run may have started during the awaits above.
   const isLive =
     (await liveRunsOf($)).length > 0 ||
     (await read($, demoStartedAt)) !== null ||
-    Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
+    (await hasRunningReport($, now))
   if (!isLive) {
     clock?.cancel()
     clock = null
-    // A run that started after that read found the clock still set and didn't start one: start it again.
-    if ((await liveRunsOf($)).length) startClock($)
+    // A run or report that started after those reads found the clock still set and didn't start one: start it again.
+    if ((await liveRunsOf($)).length || (await hasRunningReport($, now))) startClock($)
   }
 }
 
@@ -543,6 +568,12 @@ class RunTimeout extends Error {}
 const timeoutOf = (): RunTimeout => new RunTimeout(Lab.timeoutText(runLimit))
 
 /** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
+/** Whether any build still has a live running report, read now rather than from an earlier copy. */
+async function hasRunningReport($: Engine, now: number): Promise<boolean> {
+  const reports = [Lab.liveReports(await read($, reported), now), ...Object.values(await read($, building)).map(builds => Lab.liveReports(builds, now))]
+  return reports.some(all => Object.values(all).some(report => report.status === 'running'))
+}
+
 async function liveRunsOf($: Engine): Promise<Run[]> {
   return Lab.liveRuns(await read($, runs), await $.clock.now(), runLimit)
 }
@@ -864,6 +895,8 @@ export const register: Register = (on, options) => {
     await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
+    // A running report kept from before a reload has no clock in this module: start one, so it can expire (#19).
+    if (await hasRunningReport($, await $.clock.now()).catch(() => false)) startClock($)
     return next(e)
   })
 
@@ -938,7 +971,8 @@ export const register: Register = (on, options) => {
     if ((await read($, judged)).modsDir !== modsDir) await scan($, false)
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
     const known = (await read($, judged)).views.find(view => view.name === mod)
-    if (Lab.startsGeneration(report, known?.lights ?? null)) {
+    // A mod with no folder yet is being built, not edited.
+    if (Lab.startsGeneration(report, known && !known.isPlaceholder ? known.lights : null)) {
       // The version on disk as the edit begins (a bump may land after the last scan); a repeat keeps its own.
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
@@ -953,7 +987,8 @@ export const register: Register = (on, options) => {
       })
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
-    await update($, reported, all => ({ ...all, [mod]: report }))
+    await update($, reported, all => ({ ...all, [mod]: { ...report, dir: modsDir } }))
+    await update($, building, all => Lab.withBuilding(all, modsDir, mod, { ...report, dir: modsDir }, now))
     if (report.status === 'running') {
       // Follow the active build, unless a README is open in the pane.
       if (!(await read($, readme))) await update($, selected, () => mod)
@@ -1024,6 +1059,8 @@ export const register: Register = (on, options) => {
     const { n, now } = await read($, frame)
     const pick = await read($, selected)
     const current = all.find(view => view.name === pick) ?? all[0] ?? null
+    // A mod reported before its folder exists: nothing to run or read yet (#19).
+    const isPlaceholder = current?.isPlaceholder === true
     const doc = await read($, readme)
     // The folder `all` was judged in: what the header names and the buttons act on.
     const shownDir = await shownModsDir($)
@@ -1076,12 +1113,10 @@ export const register: Register = (on, options) => {
           </Text>
         ) : (
           <Text>
-            {Lab.summaryPartsOf(counts).map((part, at) => (
-              <Text key={`sum-${at}`}>
-                {at > 0 && dim(' · ')}
-                {counts.mods ? part : dim(part)}
-              </Text>
-            ))}
+            {Lab.summaryPartsOf(counts).map((part, at) => [
+              at > 0 && dim(' · ', `sum-sep-${at}`),
+              <Text key={`sum-${at}`}>{counts.mods ? part : dim(part)}</Text>,
+            ])}
           </Text>
         )}
         {layout !== 'compact' &&
@@ -1277,8 +1312,12 @@ export const register: Register = (on, options) => {
       return frameOf(
         [...rows, blank('mobile-gap')],
         buttonRows([
-          [button('validate', 'v', 'Validate', press.run('Validate'), { busy: isRunning('Validate') }), button('test', 't', 'Test', press.run('Test'), { busy: isRunning('Test') })],
-          [button('typecheck', 'k', 'Type-check', press.run('Typecheck'), { busy: isRunning('Typecheck') }), button('readme', 'o', 'README', press.readme)],
+          ...(isPlaceholder
+            ? []
+            : [
+                [button('validate', 'v', 'Validate', press.run('Validate'), { busy: isRunning('Validate') }), button('test', 't', 'Test', press.run('Test'), { busy: isRunning('Test') })],
+                [button('typecheck', 'k', 'Type-check', press.run('Typecheck'), { busy: isRunning('Typecheck') }), button('readme', 'o', 'README', press.readme)],
+              ]),
           [button('next', 'j', 'Next', press.next), button('prev', 'p', 'Prev', press.prev)],
           [button('new', 'n', 'New mod', press.newMod), button('demo', 'd', 'Demo', press.demo, { lit: isDemoRunning })],
         ]),
@@ -1306,6 +1345,7 @@ export const register: Register = (on, options) => {
       // Read the working directory now, not at the last scan, so a /cd shows at once and matches what F writes.
       const shown = current.isDemo ? current.path : `${Lab.displayPathOf(`${shownDir}/${current.name}`, await cwdOf($))}/`
       const where = [current.version && (current.isDemo ? current.version : `v${current.version}`), shown].filter(Boolean).join(' · ')
+      const note = isPlaceholder ? `folder not written yet: ${Lab.shortPath(shownDir)}/${current.name}/` : null
       detail.push(
         <Box key="d-head" justifyContent="space-between">
           <Text>
@@ -1327,6 +1367,13 @@ export const register: Register = (on, options) => {
         detail.push(
           <Text key="d-desc" color={COLOR.dim} wrap="truncate">
             {current.description}
+          </Text>,
+        )
+      }
+      if (note) {
+        detail.push(
+          <Text key="d-note" color={COLOR.dim} wrap="truncate">
+            {note}
           </Text>,
         )
       }
@@ -1452,21 +1499,25 @@ export const register: Register = (on, options) => {
     return frameOf(
       [...(columns ? [columns] : []), ...rows, ...detail],
       buttonRows([
-        [
-          button('validate', 'v', 'Validate', press.run('Validate'), { busy: isRunning('Validate') || isDemoPick }),
-          button('test', 't', 'Test', press.run('Test'), { busy: isRunning('Test') || isDemoPick }),
-          ...(layout === 'full'
-            ? [button('typecheck', 'k', 'Type-check', press.run('Typecheck'), { busy: isRunning('Typecheck') || isDemoPick })]
-            : []),
-          button('readme', 'o', 'README', press.readme),
-        ],
+        ...(isPlaceholder
+          ? []
+          : [
+              [
+                button('validate', 'v', 'Validate', press.run('Validate'), { busy: isRunning('Validate') || isDemoPick }),
+                button('test', 't', 'Test', press.run('Test'), { busy: isRunning('Test') || isDemoPick }),
+                ...(layout === 'full'
+                  ? [button('typecheck', 'k', 'Type-check', press.run('Typecheck'), { busy: isRunning('Typecheck') || isDemoPick })]
+                  : []),
+                button('readme', 'o', 'README', press.readme),
+              ],
+            ]),
         [
           ...(all.length > 1 ? [button('next', 'j', 'Next', press.next), button('prev', 'p', 'Prev', press.prev)] : []),
           button('new', 'n', 'New mod', press.newMod),
           button('demo', 'd', 'Demo', press.demo, { lit: isDemoRunning }),
         ],
       ]),
-      `V validate · T test${layout === 'full' ? ' · K types' : ''} · O readme${all.length > 1 ? ' · J/P move' : ''} · N new · D demo${current?.failedStage && !current.isDemo ? ' · F fix' : ''}`,
+      `${isPlaceholder ? '' : `V validate · T test${layout === 'full' ? ' · K types' : ''} · O readme · `}${all.length > 1 ? 'J/P move · ' : ''}N new · D demo${current?.failedStage && !current.isDemo ? ' · F fix' : ''}`,
     )
   })
 

@@ -106,6 +106,16 @@ const modsDirFor = (configured: string, cwd: string | null, existing: readonly s
     fallback,
   )
 
+/** The placeholder rules (#19), read the same way: a missing rule fails its assertion, not the import. */
+type ReportedByMod = Parameters<typeof liveReports>[0]
+const placeholderFacts = (name: string): FileFacts | undefined =>
+  (Logic as unknown as { placeholderFacts?: (name: string) => FileFacts }).placeholderFacts?.(name)
+type BuildingByDir = Record<string, ReportedByMod>
+const withBuilding = (all: BuildingByDir, dir: string, mod: string, report: ReportedByMod[string], now: number): BuildingByDir | undefined =>
+  (Logic as unknown as { withBuilding?: (all: BuildingByDir, dir: string, mod: string, report: ReportedByMod[string], now: number) => BuildingByDir }).withBuilding?.(all, dir, mod, report, now)
+const placeholderNames = (reports: ReportedByMod, factsNames: readonly string[], dir?: string): string[] | undefined =>
+  (Logic as unknown as { placeholderNames?: (reports: ReportedByMod, factsNames: readonly string[], dir?: string) => string[] }).placeholderNames?.(reports, factsNames, dir)
+
 const EMPTY: FileFacts = {
   name: 'git-branch',
   hasSpec: false,
@@ -786,6 +796,94 @@ describe('logicMtimeMs sees nested logic and test files (#15)', () => {
     const facts = factsOf({ ...read, nested: [counted, ...ignored] })!
     expect(facts.logicMtimeMs).toBe(500)
     expect(facts.codeMtimeMs).toBe(900)
+  })
+})
+
+describe('a mod is listed as soon as a build reports it, before its folder exists (#19)', () => {
+  const running = (stage: 'Spec' | 'Logic', since = 0): ReportedByMod[string] => ({ stage, status: 'running', since })
+  const finished = (status: 'passed' | 'failed'): ReportedByMod[string] => ({ stage: 'Spec', status, since: 0 })
+
+  test('placeholderNames: a name with a running report and no facts gets a row; one with facts does not', () => {
+    expect(placeholderNames({ 'new-mod': running('Spec') }, ['git-branch'])).toEqual(['new-mod'])
+    expect(placeholderNames({ 'new-mod': running('Spec') }, [])).toEqual(['new-mod'])
+    expect(placeholderNames({ 'git-branch': running('Logic'), 'new-mod': running('Spec') }, ['git-branch'])).toEqual(['new-mod'])
+    expect(placeholderNames({ a: running('Spec'), b: running('Logic') }, ['git-branch'])?.slice().sort()).toEqual(['a', 'b'])
+    expect(placeholderNames({}, ['git-branch'])).toEqual([])
+  })
+
+  test('placeholderNames: a passed or failed report for a missing folder gets no row, so a typo in an old report never lingers', () => {
+    expect(placeholderNames({ typo: finished('passed') }, ['git-branch'])).toEqual([])
+    expect(placeholderNames({ typo: finished('failed') }, ['git-branch'])).toEqual([])
+    expect(placeholderNames({ typo: finished('passed'), 'new-mod': running('Spec') }, [])).toEqual(['new-mod'])
+  })
+
+  test('placeholderNames: a running report older than REPORT_TTL_MS gets no row, once liveReports has dropped it', () => {
+    const reports = { 'new-mod': running('Spec', 0) }
+    expect(placeholderNames(liveReports(reports, REPORT_TTL_MS - 1), [])).toEqual(['new-mod'])
+    expect(placeholderNames(liveReports(reports, REPORT_TTL_MS), [])).toEqual([])
+  })
+
+  test('placeholderNames: given a mods folder, only reports made in that folder get a row (Codex P2, PR #80)', () => {
+    const inOne = { ...running('Spec'), dir: '/w/one/mods' }
+    expect(placeholderNames({ 'new-mod': inOne }, [], '/w/one/mods')).toEqual(['new-mod'])
+    expect(placeholderNames({ 'new-mod': inOne }, [], '/w/two/mods')).toEqual([])
+    expect(placeholderNames({ 'new-mod': running('Spec') }, [], '/w/two/mods')).toEqual([])
+  })
+
+  test('withBuilding: running reports are kept per mods folder and name, so a same-named build elsewhere leaves this one (Codex P2, PR #80 round 4)', () => {
+    const one = withBuilding({}, '/w/one/mods', 'new-mod', running('Spec', 100), 100)
+    expect(one).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) } })
+    const both = withBuilding(one ?? {}, '/w/two/mods', 'new-mod', running('Spec', 200), 200)
+    expect(both).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) }, '/w/two/mods': { 'new-mod': running('Spec', 200) } })
+    // A finished report ends only its own folder's build.
+    expect(withBuilding(both ?? {}, '/w/two/mods', 'new-mod', { ...finished('passed'), since: 300 }, 300)).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) } })
+    // Expired running entries are dropped on the way in, with any folder left empty.
+    expect(withBuilding(both ?? {}, '/w/two/mods', 'other', running('Logic', 100 + REPORT_TTL_MS), 100 + REPORT_TTL_MS)).toEqual({ '/w/two/mods': { 'new-mod': running('Spec', 200), other: running('Logic', 100 + REPORT_TTL_MS) } })
+  })
+
+  test('placeholderFacts: the facts of a folder with nothing in it, under the reported name', () => {
+    const facts = placeholderFacts('new-mod')
+    expect(facts).toBeDefined()
+    expect(facts?.name).toBe('new-mod')
+    const flags = Object.entries(facts ?? {}).filter(([key]) => /^has[A-Z]/.test(key))
+    expect(flags.map(([key]) => key).sort()).toEqual(Object.keys(EMPTY).filter(key => /^has[A-Z]/.test(key)).sort())
+    expect(flags.filter(([, value]) => value !== false)).toEqual([])
+    expect(facts).toMatchObject({
+      specHasPlaceholder: false,
+      readmeHasReaches: false,
+      isListed: false,
+      isReadmeStale: false,
+      codeMtimeMs: 0,
+      firstMtimeMs: 0,
+      lastMtimeMs: 0,
+      specMtimeMs: 0,
+      logicMtimeMs: 0,
+      readmeMtimeMs: 0,
+      archetype: null,
+      builtOn: null,
+      version: null,
+      description: null,
+      listedVersion: null,
+    })
+  })
+
+  test('a placeholder view lights the reported stage running and leaves the rest pending', () => {
+    const facts = placeholderFacts('new-mod')
+    expect(facts?.name).toBe('new-mod')
+    const spec = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
+    expect(spec.name).toBe('new-mod')
+    expect(spec.lights).toEqual(STAGES.map(stage => (stage === 'Spec' ? 'running' : 'pending')))
+    const logic = viewOf(facts!, {}, [], running('Logic'), false, null, null, 'mods/new-mod')
+    expect(logic.lights).toEqual(STAGES.map(stage => (stage === 'Logic' ? 'running' : 'pending')))
+  })
+
+  test('countsOf counts a placeholder as building', () => {
+    const facts = placeholderFacts('new-mod')
+    expect(facts?.name).toBe('new-mod')
+    const placeholder = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
+    const green = viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')
+    expect(countsOf([green, placeholder])).toEqual({ mods: 2, green: 1, building: 1, failing: 0, stale: 0 })
+    expect(summaryOf(countsOf([green, placeholder]))).toBe('2 mods · 1 green · 1 building')
   })
 })
 
