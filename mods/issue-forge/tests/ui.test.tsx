@@ -1368,7 +1368,8 @@ describe('parallel runs (Change 0.3.0)', () => {
   test("session.end clears this session's driver, not another's, and not on /clear (the process goes on)", async ($, on) => {
     // #40 is blocked with a driver left by another session: it isn't running, so it doesn't share the LCOV file.
     const store: Record<string, unknown> = { [key(40)]: elsewhere40({ step: 'blocked', blocked: { at: 'green', reason: 'r', next: 'n' } }) }
-    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    // #40 is still active, so starting #16 asks: Start (Esc would now cancel).
+    const w = engine(on, { answer: START16, baseProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
     await start($)
     await run($, '16')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
