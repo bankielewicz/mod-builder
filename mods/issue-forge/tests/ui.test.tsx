@@ -1596,8 +1596,6 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
   const REPO_VIEW = ['gh', 'repo', 'view', '--json', 'nameWithOwner,url']
   const BUT = 'but gh sends issues and pull requests to o/r'
   const NEXT_CLONE = 'work from a clone whose origin is o/r (forks: #26)'
-  /** Keeps $.agent.spawn pending, so the drive stays at red (under test a spawn never gets an agent id). */
-  const held = () => new Promise<void>(() => undefined)
   /** The store the mod writes to, readable here. */
   const watched = (): Record<string, unknown> => ({})
   const WATCH = { when: () => false, until: Promise.resolve() }
