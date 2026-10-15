@@ -1831,6 +1831,25 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
   })
 
+  test('a number start that blocks after origin passes is pinned to its repository, and resume keeps it (PR #68 review 2)', async ($, on) => {
+    const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toStartWith('o/r#16\n')
+    expect((await run($, 'resume')).text).toBe('resuming #16 at preflight.')
+    await until(w, () => w.toasts.filter(t => t.includes('blocked')).length >= 2, 'the second block')
+    // The repository is not asked again: a remote changed meanwhile can't move the run to another repository's #16.
+    expect(w.argv.filter(a => a.join(' ') === REPO_VIEW.join(' '))).toHaveLength(1)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue')).toEqual([ISSUE_VIEW, ISSUE_VIEW])
+  })
+
+  test('a number start that origin blocks stays unpinned, so fixing the remotes or gh repo set-default and resuming recovers it', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/fork/r.git', canonical: { 'github.com/fork/r': 'fork/r' } })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toStartWith('#16\n')
+  })
+
   test('an issue gh cannot find says to check the number or URL', async ($, on) => {
     const w = engine(on, { issueFails: 'GraphQL: Could not resolve to an issue or pull request with the number of 16.' })
     await start($)

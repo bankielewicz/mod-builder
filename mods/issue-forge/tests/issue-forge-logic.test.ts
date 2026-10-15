@@ -1602,6 +1602,14 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
     expect(repoLabel('ghe.example.com/o/r')).toBe('ghe.example.com/o/r')
   })
 
+  test("advance: 'pinned' records the repository a number start resolved; a run already pinned keeps its own (PR #68 review 2)", () => {
+    expect(advance(run(), { type: 'pinned', repo: 'github.com/o/r' }, 1).ghRepo).toBe('github.com/o/r')
+    expect(advance(run({ ghRepo: 'github.com/o/r' }), { type: 'pinned', repo: 'github.com/x/y' }, 1).ghRepo).toBe('github.com/o/r')
+    // Pinning changes nothing else: the step and its block stay as they are.
+    const blocked = run({ step: 'blocked', blocked: { at: 'preflight', reason: 'r', next: 'n' } })
+    expect(advance(blocked, { type: 'pinned', repo: 'github.com/o/r' }, 1)).toEqual({ ...blocked, ghRepo: 'github.com/o/r' })
+  })
+
   test('a run keeps the repository it was started or preflighted for; without one it has none', () => {
     const pinned = newRun('16-1', ROOT, 16, 1000, 'github.com/o/r') as Run & { ghRepo?: string }
     expect(pinned.ghRepo).toBe('github.com/o/r')
