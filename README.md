@@ -67,12 +67,14 @@ Choose **User** scope when asked, so it works in every project. Then:
 ## Built with mod-builder
 
 Each of these was built by `/mod-builder:build` (and duet extended with `/mod-builder:edit`).
-They're in this marketplace, so you can install one and try its demo.
+git-branch, duet and issue-forge are in this marketplace, so you can install one and try its demo;
+turn-counter loads from its folder.
 
 | Mod | What it does | Try it |
 |---|---|---|
 | [**git-branch**](mods/git-branch/) | A band above the prompt with the current branch, changed files, and ahead/behind | `/plugin install git-branch@claudemod`, then `/git-branch demo` |
 | [**duet**](mods/duet/) | Hands chosen subagents to OpenAI's Codex, gets independent Codex reviews of your diff, and measures every run. Needs the [Codex CLI](https://github.com/openai/codex). | `/plugin install duet@claudemod`, then `/duet demo` |
+| [**issue-forge**](mods/issue-forge/) | Takes a GitHub issue to a pull request, test-first: red, green and refactor subagents, with commands and a 95% diff-coverage gate checking each phase. Pushes only after you say yes. Needs `gh` signed in and a `.issue-forge.json` profile in the repository. | `/plugin install issue-forge@claudemod`, then `/issue-forge demo` |
 | [**turn-counter**](mods/turn-counter/) | Counts this turn's tool calls in a band. Left as the scaffold produced it, mid-pipeline, so you can see a mod before its README and Share stages. | `claude --plugin-dir mods/turn-counter`, then `/turn-counter demo` |
 
 Read each mod's **What it reaches** table before installing it.
@@ -95,7 +97,8 @@ Read each mod's **What it reaches** table before installing it.
 
 ## Requirements
 
-- Claude Code **2.1.296** (built and verified on it; the mod API is early access).
+- Claude Code. CI tests every plugin on **2.1.296**; duet's and issue-forge's latest changes were
+  also checked on 2.1.300. The mod API is early access and changes between builds.
 - `node` and `npx`, for the scaffold script and the optional type-check.
 - Tested on Linux (WSL2). macOS and Windows native aren't verified yet.
 
