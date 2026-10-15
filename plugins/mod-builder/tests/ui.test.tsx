@@ -64,6 +64,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denyStoreGet: '',
     /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
     holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
+    /** Arm mid-test: the next read of `key` waits for `until`, and sets `isReached`. */
+    holdStoreGet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
     holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
     timeouts: [] as (number | undefined)[],
@@ -73,9 +75,14 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   // The store in memory, as mock.store keeps it (values read back as JSON), with reads and writes that can be refused.
   const stored = new Map<string, string>(Object.entries(seeded).map(([key, value]) => [key, JSON.stringify(value)]))
-  on('store.get', ($, e) => {
+  on('store.get', async ($, e) => {
     const key = (e as { key: string }).key
     if (seen.denyStoreGet === key) return { deny: 'EIO: store read failed' }
+    const held = seen.holdStoreGet
+    if (held?.key === key && !held.isReached) {
+      held.isReached = true
+      await held.until
+    }
     const text = stored.get(key)
     return { value: text === undefined ? undefined : JSON.parse(text) } as never
   })
@@ -880,6 +887,36 @@ describe('edit: Spec running arrives while another hook\'s scan is listing (#10)
     expect(seen.holdList.isReached).toBe(true)
 
     // Spec running arrives meanwhile: git-branch is in no list yet, so the report waits for that scan.
+    const reporting = reportSpec($, 'running')
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed')
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked when the report lands after the scan has its facts but before it writes its rows (PR #74 review)', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan; it has read every mod folder and waits at its first read after that.
+    let release = () => {}
+    seen.holdStoreGet = { key: `modlab:done:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdStoreGet.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: the scan knows git-branch but hasn't written its rows.
     const reporting = reportSpec($, 'running')
     await clock.advance(10)
     release()
@@ -1955,5 +1992,67 @@ describe('the scan publishes its folder and its mods together (PR #57 review rou
       expect(typeof verdict.modsDir).toBe('string')
       expect((verdict.views ?? []).map(view => view.name)).toEqual(expected[verdict.modsDir as string] ?? ['?'])
     }
+  })
+})
+
+describe('edit: Spec running after a /cd, while another hook\'s scan of the new folder is listing (#79)', () => {
+  // Two folders with a mod named alpha: in ONE it has no SPEC yet; in TWO it is built and passed
+  // Validate and Test in an earlier session (files at 1000, results stamped 5000).
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
+  const seed = { [`modlab:results:${TWO}/mods`]: { alpha: { Validate: ok('Validate'), Test: ok('Test') } } }
+  const unspecced = (folder: string): Disk => {
+    const files = { ...modFiles('alpha', `${folder}/mods`) }
+    delete files[`${folder}/mods/alpha/SPEC.md`]
+    return files
+  }
+  const disk = (): Disk => ({
+    ...unspecced(ONE),
+    [`${ONE}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [] }),
+    ...modFiles('alpha', `${TWO}/mods`),
+    [`${TWO}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    [`${TWO}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'alpha', source: './mods/alpha', version: '0.1.0' }] }),
+  })
+  const reportSpec = ($: Engine, status: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status } as never)
+
+  test('control: with no scan under way, the report scans the new folder itself and the edit is tracked', async ($, on) => {
+    const w = world(on, disk(), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await reportSpec($, 'running')
+    await w.clock.advance(1000)
+    await reportSpec($, 'passed')
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked when the report joins a scan of the new folder that another hook started', async ($, on) => {
+    const w = world(on, disk(), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    // A /cd to TWO; the end of a turn starts a scan (its own hook), which waits at TWO's mods folder.
+    w.seen.cwd = `${TWO}/plugins/x`
+    let release = () => {}
+    w.seen.holdList = { path: `${TWO}/mods`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'moved' } as never)
+    await w.clock.advance(10)
+    expect(w.seen.holdList.isReached).toBe(true)
+
+    // Spec running arrives meanwhile; alpha is a name the last finished scan (ONE's) also listed.
+    const reporting = reportSpec($, 'running')
+    await w.clock.advance(10)
+    release()
+    await reporting
+    await w.clock.advance(1000)
+    await reportSpec($, 'passed')
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
   })
 })
