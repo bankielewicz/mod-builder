@@ -38,6 +38,9 @@ const COLOR: Record<Lab.Tone, string | undefined> = {
 const BACKGROUND = '#1A1918'
 const HOVER = '#2C2A27'
 
+// One value on purpose: a scan's mods and the folder it judged them in are written together, so no
+// render, button, lab_report or re-run ever pairs one folder's rows with another's path. Don't split
+// it into two atoms (PR #57 review round 2; the "publishes its folder and its mods together" test).
 const judged = atom({ plugin: 'mod-builder', key: 'judged' } as const, { modsDir: null, views: [] })
 const selected = atom({ plugin: 'mod-builder', key: 'selected' } as const, null)
 const runs = atom({ plugin: 'mod-builder', key: 'runs' } as const, [])
