@@ -432,13 +432,16 @@ async function tick($: Engine): Promise<void> {
     void scan($, true).catch((error: unknown) => logCaught($, 'tick.scan', error))
   }
 
+  // runs is read again here: a run may have started during the awaits above.
   const isLive =
-    live.length > 0 ||
+    (await liveRunsOf($)).length > 0 ||
     (await read($, demoStartedAt)) !== null ||
     Object.values(Lab.liveReports(await read($, reported), now)).some(report => report.status === 'running')
   if (!isLive) {
     clock?.cancel()
     clock = null
+    // A run that started after that read found the clock still set and didn't start one: start it again.
+    if ((await liveRunsOf($)).length) startClock($)
   }
 }
 
