@@ -394,6 +394,22 @@ describe('test-file integrity', () => {
     expect(seen.toasts).toEqual([UNCHECKED])
   })
 
+  test('the walk enters only folders a - glob can match below: an exact file lists the root alone', { options: { rules: 'green-developer=-package.json' } }, async ($, on) => {
+    const seen = engine(on, { files: { ...FILES, '/w/package.json': '{}' }, during: f => { f['/w/package.json'] = '{"edited":true}' } })
+    await start($)
+    const r: any = await $.tool.call(GREEN_RUN as never)
+    expect(r.context).toEqual(['tdd-guard: green-developer changed protected test files: package.json (modified)'])
+    expect(seen.listed).toEqual(['/w', '/w'])
+    expect(seen.reads).toEqual(['/w/package.json', '/w/package.json'])
+  })
+
+  test('the walk enters only folders a - glob can match below: a one-segment glob never lists a subfolder', { options: { rules: 'green-developer=-tests/*.test.ts' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await $.tool.call(GREEN_RUN as never)
+    expect(seen.listed).toEqual(['/w/tests', '/w/tests'])
+  })
+
   test('a type with no - rules takes no snapshot: no folder is listed and no file read; a type with - rules does', { options }, async ($, on) => {
     const seen = engine(on)
     await start($)
