@@ -217,6 +217,19 @@ Re-check [field] items against the d.ts after a Claude Code update.
   its `{ text }`, prefixed `<plugin>:`. It's the quickest live smoke test, and needs no interactive session.
 - **[d.ts]** `claude plugin validate <dir>` lists `hooks:`, `calls:` and each gating hook
   `with .catch` / `without .catch`. That output is the source for the README's "What it reaches".
+- **[d.ts] [probe]** `claude plugin validate` and `claude plugin test` start neither a settings-style
+  command hook in `hooks/hooks.json` nor a `.mcp.json` server. The d.ts header (2.1.296 and 2.1.300) says `plugin test` runs test files "in an environment
+  like the one a plugin's hooks run in (no fs, network or process)". Probed on 2.1.300 (#9) with a
+  throwaway plugin holding, beside `"modules"` in `hooks/hooks.json`, a settings-style command hook
+  (`"hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "touch <abs>/markers/classic" } ] } ] }`)
+  and a `.mcp.json` server (`{ "mcpServers": { "probe": { "command": "touch", "args": ["<abs>/markers/mcp"] } } }`).
+  Validate passed, test passed, and neither marker appeared (run twice). Control: `claude -p
+  --plugin-dir <probe> "hi"` created both, so the shapes are live ones. Validate's listing, `--json`
+  included, names only the module's hooks and calls, so a "What it reaches" table built from it
+  misses a command hook or an MCP server. Earlier probes (2.1.296): in test code, `process`, `Bun`,
+  `Deno`, `require`, `fetch`, `WebSocket`, `XMLHttpRequest` and `Worker` are `undefined`, and a test
+  file holding `import()` or `import … from 'node:fs'` doesn't load. Mod Lab's `autoRerun` relies on
+  this, so re-run the probe after a Claude Code update.
 - **[field]** `claude plugin test` only collects `*.test.ts(x)`. Other spec files are ignored.
 - **[probe]** In a test, nothing sits beneath the mod. Every `$` call it makes needs an answer from
   `on(...)`, `session.start` included (`on('session.start', ($, e) => ({ cwd: e.cwd }))`). One stub

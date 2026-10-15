@@ -493,3 +493,13 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   3. Config: `/mod-builder config testTimeoutMinutes 5` (a number) and `/mod-builder config testTimeoutMinutes default` (`''`) both go through `$.config.set`, and the listing shows them.
   The streamed timeout, the clearing after a real reload and the tick's restart have no automated test: the kit can't stub `$.process.spawn`, make a reload, or interleave a press inside a tick.
 - **Version:** 0.2.10 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.11 (2026-10-15)
+
+> For issue #9: does `autoRerun`, on by default, run a collaborator's changed mod code with the person's access? Codex's security comment on PR #1 (discussion_r4252564453).
+
+- **Decision:** keep `autoRerun` on by default. Docs only, no code change.
+- **Why:** `autoRerun` runs `claude plugin validate` and `claude plugin test`. The d.ts says a test runs with no fs, network or process `[d.ts]`, and probes back it `[probe]` (gotchas.md, "Testing and checking"). On 2.1.296, test code had none of those globals, and `import()` or `node:fs` imports didn't load. On 2.1.300, neither command started a settings-style command hook in `hooks/hooks.json` or a `.mcp.json` server, while the control, `claude -p --plugin-dir`, started both.
+- **Changed:** `docs/safety.md` cites the d.ts and the probes with their builds. It says the own-code-only rule (`skills/build/SKILL.md`) is stricter than the sandbox, and that validate's listing, so "What it reaches", leaves out command hooks and MCP servers. `gotchas.md` records the probe, its shapes and its control.
+- **Not changed:** nothing re-runs the probe. It holds for the builds named, and Claude Code changes between builds; gotchas.md says to re-run it after an update.
+- **Version:** 0.2.11 in `plugin.json` and the marketplace entry.

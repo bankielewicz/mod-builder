@@ -15,10 +15,23 @@ mod-builder follows two rules:
 
 Mod Lab re-runs a mod's checks on its own (`autoRerun`) when the mod's code changes. That's
 `claude plugin validate`, which only reads the files, and `claude plugin test`, whose test
-environment has no file system, network or process access (per Claude Code's API declarations).
-It only re-runs mods you have already validated or tested in this install. To turn it off, set
-`autoRerun` to off in `/config`. Separately, when a skill's `lab_report` says a Validate or Test
-stage finished, Mod Lab runs that check on the mod the report names.
+environment has no file system, network or process access. Claude Code's API declarations say so,
+and probes in this repo agree (each in
+[gotchas.md](../plugins/mod-builder/skills/build/references/gotchas.md#testing-and-checking)):
+
+- On 2.1.296, test code found no `process`, `require`, `fetch` or `Bun`, and a test file that
+  imports `node:fs` or uses `import()` didn't load.
+- On 2.1.300, neither command started a plugin's settings-style command hook (`hooks/hooks.json`)
+  or its `.mcp.json` server. A live `claude --plugin-dir` session started both.
+
+Those are the builds checked; Claude Code changes between builds. Mod Lab only re-runs mods you
+have already validated or tested in this install. To turn it off, set `autoRerun` to off in
+`/config`. Separately, when a skill's `lab_report` says a Validate or Test stage finished, Mod Lab
+runs that check on the mod the report names.
+
+The own-code-only rule is stricter than that sandbox, and stays: installing a mod or opening a
+session with it runs its hooks with your full access, and `claude plugin validate` doesn't list a
+command hook or an MCP server, so its "What it reaches" table wouldn't show them.
 
 What the skills do for safety:
 
