@@ -53,11 +53,13 @@ claude plugin marketplace add .
 
 After that, `/reload-plugins` picks up edits. It never loads a plugin that isn't installed yet.
 
-## 5. Point Mod Lab at your mods
+## 5. Mod Lab finds your mods
 
-Mod Lab reads its **Mods folder** option (`modsDir`). Empty means "the `mods/` next to the
-plugin's own marketplace", which fits a clone of this repo but not your project. Set it to your
-project's `mods/` on the install options screen or later in `/config`.
+With its **Mods folder** option (`modsDir`) empty, Mod Lab watches the `mods/` of the marketplace
+nearest the session's working directory: your project's, the same folder `/mod-builder:build`
+writes to. In a git worktree it's that worktree's, and a `/cd` takes effect at the next scan. Set
+`modsDir` (on the install options screen or later in `/config`) only to pin one folder, for example
+when your marketplace keeps its mods somewhere other than `mods/`.
 
 ## 6. Keep engine types out of git
 
