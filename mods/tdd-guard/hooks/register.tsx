@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { changesOf, decide, folderOf, hashOf, launchedId, matchGlob, parseRules, relativeTo, reportOf, withoutId } from './tdd-guard-logic'
+import { changesOf, decide, folderOf, hashOf, launchedId, matchGlob, mayMatchBelow, parseRules, relativeTo, reportOf, withoutId } from './tdd-guard-logic'
 import type { Files, Rules } from './tdd-guard-logic'
 
 /**
@@ -73,7 +73,7 @@ async function walk($: EngineInterface, root: string, dir: string, globs: string
   for (const entry of entries) {
     const rel = dir === '' ? entry.name : `${dir}/${entry.name}`
     if (entry.kind === 'dir') {
-      if (!SKIPPED.has(entry.name)) await walk($, root, rel, globs, files)
+      if (!SKIPPED.has(entry.name) && globs.some(glob => mayMatchBelow(glob, rel))) await walk($, root, rel, globs, files)
     } else if (entry.kind === 'file' && !files.has(rel) && globs.some(glob => matchGlob(glob, rel))) {
       files.set(rel, await $.fs.read(`${root}/${rel}`).then(hashOf, () => `${entry.size}:${entry.mtimeMs}`))
     }

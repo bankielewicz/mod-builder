@@ -93,6 +93,22 @@ export function folderOf(glob: string): string {
   return segments.slice(0, wild < 0 ? -1 : wild).join('/')
 }
 
+/**
+ * Could a path below the folder `dir` (relative to the root; `''` is the root) match the glob? The integrity walk enters a
+ * folder only when one can. A `**` may stand for any folders, so a glob holding one can always match deeper.
+ */
+export function mayMatchBelow(glob: string, dir: string): boolean {
+  const globs = glob.split('/')
+  const dirs = dir === '' ? [] : dir.split('/')
+  for (let i = 0; i < dirs.length; i++) {
+    const segment = globs[i]
+    if (segment === undefined) return false
+    if (segment.includes('**')) return true
+    if (!matchGlob(segment, dirs[i]!)) return false
+  }
+  return globs.length > dirs.length
+}
+
 /** What a run did to the files: `path (modified | deleted | new)`, in path order. */
 export function changesOf(before: Files, after: Files): string[] {
   const changes: [string, string][] = []
