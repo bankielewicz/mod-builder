@@ -194,6 +194,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('ui.toast', ($: any, e: any) => (world.toasts.push(e.text ?? String(e)), { value: undefined }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
+  on('session.receive', ($: any, e: any) => ({ text: e.text }))
   on('tool.call', { tool: 'Bash' }, ($: any, e: any) => (world.beneath.push(e.agentId ?? 'main'), world.bash.push(e.command), { result: 'ran' }))
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     const q = e.questions[0].question
@@ -800,6 +801,45 @@ describe('reloads, resume and stop', () => {
     expect(((await $.prompt.submit(handback('old-green'))) as any).drop).toBeDefined()
     expect((await $.prompt.submit(handback('someone-else'))) as any).toMatchObject({ text: expect.stringContaining('someone-else') })
     expect((await $.prompt.submit({ text: '<agent-message from="issue-forge-16-red-1">typed by the person' } as never)) as any).toMatchObject({ text: expect.stringContaining('typed') })
+  })
+
+  // A named agent is a teammate with agent teams on: its report is a mailbox delivery, not a prompt (#27, probed on 2.1.296).
+  const MAILBOX_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
+  const idle = (from: string) => `{"type":"idle_notification","from":"${from}","idleReason":"available","result":"Five new tests are in place."}`
+  const mailbox = (teammate: string, extra: Record<string, unknown> = {}) => ({ origin: { kind: 'peer', teammate, isVerified: true, ...extra }, text: idle(teammate) }) as never
+
+  test("a run's named agent finishing is consumed in session.receive, so the main model stays idle (#27)", async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const ui = await pane($)
+    await ui.unmount()
+    expect(await $.session.receive(mailbox('issue-forge-16-red-1'))).toEqual({ consumed: MAILBOX_DROP })
+    expect(await $.session.receive(mailbox('issue-forge-16-green-1'))).toEqual({ consumed: MAILBOX_DROP })
+  })
+
+  test("a mailbox delivery from the run's agent is consumed whether or not the harness verified the sender (#27)", async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const ui = await pane($)
+    await ui.unmount()
+    expect(await $.session.receive(mailbox('issue-forge-16-red-1', { isVerified: false }))).toEqual({ consumed: MAILBOX_DROP })
+  })
+
+  test('every other delivery still reaches the model: another teammate, the lead, a delivery with no sender name (#27)', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const ui = await pane($)
+    await ui.unmount()
+    // Consumed only for the run's own agent: the same text from a name the run doesn't know passes through untouched.
+    expect(await $.session.receive(mailbox('issue-forge-16-red-1'))).toEqual({ consumed: MAILBOX_DROP })
+    expect(await $.session.receive(mailbox('researcher'))).toEqual({ text: idle('researcher') })
+    expect(await $.session.receive(mailbox('issue-forge-99-red-1'))).toEqual({ text: idle('issue-forge-99-red-1') })
+    expect(await $.session.receive({ origin: { kind: 'coordinator', teammate: 'team-lead', isVerified: true }, text: 'please look at #16' } as never)).toEqual({ text: 'please look at #16' })
+    // A delivery without a mailbox sender passes through, even when its text names the run's agent.
+    const quoted = idle('issue-forge-16-red-1')
+    expect(await $.session.receive({ origin: { kind: 'bridge' }, text: quoted } as never)).toEqual({ text: quoted })
+    expect(await $.session.receive({ origin: { kind: 'peer' }, text: quoted } as never)).toEqual({ text: quoted })
+    expect(await $.session.receive({ text: quoted } as never)).toEqual({ text: quoted })
   })
 
   test('resume re-checks HEAD, then restarts the step with its attempts reset; stop ends it', async ($, on) => {
