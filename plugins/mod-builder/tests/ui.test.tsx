@@ -56,6 +56,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     cwd: '/m' as string | null,
     /** The session's project root (#92): undefined follows `cwd` (a `/cd` moves both); a string stays put (a Bash `cd` moves only `cwd`); null is refused. */
     root: undefined as string | null | undefined,
+    /** Arm before start: each `session.root` read waits for `until`, unless made after `answerNow` is set. */
+    holdRoot: null as { until: Promise<void>; answerNow: boolean } | null,
     failReads: [] as string[],
     /** Every path `$.fs.exists` was asked about. */
     probed: [] as string[],
@@ -137,7 +139,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
   on('session.cwd', () => (seen.cwd === null ? { deny: 'cwd unavailable' } : ({ value: seen.cwd } as never)))
-  on('session.root', () => {
+  on('session.root', async () => {
+    if (seen.holdRoot && !seen.holdRoot.answerNow) await seen.holdRoot.until
     const root = seen.root === undefined ? seen.cwd : seen.root
     return root === null ? { deny: 'root unavailable' } : ({ value: root } as never)
   })
@@ -1124,8 +1127,8 @@ describe('edit: Spec running arrives while another hook\'s scan is listing (#10)
   const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
   // Validate and Test passed in an earlier session: the files' mtime is 1000, the results are stamped 5000.
   const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate'), Test: ok('Test') } } }
-  const reportSpec = ($: Engine, status: string) =>
-    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+  const reportSpec = ($: Engine, status: string, path?: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status, ...(path ? { path } : {}) } as never)
 
   test('the edit is tracked: a state read after the scan the report waits for sees what that scan wrote', OPTIONS, async ($, on) => {
     const disk: Disk = {
@@ -1182,6 +1185,67 @@ describe('edit: Spec running arrives while another hook\'s scan is listing (#10)
     await reporting
     await clock.advance(1000)
     await reportSpec($, 'passed')
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked with path (#92): a state read after the scan the report waits for sees what that scan wrote', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    // git-branch, checked in an earlier session, appears on disk after the startup scan ended.
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan (its own hook), and the scan waits at the mods folder.
+    let release = () => {}
+    seen.holdList = { path: MODS, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: git-branch is in no list yet, so the report waits for that scan.
+    const reporting = reportSpec($, 'running', `${MODS}/git-branch`)
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed', `${MODS}/git-branch`)
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked with path (#92) when the report lands after the scan has its facts but before it writes its rows', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan; it has read every mod folder and waits at its first read after that.
+    let release = () => {}
+    seen.holdStoreGet = { key: `modlab:done:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdStoreGet.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: the scan knows git-branch but hasn't written its rows.
+    const reporting = reportSpec($, 'running', `${MODS}/git-branch`)
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed', `${MODS}/git-branch`)
     await clock.advance(10)
 
     const ui = await mountPane($)
@@ -2585,6 +2649,43 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     await start($)
     await clock.advance(10)
     expect((await listed($)).names).toEqual(['beta'])
+  })
+
+  test('a drawing before the first scan leaves a dropped pin to the next read outside a render', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    // As after a reload and a /cd: state kept a pin from the root before, and the root is now another.
+    seen.cwd = OTHER
+    const restored: Record<string, unknown> = { pinned: { modsDir: `${WT}/mods`, root: MAIN } }
+    const written = new Set<string>()
+    const pinWrites: { value: unknown; isDrawing: boolean }[] = []
+    let isDrawing = false
+    on('state.set', (_, e, next) => {
+      const { plugin, key, value } = e as unknown as { plugin: string; key: string; value: unknown }
+      if (plugin === 'mod-builder') written.add(key)
+      if (plugin === 'mod-builder' && key === 'pinned') pinWrites.push({ value, isDrawing })
+      return next(e)
+    })
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key in restored && !written.has(key)) return { value: { version: 1, value: restored[key] } } as never
+      return next(e)
+    })
+    // The start-up log line and scan wait at their root read, so the pane draws before any scan wrote a folder.
+    let release = () => {}
+    seen.holdRoot = { until: new Promise<void>(resolve => (release = resolve)), answerNow: false }
+    await start($)
+    await clock.advance(10)
+    seen.holdRoot.answerNow = true
+    isDrawing = true
+    const ui = await mountPane($)
+    isDrawing = false
+    expect(pinWrites).toEqual([])
+    await ui.unmount()
+    release()
+    await clock.advance(10)
+    await clock.settle()
+    expect(pinWrites).toEqual([{ value: null, isDrawing: false }])
+    expect((await listed($)).names).toEqual(['gamma'])
   })
 
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {

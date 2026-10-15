@@ -241,8 +241,10 @@ async function defaultModsDir($: Engine): Promise<string> {
 /**
  * The mods folder to watch now (#92): a build's pinned folder while the project root is the one it
  * was pinned under, else a set `modsDir` (nothing is walked), else the walk `defaultModsDir` takes.
+ * A drawing reads it without dropping the pin: `$.state.set` is refused while a render draws, so the
+ * next read outside a render drops it.
  */
-async function currentModsDir($: Engine): Promise<string> {
+async function currentModsDir($: Engine, isDrawing = false): Promise<string> {
   const held = pin
   const root = await rootOf($)
   const isWalked = !configuredDir && !Lab.keptPinOf(held, root)
@@ -250,7 +252,7 @@ async function currentModsDir($: Engine): Promise<string> {
   const existing = isWalked ? await nearestMarketplace($, Lab.walkStartOf(root, cwd)) : []
   const watched = Lab.watchedDirOf(held, root, configuredDir, cwd, existing, pluginModsDirOf($))
   // A changed root dropped the pin, unless a report has pinned another folder meanwhile.
-  if (held && !watched.pin && pin === held) await setPin($, null)
+  if (held && !watched.pin && pin === held && !isDrawing) await setPin($, null)
   return watched.dir
 }
 
@@ -258,8 +260,8 @@ async function currentModsDir($: Engine): Promise<string> {
  * The folder the pane shows: the one the last scan judged (kept in state, so it survives a
  * reload), else the current one before any scan. What the pane's buttons act on.
  */
-async function shownModsDir($: Engine): Promise<string> {
-  return (await read($, judged)).modsDir ?? currentModsDir($)
+async function shownModsDir($: Engine, isDrawing = false): Promise<string> {
+  return (await read($, judged)).modsDir ?? currentModsDir($, isDrawing)
 }
 
 /** One mod folder's file facts, as a scan judges them; null when it isn't a mod. */
@@ -1099,7 +1101,7 @@ export const register: Register = (on, options) => {
     const isPlaceholder = current?.isPlaceholder === true
     const doc = await read($, readme)
     // The folder `all` was judged in: what the header names and the buttons act on.
-    const shownDir = await shownModsDir($)
+    const shownDir = await shownModsDir($, true)
     const inFlight = await liveRunsOf($)
     const demoStart = await read($, demoStartedAt)
     const isDemoRunning = demoStart !== null
