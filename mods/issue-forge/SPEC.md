@@ -1036,3 +1036,18 @@ Where the build differs from the approved text above, and why:
   passes, with `.catch` on every gating hook and on `session.end`. Logic coverage: `issue-forge-logic.ts`
   lines 100%, branches 99.54% (origin/main 99.46%), with every changed line and branch covered. All
   logic files together: 97.79% / 93.79% (origin/main 97.63% / 93.29%).
+- **Live check (2026-10-14, 2.1.300):** I used a fresh clone of the repository under the session
+  scratchpad (nothing in the main folder) and ran two `claude --plugin-dir` sessions in tmux, both in
+  the clone's root.
+  - Session A ran `/issue-forge 40`: it started in `scratch/issue-forge/issue-40-…`. Session B then
+    ran `/issue-forge 49` and was asked `#40 is active in this repository: red 1/2, driven by another
+    session for 21s. What should this session do?` with Start / Take over / Cancel. On Start it went
+    to `scratch/issue-forge/issue-49-…`.
+  - A's pane showed `also #49 preflight (another session)`. A's `/issue-forge resume 49` asked
+    `#49 is driven by another session (for 20s). If that session has ended, take it over?`, and Esc
+    answered `#49 runs in another session; …`.
+  - Each worktree wrote its own `coverage/issue-forge.lcov`. The store held
+    `issue-forge:run:<clone>/.git#40` and `#49`, both stopped, with their drivers cleared. The other
+    folders' 0.2 keys in that store were left alone, because the clone's git doesn't list those folders.
+  - **Not as planned:** baseline took about 20 s on a Linux disk, so each run spawned its red agent
+    before the stop reached it. The stops refused their tools, and both worktrees had no changed files.
