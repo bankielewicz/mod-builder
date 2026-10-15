@@ -520,8 +520,9 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   if (codeSig !== undefined) result = { ...result, codeSig }
   logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
   const results = await resultsOf($, modsDir)
-  await $.store.set(keyOf(RESULTS_KEY, modsDir), { ...results, [mod]: { ...results[mod], [kind]: result } })
-  logEvent($, 'debug', 'store.set', keyOf(RESULTS_KEY, modsDir), { mod, kind })
+  const resultsKey = keyOf(RESULTS_KEY, modsDir)
+  await $.store.set(resultsKey, { ...results, [mod]: { ...results[mod], [kind]: result } })
+  logEvent($, 'debug', 'store.set', resultsKey, { mod, kind })
   await update($, runs, all => all.filter(one => !(one.mod === mod && one.kind === kind)))
   $.ui.toast(Lab.toastOfRun(mod, result))
   await scan($, true)
@@ -769,8 +770,9 @@ export const register: Register = (on, options) => {
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
       const modsDir = modsDirOf($)
-      await $.store.set(keyOf(GENERATIONS_KEY, modsDir), { ...(await generationsOf($, modsDir)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
-      logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
+      const generationsKey = keyOf(GENERATIONS_KEY, modsDir)
+      await $.store.set(generationsKey, { ...(await generationsOf($, modsDir)), [mod]: { since: now, fromVersion: factsByMod.get(mod)?.version ?? null } })
+      logEvent($, 'debug', 'store.set', generationsKey, { mod, edit: 'started' })
     }
     await update($, reported, all => ({ ...all, [mod]: report }))
     if (report.status === 'running') {
