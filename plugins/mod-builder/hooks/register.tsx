@@ -916,12 +916,11 @@ export const register: Register = (on, options) => {
     if ('error' in checked) return { result: `Mod Lab: ${checked.error}` }
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
-    // The model reports on the folder the session is in now; judge it first if a /cd moved it. A Spec
-    // report for a mod no finished scan has listed waits for the scan under way before it reads any
-    // state: every `get` of one dispatch reads one moment, so a read made before that scan ended would
-    // not see what it wrote (#10). A mod already listed doesn't wait; its stale rows are enough.
     const modsDir = await currentModsDir($)
+    // A Spec report on a mod no finished scan has listed waits for a scan before it reads any state: the
+    // first `get` fixes the moment every read of this dispatch sees (#10). A listed mod's rows are enough.
     if (report.stage === 'Spec' && !factsByMod.has(mod)) await scan($, false)
+    // The model reports on the folder the session is in now; judge it first if a /cd moved it.
     if ((await read($, judged)).modsDir !== modsDir) await scan($, false)
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
     const known = (await read($, judged)).views.find(view => view.name === mod)
