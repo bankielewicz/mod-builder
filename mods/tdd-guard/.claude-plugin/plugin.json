@@ -1,0 +1,17 @@
+{
+  "name": "tdd-guard",
+  "version": "0.1.0",
+  "description": "Limits which paths each TDD subagent type may write, and reports test files a guarded agent changed through the shell",
+  "author": {
+    "name": "Bryan Ankielewicz"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "rules": {
+      "type": "string",
+      "title": "Paths each subagent type may write",
+      "description": "type=glob,glob entries separated by ';'. +glob: the type may write only paths matching one of its + globs. -glob: the type may not write a path matching a - glob, and a run of it is checked afterwards for changed files under those globs. Globs are relative to the project root; * is one path segment, ** any depth. A type with no entry is not guarded. Empty: nothing is guarded.",
+      "default": "red-test-writer=+tests/**,+test/**; green-developer=-tests/**,-test/**; refactorer=-tests/**,-test/**"
+    }
+  }
+}

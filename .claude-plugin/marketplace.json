@@ -28,6 +28,12 @@
       "source": "./mods/issue-forge",
       "description": "Takes one GitHub issue to a pull request test-first: red, green and refactor subagents, each phase checked by commands and a 95% diff-coverage gate; pushes only after you confirm.",
       "version": "0.4.0"
+    },
+    {
+      "name": "tdd-guard",
+      "source": "./mods/tdd-guard",
+      "description": "Limits which paths each TDD subagent type may write, and reports test files a guarded agent changed through the shell.",
+      "version": "0.1.0"
     }
   ]
 }

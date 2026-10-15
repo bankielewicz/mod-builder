@@ -62,7 +62,7 @@ plugins/mod-builder/                the plugin
   hooks/register.tsx                Mod Lab: every $ call
   hooks/mod-builder-logic.ts        Mod Lab: every rule, $-free, unit-tested
   tests/  types/  SPEC.md  README.md  NOTICE.md  design/
-mods/                               example mods: git-branch, duet, issue-forge, turn-counter
+mods/                               example mods: git-branch, duet, issue-forge, tdd-guard, turn-counter
 docs/                               guides, README images, and specs/ (issue-forge's design)
 .github/workflows/ci.yml            validate + test every plugin, regenerate every archetype
 ```
