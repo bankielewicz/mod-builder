@@ -25,6 +25,9 @@ const ISSUE = { number: 16, title: 'Fix the thing', body: 'Make it work.', state
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+x\n+y\n'
 const LCOV = 'SF:/w/src/a.ts\nDA:1,1\nDA:2,3\nLF:2\nLH:2\nBRF:0\nBRH:0\nend_of_record\n'
 
+/** One answer of `gitFails` (#28). */
+type GitFail = { stderr: string; code: number; isLocked: boolean }
+
 /** The first store.set of a value `when` picks lands only once `until` settles; `isHeld` says it is waiting. */
 type StoreHold = { when: (value: any) => boolean; until: Promise<void>; isHeld?: boolean }
 
@@ -109,14 +112,25 @@ type World = {
   pushUrl?: string | string[] | { exitCode: number; stderr: string }
   /** What `gh repo view <host/owner/repo>` canonicalises an argument to (its nameWithOwner); absent, the argument itself (#25). */
   canonical?: Record<string, string>
+  /**
+   * Index-writing git calls that fail (#28): a call whose arguments are, or start with, `on` takes the next answer;
+   * once `seq` is empty the calls pass. `isLocked` says the answer leaves .git/index.lock in place (fs.exists sees it).
+   */
+  gitFails?: { on: string; seq: GitFail[] }
+  /** Whether .git/index.lock exists now: set by a failure that held it, cleared by the next call `gitFails` matches. */
+  lockFile?: boolean
+  /** `git stash list`'s output; absent, empty. */
+  stashList?: string
   /** The url `gh issue view` answers with; absent, ISSUE's (#25). */
   issueUrl?: string
   /** `gh issue view` exits 1 with this on stderr (#25). */
   issueFails?: string
   /** What $.command.register was given. */
   registered: { name: string; argumentHint?: string }[]
-  /** Every process.run with the folder it ran in. */
-  calls: { argv: string[]; cwd?: string; timeoutMs?: number }[]
+  /** Every process.run with the folder it ran in and the mock time it ran at. */
+  calls: { argv: string[]; cwd?: string; timeoutMs?: number; at: number }[]
+  /** Every process.run's init, parallel to `argv`: the env and stdin a call carried (#28). */
+  inits: any[]
   /** The command each Bash call reached beneath the mod with. */
   bash: string[]
   argv: string[][]
@@ -129,6 +143,9 @@ type World = {
   beneath: string[]
   clock: any
 }
+
+/** Where git keeps /w's index lock (#28). */
+const LOCK_PATH = `${ROOT}/.git/index.lock`
 
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 const fail = (stderr: string, code = 1) => ({ value: { exitCode: code, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
@@ -156,6 +173,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     wtProfiles: {},
     registered: [],
     calls: [],
+    inits: [],
     bash: [],
     argv: [],
     commits: [],
@@ -211,7 +229,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
   const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
   on('fs.exists', ($: any, e: any) => ({
-    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path)),
+    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path) || (e.path === LOCK_PATH && world.lockFile === true)),
   }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
@@ -224,7 +242,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     world.argv.push(argv)
-    world.calls.push({ argv, cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs })
+    world.calls.push({ argv, cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs, at: world.clock.now() })
+    world.inits.push(e.init)
     const inWorktree = world.worktrees.includes(e.init?.cwd)
     const [cmd, ...a] = argv
     const s = a.join(' ')
@@ -249,6 +268,15 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
+    // A held index.lock (#28): the call takes the next scripted failure, and the lock file stays while that failure says so.
+    const failing = world.gitFails
+    if (failing && (s === failing.on || s.startsWith(`${failing.on} `))) {
+      const next = failing.seq.shift()
+      world.lockFile = next?.isLocked ?? false
+      if (next) return fail(next.stderr, next.code)
+    }
+    if (s === 'rev-parse --path-format=absolute --git-path index.lock') return ok(`${LOCK_PATH}\n`)
+    if (a[0] === 'stash' && a[1] === 'list' && world.stashList !== undefined) return ok(world.stashList)
     // git's common folder: the main checkout answers relative, as git does there.
     // As git 2.53 prints them: `--all` lists every push URL, one per line.
     if (s === 'remote get-url origin' || s === 'remote get-url --push --all origin') {
@@ -2005,5 +2033,198 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await run($, 'status')
     const ui = await pane($)
     expect(await ui.find({ type: 'Text', text: /^\/issue-forge <issue number or URL> starts another\.$/ })).toBeDefined()
+  })
+})
+
+// #28: another process holds .git/index.lock, so the index-writing calls (add, commit, stash apply, switch,
+// merge --ff-only) fail at once. They wait a second and try again, five attempts in all, then the run blocks naming the lock.
+describe('a held git index lock (#28)', () => {
+  /** git 2.43.0's refusal of add, commit and switch, with its hint. */
+  const LOCK_STDERR = `fatal: Unable to create '${LOCK_PATH}': File exists.\n\nAnother git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'. Please make sure all processes\nare terminated then try again. If it still fails, a git process\nmay have crashed in this repository earlier:\nremove the file manually to continue.\n`
+  /** `n` failures that leave the lock file in place; the call after them passes. */
+  const locked = (n: number, stderr = LOCK_STDERR, code = 128): GitFail[] => Array.from({ length: n }, () => ({ stderr, code, isLocked: true }))
+  /** Keeps $.agent.spawn pending, so the drive stays at the spawn (under test a spawn never gets an agent id). */
+  const held = () => new Promise<void>(() => undefined)
+  const STASH = { sha: 'abc1234def', message: 'issue-forge #16 green before behaviour test (run 16-1, attempt 1)' }
+  const isBlocked = (w: World) => w.toasts.some(t => t.includes('blocked'))
+  /** Advances the mock clock a step at a time until `cond` holds, or `ms` have passed. It never throws, so the test's own expect says what failed. */
+  async function pump(w: World, cond: () => boolean, ms = 12_000): Promise<void> {
+    for (let t = 0; t < ms && !cond(); t += 50) await w.clock.advance(50)
+    await w.clock.settle()
+  }
+  /** Each git call whose arguments are, or start with, `prefix`. */
+  const callsOf = (w: World, prefix: string) => w.calls.filter(c => c.argv[0] === 'git' && (c.argv.slice(1).join(' ') === prefix || c.argv.slice(1).join(' ').startsWith(`${prefix} `)))
+  const stdinsOf = (w: World, prefix: string) => w.argv.flatMap((a, i) => (a[0] === 'git' && a.slice(1).join(' ').startsWith(prefix) ? [w.inits[i]?.stdin] : []))
+  /** The wait between one attempt and the next: at least a second each, as the issue says. */
+  const gaps = (calls: { at: number }[]) => calls.slice(1).map((c, i) => c.at - calls[i]!.at)
+  const atGateR = (extra: Partial<World> = {}, run: Record<string, unknown> = {}) => {
+    const stored = { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], ...run }) }
+    return { world: { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), ...extra }, stored }
+  }
+
+  test('gate R: a commit that meets the lock waits a second and tries again with the same message; the run goes on', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(1) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(2)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    // The retry sends the message again: stdin is not a stream that the first attempt used up.
+    expect(stdinsOf(w, 'commit')).toEqual([w.commits[0], w.commits[0]])
+    expect(w.commits[0]).toBe('test(#16): red: Fix the thing\n\nCo-Authored-By: Tester <t@example.com>\n')
+    expect(w.spawned.length).toBe(1)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
+  test('gate R: a commit that meets the lock five times blocks naming the lock, after four waits, with no sixth attempt', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: another git process is using ${LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${LOCK_PATH} if none is running, then /issue-forge resume`)
+    expect(w.toasts.some(t => t.startsWith('#16 blocked: another git process is using /w/.git/index.lock'))).toBe(true)
+    // Long enough for a sixth attempt, were there one.
+    await w.clock.advance(5000)
+    await w.clock.settle()
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(5)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    expect(commits[4]!.at - commits[0]!.at).toBeGreaterThanOrEqual(4000)
+    // The lock's path is asked of git once and reused by the later attempts.
+    expect(w.argv.filter(a => a.join(' ') === 'git rev-parse --path-format=absolute --git-path index.lock').length).toBe(1)
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned.length).toBe(0)
+  })
+
+  test('gate R: after a retry, a commit that fails for another reason is not tried again, and the block is the unexpected one', async ($, on) => {
+    const emptyIdent: GitFail = { stderr: 'fatal: empty ident name (for <u@h>) not allowed\n', code: 128, isLocked: false }
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: [...locked(1), emptyIdent] } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    expect((await run($, 'status')).text).toContain('blocked at gateR: unexpected: git commit failed: fatal: empty ident name (for <u@h>) not allowed')
+    await w.clock.advance(5000)
+    await w.clock.settle()
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(2)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    expect(w.commits.length).toBe(0)
+  })
+
+  test('gate R: git add -A that meets the lock is retried after a second, and gate R goes on', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(1) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const adds = callsOf(w, 'add -A')
+    expect(adds.length).toBe(2)
+    expect(gaps(adds).every(g => g >= 1000)).toBe(true)
+    expect(w.commits.length).toBe(1)
+    expect(w.spawned.length).toBe(1)
+  })
+
+  test('gate G: git add -A that meets the lock is retried after a second, and the green commit is made', async ($, on) => {
+    const stored = { [`issue-forge:run:${ROOT}`]: storedRun('gateG') }
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), gitFails: { on: 'add', seq: locked(1) } }, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const adds = callsOf(w, 'add -A')
+    expect(adds.length).toBe(2)
+    expect(gaps(adds).every(g => g >= 1000)).toBe(true)
+    expect(w.commits[0]).toStartWith('fix(#16): green: Fix the thing')
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+  })
+
+  describe("restoring green's stash", () => {
+    const behaviour = (gitFails: { on: string; seq: GitFail[] }) =>
+      atGateR(
+        { testsExit: 1, sinceRed: ['tests/b.ui.test.ts'], staged: ['tests/a.test.ts', 'tests/b.ui.test.ts'], stashList: `${STASH.sha}\tOn ${BRANCH}: ${STASH.message}\n`, gitFails },
+        { redCommit: 'c1', behaviourFor: ['src/register.tsx'], greenStash: STASH, used: { red: 1, green: 1, refactor: 0 }, agents: [{ id: 'old-green', name: 'issue-forge-16-green-1', phase: 'green' }] },
+      )
+    const applies = (w: World) => callsOf(w, `stash apply ${STASH.sha}`)
+
+    test('gate R: git stash apply that exits 1 with no output while the lock file exists is retried, and gate R goes on', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }] })
+      const w = engine(on, world, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')) || isBlocked(w))
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(applies(w).length).toBe(2)
+      expect(gaps(applies(w)).every(g => g >= 1000)).toBe(true)
+      expect(w.commits[0]).toStartWith('test(#16): red: behaviour test for src/register.tsx')
+      // Gate G has begun: green's work is back in the tree.
+      expect(w.argv.some(a => a[1] === 'diff' && a.includes('-U0'))).toBe(true)
+    })
+
+    test('gate R: a stash apply that fails with no lock file is not tried again, and the block says where green\'s work is', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }, { stderr: '', code: 1, isLocked: false }] })
+      const w = engine(on, world, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => isBlocked(w))
+      expect((await run($, 'status')).text).toContain(`blocked at gateG: could not restore green's work; it is in stash abc1234 "${STASH.message}"`)
+      await w.clock.advance(5000)
+      await w.clock.settle()
+      expect(applies(w).length).toBe(2)
+      expect(gaps(applies(w)).every(g => g >= 1000)).toBe(true)
+    })
+  })
+
+  test('preflight: git switch that meets the lock five times blocks at preflight naming the lock, and nothing after the switch runs', async ($, on) => {
+    const w = engine(on, { spawnHold: held(), gitFails: { on: 'switch', seq: locked(5) } })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at preflight: another git process is using ${LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${LOCK_PATH} if none is running, then /issue-forge resume`)
+    await w.clock.advance(5000)
+    await w.clock.settle()
+    const switches = callsOf(w, 'switch')
+    expect(switches.length).toBe(5)
+    expect(gaps(switches).every(g => g >= 1000)).toBe(true)
+    const lastSwitch = w.argv.map(a => a[1]).lastIndexOf('switch')
+    const after = w.argv.slice(lastSwitch + 1)
+    expect(after.some(a => a[0] === 't' || a[0] === 'c' || a[1] === 'merge-base')).toBe(false)
+    expect(w.spawned.length).toBe(0)
+  })
+
+  test('baseline: git merge --ff-only that meets the lock (error: text, exit 1) is retried after a second, and the baseline is recorded', async ($, on) => {
+    const blocked = storedRun('blocked', { blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const lockError = `error: Unable to create '${LOCK_PATH}': File exists.\n\nAnother git process seems to be running in this repository.\n`
+    const w = engine(on, { head: BRANCH, spawnHold: held(), gitFails: { on: 'merge --ff-only', seq: locked(1, lockError, 1) } }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const merges = callsOf(w, 'merge --ff-only')
+    expect(merges.length).toBe(2)
+    expect(gaps(merges).every(g => g >= 1000)).toBe(true)
+    expect(w.spawned.length).toBe(1)
+    expect((await run($, 'status')).text).toContain('baseline: total lines 100.00% · branches n/a')
+  })
+
+  test("the run's own git calls take no optional locks: each carries GIT_OPTIONAL_LOCKS=0, its git status included", async ($, on) => {
+    const w = engine(on, { spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.spawned.length).toBe(1)
+    // The one git call outside git(): it finds the root the others run in.
+    const calls = w.argv.flatMap((a, i) => (a[0] === 'git' && a.slice(1).join(' ') !== 'rev-parse --show-toplevel' ? [{ text: a.join(' '), env: w.inits[i]?.env }] : []))
+    expect(calls.some(c => c.text.startsWith('git status'))).toBe(true)
+    expect(calls.filter(c => c.env?.GIT_OPTIONAL_LOCKS !== '0').map(c => c.text)).toEqual([])
   })
 })
