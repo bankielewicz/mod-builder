@@ -38,8 +38,7 @@ const COLOR: Record<Lab.Tone, string | undefined> = {
 const BACKGROUND = '#1A1918'
 const HOVER = '#2C2A27'
 
-const views = atom({ plugin: 'mod-builder', key: 'views' } as const, [])
-const judgedDir = atom({ plugin: 'mod-builder', key: 'modsDir' } as const, null)
+const judged = atom({ plugin: 'mod-builder', key: 'judged' } as const, { modsDir: null, views: [] })
 const selected = atom({ plugin: 'mod-builder', key: 'selected' } as const, null)
 const runs = atom({ plugin: 'mod-builder', key: 'runs' } as const, [])
 const reported = atom({ plugin: 'mod-builder', key: 'reported' } as const, {})
@@ -220,7 +219,7 @@ async function currentModsDir($: Engine): Promise<string> {
  * reload), else the current one before any scan. What the pane's buttons act on.
  */
 async function shownModsDir($: Engine): Promise<string> {
-  return (await read($, judgedDir)) ?? currentModsDir($)
+  return (await read($, judged)).modsDir ?? currentModsDir($)
 }
 
 /** One mod folder's file facts, as a scan judges them; null when it isn't a mod. */
@@ -360,9 +359,6 @@ async function scanPasses($: Engine, isAnnounced: boolean): Promise<void> {
 async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const scanStartedAt = Date.now()
   const dir = await currentModsDir($)
-  // A README open over another folder's list doesn't belong to this one.
-  const previous = await read($, judgedDir)
-  if (previous !== null && previous !== dir) await update($, readme, () => null)
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
   const marketplace = await marketplaceOf($, dir)
   const results = await resultsOf($, dir)
@@ -409,8 +405,10 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
       return remaining
     })
   }
-  await update($, judgedDir, () => dir)
-  await update($, views, () => next)
+  // A README open over another folder's list doesn't belong to this one; closed as the list changes.
+  const previous = (await read($, judged)).modsDir
+  if (previous !== null && previous !== dir) await update($, readme, () => null)
+  await update($, judged, () => ({ modsDir: dir, views: next }))
   logEvent($, 'verbose', 'scan', `${folders.length} folders, ${next.length} mods in ${Date.now() - scanStartedAt}ms`, { modsDir: dir })
   logEvent($, 'debug', 'scan.lights', 'lights per mod', Object.fromEntries(next.map(view => [view.name, view.lights.join(' ')])))
   await update($, selected, current =>
@@ -448,7 +446,7 @@ async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced:
 /** Every mod drawn now: the demo first while it runs. */
 async function shownViews($: Engine): Promise<ModView[]> {
   const started = await read($, demoStartedAt)
-  const all = await read($, views)
+  const all = (await read($, judged)).views
   if (started === null) return all
   const { now } = await read($, frame)
   return [Lab.demoViewAt(Math.max(0, now - started)), ...all]
@@ -602,9 +600,10 @@ async function rerunStale($: Engine): Promise<void> {
   await scan($, true)
   if (!autoRerun) return
   // The folder these views were judged in, read with them: each run's scans may move elsewhere.
-  const modsDir = await shownModsDir($)
+  const verdict = await read($, judged)
+  const modsDir = verdict.modsDir ?? (await currentModsDir($))
   const inFlight = await read($, runs)
-  for (const view of await read($, views)) {
+  for (const view of verdict.views) {
     const plan = Lab.rerunPlanOf(view.lights, inFlight.some(one => one.mod === view.name))
     if (plan.includes('Validate')) await run($, view.name, 'Validate', modsDir)
     const validated = (await resultsOf($, modsDir))[view.name]?.Validate
@@ -798,7 +797,7 @@ export const register: Register = (on, options) => {
         const name = sub
         void (async () => {
           await scan($, false)
-          if ((await read($, views)).some(view => view.name === name)) {
+          if ((await read($, judged)).views.some(view => view.name === name)) {
             await update($, selected, () => name)
             await update($, readme, () => null)
             await openPane($)
@@ -833,12 +832,12 @@ export const register: Register = (on, options) => {
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
     // The model reports on the folder the session is in now; judge it first if a /cd moved it.
     const modsDir = await currentModsDir($)
-    if ((await read($, judgedDir)) !== modsDir) await scan($, false)
+    if ((await read($, judged)).modsDir !== modsDir) await scan($, false)
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
-    let known = (await read($, views)).find(view => view.name === mod)
+    let known = (await read($, judged)).views.find(view => view.name === mod)
     if (!known && report.stage === 'Spec') {
       await scan($, false)
-      known = (await read($, views)).find(view => view.name === mod)
+      known = (await read($, judged)).views.find(view => view.name === mod)
     }
     if (Lab.startsGeneration(report, known?.lights ?? null)) {
       // The version on disk as the edit begins: a bump may land after the last scan.
@@ -1376,7 +1375,7 @@ export const register: Register = (on, options) => {
         await read($, runs),
         Lab.liveReports(await read($, reported), now),
         demo,
-        await read($, views),
+        (await read($, judged)).views,
       ).slice(0, e.props.maxRows)
       if (!entries.length) return rest
       const { Box, Text } = $.ui.resolve(e)

@@ -66,10 +66,12 @@ export type Run = {
 declare module 'claude-code' {
   interface PluginState {
     'mod-builder': {
-      /** The mods on disk, scanned and judged; the demo is not among them. */
-      views: ModView[]
-      /** The mods folder `views` were judged from; what the pane's buttons act on. Null before the first scan. */
-      modsDir: string | null
+      /**
+       * The last scan's verdict, written as one value so no reader pairs one folder's rows with
+       * another's path: `views`, the mods on disk judged (the demo is not among them), and `modsDir`,
+       * the folder they were judged in, which the pane's buttons act on (null before the first scan).
+       */
+      judged: { modsDir: string | null; views: ModView[] }
       /** The row the detail panel shows. */
       selected: string | null
       runs: Run[]
