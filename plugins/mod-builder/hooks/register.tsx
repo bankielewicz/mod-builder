@@ -706,7 +706,7 @@ async function configure($: Engine, words: string[]): Promise<string> {
     autoOpen,
     modsDir: configuredDir,
     modsDirShown: Lab.shortPath(modsDirOf($)),
-    testTimeoutMinutes: runLimit / 60_000,
+    testTimeoutMinutes: Lab.limitMinutesOf(runLimit),
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
   if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, Lab.normalizePath(`${$.plugin.root}/../../mods`)))

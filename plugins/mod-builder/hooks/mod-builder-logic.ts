@@ -1156,9 +1156,14 @@ export function isOverLimit(elapsedMs: number, limitMs: number): boolean {
   return elapsedMs >= limitMs
 }
 
+/** A time limit in minutes, to two places, as it is shown. */
+export function limitMinutesOf(limitMs: number): number {
+  return Math.round(limitMs / 600) / 100
+}
+
 /** The summary of a check stopped at its time limit: "timed out after 3 minutes". */
 export function timeoutText(limitMs: number): string {
-  return `timed out after ${plural(Math.round(limitMs / 600) / 100, 'minute')}`
+  return `timed out after ${plural(limitMinutesOf(limitMs), 'minute')}`
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────
@@ -1304,7 +1309,7 @@ export function parseConfigCommand(words: readonly string[]): ConfigCommand {
     return { kind: 'error', text: `${field.name} must be on or off.` }
   }
   if (field.kind === 'minutes') {
-    if (raw.toLowerCase() === 'default') return { kind: 'set', name: field.name, value: RUN_MINUTES }
+    if (raw.toLowerCase() === 'default') return { kind: 'set', name: field.name, value: '' }
     const minutes = Number(raw)
     return Number.isFinite(minutes) && minutes > 0 && minutes <= RUN_MINUTES_MAX
       ? { kind: 'set', name: field.name, value: minutes }
@@ -1321,7 +1326,7 @@ export function isOwnRow(owner: string | undefined, plugin: string): boolean {
 /** The listing's values once `name` is set to `value`; `defaultDir` is the folder an empty `modsDir` means. */
 export function valuesAfterSet(name: OptionName, value: string | boolean | number, defaultDir: string): Partial<OptionValues> {
   if (name === 'logging') return { logging: logLevelOf(value) }
-  if (name === 'testTimeoutMinutes') return { testTimeoutMinutes: runLimitMsOf(value) / 60_000 }
+  if (name === 'testTimeoutMinutes') return { testTimeoutMinutes: limitMinutesOf(runLimitMsOf(value)) }
   if (name === 'autoRerun') return { autoRerun: value === true }
   if (name === 'autoOpen') return { autoOpen: value === true }
   const dir = String(value)
