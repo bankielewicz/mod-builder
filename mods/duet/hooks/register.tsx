@@ -159,6 +159,18 @@ async function readText($: EngineInterface, path: string): Promise<string> {
   }
 }
 
+/**
+ * A file's text, '' when it isn't there, or undefined when the read failed otherwise (too many open files, no
+ * permission). The engine's error names the errno in its message (`… failed: ENOENT`) and carries no code.
+ */
+async function readIfThere($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    return String(await $.fs.read(path))
+  } catch (err) {
+    return /\bENOENT\b/.test(String(err)) ? '' : undefined
+  }
+}
+
 async function appendRun($: EngineInterface, task: Task): Promise<void> {
   const path = `${await sessionDir($)}/runs.jsonl`
   await $.fs.write(path, appendLog(await readText($, path), runLineOf(task)))
@@ -169,19 +181,26 @@ function logRun($: EngineInterface, task: Task): Promise<void> {
   return logChain
 }
 
-/** Every run log there is: the legacy shared one, then each session folder's own (a folder with no log reads as empty). */
+/**
+ * Every run log there is: the legacy shared one, then each session folder's own (a folder with no log reads as empty),
+ * read AGENT_READS at a time. A read that failed other than as missing is tried once more on its own, as agentTexts
+ * does; one that fails again reads as empty.
+ */
 async function readRunLogs($: EngineInterface): Promise<string[]> {
   const data = await dataDir($)
   const folders = await $.fs.list(`${data}/sessions`).catch(() => [])
   const paths = [`${data}/runs.jsonl`, ...folders.map(e => `${data}/sessions/${e.name}/runs.jsonl`)]
-  return Promise.all(paths.map(path => readText($, path)))
+  const texts: (string | undefined)[] = []
+  for (let i = 0; i < paths.length; i += AGENT_READS) texts.push(...(await Promise.all(paths.slice(i, i + AGENT_READS).map(path => readIfThere($, path)))))
+  for (const [i, path] of paths.entries()) if (texts[i] === undefined) texts[i] = await readIfThere($, path)
+  return texts.map(text => text ?? '')
 }
 
 /** How many folders deep below a `.claude/agents` folder duet's own search goes. */
 const AGENT_DEPTH = 8
 /** How many `.md` files duet's own search reads per `.claude/agents` folder. */
 const AGENT_FILES = 500
-/** How many agent files are read at once: enough to overlap the reads, few enough to stay far from the open-file limit. */
+/** How many agent files, or run logs for stats, are read at once: enough to overlap the reads, few enough to stay far from the open-file limit. */
 const AGENT_READS = 16
 
 /** Agent files by path, read again only when their size or time changed; the folders are listed on every call. */

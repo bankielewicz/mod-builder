@@ -1286,4 +1286,35 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
     expect(rowOf(text, 'codex · general-purpose')).toMatch(/^codex · general-purpose\s+1\s/)
   })
+
+  test('PR #67 review (Codex P2): /duet stats reads the session logs at most 16 at a time and counts every one', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { hold: () => 3 })
+    for (let i = 0; i < 40; i++) seen.files[logOf(`p${i}`)] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p.startsWith(`${DATA}/sessions/p`)).length).toBe(40)
+    expect(seen.maxReads).toBe(16)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+40\s/)
+  })
+
+  test('PR #67 review (Codex P2): a session log whose read fails once, as past the open-file limit, is read again and counted', { options: OPTS }, async ($, on) => {
+    const seen = engine(on, { flaky: [logOf('s2')] })
+    seen.files[logOf('s2')] = runLine('claude', 'Explore') + runLine('claude', 'Explore')
+    seen.files[logOf('s3')] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p === logOf('s2')).length).toBe(2)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+3\s/)
+  })
+
+  test('PR #67 review (Codex P2): a session folder with no log, or no legacy log, is read once: a missing file is not retried', { options: OPTS }, async ($, on) => {
+    const seen = engine(on)
+    seen.files[`${DATA}/sessions/s4/review-d1.md`] = 'a session that logged nothing'
+    seen.files[logOf('s2')] = runLine('claude', 'Explore')
+    await start($)
+    const { text } = await stats($)
+    expect(seen.reads.filter(p => p === logOf('s4')).length).toBe(1)
+    expect(seen.reads.filter(p => p === LEGACY_LOG).length).toBe(1)
+    expect(rowOf(text, 'claude · Explore')).toMatch(/^claude · Explore\s+1\s/)
+  })
 })
