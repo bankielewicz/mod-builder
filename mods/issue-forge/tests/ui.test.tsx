@@ -1469,6 +1469,20 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect((store[key(16)] as any).workRoot).toBeUndefined()
   })
 
+  test("pruning keeps a pruned run's agents list, so they stay refused after a restart (PR #51 review)", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:repo-agents:${ROOT}/.git#100`]: ['ghost-100'] }
+    for (let i = 0; i < 21; i++) store[key(100 + i)] = storedRun('done', { id: `${100 + i}-1`, issue: 100 + i, repo: `${ROOT}/.git`, startedAt: i, agents: [] })
+    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(store[key(100)]).toBeUndefined()
+    expect(store[key(101)]).toBeDefined()
+    // A restart of the module (a reload) rebuilds the known agents from the store.
+    await start($)
+    expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'ghost-100' } as never)) as any).deny).toContain('issue-forge:')
+  })
+
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, fetchLocks: 2, spawnHold: held() })
     await start($)

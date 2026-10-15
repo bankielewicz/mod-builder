@@ -74,8 +74,10 @@ import {
   phaseRows,
   pickRun,
   prBody,
+  isPrunable,
   pruneKeys,
   releasesOnEnd,
+  repoAgentsKeys,
   profileProblems,
   profileStatusText,
   publishQuestion,
@@ -1388,6 +1390,19 @@ describe('parallel runs (Change 0.3.0)', () => {
     const active = { key: runKey(REPO, 1), run: at(1, 'blocked', { blocked: BLOCKED, startedAt: -5 }) }
     expect(pruneKeys([...finished, active])).toEqual([runKey(REPO, 100), runKey(REPO, 101), runKey(REPO, 102)])
     expect(pruneKeys(finished.slice(0, KEEP_FINISHED))).toEqual([])
+  })
+
+  test('isPrunable: only the finished run that was listed, never one restarted since (Codex 4278707561)', () => {
+    const old16 = at(16, 'done', { id: '16-1' })
+    expect(isPrunable(old16, old16)).toBe(true)
+    expect(isPrunable(old16, null)).toBe(false)
+    expect(isPrunable(old16, at(16, 'green', { id: '16-9' }))).toBe(false)
+    expect(isPrunable(old16, at(16, 'stopped', { id: '16-9' }))).toBe(false)
+  })
+
+  test("repoAgentsKeys: every agents list of the repository, a pruned run's included (PR #51 review)", () => {
+    const keys = [agentsKey(REPO, 1), runKey(REPO, 1), agentsKey('/other/.git', 2), agentsKey(REPO, 30), 'issue-forge:agents:/repo']
+    expect(repoAgentsKeys(keys, REPO)).toEqual([agentsKey(REPO, 1), agentsKey(REPO, 30)])
   })
 
   test('foreignChange: what the driving session reads in the store every 5 s', () => {

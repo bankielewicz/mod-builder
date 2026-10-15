@@ -1732,6 +1732,14 @@ export function sharedLcovBlock(p: Profile, others: readonly Run[]): { reason: s
   return running ? { reason: `lcovPath ${p.lcovPath} is shared by every run and #${running.issue} is running`, next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov' } : null
 }
 
+export function isPrunable(listed: Run, stored: Run | null): boolean {
+  return listed !== null && stored !== null
+}
+
+export function repoAgentsKeys(keys: readonly string[], repo: string): string[] {
+  return repo ? [] : [...keys]
+}
+
 /** Finished runs beyond the newest `keep`, oldest first; active runs are never pruned. */
 export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = KEEP_FINISHED): string[] {
   const finished = entries.filter(e => !isActive(e.run)).sort((a, b) => a.run.startedAt - b.run.startedAt)
