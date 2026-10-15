@@ -70,6 +70,8 @@ let isQueuedAnnounced = false
 let storeChain: Promise<void> = Promise.resolve()
 // What the last finished scan read; a scan swaps in its own once it has read every folder (Change 0.2.8).
 let factsByMod = new Map<string, Lab.FileFacts>()
+/** The folder and mods of the last scan that wrote its rows (`judged`): set with no await after that write. */
+let published: { modsDir: string; names: ReadonlySet<string> } | null = null
 // Logging (Change 0.2.2): the level, this session's lines, its file once known, and writes in order.
 let logLevel: Lab.LogLevel = 'normal'
 let logBuffer: Lab.LogBuffer = Lab.EMPTY_LOG
@@ -414,6 +416,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const previous = (await read($, judged)).modsDir
   if (previous !== null && previous !== dir) await update($, readme, () => null)
   await update($, judged, () => ({ modsDir: dir, views: next }))
+  published = { modsDir: dir, names: new Set(next.map(view => view.name)) }
   logEvent($, 'verbose', 'scan', `${folders.length} folders, ${next.length} mods in ${Date.now() - scanStartedAt}ms`, { modsDir: dir })
   logEvent($, 'debug', 'scan.lights', 'lights per mod', Object.fromEntries(next.map(view => [view.name, view.lights.join(' ')])))
   await update($, selected, current =>
@@ -917,9 +920,9 @@ export const register: Register = (on, options) => {
     const { mod, report } = checked
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
     const modsDir = await currentModsDir($)
-    // A Spec report on a mod no finished scan has listed waits for a scan before it reads any state: the
-    // first `get` fixes the moment every read of this dispatch sees (#10). A listed mod's rows are enough.
-    if (report.stage === 'Spec' && !factsByMod.has(mod)) await scan($, false)
+    // A Spec report on a mod the last written rows of this folder don't list waits for a scan before it reads
+    // any state: the first `get` fixes the moment every read of this dispatch sees (#10, #79). A listed mod's rows are enough.
+    if (report.stage === 'Spec' && !(published?.modsDir === modsDir && published.names.has(mod))) await scan($, false)
     // The model reports on the folder the session is in now; judge it first if a /cd moved it.
     if ((await read($, judged)).modsDir !== modsDir) await scan($, false)
     // A Spec report on a mod built before starts an edit: older evidence goes stale.
