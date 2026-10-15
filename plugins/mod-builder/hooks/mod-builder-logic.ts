@@ -57,7 +57,7 @@ export type FileFacts = {
   description: string | null
   /** README.md is older than the newest code. */
   isReadmeStale: boolean
-  /** When SPEC.md, the newest logic or test file, and README.md were last saved (0 when absent). */
+  /** When SPEC.md, the newest logic or test file (subfolders included), and README.md were last saved (0 when absent). */
   specMtimeMs: number
   logicMtimeMs: number
   readmeMtimeMs: number
@@ -318,6 +318,13 @@ export function isLogicModule(file: string): boolean {
 /** Whether a tests/ file name is one `claude plugin test` collects. */
 export function isTestFile(file: string): boolean {
   return /\.test\.tsx?$/.test(file)
+}
+
+/** Whether a nested file (named by its path from the mod folder) is logic under hooks/ or a test under tests/. Freshness only: existence stays top-level. */
+export function isNestedLogicOrTest(path: string): boolean {
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  if (path.startsWith('hooks/')) return isLogicModule(base)
+  return path.startsWith('tests/') && isTestFile(base)
 }
 
 // ── Parsing what the commands print ───────────────────────────────────────
@@ -949,17 +956,23 @@ export function factsOf(read: FolderRead): FileFacts | null {
   // Named by folder, so a file moved between folders without a new mtime still changes the signature.
   const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
     entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  const nested = read.nested ?? []
   const code = [
     ...inFolder('.claude-plugin', manifest),
     ...inFolder('hooks', read.hooks),
     ...inFolder('tests', read.tests),
     ...inFolder('types', read.types),
-    ...(read.nested ?? []).filter(entry => entry.kind === 'file'),
+    ...nested.filter(entry => entry.kind === 'file'),
   ]
   const all = [...read.top.filter(entry => entry.kind === 'file'), ...code]
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}
   const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
+  const logic = [
+    ...read.hooks.filter(entry => isLogicModule(entry.name)),
+    ...read.tests.filter(entry => isTestFile(entry.name)),
+    ...nested.filter(entry => isNestedLogicOrTest(entry.name)),
+  ]
   const codeSig = signatureOf(code.map(entry => `${entry.name}@${entry.mtimeMs}`))
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
   return {
@@ -979,12 +992,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     listedVersion: listedVersionOf(read.marketplace, read.name),
     specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
-    logicMtimeMs: Math.max(
-      0,
-      ...[...read.hooks.filter(entry => isLogicModule(entry.name)), ...read.tests.filter(entry => isTestFile(entry.name))].map(
-        entry => entry.mtimeMs,
-      ),
-    ),
+    logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,

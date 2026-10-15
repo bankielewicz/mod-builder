@@ -1175,11 +1175,22 @@ export function runLineOf(t: Task): RunLine {
   }
 }
 
+/** A run log's non-blank lines. */
+function logLines(text: string): string[] {
+  return text.split('\n').filter(l => l.trim())
+}
+
 /** The log with one line added, kept to the newest `keep` lines. */
 export function appendLog(existing: string, line: RunLine, keep = 2000): string {
-  const lines = existing.split('\n').filter(l => l.trim())
+  const lines = logLines(existing)
   lines.push(JSON.stringify(line))
   return lines.slice(-keep).join('\n') + '\n'
+}
+
+/** Several run logs (the legacy one, each session's) as one: their non-blank lines, so a log with no final newline can't swallow the next one's first. */
+export function mergeLogs(texts: string[]): string {
+  const lines = texts.flatMap(logLines)
+  return lines.length ? lines.join('\n') + '\n' : ''
 }
 
 function median(xs: number[]): number {
@@ -1198,7 +1209,9 @@ export function summarize(log: string): StatRow[] {
     try {
       const r = JSON.parse(l) as RunLine
       const key = `${r.provider} · ${r.kind === 'review' ? 'review' : r.type}`
-      groups.set(key, [...(groups.get(key) ?? []), r])
+      const group = groups.get(key)
+      if (group) group.push(r)
+      else groups.set(key, [r])
     } catch {
       /* a torn line is skipped */
     }

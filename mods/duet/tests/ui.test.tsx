@@ -4,17 +4,29 @@ const PANE = { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock
 const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 160 } as const
 
-function engine(on: any, opened: string[]) {
+const DATA = '/home/u/.claude/duet-data'
+const LEGACY_LOG = `${DATA}/runs.jsonl`
+const RUN = (provider: 'codex' | 'claude', type: string) => JSON.stringify({ id: 'd1', at: 0, provider, kind: 'agent', type, model: '', ms: 4000, tokens: 900, ok: true }) + '\n'
+
+/** `sessions`: each session folder's runs.jsonl, by folder name; the legacy log holds one codex Explore run. */
+function engine(on: any, opened: string[], sessions: Record<string, string> = {}) {
   mock.clock(on)
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
   on('ui.open', ($: any, e: any) => (opened.push(e.id), { value: { isPlaced: true } }))
   on('ui.panes', () => ({ value: [] }))
   on('env.get', () => ({ value: '/home/u' }))
-  on('fs.read', ($: any, e: any) =>
-    e.path.endsWith('runs.jsonl')
-      ? { value: '{"id":"d1","at":0,"provider":"codex","kind":"agent","type":"Explore","model":"","ms":4000,"tokens":900,"ok":true}\n' }
-      : { deny: 'ENOENT' })
+  on('session.id', () => ({ value: 's1' }))
+  // With no session logs the sessions folder is not there, as before a first run: listing it fails.
+  on('fs.list', ($: any, e: any) =>
+    String(e.path).replace(/\/+$/, '') === `${DATA}/sessions` && Object.keys(sessions).length
+      ? { value: Object.keys(sessions).map(name => ({ name, kind: 'dir', size: 0, mtimeMs: 1, isLink: false })) }
+      : { deny: 'ENOENT: no such directory' })
+  on('fs.read', ($: any, e: any) => {
+    if (e.path === LEGACY_LOG) return { value: RUN('codex', 'Explore') }
+    const session = Object.keys(sessions).find(name => e.path === `${DATA}/sessions/${name}/runs.jsonl`)
+    return session ? { value: sessions[session] } : { deny: 'ENOENT' }
+  })
 }
 
 const mount = ($: any, surface: 'terminal' | 'desktop', props: object = PANE) =>
@@ -70,5 +82,25 @@ describe('ui', () => {
     expect((await run('stats')).text).toContain('codex · Explore')
     expect((await run('routes')).text).toContain('nothing routed')
     expect((await run('review --base --x')).text).toMatch(/^Usage/)
+  })
+
+  test('/duet stats counts the legacy log and every session\'s log', { options: { codexAgents: '' } }, async ($, on) => {
+    engine(on, [], { s1: RUN('codex', 'Explore') + RUN('codex', 'Explore'), s2: RUN('claude', 'Explore') + RUN('codex', 'Explore') })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    const { text } = await $.command.run({ command: 'duet', args: 'stats', origin: COMPOSER, presentation: PRESENTATION })
+    expect(text).toMatch(/^codex · Explore\s+4\s/m)
+    expect(text).toMatch(/^claude · Explore\s+1\s/m)
+  })
+
+  test('the pane\'s Stats view counts every session\'s log too', async ($, on) => {
+    engine(on, [], { s2: RUN('claude', 'Explore') })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await $.command.run({ command: 'duet', args: 'demo', origin: COMPOSER, presentation: PRESENTATION })
+    const ui = await mount($, 'terminal')
+    await ui.press({ key: 'stats' })
+    await ui.unmount()
+    const stats = await mount($, 'terminal')
+    expect(await stats.find({ type: 'Text', text: /claude · Explore/ })).toBeDefined()
+    await stats.unmount()
   })
 })

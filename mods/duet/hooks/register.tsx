@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
-  splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
+  mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
   codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
@@ -141,13 +141,14 @@ async function dataDir($: EngineInterface): Promise<string> {
   return `${(await homeDir($)) || '.'}/.claude/duet-data`
 }
 
-/** This session's own folder, for per-task files: ids restart at d1 in every session. */
+/** This session's own folder, for per-task files and its run log: ids restart at d1 in every session. */
 async function sessionDir($: EngineInterface): Promise<string> {
   const id = await $.session.id().catch(() => 'unknown')
   return `${await dataDir($)}/sessions/${sessionFolderOf(id)}`
 }
 
-// Appends to runs.jsonl one at a time within this session (it is read, appended and rewritten).
+// Appends to this session's runs.jsonl one at a time (it is read, appended and rewritten); no other session writes it,
+// except that sessions whose id can't be read share the folder `unknown`.
 let logChain: Promise<void> = Promise.resolve()
 
 async function readText($: EngineInterface, path: string): Promise<string> {
@@ -158,9 +159,29 @@ async function readText($: EngineInterface, path: string): Promise<string> {
   }
 }
 
+/**
+ * A file's text, '' when it isn't there, or undefined when the read failed otherwise (too many open files, no
+ * permission). The engine's error names the errno only in its message (`… failed: ENOENT`, 2.1.300) and carries no
+ * code, so any other failure asks whether the file exists: a rewording can't make a missing log look unreadable.
+ */
+async function readIfThere($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    return String(await $.fs.read(path))
+  } catch (err) {
+    if (/\bENOENT\b/.test(String(err))) return ''
+    return (await $.fs.exists(path).catch(() => true)) ? undefined : ''
+  }
+}
+
+/**
+ * Appends a run to this session's log, which is read and rewritten whole. A missing log starts a new one; a read that
+ * fails twice skips this run's line (every caller catches) rather than rewrite the log from nothing.
+ */
 async function appendRun($: EngineInterface, task: Task): Promise<void> {
-  const path = `${await dataDir($)}/runs.jsonl`
-  await $.fs.write(path, appendLog(await readText($, path), runLineOf(task)))
+  const path = `${await sessionDir($)}/runs.jsonl`
+  const text = (await readIfThere($, path)) ?? (await readIfThere($, path))
+  if (text === undefined) throw new Error(`duet: ${path} could not be read, so this run is not logged`)
+  await $.fs.write(path, appendLog(text, runLineOf(task)))
 }
 
 function logRun($: EngineInterface, task: Task): Promise<void> {
@@ -168,11 +189,26 @@ function logRun($: EngineInterface, task: Task): Promise<void> {
   return logChain
 }
 
+/**
+ * Every run log there is: the legacy shared one, then each session folder's own (a folder with no log reads as empty),
+ * read AGENT_READS at a time. A read that failed other than as missing is tried once more on its own, as agentTexts
+ * does; one that fails again reads as empty.
+ */
+async function readRunLogs($: EngineInterface): Promise<string[]> {
+  const data = await dataDir($)
+  const folders = await $.fs.list(`${data}/sessions`).catch(() => [])
+  const paths = [`${data}/runs.jsonl`, ...folders.map(e => `${data}/sessions/${e.name}/runs.jsonl`)]
+  const texts: (string | undefined)[] = []
+  for (let i = 0; i < paths.length; i += AGENT_READS) texts.push(...(await Promise.all(paths.slice(i, i + AGENT_READS).map(path => readIfThere($, path)))))
+  for (const [i, path] of paths.entries()) if (texts[i] === undefined) texts[i] = await readIfThere($, path)
+  return texts.map(text => text ?? '')
+}
+
 /** How many folders deep below a `.claude/agents` folder duet's own search goes. */
 const AGENT_DEPTH = 8
 /** How many `.md` files duet's own search reads per `.claude/agents` folder. */
 const AGENT_FILES = 500
-/** How many agent files are read at once: enough to overlap the reads, few enough to stay far from the open-file limit. */
+/** How many agent files, or run logs for stats, are read at once: enough to overlap the reads, few enough to stay far from the open-file limit. */
 const AGENT_READS = 16
 
 /** Agent files by path, read again only when their size or time changed; the folders are listed on every call. */
@@ -627,7 +663,7 @@ async function finishReview($: EngineInterface, task: Task, target: ReviewTarget
 // ── Commands ─────────────────────────────────────────────────────────────
 
 async function showStats($: EngineInterface): Promise<string> {
-  const text = statsText(summarize(await readText($, `${await dataDir($)}/runs.jsonl`)))
+  const text = statsText(summarize(mergeLogs(await readRunLogs($))))
   await update($, statsAtom, () => text)
   return text
 }

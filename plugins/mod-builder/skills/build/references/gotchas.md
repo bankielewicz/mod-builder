@@ -118,7 +118,7 @@ Re-check [field] items against the d.ts after a Claude Code update.
   hook that awaits another hook's write (a scan it waits for) and then reads the atom again gets the
   old value, not the write.
 - **[probe]** The moment is fixed at the dispatch's first `get`, of any atom, not at its start and not per
-  atom. In `claude plugin test` (2.1.300, Change 0.2.12's held test) a `lab_report` hook whose first read
+  atom. In `claude plugin test` (2.1.300, Change 0.2.13's held test) a `lab_report` hook whose first read
   came before the scan it then awaited re-read the same empty list. Live, on 2.1.300 with a throwaway
   `claude -p --plugin-dir` mod whose command awaits a nested `$.tool.call` that another hook answers with
   a state write: a re-read of an atom that hook had written read the old value (0, written to 1); an atom

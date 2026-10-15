@@ -275,7 +275,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 - **New:** `/mod-builder:edit`; build generations for edits; `autoRerun`; the selection follows the active build; the numbered `MODS 1–8` header and numbered track; rows follow streamed test progress; a keyboard hint line.
 - **Fixes:**
-  - `scan()` waits for a scan in progress, so an edit's start is never missed. (Not so when the hook had already read state: corrected in Change 0.2.12.)
+  - `scan()` waits for a scan in progress, so an edit's start is never missed. (Not so when the hook had already read state: corrected in Change 0.2.13.)
   - A Validate that fails on current code blocks a stale Test instead of re-running every turn.
   - A run that can't start shows as failed, with Fix.
   - During an edit, Share needs a version different from the one the edit started from.
@@ -511,6 +511,15 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 ## Change 0.2.12 (2026-10-15)
 
+> For issue #15: nested-only logic edits left the Logic stage stale (Codex's comment on PR #1, discussion_r4254194992).
+
+- **Fix:** `logicMtimeMs`, which the Logic stage compares against an edit generation's start, was the newest mtime of top-level `hooks/` logic modules and top-level `tests/` test files only. 0.2.1 made Validate and Test notice `hooks/lib/parser.ts`, so an edit that changed only nested logic re-ran both while the Logic light stayed stale and the mod never reached "ready to share". `Lab.factsOf` now also takes into account the nested files (`read.nested`) under `hooks/` that are logic modules (`Lab.isLogicModule` on the base name: no `register.*`, no `.d.ts`) and those under `tests/` that are test files (`Lab.isTestFile`), through `Lab.isNestedLogicOrTest`. Files under `types/` and other files in subfolders (data, helpers in `tests/`) still count for the code signature only.
+- **Amends 0.2.1's "Unchanged":** the rule that Logic and Register look only at files directly in `hooks/` and `tests/` now applies to **existence** only: `hasLogic`, `hasTests` and `hasRegister` stay top-level, so a nested `hooks/lib/x-logic.ts` still isn't the logic module. Freshness (`logicMtimeMs`) sees nested logic and test files.
+- **Tests:** `tests/mod-builder-logic.test.ts`, "logicMtimeMs sees nested logic and test files": a newer nested `hooks/` file, a nested `*.test.ts(x)` and one 3 levels down raise `logicMtimeMs` and leave `hasLogic` and `hasTests` as they were; `register.*`, `.d.ts`, data files, `types/` and helpers under `tests/` don't count. `tests/ui.test.tsx`, "nested logic edit during a generation": with SPEC, README, `plugin.json` and only `hooks/lib/parser.ts` saved, the edit reaches "ready to share" (a control with a top-level logic file also saved passes before and after). The nested-only test fails on 0.2.11.
+- **Version:** 0.2.12 in `plugin.json` and the marketplace entry.
+
+## Change 0.2.13 (2026-10-15)
+
 > For issue #10: an edit's start was missed when `lab_report` reported `Spec running` while a scan that hadn't listed the mod was under way. Codex's comment on PR #1 (discussion_r4252575075).
 
 - **Cause:** the 0.2.0 claim above ("an edit's start is never missed") held only when the hook had read no state before it waited. Every `$.state.get` of one dispatch reads one moment `[d.ts]`, fixed at the dispatch's first `get` `[probe]`. The handler's first read (the folder `judged`) came before the wait, so the re-read after `await scan()` returned the same list, without the mod: no generation was stored, and the results from before the edit stayed green.
@@ -519,4 +528,4 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Tests:** `tests/ui.test.tsx`, "edit: Spec running arrives while another hook's scan is listing (#10)": a mod checked in an earlier session appears on disk after the startup scan; a scan is held at the mods folder; `Spec running` waits for it, then `Spec passed` shows "edit · update Spec for this change". The store is seeded through `world()`'s existing `seeded` parameter; the helper's `fs.list` now reads the disk at call time, so a test can add files after the world is made.
 - **Known gap:** a scan sets `factsByMod` before it writes the judged rows (a few awaits later), so a report in that gap finds the mod listed in the facts and not yet in the rows, and does not wait. The window is the scan's own announce step.
 - **Live check (2.1.300):** a throwaway mod in `claude -p --plugin-dir` shows the moment is fixed at the first `get` of any atom; see gotchas.md ("Modules"). Mod Lab itself was not driven live with a held scan.
-- **Version:** 0.2.12 in `plugin.json` and the marketplace entry.
+- **Version:** 0.2.13 in `plugin.json` and the marketplace entry (0.2.12 went to #15, PR #72, which merged first).
