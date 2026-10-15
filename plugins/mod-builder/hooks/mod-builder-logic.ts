@@ -1060,12 +1060,7 @@ export function withProgress(all: readonly Run[], entry: Run, counts: { passed: 
 
 /** Test lines streamed so far → the counts: bun prints one `(pass)` or `(fail)` line per test. */
 export function countStreamed(text: string): { passed: number; failed: number } {
-  let passed = 0
-  let failed = 0
-  for (const line of text.split('\n')) {
-    if (line.startsWith('(pass) ')) passed += 1
-    else if (line.startsWith('(fail) ')) failed += 1
-  }
+  const { passed, failed } = streamPiece(EMPTY_STREAM, `${text}\n`)
   return { passed, failed }
 }
 
