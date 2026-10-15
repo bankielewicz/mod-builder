@@ -163,6 +163,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('session.id', () => ({ value: SESSION }))
   mock.env(on, { HOME: '/home/u' })
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
+  on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
   on('command.register', () => ({ value: undefined }))
   on('agent.register', ($: any, e: any) => ({ value: { agent: `issue-forge:${e.name}` } }))
   on('ui.open', ($: any, e: any) => (world.opened.push(e.id), { value: { isPlaced: world.isPlaced } }))
@@ -339,7 +340,7 @@ describe('demo and drawing', () => {
       ['failed', /gate G: diff branch 91\.30% < 95/],
       ['blocked', /blocked at baseline: tests fail before any change/],
       ['interrupted', /interrupted during green; \/issue-forge resume restarts it/],
-      ['elsewhere', /runs in another session \(for .*\); \/issue-forge resume 16 takes it over/],
+      ['elsewhere', /◌ runs in another session \(for 2m05s\)/],
       ['ready', /Push issue-16-mod-lab-fix-prompt-and-path-header-hardc/],
       ['done', /pull request opened/],
     ]
@@ -365,7 +366,7 @@ describe('demo and drawing', () => {
     await ui.press({ key: 'next' })
     await ui.unmount()
     ui = await pane($)
-    expect(await ui.find({ type: 'Text', text: /demo · empty \(1\/8\)/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /demo · empty \(1\/9\)/ })).toBeDefined()
     await ui.press({ key: 'next' })
     await ui.unmount()
     ui = await pane($)
@@ -1323,7 +1324,7 @@ describe('parallel runs (Change 0.3.0)', () => {
 
   test('a run another session drives: Cancel or no answer refuses and writes nothing; Take over resumes it here', async ($, on) => {
     const store: Record<string, unknown> = { [key(40)]: elsewhere40() }
-    const w = engine(on, { head: BRANCH, answer: 'Cancel', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    const w = engine(on, { head: 'issue-40-x', answer: 'Cancel', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
     await start($)
     const refused = '#40 runs in another session; use that session, or answer Take over in an interactive one.'
     expect((await run($, 'resume')).text).toBe(refused)
@@ -1344,7 +1345,8 @@ describe('parallel runs (Change 0.3.0)', () => {
     await run($, 'status 40')
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await pane($, surface)
-      expect(await ui.find({ type: 'Text', text: /◌ runs in another session \(for 2m05s\); \/issue-forge resume 40 takes it over/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /◌ runs in another session \(for 2m05s\)$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /\/issue-forge resume 40 takes it over/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /also {7}#44 blocked at gateG/ })).toBeDefined()
       await ui.unmount()
     }
