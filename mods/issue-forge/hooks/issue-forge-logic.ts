@@ -683,16 +683,37 @@ export function repoOfView(stdout: string): string | null {
   return host && typeof view.nameWithOwner === 'string' && /^[^/]+\/[^/]+$/.test(view.nameWithOwner) ? `${host.toLowerCase()}/${view.nameWithOwner}` : null
 }
 
-// The host is group 1 in an https:// or ssh:// URL, group 2 in the scp-like form; then owner (3) and repository (4).
-const REMOTE_URL = /^(?:(?:https|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
+// The scheme is group 1 and the host group 2 in a URL, the host group 3 in the scp-like form; then owner (4) and repository (5).
+const REMOTE_URL = /^(?:(https|ssh):\/\/(?:[^/@]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::\d+)?\/|(?:[^/@:\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(?!\/))([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
+
+/** A remote's `host/owner/repo`, and whether git reaches it over ssh (an ssh:// URL or the scp-like form). */
+function parseRemote(url: string): { repo: string; isSsh: boolean } | null {
+  const m = url.trim().match(REMOTE_URL)
+  return m ? { repo: `${String(m[2] ?? m[3]).toLowerCase()}/${m[4]}/${m[5]}`, isSsh: m[1] !== 'https' } : null
+}
 
 /**
  * `host/owner/repo` from a git remote URL: https and ssh URLs (userinfo, port, `.git` and a trailing slash dropped, the host
  * lowercased) and scp-like `[user@]host:owner/repo`. Any other form (git://, file://, a path) is null.
  */
 export function repoOfRemoteUrl(url: string): string | null {
-  const m = REMOTE_URL.exec(url.trim())
-  return m ? `${String(m[1] ?? m[2]).toLowerCase()}/${m[3]}/${m[4]}` : null
+  return parseRemote(url)?.repo ?? null
+}
+
+export type RemoteVerdict = { kind: 'match' } | { kind: 'unrecognised' } | { kind: 'ask'; repo: string } | { kind: 'other'; repo: string }
+
+const hostOf = (repo: string) => repo.slice(0, repo.indexOf('/')).toLowerCase()
+
+/**
+ * Whether a remote URL names `repo` (PR #68 review). An https host is the host; git hands an ssh remote's host to ssh, and
+ * ~/.ssh/config may alias it, so there the same owner and repository is enough. Another owner or repository on the pinned
+ * host may be `repo` renamed, which only gh can say (`ask`); gh is never asked about another host.
+ */
+export function remoteVerdict(url: string, repo: string): RemoteVerdict {
+  const remote = parseRemote(url)
+  if (!remote) return { kind: 'unrecognised' }
+  if (isSameRepo(remote.repo, repo) || (remote.isSsh && isSameOwnerRepo(remote.repo, repo))) return { kind: 'match' }
+  return hostOf(remote.repo) === hostOf(repo) ? { kind: 'ask', repo: remote.repo } : { kind: 'other', repo: remote.repo }
 }
 
 /** The same host, owner and repository, in any case; a null side never matches. */

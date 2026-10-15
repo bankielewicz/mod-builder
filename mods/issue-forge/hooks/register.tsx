@@ -45,7 +45,6 @@ import {
   isOwnHandback,
   isPrunable,
   isPullUrl,
-  isSameOwnerRepo,
   isSameRepo,
   isWorking,
   isWorktreeRun,
@@ -80,8 +79,8 @@ import {
   publishQuestion,
   readdWorktreeCommand,
   releasesOnEnd,
+  remoteVerdict,
   repoLabel,
-  repoOfRemoteUrl,
   repoOfView,
   repoAgentsKeys,
   repoRunKeys,
@@ -483,12 +482,13 @@ async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { r
 async function remoteRepo($: EngineInterface, root: string, remote: string, isPush: boolean, repo: string): Promise<'missing' | 'match' | { other: string | null }> {
   const got = await git($, root, ['remote', 'get-url', ...(isPush ? ['--push'] : []), remote])
   if (got.exitCode !== 0) return 'missing'
-  const parsed = repoOfRemoteUrl(got.stdout)
-  if (parsed === null) return { other: null }
-  if (isSameOwnerRepo(parsed, repo)) return 'match'
-  const view = await $.process.run(['gh', 'repo', 'view', parsed, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  const verdict = remoteVerdict(got.stdout, repo)
+  if (verdict.kind === 'match') return 'match'
+  if (verdict.kind === 'unrecognised') return { other: null }
+  if (verdict.kind === 'other') return { other: verdict.repo }
+  const view = await $.process.run(['gh', 'repo', 'view', verdict.repo, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
   const canonical = view?.exitCode === 0 ? repoOfView(view.stdout) : null
-  return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? parsed }
+  return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? verdict.repo }
 }
 
 /** Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. */
