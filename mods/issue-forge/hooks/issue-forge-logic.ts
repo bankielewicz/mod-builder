@@ -685,6 +685,8 @@ export type RunEvent =
   | { type: 'made'; keep: Kept }
   | { type: 'resume' }
   | { type: 'stop' }
+  | { type: 'drive'; session: string }
+  | { type: 'release'; session: string }
   | { type: 'publish' }
   | { type: 'published'; url: string; merge?: MergeCheck }
 
@@ -749,6 +751,13 @@ function blockedAt(run: Run, at: Step, reason: string, next: string): Run {
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
+  // Who drives the run (Change 0.3.0): set when a drive starts; only that session's release clears it.
+  if (ev.type === 'drive') return { ...run, driver: { session: ev.session, since: now } }
+  if (ev.type === 'release') {
+    if (run.driver?.session !== ev.session) return run
+    const { driver: _, ...rest } = run
+    return rest
+  }
   // The branch and folder preflight made land at any step, a stopped one too, so a Stop never loses them.
   if (ev.type === 'made') return { ...run, ...ev.keep }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
@@ -830,7 +839,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
 
 // ── Workspace (Change 0.2.0) ─────────────────────────────────────────────
 
-export type CheckoutFacts = { porcelain: string; head: string; base: string }
+export type CheckoutFacts = { porcelain: string; head: string; base: string; heldBy?: number }
 export type CheckoutState = { isBusy: boolean; why: string }
 export type WorkspacePlan = { kind: 'here' } | { kind: 'worktree' } | { kind: 'ask' } | { kind: 'block'; reason: string; next: string }
 
@@ -840,6 +849,7 @@ export function checkoutState(f: CheckoutFacts): CheckoutState {
   const reasons = [
     changed > 0 ? `${changed} changed file${changed === 1 ? '' : 's'}` : '',
     f.head === f.base ? '' : f.head === 'HEAD' ? 'detached HEAD' : `on ${f.head}`,
+    f.heldBy === undefined ? '' : `#${f.heldBy}'s run works here`,
   ].filter(Boolean)
   return { isBusy: reasons.length > 0, why: reasons.join(', ') }
 }
@@ -1203,7 +1213,7 @@ export function prBody(run: Run): string {
 export type Command =
   | { kind: 'toggle' }
   | { kind: 'start'; issue: number }
-  | { kind: 'status' | 'resume' | 'publish' | 'stop' }
+  | { kind: 'status' | 'resume' | 'publish' | 'stop' | 'handoff'; issue?: number }
   | { kind: 'demo'; state: DemoState | null }
   | { kind: 'unknown'; text: string }
 
@@ -1212,7 +1222,12 @@ export function parseCommand(args: string): Command {
   const first = (words[0] ?? '').toLowerCase()
   if (first === '') return { kind: 'toggle' }
   if (/^#?\d+$/.test(first)) return { kind: 'start', issue: Number(first.replace('#', '')) }
-  if (first === 'status' || first === 'resume' || first === 'publish' || first === 'stop') return { kind: first }
+  if (first === 'status' || first === 'resume' || first === 'publish' || first === 'stop' || first === 'handoff') {
+    const arg = words[1]
+    if (arg === undefined) return { kind: first }
+    // Change 0.3.0: the run a command means, by its issue number.
+    return /^#?\d+$/.test(arg) ? { kind: first, issue: Number(arg.replace('#', '')) } : { kind: 'unknown', text: args.trim() }
+  }
   if (first === 'demo') {
     const state = (words[1] ?? '').toLowerCase()
     return { kind: 'demo', state: (DEMO_STATES as readonly string[]).includes(state) ? (state as DemoState) : null }
@@ -1220,7 +1235,7 @@ export function parseCommand(args: string): Command {
   return { kind: 'unknown', text: args.trim() }
 }
 
-export const USAGE = '/issue-forge <issue number> · status · resume · publish · stop · demo'
+export const USAGE = '/issue-forge <issue number> · status [N] · resume [N] · publish [N] · handoff [N] · stop [N] · demo'
 
 // ── View (§7.3) ───────────────────────────────────────────────────────────
 
@@ -1243,12 +1258,16 @@ export function layoutOf(bodyColumns: number): Layout {
   return bodyColumns >= 60 ? 'full' : bodyColumns >= 40 ? 'medium' : 'compact'
 }
 
-export type View = 'empty' | 'running' | 'interrupted' | 'blocked' | 'ready' | 'done' | 'stopped'
+export type View = 'empty' | 'running' | 'interrupted' | 'elsewhere' | 'blocked' | 'ready' | 'done' | 'stopped'
 
-/** Which drawing: a working step the module isn't driving is interrupted (a reload ended it). */
-export function viewOf(run: Run | null, isDriving: boolean): View {
+/**
+ * Which drawing: a working step the module isn't driving is interrupted (a reload ended it), unless another
+ * session drives it (Change 0.3.0). `me` is this session's id.
+ */
+export function viewOf(run: Run | null, isDriving: boolean, me = ''): View {
   if (!run) return 'empty'
   if (run.step === 'blocked') return 'blocked'
+  if (!isDriving && isElsewhere(run, me)) return 'elsewhere'
   if (run.step === 'ready') return 'ready'
   if (run.step === 'done') return 'done'
   if (run.step === 'stopped') return 'stopped'
@@ -1337,14 +1356,15 @@ export function badgeOf(run: Run, now: number): string {
   return `#${run.issue} ${run.step}`
 }
 
-/** `/issue-forge status` as text. */
-export function statusText(run: Run | null, isDriving: boolean, now: number): string {
+/** `/issue-forge status` as text; `others` are the repository's other active runs (Change 0.3.0). */
+export function statusText(run: Run | null, isDriving: boolean, now: number, me = '', others: readonly OtherRun[] = []): string {
   if (!run) return `No run in this repository. ${USAGE}`
-  const view = viewOf(run, isDriving)
+  const view = viewOf(run, isDriving, me)
   const head = `#${run.issue}${run.title ? ` ${run.title}` : ''}${run.branch ? ` · ${run.branch} → ${run.base}` : ''}`
   const lines = [head]
   if (view === 'blocked' && run.blocked) lines.push(`blocked at ${run.blocked.at}: ${run.blocked.reason}`, `next: ${run.blocked.next}, then /issue-forge resume`)
   else if (view === 'interrupted') lines.push(`interrupted during ${run.step}; /issue-forge resume restarts it`)
+  else if (view === 'elsewhere') lines.push(elsewhereLine(run, now))
   else if (view === 'stopped') lines.push('stopped; the branch and its commits are kept')
   else if (view === 'ready') {
     lines.push(`ready: /issue-forge publish pushes ${run.branch} and opens a pull request against ${run.base}`)
@@ -1358,6 +1378,7 @@ export function statusText(run: Run | null, isDriving: boolean, now: number): st
   const cov = coverageLine(run)
   if (cov) lines.push(`coverage: ${cov}`)
   if (run.lastGate && !run.lastGate.passed) lines.push(`gate ${run.lastGate.gate} failed: ${run.lastGate.checks.filter(c => !c.passed).map(c => `${c.id} ${c.detail}`).join('; ')}`)
+  if (others.length > 0) lines.push(`also: ${othersLine(others)}`)
   return lines.join('\n')
 }
 
@@ -1370,7 +1391,7 @@ export function profileStatusText(errors: readonly string[], profile: Profile | 
 
 // ── Demo ──────────────────────────────────────────────────────────────────
 
-export const DEMO_STATES = ['empty', 'running', 'gate', 'failed', 'blocked', 'interrupted', 'ready', 'done'] as const
+export const DEMO_STATES = ['empty', 'running', 'gate', 'failed', 'blocked', 'interrupted', 'elsewhere', 'ready', 'done'] as const
 export type DemoState = (typeof DEMO_STATES)[number]
 
 export function nextDemoState(state: DemoState): DemoState {
@@ -1388,8 +1409,22 @@ const DEMO_PROFILE: Profile = {
 
 const demoCheck = (id: string, passed: boolean, detail: string): Check => ({ id, passed, detail })
 
+const DEMO_ME = 'demo'
+/** The repository's other runs in the demo's running states: the also line (Change 0.3.0). */
+const DEMO_OTHERS: OtherRun[] = [
+  { issue: 44, step: 'blocked', line: '#44 blocked at gateG', isElsewhere: false },
+  { issue: 52, step: 'refactor', line: '#52 refactor (another session)', isElsewhere: true },
+]
+
+export type DemoView = { run: Run | null; isDriving: boolean; activity: Activity | null; others: OtherRun[]; me: string }
+
 /** A sample run for issue #16 in each demo state: what the pane draws, never stored. */
-export function demoRun(state: DemoState, now: number): { run: Run | null; isDriving: boolean; activity: Activity | null } {
+export function demoRun(state: DemoState, now: number): DemoView {
+  const shown = demoShown(state, now)
+  return { ...shown, others: shown.isDriving ? DEMO_OTHERS : [], me: DEMO_ME }
+}
+
+function demoShown(state: DemoState, now: number): { run: Run | null; isDriving: boolean; activity: Activity | null } {
   if (state === 'empty') return { run: null, isDriving: false, activity: null }
   const base: Run = {
     ...newRun('demo', '/demo', 16, now - 380_000),
@@ -1428,6 +1463,8 @@ export function demoRun(state: DemoState, now: number): { run: Run | null; isDri
       }
     case 'interrupted':
       return { run: base, isDriving: false, activity: null }
+    case 'elsewhere':
+      return { run: { ...base, driver: { session: 'another', since: now - 125_000 } }, isDriving: false, activity: null }
     case 'ready':
     case 'done': {
       const finished: Run = {
@@ -1448,38 +1485,108 @@ export function demoRun(state: DemoState, now: number): { run: Run | null; isDri
 }
 
 // ── Parallel runs (Change 0.3.0) ──────────────────────────────────────────
-// Red stubs: each answers wrongly until green.
 
+/** Finished runs (done, stopped) a repository keeps in the store; older ones are deleted when a run starts. */
 export const KEEP_FINISHED = 20
+export const TAKE_OVER = 'Take over'
 
+const RUN_PREFIX = 'issue-forge:run:'
+const AGENTS_PREFIX = 'issue-forge:agents:'
+
+/** A run's store key: git's common folder (every worktree of the repository shares it) and the issue. */
 export function runKey(repo: string, issue: number): string {
-  return `${repo}${issue}`
+  return `${RUN_PREFIX}${repo}#${issue}`
 }
 
+/** The agents a run has started, kept beside it for the guard. */
 export function agentsKey(repo: string, issue: number): string {
-  return `${repo}${issue}`
+  return `${AGENTS_PREFIX}${repo}#${issue}`
 }
 
 export type ParsedKey = { kind: 'run' | 'agents'; repo: string; issue: number } | { kind: 'legacyRun' | 'legacyAgents'; root: string }
 
+/** A 0.3.0 key ends in `#<issue>`; anything else under the prefix is the 0.2 form, keyed by the checkout. */
 export function parseRunKey(key: string): ParsedKey | null {
-  return key ? null : null
+  const forms = [
+    [RUN_PREFIX, 'run', 'legacyRun'],
+    [AGENTS_PREFIX, 'agents', 'legacyAgents'],
+  ] as const
+  for (const [prefix, kind, legacy] of forms) {
+    if (!key.startsWith(prefix)) continue
+    const rest = key.slice(prefix.length)
+    const m = rest.match(/^(.*)#(\d+)$/)
+    return m ? { kind, repo: m[1] ?? '', issue: Number(m[2]) } : { kind: legacy, root: rest }
+  }
+  return null
 }
 
+/** `git rev-parse --git-common-dir` run in the top level: relative there in the main checkout, absolute in a linked one. */
 export function commonDirOf(top: string, out: string): string | null {
-  return top && out ? null : null
+  const dir = out.trim()
+  if (!dir) return null
+  return normalizePath(isAbsolutePath(dir) ? dir : `${top}/${dir}`)
 }
 
+/** The store keys of this repository's runs. */
 export function repoRunKeys(keys: readonly string[], repo: string): string[] {
-  return repo ? [] : [...keys]
+  const prefix = runKey(repo, 0).replace(/0$/, '')
+  return keys.filter(key => key.startsWith(prefix) && /^\d+$/.test(key.slice(prefix.length)))
 }
 
 export type LegacyEntry = { key: string; root: string; run: Run }
 export type MigrationPlan = { moves: { from: string; root: string; to: string; run: Run }[]; drops: { from: string; root: string; to: string }[] }
 
+/**
+ * Which 0.2 keys move to the repository's keys: those of a checkout git lists. A new key that holds an active
+ * or newer run keeps it; the legacy run is then dropped if it is finished, else left alone.
+ */
 export function migrationPlan(entries: readonly LegacyEntry[], worktrees: readonly string[], repo: string, existing: Readonly<Record<string, Run | null | undefined>>): MigrationPlan {
-  return entries && worktrees && repo && existing ? { moves: [], drops: [] } : { moves: [], drops: [] }
+  const listed = new Set(worktrees.map(normalizePath))
+  const held: Record<string, Run | null | undefined> = { ...existing }
+  const plan: MigrationPlan = { moves: [], drops: [] }
+  for (const e of entries) {
+    if (!listed.has(normalizePath(e.root))) continue
+    const to = runKey(repo, e.run.issue)
+    const current = held[to]
+    if (!current || (!isActive(current) && current.startedAt < e.run.startedAt)) {
+      const run = { ...e.run, repo }
+      plan.moves.push({ from: e.key, root: e.root, to, run })
+      held[to] = run
+    } else if (!isActive(e.run)) plan.drops.push({ from: e.key, root: e.root, to })
+  }
+  return plan
 }
+
+/** `green 2/3` for a phase step (gates count as their phase), else the step's name. */
+function stepLabel(run: Run): string {
+  const phase = phaseOf(run.step)
+  return phase === 'red' || phase === 'green' || phase === 'refactor' ? `${phase} ${Math.max(1, run.used[phase])}/${attemptsOf(run, phase)}` : run.step
+}
+
+/** Another session drives the run, and it is under way there (working or waiting at ready). */
+function isElsewhere(run: Run, me: string): boolean {
+  return !!run.driver && run.driver.session !== me && (isWorking(run.step) || run.step === 'ready')
+}
+
+function drivenFor(run: Run, now: number): string {
+  return elapsed(now - (run.driver?.since ?? now))
+}
+
+/** How the start menu describes another run. */
+function stateOf(run: Run, me: string, now: number): string {
+  if (isElsewhere(run, me)) return `${stepLabel(run)}, driven by another session for ${drivenFor(run, now)}`
+  if (run.step === 'blocked') return `blocked at ${run.blocked?.at ?? 'an unknown step'}`
+  if (run.step === 'ready') return 'ready to publish'
+  return `interrupted during ${run.step}`
+}
+
+function shortStateOf(run: Run, me: string): string {
+  if (isElsewhere(run, me)) return 'in another session'
+  if (run.step === 'blocked' || run.step === 'ready') return run.step
+  return 'interrupted'
+}
+
+const newestFirst = (runs: readonly Run[]): Run[] => [...runs].sort((a, b) => b.startedAt - a.startedAt)
 
 export type StartAction =
   | { kind: 'start' }
@@ -1492,71 +1599,154 @@ export type StartAction =
 export type StartMenu = { question: string; options: { label: string; action: StartAction }[]; fallback: StartAction }
 export type StartContext = { issue: number; base: string; workspace: Workspace; driving: Run | null; others: readonly Run[]; me: string; now: number }
 
+const CANCEL = { label: 'Cancel', action: { kind: 'cancel' } as StartAction }
+
+/**
+ * The one question `/issue-forge <N>` asks when the repository has another active run, or this session drives
+ * one (SPEC Change 0.3.0, 3); null when there is nothing to ask. One run per session: the session driving a run
+ * is offered keep or hand-off, never a second drive.
+ */
 export function startChoices(ctx: StartContext): StartMenu | null {
-  return ctx ? null : null
+  const { issue, driving, me, now } = ctx
+  if (driving) {
+    const d = driving.issue
+    return {
+      question: `This session is driving #${d} (${stepLabel(driving)}). What should it do with #${issue}?`,
+      options: [
+        { label: `Keep #${d} here; start #${issue} from another session (Recommended)`, action: { kind: 'keep' } },
+        { label: `Hand #${d} off and start #${issue} here (any session can resume #${d})`, action: { kind: 'handOffThenStart', issue: d } },
+        CANCEL,
+      ],
+      fallback: { kind: 'keep' },
+    }
+  }
+  const [other, ...rest] = newestFirst(ctx.others)
+  if (!other) return null
+  const also = rest.length > 0 ? ` (also ${rest.map(r => `#${r.issue} ${shortStateOf(r, me)}`).join(', ')})` : ''
+  const where = ctx.workspace === 'here' ? 'here' : `in a new worktree from origin/${ctx.base}`
+  const start = { label: `Start #${issue} ${where} (Recommended)`, action: { kind: 'start' } as StartAction }
+  const o = other.issue
+  const middle: StartMenu['options'] = isElsewhere(other, me)
+    ? [{ label: `Take over #${o} here (its session stops it, or has crashed)`, action: { kind: 'takeOver', issue: o } }]
+    : [
+        { label: `Resume #${o} here (${stateOf(other, me, now)})`, action: { kind: 'resume', issue: o } },
+        { label: `Stop #${o}, then start #${issue}`, action: { kind: 'stopThenStart', issue: o } },
+      ]
+  return {
+    question: `#${o} is active in this repository: ${stateOf(other, me, now)}${also}. What should this session do?`,
+    options: [start, ...middle, CANCEL],
+    fallback: { kind: 'start' },
+  }
 }
 
+/** The chosen label's action; no answer possible, or free text under Other, is the menu's fallback. */
 export function startAnswer(menu: StartMenu, answer: string | null): StartAction {
-  return answer === null ? { kind: 'cancel' } : menu.fallback
+  return menu.options.find(o => o.label === answer)?.action ?? menu.fallback
 }
 
 export function keepText(issue: number): string {
-  return String(issue)
+  return `Open another Claude Code session in this repository and run /issue-forge ${issue} there; it gets its own worktree.`
 }
 
 export function takeOverQuestion(run: Run, now: number): string {
-  return `${run.issue}${now}`
+  return `#${run.issue} is driven by another session (for ${drivenFor(run, now)}). If that session has ended, take it over?`
 }
 
 export function elsewhereText(issue: number): string {
-  return String(issue)
+  return `#${issue} runs in another session; use that session, or answer ${TAKE_OVER} in an interactive one.`
+}
+
+/** The pane's and status's line for a run another session drives. */
+export function elsewhereLine(run: Run, now: number): string {
+  return `runs in another session (for ${drivenFor(run, now)}); /issue-forge resume ${run.issue} takes it over`
+}
+
+/** Whether a run is under way in another session, so resume, publish and stop ask before taking it over. */
+export function isDrivenElsewhere(run: Run, me: string): boolean {
+  return isElsewhere(run, me)
 }
 
 export type Pick = { kind: 'run'; run: Run } | { kind: 'several'; runs: Run[] } | { kind: 'none' }
 export type PickQuery = { issue: number | null; focus: number | null; root: string; needActive: boolean }
 
+/**
+ * Which run a command means: the issue named; else the focused one; else the repository's only active run.
+ * Several active runs are listed. For status, the newest run started from this checkout comes last.
+ */
 export function pickRun(runs: readonly Run[], q: PickQuery): Pick {
-  return runs && q ? { kind: 'none' } : { kind: 'none' }
+  if (q.issue !== null) {
+    const named = runs.find(r => r.issue === q.issue)
+    return named ? { kind: 'run', run: named } : { kind: 'none' }
+  }
+  const focused = q.focus === null ? undefined : runs.find(r => r.issue === q.focus && (!q.needActive || isActive(r)))
+  if (focused) return { kind: 'run', run: focused }
+  const active = newestFirst(runs.filter(isActive))
+  if (active.length === 1 && active[0]) return { kind: 'run', run: active[0] }
+  if (active.length > 1) return { kind: 'several', runs: active }
+  const mine = q.needActive ? undefined : newestFirst(runs.filter(r => r.root === q.root))[0]
+  return mine ? { kind: 'run', run: mine } : { kind: 'none' }
 }
 
 export type LineContext = { me: string; drivingId: string | null; now: number }
 
+/** One run in a line: the also line, and the list several runs answer with. */
 export function lineOf(run: Run, ctx: LineContext): string {
-  return ctx ? `#${run.issue}` : ''
+  if (run.id === ctx.drivingId) return badgeOf(run, ctx.now)
+  if (run.step === 'blocked') return `#${run.issue} blocked at ${run.blocked?.at ?? 'an unknown step'}`
+  if (isElsewhere(run, ctx.me)) return `#${run.issue} ${run.step} (another session)`
+  if (run.step === 'ready' || run.step === 'done' || run.step === 'stopped') return `#${run.issue} ${run.step}`
+  return `#${run.issue} interrupted at ${run.step}`
 }
 
 export function severalText(runs: readonly Run[], verb: string, ctx: LineContext): string {
-  return `${runs.length}${verb}${ctx.me}`
+  return `${runs.length} runs in this repository: ${runs.map(r => lineOf(r, ctx)).join(' · ')}. Name one: /issue-forge ${verb} ${runs[0]?.issue ?? ''}`
 }
 
+/** The repository's other active runs, newest first, for the also line. */
 export function othersOf(runs: readonly Run[], ctx: LineContext & { shownId: string | null }): OtherRun[] {
-  return runs && ctx ? [] : []
+  return newestFirst(runs.filter(r => isActive(r) && r.id !== ctx.shownId)).map(r => ({ issue: r.issue, step: r.step, line: lineOf(r, ctx), isElsewhere: isElsewhere(r, ctx.me) }))
 }
 
 export function othersLine(others: readonly OtherRun[]): string {
-  return others.length ? '' : ''
+  return others.map(o => o.line).join(' · ')
 }
 
+/** git refusing because another process holds one of its lock files (a ref, the index, the config). */
 export function isLockError(text: string): boolean {
-  return text === null
+  return /cannot lock ref|unable to create '[^']*\.lock'|could not lock|\.lock': file exists/i.test(text)
 }
 
+/** An LCOV file outside the run's folder is one file for every run: refused while another run is being driven. */
 export function sharedLcovBlock(p: Profile, workRoot: string, others: readonly Run[]): { reason: string; next: string } | null {
-  return p && workRoot && others ? null : null
+  if (!isAbsolutePath(p.lcovPath) || relativeTo(workRoot, p.lcovPath) !== null) return null
+  const running = others.find(r => isWorking(r.step) && !!r.driver)
+  return running ? { reason: `lcovPath ${p.lcovPath} is shared by every run and #${running.issue} is running`, next: 'make lcovPath relative to the repository (gitignored), as coverage/issue-forge.lcov' } : null
 }
 
+/** Finished runs beyond the newest `keep`, oldest first; active runs are never pruned. */
 export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = KEEP_FINISHED): string[] {
-  return entries.length > keep ? [] : []
+  const finished = entries.filter(e => !isActive(e.run)).sort((a, b) => a.run.startedAt - b.run.startedAt)
+  return finished.slice(0, Math.max(0, finished.length - keep)).map(e => e.key)
 }
 
+/** What the driving session finds in the store: its run stopped, taken over or replaced, or nothing changed. */
 export function foreignChange(stored: Run | null, runId: string, me: string): 'stopped' | 'takenOver' | 'gone' | null {
-  return stored && runId && me ? null : null
+  if (!stored || stored.id !== runId) return 'gone'
+  if (stored.step === 'stopped') return 'stopped'
+  return stored.driver && stored.driver.session !== me ? 'takenOver' : null
 }
 
+/** The workspace the starting checkout's profile names (for the menu's wording); anything unreadable is ask. */
 export function checkoutWorkspaceOf(text: string | null): Workspace {
-  return text ? 'worktree' : 'worktree'
+  try {
+    const w = (JSON.parse(text ?? '') as { workspace?: unknown }).workspace
+    return WORKSPACES.includes(w as Workspace) ? (w as Workspace) : 'ask'
+  } catch {
+    return 'ask'
+  }
 }
 
+/** A session that ends lets go of its run; after /clear or /resume the process, and its drive, go on. */
 export function releasesOnEnd(reason: string): boolean {
-  return reason === ''
+  return reason !== 'clear' && reason !== 'resume'
 }
