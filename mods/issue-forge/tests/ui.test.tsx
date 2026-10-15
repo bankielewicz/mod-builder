@@ -91,6 +91,8 @@ type World = {
   fsBlind?: string[]
   /** `git worktree list` fails. */
   worktreeListFails?: boolean
+  /** `git worktree list` throws, as a timed-out process.run does. */
+  worktreeListThrows?: boolean
   /** When set, a store stub that can hold one write stands in for mock.store. */
   storeHold?: StoreHold
   /** When set, the next `git merge-tree` waits for it (once). */
@@ -241,6 +243,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       return hold ? hold.then(add) : add()
     }
     if (s === 'worktree list --porcelain') {
+      if (world.worktreeListThrows) return { deny: 'process timed out after 60000 ms' }
       if (world.worktreeListFails) return fail('fatal: unable to read the worktree list', 128)
       // As git 2.53 prints it: the main checkout first; a registered folder that is gone is `prunable`.
       const entry = (path: string) => `worktree ${path}\nHEAD c0\nbranch refs/heads/x\n${world.staleWorktrees?.includes(path) ? 'prunable gitdir file points to non-existent location\n' : ''}`
@@ -1521,6 +1524,12 @@ describe('parallel runs (Change 0.3.0)', () => {
     await run($, '16')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
     expect((await run($, '17')).text).toBe('Open another Claude Code session in this repository and run /issue-forge 17 there; it gets its own worktree.')
+  })
+
+  test("a migration that fails doesn't stop session start from loading the known agents (PR #51 review)", async ($, on) => {
+    engine(on, { worktreeListThrows: true }, { 'issue-forge:run:/elsewhere': storedRun('stopped', { id: 'x-1', root: '/elsewhere', issue: 9 }), [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) })
+    await start($)
+    expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-red' } as never)) as any).deny).toContain('issue-forge:')
   })
 
   test('a lock another git holds on the fetch is retried, and the run goes on', async ($, on) => {
