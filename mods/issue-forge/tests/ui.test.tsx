@@ -105,8 +105,8 @@ type World = {
   repoView?: { exitCode: number; stdout: string; stderr?: string }
   /** `git remote get-url origin`: the URL, or a failure; absent, https://github.com/o/r.git (#25). */
   originUrl?: string | { exitCode: number; stderr: string }
-  /** `git remote get-url --push origin`; absent, the same as originUrl (#25). */
-  pushUrl?: string | { exitCode: number; stderr: string }
+  /** `git remote get-url --push --all origin`, one line per URL; absent, the same as originUrl (#25, PR #68 review). */
+  pushUrl?: string | string[] | { exitCode: number; stderr: string }
   /** What `gh repo view <host/owner/repo>` canonicalises an argument to (its nameWithOwner); absent, the argument itself (#25). */
   canonical?: Record<string, string>
   /** The url `gh issue view` answers with; absent, ISSUE's (#25). */
@@ -250,9 +250,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     // git's common folder: the main checkout answers relative, as git does there.
-    if (s === 'remote get-url origin' || s === 'remote get-url --push origin') {
+    // As git 2.53 prints them: `--all` lists every push URL, one per line.
+    if (s === 'remote get-url origin' || s === 'remote get-url --push --all origin') {
       const url = (s === 'remote get-url origin' ? world.originUrl : (world.pushUrl ?? world.originUrl)) ?? 'https://github.com/o/r.git'
-      return typeof url === 'string' ? ok(`${url}\n`) : fail(url.stderr, url.exitCode)
+      return typeof url === 'string' ? ok(`${url}\n`) : Array.isArray(url) ? ok(url.map(u => `${u}\n`).join('')) : fail(url.stderr, url.exitCode)
     }
     if (s === 'rev-parse --git-common-dir') return ok('.git\n')
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
@@ -1682,7 +1683,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
     await until(w, () => w.spawned.length === 1, 'red')
     expect(w.argv).toContainEqual(ISSUE_VIEW)
-    const order = ['gh auth status', 'gh repo view --json nameWithOwner,url', 'git remote get-url origin', 'git remote get-url --push origin', ISSUE_VIEW.join(' '), 'git fetch origin main'].map(t => indexOfArgv(w, t))
+    const order = ['gh auth status', 'gh repo view --json nameWithOwner,url', 'git remote get-url origin', 'git remote get-url --push --all origin', ISSUE_VIEW.join(' '), 'git fetch origin main'].map(t => indexOfArgv(w, t))
     expect(order.every(i => i >= 0)).toBe(true)
     expect([...order].sort((x, y) => x - y)).toEqual(order)
     const switched = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'switch')
@@ -1749,6 +1750,22 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
   })
 
+  test('an origin with several push URLs blocks when any of them is another repository, since git pushes to all of them (PR #68 review)', async ($, on) => {
+    const w = engine(on, { pushUrl: ['https://github.com/o/r.git', 'git@github.com:me/other.git'] })
+    await start($)
+    const status = await blockedStatus($, w)
+    expect(status).toContain(`blocked at preflight: origin pushes to me/other, ${BUT}`)
+    expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
+  })
+
+  test('a push URL that is the fetch URL is not checked twice: a renamed origin is asked of gh once (PR #68 review)', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/old/r.git', canonical: { 'github.com/old/r': 'o/r' } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv.filter(a => a.join(' ') === 'gh repo view github.com/old/r --json nameWithOwner,url')).toHaveLength(1)
+  })
+
   test('an origin URL gh cannot place is an unrecognised URL, and no gh repo view is run for it', async ($, on) => {
     const w = engine(on, { originUrl: 'git://example.org/x.git' })
     await start($)
@@ -1763,7 +1780,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await run($, '16')
     await until(w, () => w.spawned.length === 1, 'red')
     expect(w.argv).toContainEqual(['git', 'remote', 'get-url', 'origin'])
-    expect(w.argv).toContainEqual(['git', 'remote', 'get-url', '--push', 'origin'])
+    expect(w.argv).toContainEqual(['git', 'remote', 'get-url', '--push', '--all', 'origin'])
     expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'repo' && a[3] !== '--json')).toEqual([])
   })
 
@@ -1814,7 +1831,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await start($)
     expect((await run($, 'publish')).text).toBe(`publishing #16: pushing ${BRANCH} and opening a pull request against main.`)
     await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
-    const pushUrl = indexOfArgv(w, 'git remote get-url --push origin')
+    const pushUrl = indexOfArgv(w, 'git remote get-url --push --all origin')
     const push = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'push')
     expect(pushUrl >= 0 && pushUrl < push).toBe(true)
     expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
