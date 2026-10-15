@@ -1245,14 +1245,15 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const key = keyOf(run)
   const back = advance(run, { type: 'resume' }, await $.clock.now())
   if (back.branch) {
-    const issueNow = (await authCheck($, back)) ?? (await issueCheck($, back, back.ghRepo ?? null))
+    // At preflight the issue is read again, from the repository preflight pins; a run blocked there may have none yet (PR #68 review).
+    const issueNow = (await authCheck($, back)) ?? (back.step === 'preflight' ? null : await issueCheck($, back, back.ghRepo ?? null))
     const work = workOf(back)
     // A worktree that is gone, or a folder in its place, is preflight's to handle; at a later step it holds the
     // run's work, so the person decides. git runs in the folder only once git has it as the worktree.
     const kept = isWorktreeRun(back) ? await keptWorktree($, back.root, work) : 'reuse'
     const head = kept === 'reuse' ? (await gitOut($, work, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim() : null
     const why =
-      'type' in issueNow
+      issueNow && 'type' in issueNow
         ? issueNow
         : typeof kept !== 'string'
           ? kept
