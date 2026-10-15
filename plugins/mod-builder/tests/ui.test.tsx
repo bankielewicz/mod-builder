@@ -872,7 +872,7 @@ describe('a mod reported before its folder exists (#19)', () => {
     expect(await rowsOf(two)).toBe(0)
     await two.unmount()
     seen.cwd = '/w/one/plugins/x'
-    await command($, 'alpha')
+    await command($, 'new-mod')
     await clock.advance(10)
     const one = await mountPane($)
     expect(await rowsOf(one)).toBe(1)
