@@ -586,18 +586,19 @@ type ReviewStart = { started: boolean; reason: string }
 /** The gate: consent, then admission. Refused, it leaves a refused row and a toast and says why; admitted, it detaches the run and says started. */
 async function startReview($: EngineInterface, target: ReviewTarget): Promise<ReviewStart> {
   const label = target.kind === 'uncommitted' ? '--uncommitted' : `--${target.kind} ${target.ref}`
-  const task: Task = { id: '', provider: 'codex', kind: 'review', subagentType: label, model: options.model, status: 'running', startedAt: Date.now(), endedAt: null, tokens: 0, description: `review ${label}`, detail: '', envelope: null }
+  const startedAt = Date.now()
+  const rowOf = (id: string): Task => ({ id, provider: 'codex', kind: 'review', subagentType: label, model: options.model, status: 'running', startedAt, endedAt: null, tokens: 0, description: `review ${label}`, detail: '', envelope: null })
   const cwd = await $.session.cwd()
   const refuse = async (why: string): Promise<ReviewStart> => {
-    const row = await addRefused($, newId => ({ ...task, id: newId, status: 'refused', endedAt: Date.now(), detail: why }))
+    const row = await addRefused($, id => ({ ...rowOf(id), status: 'refused', endedAt: Date.now(), detail: why }))
     $.ui.toast(`${row.id} review refused: ${why}`.slice(0, 80))
     return { started: false, reason: why }
   }
   const blocked = await ensureConsent($, cwd)
   if (blocked) return refuse(blocked)
-  const admitted = await admit($, newId => ({ ...task, id: newId }))
+  const admitted = await admit($, rowOf)
   if (!admitted) return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
-  void finishReview($, { ...task, id: admitted.id }, target, cwd).catch(() => undefined)
+  void finishReview($, admitted, target, cwd).catch(() => undefined)
   return { started: true, reason: '' }
 }
 
@@ -850,7 +851,8 @@ export const register: Register = (on, raw) => {
         const target = parseReviewArgs(rest.join(' '))
         if (!target) return { text: 'Usage: /duet review [--base <branch> | --commit <sha>]  (default: uncommitted changes)' }
         const { started, reason } = await startReview($, target)
-        return { text: started ? 'Codex review started (read-only). Its verdict lands in the pane and a toast; /duet show <id> prints it in full.' : `Codex review not started: ${reason}` }
+        if (!started) return { text: `Codex review not started: ${reason}` }
+        return { text: 'Codex review started (read-only). Its verdict lands in the pane and a toast; /duet show <id> prints it in full.' }
       }
       if (sub === 'show') {
         const id = rest[0] ?? ''
