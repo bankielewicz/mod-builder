@@ -275,7 +275,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 - **New:** `/mod-builder:edit`; build generations for edits; `autoRerun`; the selection follows the active build; the numbered `MODS 1–8` header and numbered track; rows follow streamed test progress; a keyboard hint line.
 - **Fixes:**
-  - `scan()` waits for a scan in progress, so an edit's start is never missed. (Not so when the hook had already read state: corrected in Change 0.2.13.)
+  - `scan()` waits for a scan in progress, so an edit's start is never missed. (Not so when the hook had already read state: corrected in Change 0.2.14.)
   - A Validate that fails on current code blocks a stale Test instead of re-running every turn.
   - A run that can't start shows as failed, with Fix.
   - During an edit, Share needs a version different from the one the edit started from.
@@ -520,6 +520,18 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 ## Change 0.2.13 (2026-10-15)
 
+> For issue #12: a repeated `Spec running` during an edit reset the edit's baseline version. Codex's comment on PR #1 (discussion_r4254194998).
+
+- **Fix:** the `lab_report` handler rewrote the mod's generation (`since` and `fromVersion`) on every `Spec running` for a mod whose Spec light wasn't pending. A second report in the middle of an edit, after the version bump but before Validate and Test were redone, made the bumped version the baseline, so Share needed another bump and the edit could not reach "ready to share". It also moved `since` past files saved earlier in the edit, so SPEC.md read as stale. A report now starts a generation only when the mod has none (the check is inside `updateGenerations`' callback, so it runs in the store's chain); on a repeat the generation keeps its `since` and `fromVersion`.
+- **Rule:** a generation ends only when the mod is all green (`scanOnce`), so the handler takes a `Spec running` while one exists as a repeat of that edit. The one exception is a scan that had already judged the edit finished: it reads that report as the next edit (below). An abandoned edit's generation therefore stays in `$.store` into a later edit of the same mod, with its old start and baseline.
+- **Stamp:** a repeat sets `repeatedAt` on the generation: the report's time, or one past the last stamp when that isn't later, so every repeat changes it. Two repeats in one millisecond would otherwise leave it as a scan read it (Codex P2 on PR #73). #14's scan deletes the generation it judged finished only if its `since` is the one it read, which a repeat no longer changes, so a report that arrived while the scan was running would have been lost to the deletion (the "second edit of the mod whose edit the scan ends" test). The scan now also compares `repeatedAt`. Generations stored before 0.2.13 have no `repeatedAt`, which compares equal to itself.
+- **The next edit in that window:** an edit can begin after a scan has judged the previous one finished and before it deletes the generation. The handler can't tell that report from a repeat, so it stamps the old generation. The scan can: it reads the generations before the reports, and the handler writes the generation before the report, so a report the judged lights didn't show came after the edit was finished. Such a report begins the next edit. The scan replaces the generation with `since` at the stamp and `fromVersion` at the version it read, instead of deleting it. Without this, the next edit kept the previous edit's start and baseline, and reached "ready to share" with no new bump. 0.2.11 tracked that edit correctly (it rewrote `since`), so the stamp alone would have been a regression.
+- **Tests:** `tests/ui.test.tsx`, "a repeated Spec running during an edit (#12)": a second `Spec running` after the bump keeps the original baseline (the mod reaches "ready to share"), and keeps the start time (SPEC.md saved after the first report is not stale; Share is what the edit still needs). Both fail on 0.2.11. The existing "a second edit of the mod whose edit the scan ends is still tracked" passes through the stamp. In "a scan that read the generations before an edit began", the next edit begun in the window starts from the version the first left (Share still needs a bump) and at its own report (Validate and Test from the first edit are stale; autoRerun off, so the row shows it). Both pass on 0.2.11 and failed with the stamp alone. "A second edit reported in the same millisecond as the repeat the scan read is still tracked" holds the clock still from a repeat through the scan's read to the next edit's report; with the report's time as the stamp it read "ready to share".
+- **Version:** 0.2.13 in `plugin.json` and the marketplace entry (#15 took 0.2.12 first).
+
+
+## Change 0.2.14 (2026-10-15)
+
 > For issue #10: an edit's start was missed when `lab_report` reported `Spec running` while a scan that hadn't listed the mod was under way. Codex's comment on PR #1 (discussion_r4252575075). And for #79, the same miss after a `/cd`, found while reviewing this change.
 
 - **Cause:** the 0.2.0 claim above ("an edit's start is never missed") held only when the hook had read no state before it waited. Every `$.state.get` of one dispatch reads one moment `[d.ts]`, fixed at the dispatch's first `get` `[probe]`. The handler's first read (the folder `judged`) came before the wait, so the re-read after `await scan()` returned the same list, without the mod: no generation was stored, and the results from before the edit stayed green.
@@ -535,4 +547,4 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - This change's first version, the `factsByMod` guard (112 mods): `Spec running` came at 18:13:16.438, while the scan that ended at 18:13:17.314 was listing. The report waited for that pass and the one it queued, and stored the generation at 18:13:20.761.
   - In one run of each version the report came after the scan had ended (no race), and both stored the generation.
   - The final version, the `published` guard (115 mods): `Spec running` came at 18:23:51.689, while the scan that ended at 18:23:52.887 was listing. The report waited for that pass and the one it queued, and stored the generation at 18:23:57.477. A second run didn't overlap and stored it too.
-- **Version:** 0.2.13 in `plugin.json` and the marketplace entry (0.2.12 went to #15, PR #72, which merged first).
+- **Version:** 0.2.14 in `plugin.json` and the marketplace entry (0.2.12 and 0.2.13 went to #15 and #12, PRs #72 and #73, which merged first).
