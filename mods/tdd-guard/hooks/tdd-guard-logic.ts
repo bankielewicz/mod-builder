@@ -17,6 +17,10 @@ export function parseRules(text: string): { rules: Rules } | { error: string } {
     if (at < 1 || globs.some(glob => !/^[+-]./.test(glob))) {
       return { error: `tdd-guard: malformed rule "${entry}" (expected <type>=+glob,-glob, each glob led by + or -)` }
     }
+    // The integrity check walks the folder a glob names: a ".." would take it outside the project.
+    if (globs.some(glob => glob.slice(1).split('/').includes('..'))) {
+      return { error: `tdd-guard: malformed rule "${entry}" (a glob may not hold a ".." segment: globs are relative to the project root)` }
+    }
     const type = entry.slice(0, at).trim()
     const rule = rules.get(type) ?? { allow: [], deny: [] }
     for (const glob of globs) rule[glob.startsWith('+') ? 'allow' : 'deny'].push(glob.slice(1))
