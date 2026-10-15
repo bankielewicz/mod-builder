@@ -22,9 +22,6 @@ const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
 const GENERATIONS_KEY = 'modlab:generations'
 const FRAME_MS = 250
-/** A check's time limit in minutes (`testTimeoutMinutes`): the default, and the most `$.process.run` allows. */
-const RUN_MINUTES = 3
-const RUN_MINUTES_MAX = 10
 /** How often a streamed Test looks at its time limit. */
 const RUN_WATCH_MS = 5000
 const NAME_COLUMN = 18
@@ -61,7 +58,7 @@ type StoredResults = Record<string, Lab.Results>
 let configuredDir = ''
 let autoOpen = false
 let autoRerun = true
-let runMinutes = RUN_MINUTES
+let runLimit = Lab.runLimitMsOf(undefined)
 let clock: Timer | null = null
 let lastTickMs = 0
 let scanning: Promise<void> | null = null
@@ -408,10 +405,10 @@ async function noteProgress($: Engine, entry: Run, counts: { passed: number; fai
 class RunTimeout extends Error {}
 
 /** The time limit of a check, from `testTimeoutMinutes`. */
-const runLimitMs = (): number => runMinutes * 60_000
+const runLimitMs = (): number => runLimit
 
 /** The error a check ends with at its time limit: "timed out after 3 minutes". */
-const timeoutOf = (): RunTimeout => new RunTimeout(`timed out after ${runMinutes} minute${runMinutes === 1 ? '' : 's'}`)
+const timeoutOf = (): RunTimeout => new RunTimeout(Lab.timeoutText(runLimit))
 
 /** The runs in flight: a row whose run a reload ended counts nowhere once it is past the time limit and the grace. */
 async function liveRunsOf($: Engine): Promise<Run[]> {
@@ -641,10 +638,12 @@ async function configure($: Engine, words: string[]): Promise<string> {
     autoOpen,
     modsDir: configuredDir,
     modsDirShown: Lab.shortPath(modsDirOf($)),
+    testTimeoutMinutes: runLimit / 60_000,
   }
   // The set reloads the plugin rather than changing this module's values, so show the new one.
   if (command.kind === 'set') Object.assign(values, Lab.valuesAfterSet(command.name, command.value, Lab.normalizePath(`${$.plugin.root}/../../mods`)))
-  const shown = (value: string | boolean): string => (typeof value === 'boolean' ? (value ? 'on' : 'off') : value || 'default')
+  const shown = (value: string | boolean | number): string =>
+    typeof value === 'boolean' ? (value ? 'on' : 'off') : typeof value === 'number' ? String(value) : value || 'default'
   const head = command.kind === 'set' ? `${command.name} is now ${shown(command.value)}.\n` : ''
   return head + Lab.configListText(values, logFile)
 }
@@ -654,7 +653,7 @@ async function configure($: Engine, words: string[]): Promise<string> {
  * Changing a plugin's options reloads it (types), which empties this module's log buffer, so
  * the line about the change is written to the file before the set.
  */
-async function setOption($: Engine, name: Lab.OptionName, value: string | boolean): Promise<string> {
+async function setOption($: Engine, name: Lab.OptionName, value: string | boolean | number): Promise<string> {
   // A plugin option's row is keyed `<plugin>.<field>`; its owner names the install, e.g.
   // `mod-builder@claudemod` or `mod-builder@inline` under --plugin-dir (seen live, 2026-10-13).
   const key = `${$.plugin.name}.${name}`
@@ -679,8 +678,7 @@ export const register: Register = (on, options) => {
   configuredDir = String(config.modsDir ?? '').trim()
   autoOpen = config.autoOpen === true
   autoRerun = config.autoRerun !== false
-  const minutes = Number(config.testTimeoutMinutes)
-  runMinutes = Number.isFinite(minutes) && minutes > 0 ? Math.min(minutes, RUN_MINUTES_MAX) : RUN_MINUTES
+  runLimit = Lab.runLimitMsOf(config.testTimeoutMinutes)
   logLevel = Lab.logLevelOf(config.logging)
 
   on('session.start', async ($, e, next) => {
