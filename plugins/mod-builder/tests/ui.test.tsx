@@ -1,6 +1,8 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { resultOf, signatureOf } from '../hooks/mod-builder-logic'
+
 import { testFail } from './fixtures/test-fail'
 import { testNone } from './fixtures/test-none'
 import { testPass } from './fixtures/test-pass'
@@ -39,7 +41,7 @@ const modFiles = (name: string, folder = MODS): Disk => ({
 /** Every file's mtime is `ms`, unless `byPath` names its own. */
 type Mtimes = { ms: number; byPath?: Record<string, number> }
 
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[]) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[], stored: Readonly<Record<string, unknown>> = {}) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -56,7 +58,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denySet: '',
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  mock.store(on, {})
+  mock.store(on, stored)
   const files = Object.keys(disk)
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
@@ -1197,5 +1199,45 @@ describe('modsDir not set: what the pane does acts on the folder it shows (PR #5
     await cdTo($, w, TWO)
     expect(await shows($, /next: /)).toBe(false)
     expect(await shows($, /^ready to share$/)).toBe(false)
+  })
+})
+
+describe('upgrade: records kept before 0.2.9, under one key for every folder (PR #57 review)', () => {
+  const codeSig = signatureOf(['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'hooks/git-branch-logic.ts', 'tests/git-branch-logic.test.ts'].map(name => `${name}@1000`))
+  // What 0.2.8 and earlier stored after V and T, for a mod that was announced.
+  const legacy = {
+    'modlab:results': {
+      'git-branch': {
+        Validate: { ...resultOf('Validate', 0, validateClean, 1000, 100, 2000), codeSig },
+        Test: { ...resultOf('Test', 0, testPass, 1000, 100, 2000), codeSig },
+      },
+    },
+    'modlab:done': { 'git-branch': codeSig },
+  }
+  const sharedIn = (folder: string): Disk => ({
+    ...modFiles('git-branch', `${folder}/mods`),
+    [`${folder}/mods/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+    [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+  })
+
+  test('the folder they described (here a pinned modsDir) reads them: its mods stay checked, nothing re-runs or is announced again', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, sharedIn('/m'), {}, true, undefined, { ms: 1000 }, undefined, undefined, legacy)
+    await start($)
+    await clock.advance(10)
+    await $.turn.complete({ answer: 'upgraded' } as never)
+    await clock.advance(1000)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /next: / })).toBeUndefined()
+    expect(seen.argv).toEqual([])
+    expect(seen.notified).toEqual([])
+  })
+
+  test('a session in another folder does not read them', async ($, on) => {
+    const { seen, clock } = world(on, sharedIn('/w/one'), {}, true, undefined, { ms: 1000 }, undefined, undefined, legacy)
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /next: Validate/ })).toBeDefined()
   })
 })
