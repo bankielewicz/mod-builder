@@ -1833,10 +1833,12 @@ describe('the pane opens from the command itself (#90)', () => {
   for (const name of ['mod-builder:build', 'mod-builder:edit']) {
     test(`a typed /${name} opens the pane, then runs the skill`, OPTIONS, async ($, on) => {
       const { seen } = world(on, modFiles('git-branch'))
-      on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+      // What was open when the skill ran: the open must come first, in the hook, not after it.
+      let openedWhenRun: string[] | null = null
+      on('command.run', ($, e) => ((openedWhenRun = [...seen.opened]), { text: `ran ${e.command} ${e.args}` }) as never)
       await start($)
       expect((await typed($, name, 'git-branch')).text).toBe(`ran ${name} git-branch`)
-      expect(seen.opened).toEqual(['modlab'])
+      expect(openedWhenRun).toEqual(['modlab'])
     })
   }
 
@@ -1898,6 +1900,9 @@ describe('the pane opens from the command itself (#90)', () => {
     await start($)
     seen.denyOpen = 'no panes here'
     expect((await typed($, 'mod-builder:build', 'a clock band')).text).toBe('ran mod-builder:build a clock band')
+    // openForSkill caught it, so the hook's own .catch never ran.
+    expect(seen.logs.some(line => line.includes('command.skill') && line.includes('no panes here'))).toBe(true)
+    expect(seen.logs.some(line => line.includes('hook failed'))).toBe(false)
   })
 })
 
