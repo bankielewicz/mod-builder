@@ -1053,3 +1053,15 @@ describe('issue 7: mergeLogs joins the per-session run logs for /duet stats', ()
     expect(summarize(mergeLogs(['', '\n']))).toEqual([])
   })
 })
+
+describe('PR #67 review: summarize stays linear, since /duet stats now reads every session\'s log', () => {
+  test('40,000 runs of one kind summarize in well under a second (copying the group on every run took seconds)', () => {
+    const run = JSON.stringify({ id: 'x', at: 0, provider: 'codex', kind: 'agent', type: 'Explore', model: '', ms: 1000, tokens: 100, ok: true })
+    const log = `${Array(40_000).fill(run).join('\n')}\n`
+    const started = Date.now()
+    const rows = summarize(log)
+    const took = Date.now() - started
+    expect(rows).toEqual([{ key: 'codex · Explore', runs: 40_000, okPct: 100, medianMs: 1000, medianTokens: 100 }])
+    expect(took).toBeLessThanOrEqual(1000)
+  })
+})

@@ -1209,7 +1209,9 @@ export function summarize(log: string): StatRow[] {
     try {
       const r = JSON.parse(l) as RunLine
       const key = `${r.provider} · ${r.kind === 'review' ? 'review' : r.type}`
-      groups.set(key, [...(groups.get(key) ?? []), r])
+      const group = groups.get(key)
+      if (group) group.push(r)
+      else groups.set(key, [r])
     } catch {
       /* a torn line is skipped */
     }
