@@ -64,6 +64,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denyStoreGet: '',
     /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
     holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
+    /** Arm mid-test: the next read of `key` waits for `until`, and sets `isReached`. */
+    holdStoreGet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
     holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
     timeouts: [] as (number | undefined)[],
@@ -73,9 +75,14 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   // The store in memory, as mock.store keeps it (values read back as JSON), with reads and writes that can be refused.
   const stored = new Map<string, string>(Object.entries(seeded).map(([key, value]) => [key, JSON.stringify(value)]))
-  on('store.get', ($, e) => {
+  on('store.get', async ($, e) => {
     const key = (e as { key: string }).key
     if (seen.denyStoreGet === key) return { deny: 'EIO: store read failed' }
+    const held = seen.holdStoreGet
+    if (held?.key === key && !held.isReached) {
+      held.isReached = true
+      await held.until
+    }
     const text = stored.get(key)
     return { value: text === undefined ? undefined : JSON.parse(text) } as never
   })
@@ -90,10 +97,10 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
-  const files = Object.keys(disk)
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
-    for (const path of files) {
+    // The disk as it is now: a test may add files after the world is made.
+    for (const path of Object.keys(disk)) {
       if (!path.startsWith(`${dir}/`)) continue
       const [head, ...tail] = path.slice(dir.length + 1).split('/')
       names.set(head!, tail.length ? 'dir' : 'file')
@@ -878,6 +885,75 @@ describe('edit', () => {
   })
 })
 
+describe('edit: Spec running arrives while another hook\'s scan is listing (#10)', () => {
+  const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
+  // Validate and Test passed in an earlier session: the files' mtime is 1000, the results are stamped 5000.
+  const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate'), Test: ok('Test') } } }
+  const reportSpec = ($: Engine, status: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+
+  test('the edit is tracked: a state read after the scan the report waits for sees what that scan wrote', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    // git-branch, checked in an earlier session, appears on disk after the startup scan ended.
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan (its own hook), and the scan waits at the mods folder.
+    let release = () => {}
+    seen.holdList = { path: MODS, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: git-branch is in no list yet, so the report waits for that scan.
+    const reporting = reportSpec($, 'running')
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed')
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked when the report lands after the scan has its facts but before it writes its rows (PR #74 review)', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan; it has read every mod folder and waits at its first read after that.
+    let release = () => {}
+    seen.holdStoreGet = { key: `modlab:done:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdStoreGet.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: the scan knows git-branch but hasn't written its rows.
+    const reporting = reportSpec($, 'running')
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed')
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+})
+
 describe('nested logic edit during a generation (#15, Codex 4254194992)', () => {
   async function nested($: Engine, on: On, touchTopLevel: boolean) {
     const mtime: Mtimes = { ms: 1000 }
@@ -1208,6 +1284,106 @@ describe('a scan that read the generations before an edit began', () => {
 
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Spec for this change$/)
+  })
+
+  /**
+   * git-branch's edit is bumped to 0.1.1, redone and re-listed, and the scan that ends it is held after
+   * reading the generations. The next edit's Spec running arrives meanwhile, then its Spec passed.
+   */
+  async function secondEditInTheWindow($: Engine, on: On) {
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edits below.
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, { ms: Date.parse('2027-01-01T00:00:00Z') })
+    await start($)
+    await clock.advance(10)
+    await recheck($, clock)
+    await clock.advance(5000)
+    await reportSpec($, 'git-branch', 'running')
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(10)
+    await recheck($, clock)
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifestOf('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = listing('0.1.1')
+
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    await clock.advance(5000)
+    await reportSpec($, 'git-branch', 'running')
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(1000)
+    return clock
+  }
+
+  test('a second edit that begins while the scan ends the first starts from the version the first left', OPTIONS, async ($, on) => {
+    const clock = await secondEditInTheWindow($, on)
+    // Checked again, but not bumped past 0.1.1: Share is what the edit still needs.
+    await recheck($, clock)
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
+  })
+
+  // With autoRerun on, the end of the turn would run the stale checks again before the row is read.
+  test('a second edit that begins while the scan ends the first starts at its own report: earlier checks are stale', { options: { modsDir: MODS, autoRerun: false } }, async ($, on) => {
+    await secondEditInTheWindow($, on)
+
+    // Validate and Test last ran in the first edit, before this one began.
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ files changed · re-run Validate$/)
+  })
+
+  test('a second edit reported in the same millisecond as the repeat the scan read is still tracked (Codex P2 on PR #73)', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edits below.
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, { ms: Date.parse('2027-01-01T00:00:00Z') })
+    await start($)
+    await clock.advance(10)
+    await recheck($, clock)
+    await clock.advance(5000)
+    await reportSpec($, 'git-branch', 'running')
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(10)
+    await recheck($, clock)
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifestOf('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = listing('0.1.1')
+    await clock.advance(5000)
+
+    // From here the clock stands still. The edit's Spec is reported again, and the scan that ends
+    // the edit reads that repeat, then waits at git-branch's folder.
+    await reportSpec($, 'git-branch', 'running')
+    await reportSpec($, 'git-branch', 'passed')
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.settle()
+    expect(seen.holdList.isReached).toBe(true)
+
+    // The next edit begins in the same millisecond.
+    await reportSpec($, 'git-branch', 'running')
+    release()
+    await clock.advance(1000)
+    await reportSpec($, 'git-branch', 'passed')
+    await clock.advance(10)
+    // Checked again, but not bumped past 0.1.1: Share is what the edit still needs.
+    await recheck($, clock)
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
   })
   test('an edit that begins before any scan has read a bump starts from the bumped version', OPTIONS, async ($, on) => {
     const disk: Disk = {
@@ -1940,5 +2116,132 @@ describe('the scan publishes its folder and its mods together (PR #57 review rou
       expect(typeof verdict.modsDir).toBe('string')
       expect((verdict.views ?? []).map(view => view.name)).toEqual(expected[verdict.modsDir as string] ?? ['?'])
     }
+  })
+})
+
+describe('edit: Spec running after a /cd, while another hook\'s scan of the new folder is listing (#79)', () => {
+  // Two folders with a mod named alpha: in ONE it has no SPEC yet; in TWO it is built and passed
+  // Validate and Test in an earlier session (files at 1000, results stamped 5000).
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
+  const seed = { [`modlab:results:${TWO}/mods`]: { alpha: { Validate: ok('Validate'), Test: ok('Test') } } }
+  const unspecced = (folder: string): Disk => {
+    const files = { ...modFiles('alpha', `${folder}/mods`) }
+    delete files[`${folder}/mods/alpha/SPEC.md`]
+    return files
+  }
+  const disk = (): Disk => ({
+    ...unspecced(ONE),
+    [`${ONE}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [] }),
+    ...modFiles('alpha', `${TWO}/mods`),
+    [`${TWO}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    [`${TWO}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'alpha', source: './mods/alpha', version: '0.1.0' }] }),
+  })
+  const reportSpec = ($: Engine, status: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status } as never)
+
+  test('control: with no scan under way, the report scans the new folder itself and the edit is tracked', async ($, on) => {
+    const w = world(on, disk(), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await reportSpec($, 'running')
+    await w.clock.advance(1000)
+    await reportSpec($, 'passed')
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked when the report joins a scan of the new folder that another hook started', async ($, on) => {
+    const w = world(on, disk(), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    // A /cd to TWO; the end of a turn starts a scan (its own hook), which waits at TWO's mods folder.
+    w.seen.cwd = `${TWO}/plugins/x`
+    let release = () => {}
+    w.seen.holdList = { path: `${TWO}/mods`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'moved' } as never)
+    await w.clock.advance(10)
+    expect(w.seen.holdList.isReached).toBe(true)
+
+    // Spec running arrives meanwhile; alpha is a name the last finished scan (ONE's) also listed.
+    const reporting = reportSpec($, 'running')
+    await w.clock.advance(10)
+    release()
+    await reporting
+    await w.clock.advance(1000)
+    await reportSpec($, 'passed')
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+})
+
+describe('a repeated Spec running during an edit (#12)', () => {
+  const T0 = Date.parse('2026-10-12T10:00:00Z')
+  const manifest = (v: string) => `{ "name": "git-branch", "version": "${v}", "description": "The git-branch mod." }`
+  const market = (v: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: v }] })
+  const report = ($: Engine, status: string, note?: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status, ...(note ? { note } : {}) } as never)
+
+  /**
+   * A green git-branch is edited, and the Spec report is sent a second time after the file saves
+   * (and the bump, when `bump` is set: 0.1.0 to 0.2.0, listed) and before the turn that redoes
+   * Validate and Test.
+   */
+  async function scenario($: Engine, on: On, bump: boolean) {
+    const mtime = { ms: 1000 }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = T0
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+    await report($, 'running', 'editing: x')
+    await adv(10)
+    await report($, 'passed')
+    // the edit: files saved after it began, and the version bumped and listed
+    if (bump) {
+      disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifest('0.2.0')
+      disk['/m/.claude-plugin/marketplace.json'] = market('0.2.0')
+    }
+    mtime.ms = t + 100
+    await adv(200)
+    await report($, 'running', 'editing: x (retry)')
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const row = (await ui.find({ key: 'row-git-branch' }))?.text
+    await ui.unmount()
+    return { row }
+  }
+
+  test('a second Spec running after the bump keeps the original baseline version', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, true)
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('a second Spec running keeps the edit start time: SPEC.md saved after the first report is not stale', OPTIONS, async ($, on) => {
+    // No bump, so the one thing left for the edit is Share. The Spec stage is what the second report would break.
+    const r = await scenario($, on, false)
+    expect(r.row).toMatch(/ edit · bump the version and re-list it$/)
   })
 })
