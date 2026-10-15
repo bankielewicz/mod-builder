@@ -247,6 +247,22 @@ describe('mod-builder-logic', () => {
     expect(hasPlaceholder('# x\n- an unmatched ` tick\n- stage <files> with `git add`\n')).toBe(true)
   })
 
+  test('hasPlaceholder: an escaped backtick opens no code span (#20)', () => {
+    // CommonMark reads \` as a literal backtick, so it can't pair with the opener of `git add`.
+    expect(hasPlaceholder('# x\nliteral \\`\n<files> and then `git add`\n')).toBe(true)
+    // An escaped backslash leaves the backtick after it free to open a span.
+    expect(hasPlaceholder('# x\npath \\\\`cmd\n<arg>` ok\n')).toBe(false)
+  })
+
+  test('hasPlaceholder: a heading or quote indented four spaces is paragraph text, so it ends no span (#20)', () => {
+    // CommonMark allows at most three spaces before `#` or `>`; the span runs to `end`, and <files> after it is prose.
+    expect(hasPlaceholder('# x\nText `cmd\n    # foo\nend` <files>\nthen `x`\n')).toBe(true)
+    expect(hasPlaceholder('# x\nText `cmd\n    > foo\nend` <files>\nthen `x`\n')).toBe(true)
+    // Three spaces still start a heading; a nested list item ends a span at any indent.
+    expect(hasPlaceholder('# x\nAn unmatched `\n   # Fill <files> with `git add`\n')).toBe(true)
+    expect(hasPlaceholder('# x\n- a\n  - b\n    - c with ` tick\n    - stage <files> with `git add`\n')).toBe(true)
+  })
+
   test('validate: a clean report from real output', () => {
     const report = parseValidate(validateClean, 0)
     expect(report.ok).toBe(true)
