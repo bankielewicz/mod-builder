@@ -10,7 +10,11 @@ mod-builder follows two rules:
 - **Every mod says what it reaches.** Each mod's README carries a "What it reaches" table generated
   from `claude plugin validate`: hooks, processes, files, network, model calls, and gating hooks.
   Read it before you install a mod. Mod Lab's own is in
-  [its README](../plugins/mod-builder/README.md#what-it-reaches).
+  [its README](../plugins/mod-builder/README.md#what-it-reaches). Validate doesn't list a
+  settings-style command hook or an MCP server, so the table adds those by hand. For a mod from
+  elsewhere, also look in its `hooks/hooks.json`, `.mcp.json` and `plugin.json` (`hooks`,
+  `mcpServers`). No plugin in this repo has either today: each `hooks/hooks.json` holds only
+  `modules`, and none has a `.mcp.json`.
 - **Our own code only.** Community mods are read for ideas. They are never installed or copied.
 
 Mod Lab re-runs a mod's checks on its own (`autoRerun`) when the mod's code changes. That's
@@ -21,8 +25,8 @@ and probes in this repo agree (each in
 
 - On 2.1.296, test code found no `process`, `require`, `fetch` or `Bun`, and a test file that
   imports `node:fs` or uses `import()` didn't load.
-- On 2.1.300, neither command started a plugin's settings-style command hook (`hooks/hooks.json`)
-  or its `.mcp.json` server. A live `claude --plugin-dir` session started both.
+- On 2.1.300, neither command started a `SessionStart` command hook in `hooks/hooks.json` or a
+  `.mcp.json` server, the two shapes probed. A live `claude --plugin-dir` session started both.
 
 Those are the builds checked; Claude Code changes between builds. Mod Lab only re-runs mods you
 have already validated or tested in this install. To turn it off, set `autoRerun` to off in
@@ -30,8 +34,7 @@ have already validated or tested in this install. To turn it off, set `autoRerun
 runs that check on the mod the report names.
 
 The own-code-only rule is stricter than that sandbox, and stays: installing a mod or opening a
-session with it runs its hooks with your full access, and `claude plugin validate` doesn't list a
-command hook or an MCP server, so its "What it reaches" table wouldn't show them.
+session with it runs its hooks with your full access.
 
 What the skills do for safety:
 

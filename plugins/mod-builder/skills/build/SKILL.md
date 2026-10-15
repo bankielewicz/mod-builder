@@ -138,7 +138,9 @@ those results stale: run Verify again (and report Validate and Test again) befor
 1. **README:** finish `<mods>/<name>/README.md`, which the scaffold wrote. Replace every
    `<!-- … -->` comment, and put the version from step 0 in place of `<version>`. Generate the
    "What it reaches" table from `claude plugin validate` output (the hooks, calls and gates
-   lines), not from memory.
+   lines), not from memory. Validate doesn't list settings-style command hooks or MCP servers
+   (gotchas.md), so also read `hooks/hooks.json` (entries besides `modules`), `.mcp.json` and
+   `plugin.json`'s `hooks` and `mcpServers`, and add a row for each entry, naming its command.
 2. **Share:** add `{ "name", "source": "./mods/<name>", "description", "version" }` to the
    marketplace's `plugins` list. Bump `version` in both files on every release.
 3. **Hand off** in plain words:

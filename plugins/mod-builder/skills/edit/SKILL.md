@@ -66,7 +66,7 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
 1. **Version:** set the new version in `plugin.json` **and** the marketplace entry. Mod Lab's
    Share stage re-passes when they match.
 2. **README:** describe the change where it matters to a user, update the options and commands,
-   and regenerate the "What it reaches" table from `claude plugin validate`. No template
-   comments left.
+   and regenerate the "What it reaches" table from `claude plugin validate`, plus any command
+   hook or MCP server it doesn't list (build's step 5). No template comments left.
 3. **Hand off** as in build's step 5. Add what changed in one line, and that `/reload-plugins`
    (or a new session) loads the new version.

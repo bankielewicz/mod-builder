@@ -96,7 +96,7 @@ everything that costs money or is hard to undo. Nothing is built until the perso
 - <A demonstrable outcome the person can do themselves: "I type /x, …, and see …".>
 - All tests pass; `claude plugin validate` is clean (every gating hook has a `.catch`); `tsc -p` is clean.
 - `/<name> demo` shows every state listed above.
-- README has the install line and the "What it reaches" table generated from `validate`.
+- README has the install line and the "What it reaches" table generated from `validate`, plus any command hook or MCP server it doesn't list.
 
 ## Handoff
 

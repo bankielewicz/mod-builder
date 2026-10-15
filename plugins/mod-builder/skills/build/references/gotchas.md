@@ -216,20 +216,29 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** `claude -p --plugin-dir <mod> "/<command> <args>"` runs one command headless and prints
   its `{ text }`, prefixed `<plugin>:`. It's the quickest live smoke test, and needs no interactive session.
 - **[d.ts]** `claude plugin validate <dir>` lists `hooks:`, `calls:` and each gating hook
-  `with .catch` / `without .catch`. That output is the source for the README's "What it reaches".
-- **[d.ts] [probe]** `claude plugin validate` and `claude plugin test` start neither a settings-style
-  command hook in `hooks/hooks.json` nor a `.mcp.json` server. The d.ts header (2.1.296 and 2.1.300) says `plugin test` runs test files "in an environment
-  like the one a plugin's hooks run in (no fs, network or process)". Probed on 2.1.300 (#9) with a
-  throwaway plugin holding, beside `"modules"` in `hooks/hooks.json`, a settings-style command hook
-  (`"hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "touch <abs>/markers/classic" } ] } ] }`)
-  and a `.mcp.json` server (`{ "mcpServers": { "probe": { "command": "touch", "args": ["<abs>/markers/mcp"] } } }`).
-  Validate passed, test passed, and neither marker appeared (run twice). Control: `claude -p
-  --plugin-dir <probe> "hi"` created both, so the shapes are live ones. Validate's listing, `--json`
-  included, names only the module's hooks and calls, so a "What it reaches" table built from it
-  misses a command hook or an MCP server. Earlier probes (2.1.296): in test code, `process`, `Bun`,
-  `Deno`, `require`, `fetch`, `WebSocket`, `XMLHttpRequest` and `Worker` are `undefined`, and a test
-  file holding `import()` or `import … from 'node:fs'` doesn't load. Mod Lab's `autoRerun` relies on
-  this, so re-run the probe after a Claude Code update.
+  `with .catch` / `without .catch`. That output is the source for the README's "What it reaches",
+  except for what it leaves out (next entry).
+- **[probe]** Validate's listing, `--json` included, names only the hooks module's hooks and calls.
+  Probed on 2.1.300 (#9): a settings-style `SessionStart` command hook beside `"modules"` in
+  `hooks/hooks.json`, and a `.mcp.json` server, were not listed. "What it reaches" adds such entries
+  by hand, from `hooks/hooks.json`, `.mcp.json` and `plugin.json`'s `hooks` and `mcpServers`.
+- **[probe]** `claude plugin validate` and `claude plugin test` started neither a settings-style
+  command hook in `hooks/hooks.json` nor a `.mcp.json` server. Probed on 2.1.300 (#9) with a
+  throwaway plugin: `"modules": ["./register.tsx"]` (one `session.start` hook), one passing
+  `tests/*.test.ts`, a `markers/` folder made beforehand, and these two, each touching a marker:
+  - in `hooks/hooks.json`: `"hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "touch <abs>/markers/classic" } ] } ] }`
+  - `.mcp.json`: `{ "mcpServers": { "probe": { "command": "touch", "args": ["<abs>/markers/mcp"] } } }`
+
+  Validate and test passed, and neither marker appeared (run twice). Control: `claude -p
+  --plugin-dir <probe> "hi"` created both, so the shapes are live ones. Not probed: hooks or
+  `mcpServers` declared in `plugin.json`, other hook events and types, `lspServers`, an agent's
+  `mcpServers`, shell in skill or command bodies. Mod Lab's `autoRerun` relies on this, so re-run
+  the probe after a Claude Code update.
+- **[d.ts] [probe]** The d.ts header (2.1.296, unchanged on 2.1.299 and 2.1.300) says `claude plugin
+  test` runs test files "in an environment like the one a plugin's hooks run in (no fs, network or
+  process)". Issue #9's audit run probed it on 2.1.296 (not re-run since): in test code, `process`,
+  `Bun`, `Deno`, `require`, `fetch`, `WebSocket`, `XMLHttpRequest` and `Worker` are `undefined`,
+  and a test file holding `import()` or `import … from 'node:fs'` doesn't load.
 - **[field]** `claude plugin test` only collects `*.test.ts(x)`. Other spec files are ignored.
 - **[probe]** In a test, nothing sits beneath the mod. Every `$` call it makes needs an answer from
   `on(...)`, `session.start` included (`on('session.start', ($, e) => ({ cwd: e.cwd }))`). One stub
