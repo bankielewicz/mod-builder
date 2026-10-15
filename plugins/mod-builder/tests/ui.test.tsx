@@ -790,6 +790,61 @@ describe('a scan that read the generations before an edit began', () => {
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · bump the version and re-list it$/)
   })
+
+  test('a second edit of the mod whose edit the scan ends is still tracked', OPTIONS, async ($, on) => {
+    const manifestOf = (version: string) => `{ "name": "git-branch", "version": "${version}", "description": "The git-branch mod." }`
+    const listing = (version: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version }] })
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': listing('0.1.0'),
+    }
+    // Every file is newer than the edits below, until the second edit leaves SPEC.md older than itself.
+    const mtime: Mtimes = { ms: Date.parse('2027-01-01T00:00:00Z'), byPath: {} }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const redo = async () => {
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await clock.advance(500)
+      await ui.press({ key: 'test' })
+      await clock.advance(500)
+      await ui.unmount()
+    }
+    const report = (status: string) => $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+
+    // git-branch is green, then edited, redone and re-listed: every stage is green again, and its edit is about to end.
+    await redo()
+    await clock.advance(5000)
+    await report('running')
+    await report('passed')
+    await clock.advance(10)
+    await redo()
+    disk[`${MODS}/git-branch/.claude-plugin/plugin.json`] = manifestOf('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = listing('0.1.1')
+
+    // The scan that ends it reads the generations, then waits at git-branch's folder.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Meanwhile git-branch's next edit begins.
+    await clock.advance(5000)
+    await report('running')
+    await clock.advance(10)
+    release()
+    await clock.advance(1000)
+    // It reports its Spec done without having changed SPEC.md.
+    mtime.byPath![`${MODS}/git-branch/SPEC.md`] = 1000
+    await report('passed')
+    await clock.advance(1000)
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Spec for this change$/)
+  })
 })
 
 describe('command', () => {
