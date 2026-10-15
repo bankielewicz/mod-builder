@@ -89,6 +89,19 @@ import { validateMissing } from './fixtures/validate-missing'
 const displayPathOf = (path: string, cwd: string | null): string | undefined =>
   (Logic as unknown as { displayPathOf?: (path: string, cwd: string | null) => string }).displayPathOf?.(path, cwd)
 
+/** The mods folder rules, read the same way: a missing rule fails its assertion, not the import. */
+const marketplaceCandidatesOf = (cwd: string): string[] | undefined =>
+  (Logic as unknown as { marketplaceCandidatesOf?: (cwd: string) => string[] }).marketplaceCandidatesOf?.(cwd)
+const freshIdsOf = (stored: readonly string[], legacyDir: string): string[] | undefined =>
+  (Logic as unknown as { freshIdsOf?: (stored: readonly string[], legacyDir: string) => string[] }).freshIdsOf?.(stored, legacyDir)
+const modsDirFor = (configured: string, cwd: string | null, existing: readonly string[], fallback: string): string | undefined =>
+  (Logic as unknown as { modsDirFor?: (configured: string, cwd: string | null, existing: readonly string[], fallback: string) => string }).modsDirFor?.(
+    configured,
+    cwd,
+    existing,
+    fallback,
+  )
+
 const EMPTY: FileFacts = {
   name: 'git-branch',
   hasSpec: false,
@@ -375,6 +388,110 @@ describe('mod-builder-logic', () => {
     expect(displayPathOf('/m/./mods//foo', null)).toBe('/m/mods/foo')
   })
 
+  test('marketplaceCandidatesOf: the marketplace file of the working directory and of every folder above it, nearest first, down to the root', () => {
+    expect(marketplaceCandidatesOf('/w/wt/plugins/x')).toEqual([
+      '/w/wt/plugins/x/.claude-plugin/marketplace.json',
+      '/w/wt/plugins/.claude-plugin/marketplace.json',
+      '/w/wt/.claude-plugin/marketplace.json',
+      '/w/.claude-plugin/marketplace.json',
+      '/.claude-plugin/marketplace.json',
+    ])
+    expect(marketplaceCandidatesOf('/')).toEqual(['/.claude-plugin/marketplace.json'])
+  })
+
+  test('marketplaceCandidatesOf: a working directory written with ".", "..", "//" or a trailing slash is read as the folder it names', () => {
+    expect(marketplaceCandidatesOf('/w//wt/./plugins/../')).toEqual([
+      '/w/wt/.claude-plugin/marketplace.json',
+      '/w/.claude-plugin/marketplace.json',
+      '/.claude-plugin/marketplace.json',
+    ])
+  })
+
+  test('marketplaceCandidatesOf: a Windows drive is walked down to its root, as the drive (PR #57 review)', () => {
+    expect(marketplaceCandidatesOf('C:\\repo\\wt')).toEqual([
+      'C:/repo/wt/.claude-plugin/marketplace.json',
+      'C:/repo/.claude-plugin/marketplace.json',
+      'C:/.claude-plugin/marketplace.json',
+    ])
+  })
+
+  test('marketplaceCandidatesOf: a UNC path is walked down to its share, keeping the // root (PR #57 review)', () => {
+    const expected = ['//server/share/x/.claude-plugin/marketplace.json', '//server/share/.claude-plugin/marketplace.json']
+    expect(marketplaceCandidatesOf('\\\\server\\share\\x')).toEqual(expected)
+    expect(marketplaceCandidatesOf('//server/share/x')).toEqual(expected)
+  })
+
+  test('marketplaceCandidatesOf: a relative working directory names no folder to walk, so there are no candidates (PR #57 review)', () => {
+    expect(marketplaceCandidatesOf('a/b')).toEqual([])
+  })
+
+  test('modsDirFor: a marketplace on a Windows drive or a UNC share gives its mods/ there (PR #57 review)', () => {
+    expect(modsDirFor('', 'C:\\repo\\wt', ['C:/repo/wt/.claude-plugin/marketplace.json'], '/p/mods')).toBe('C:/repo/wt/mods')
+    expect(modsDirFor('', 'C:\\repo\\wt', ['C:/.claude-plugin/marketplace.json'], '/p/mods')).toBe('C:/mods')
+    expect(modsDirFor('', '\\\\server\\share\\x', ['//server/share/.claude-plugin/marketplace.json'], '/p/mods')).toBe('//server/share/mods')
+  })
+
+  test('normalizePath and displayPathOf keep a UNC root and stop ".." at a drive (PR #57 review)', () => {
+    expect(normalizePath('\\\\server\\share\\x\\..\\y')).toBe('//server/share/y')
+    expect(normalizePath('//server/share/x')).toBe('//server/share/x')
+    expect(normalizePath('C:\\..\\x')).toBe('C:/x')
+    expect(displayPathOf('//server/share/x/mods/foo', '\\\\server\\share\\x')).toBe('mods/foo')
+  })
+
+  test('freshIdsOf: "ready to share" marks kept before 0.2.9 as bare names belong to the folder the old records described (PR #57 review round 2)', () => {
+    expect(freshIdsOf(['alpha', '/w/one/mods/beta'], '/p/mods')).toEqual(['/p/mods/alpha', '/w/one/mods/beta'])
+    expect(freshIdsOf(['C:/w/mods/gamma'], '/p/mods')).toEqual(['C:/w/mods/gamma'])
+    expect(freshIdsOf([], '/p/mods')).toEqual([])
+  })
+
+  test('normalizePath: ".." stops at a UNC share, as at any root (PR #57 review round 2)', () => {
+    expect(normalizePath('\\\\server\\share\\repo\\..\\..\\mods')).toBe('//server/share/mods')
+    expect(normalizePath('\\\\server\\share\\..\\..\\..\\mods')).toBe('//server/share/mods')
+  })
+
+  test('normalizePath: a drive letter is written upper case, so one folder has one spelling (PR #57 review round 2)', () => {
+    expect(normalizePath('c:/repo')).toBe('C:/repo')
+    expect(normalizePath('c:\\repo\\..\\..')).toBe('C:/')
+    expect(marketplaceCandidatesOf('c:\\repo')).toEqual(['C:/repo/.claude-plugin/marketplace.json', 'C:/.claude-plugin/marketplace.json'])
+  })
+
+  test('modsDirFor: the mods/ of the nearest folder above the working directory that holds a marketplace', () => {
+    const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/wt/plugins/x', marketplace, '/main/mods')).toBe('/w/wt/mods')
+    expect(modsDirFor('', '/w/wt', marketplace, '/main/mods')).toBe('/w/wt/mods')
+  })
+
+  test('modsDirFor: a worktree inside the main checkout uses the worktree, the nearer marketplace', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/main/scratch/wt/plugins/x', both, '/p/mods')).toBe('/w/main/scratch/wt/mods')
+    expect(modsDirFor('', '/w/main/plugins/x', both, '/p/mods')).toBe('/w/main/mods')
+  })
+
+  test('modsDirFor: the order of the existing list does not matter, only how near the folder is', () => {
+    const farFirst = ['/w/.claude-plugin/marketplace.json', '/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('', '/w/wt/plugins/x', farFirst, '/p/mods')).toBe('/w/wt/mods')
+  })
+
+  test('modsDirFor: with no marketplace above the working directory it is the fallback, normalized', () => {
+    expect(modsDirFor('', '/w/wt/plugins/x', [], '/p/plugins/mod-builder/../../mods')).toBe('/p/mods')
+    expect(modsDirFor('', '/w/wt/plugins/x', ['/other/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/p/mods')
+  })
+
+  test('modsDirFor: with no working directory to walk from it is the fallback, even if a marketplace exists', () => {
+    expect(modsDirFor('', null, ['/w/wt/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/p/mods')
+  })
+
+  test('modsDirFor: a marketplace at the filesystem root gives /mods', () => {
+    expect(modsDirFor('', '/w/x', ['/.claude-plugin/marketplace.json'], '/p/mods')).toBe('/mods')
+  })
+
+  test('modsDirFor: a set modsDir always wins, normalized', () => {
+    const marketplace = ['/w/wt/.claude-plugin/marketplace.json']
+    expect(modsDirFor('/chosen/mods', '/w/wt/plugins/x', marketplace, '/p/mods')).toBe('/chosen/mods')
+    expect(modsDirFor('/chosen/./sub/../mods/', '/w/wt/plugins/x', marketplace, '/p/mods')).toBe('/chosen/mods')
+    expect(modsDirFor('/chosen/mods', null, [], '/p/mods')).toBe('/chosen/mods')
+  })
+
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {
     const freshView = viewOf(FULL, GREEN, [], null, true, null, null, 'mods/git-branch')
     expect(freshView).toMatchObject({ status: 'ready to share', isFresh: true, doneLine: '8/8 stages · 12 tests · validate clean', version: '0.1.0', path: 'mods/git-branch/', time: '0:03' })
@@ -626,7 +743,7 @@ describe('logging and /mod-builder config', () => {
     expect(parseConfigCommand(['modsDir', 'default'])).toEqual({ kind: 'set', name: 'modsDir', value: '' })
     const unknown = parseConfigCommand(['colour', 'red'])
     expect(unknown.kind).toBe('error')
-    expect((unknown as { text: string }).text).toStartWith('No option "colour". Options: logging, autoRerun, autoOpen, modsDir.')
+    expect((unknown as { text: string }).text).toStartWith('No option "colour". Options: logging, autoRerun, autoOpen, modsDir, testTimeoutMinutes.')
   })
 
   test("a /config row is mod-builder's own when its owner is mod-builder or mod-builder@<source>", () => {
@@ -645,13 +762,99 @@ describe('logging and /mod-builder config', () => {
   })
 
   test('the listing shows each value and the log file, or why there is none', () => {
-    const values = { logging: 'verbose' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods' }
+    const values = { logging: 'verbose' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods', testTimeoutMinutes: 3 }
     const text = configListText(values, '/home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
-    expect(text).toContain('logging    verbose')
-    expect(text).toContain('autoRerun  on')
-    expect(text).toContain('modsDir    default (…/ClaudeMod/mods)')
+    expect(text).toContain('logging            verbose')
+    expect(text).toContain('autoRerun          on')
+    expect(text).toContain('modsDir            default (…/ClaudeMod/mods)')
     expect(text).toContain('Log file: /home/u/.claude/mod-builder-data/logs/2026-10-13-b48cba1d.log')
     expect(configListText({ ...values, logging: 'off' }, '')).toContain('Log file: none (logging is off)')
     expect(configListText(values, '')).toContain('Log file: not written yet this session')
+  })
+})
+
+describe('runs in flight (PR #55 review)', () => {
+  const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+
+  test('a row older than the time limit plus 30 s lost its run: it no longer counts', () => {
+    expect(typeof Logic.liveRuns).toBe('function')
+    expect(Logic.RUN_GRACE_MS).toBe(30_000)
+    const limit = 60_000
+    const rows = [row(0), row(1000)]
+    expect(Logic.liveRuns(rows, limit + 30_000, limit)).toEqual(rows)
+    expect(Logic.liveRuns(rows, limit + 30_001, limit)).toEqual([row(1000)])
+    expect(Logic.liveRuns([], 0, limit)).toEqual([])
+  })
+})
+
+describe('the time limit, testTimeoutMinutes (PR #55 review)', () => {
+  test('a number of minutes above 0, at most ten, in whole milliseconds; anything else is three minutes', () => {
+    expect(typeof Logic.runLimitMsOf).toBe('function')
+    expect(Logic.runLimitMsOf(5)).toBe(300_000)
+    expect(Logic.runLimitMsOf(' 1.5 ')).toBe(90_000)
+    expect(Logic.runLimitMsOf(30)).toBe(600_000)
+    expect(Logic.runLimitMsOf(1.00001)).toBe(60_001)
+    expect(Logic.runLimitMsOf(0.00001)).toBe(1000)
+    for (const raw of [undefined, null, 0, -2, Number.NaN, Number.POSITIVE_INFINITY, true, '', 'soon', {}]) expect(Logic.runLimitMsOf(raw)).toBe(180_000)
+  })
+
+  test('a check that ran for its whole time limit is over it', () => {
+    expect(typeof Logic.isOverLimit).toBe('function')
+    expect(Logic.isOverLimit(60_000, 60_000)).toBe(true)
+    expect(Logic.isOverLimit(61_000, 60_000)).toBe(true)
+    expect(Logic.isOverLimit(59_999, 60_000)).toBe(false)
+  })
+
+  test('the timeout summary names the limit in minutes', () => {
+    expect(typeof Logic.timeoutText).toBe('function')
+    expect(Logic.timeoutText(60_000)).toBe('timed out after 1 minute')
+    expect(Logic.timeoutText(180_000)).toBe('timed out after 3 minutes')
+    expect(Logic.timeoutText(30_000)).toBe('timed out after 0.5 minutes')
+    expect(Logic.timeoutText(60_001)).toBe('timed out after 1 minute')
+  })
+
+  test('/mod-builder config takes testTimeoutMinutes: minutes above 0 and at most ten, or default', () => {
+    expect(parseConfigCommand(['testTimeoutMinutes', '5'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 5 } as never)
+    expect(parseConfigCommand(['testtimeoutminutes', '1.5'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: 1.5 } as never)
+    // default clears the row, as for modsDir, so the manifest's default applies.
+    expect(parseConfigCommand(['testTimeoutMinutes', 'Default'])).toEqual({ kind: 'set', name: 'testTimeoutMinutes', value: '' } as never)
+    for (const bad of ['0', '-1', '11', 'soon']) {
+      expect(parseConfigCommand(['testTimeoutMinutes', bad])).toEqual({ kind: 'error', text: 'testTimeoutMinutes must be a number of minutes above 0, at most 10.' })
+    }
+    expect(valuesAfterSet('testTimeoutMinutes' as never, 5 as never, '/p/mods')).toEqual({ testTimeoutMinutes: 5 } as never)
+    expect(valuesAfterSet('testTimeoutMinutes', '', '/p/mods')).toEqual({ testTimeoutMinutes: 3 })
+    // The listing shows the limit in use, rounded as the timeout summary rounds it: 0.001 is the 1 s floor.
+    expect(valuesAfterSet('testTimeoutMinutes', 0.001, '/p/mods')).toEqual({ testTimeoutMinutes: 0.02 })
+  })
+
+  test('the listing shows the time limit, and its name column fits the longest name', () => {
+    const values = { logging: 'normal' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/ClaudeMod/mods', testTimeoutMinutes: 1 }
+    const text = configListText(values, '')
+    expect(text).toContain('  testTimeoutMinutes 1 minute ')
+    expect(text).toContain('  logging            normal')
+  })
+})
+
+describe('a run that does not end well (PR #55 review)', () => {
+  test('a run that threw before its result was stored: the toast names the check and the error', () => {
+    expect(typeof Logic.toastOfRunError).toBe('function')
+    expect(Logic.toastOfRunError('m', 'Typecheck', new Error('EIO'))).toBe('✕ m: Type-check stopped before its result was saved (Error: EIO)')
+    expect(Logic.toastOfRunError('m', 'Test', 'x'.repeat(300))).toBe(`✕ m: Test stopped before its result was saved (${'x'.repeat(119)}…)`)
+  })
+
+  test('a run still has its row only while one with its mod, kind and start is in runs', () => {
+    expect(typeof Logic.hasRun).toBe('function')
+    const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+    expect(Logic.hasRun([row(5), row(9)], row(5))).toBe(true)
+    expect(Logic.hasRun([row(9)], row(5))).toBe(false)
+    expect(Logic.hasRun([{ ...row(5), kind: 'Validate' }], row(5))).toBe(false)
+    expect(Logic.hasRun([{ ...row(5), mod: 'n' }], row(5))).toBe(false)
+  })
+
+  test('streamed progress lands on its own run, not on a newer run of the same check', () => {
+    expect(typeof Logic.withProgress).toBe('function')
+    const row = (startedAt: number): Run => ({ mod: 'm', kind: 'Test', startedAt, passed: 0, failed: 0, total: null })
+    const other: Run = { ...row(5), kind: 'Validate' }
+    expect(Logic.withProgress([row(5), row(9), other], row(5), { passed: 2, failed: 1 })).toEqual([{ ...row(5), passed: 2, failed: 1 }, row(9), other])
   })
 })

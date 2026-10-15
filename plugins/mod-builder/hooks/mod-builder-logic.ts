@@ -807,20 +807,33 @@ export function demoViewAt(elapsedMs: number, beats: readonly Beat[] = demoTimel
 /** A directory entry as `$.fs.list` gives it, cut to what Mod Lab reads. */
 export type Entry = { name: string; kind: 'file' | 'dir' | 'other'; mtimeMs: number }
 
+/** How many parts of a UNC path (`//server/share`) are its root. */
+const UNC_ROOT_PARTS = 2
+
 /** Resolves `.` and `..` segments in a `/`-separated path. */
 export function normalizePath(path: string): string {
-  const isAbsolute = path.startsWith('/')
+  const slashed = path.replace(/\\/g, '/')
+  const root = rootOf(slashed)
+  // A UNC path's server and share are part of its root: '..' stops above them, as at `/`.
+  const floor = root === '//' ? UNC_ROOT_PARTS : 0
   const parts: string[] = []
-  for (const part of path.replace(/\\/g, '/').split('/')) {
+  for (const part of slashed.slice(root.length).split('/')) {
     if (part === '' || part === '.') continue
     if (part === '..') {
-      if (parts.length && parts[parts.length - 1] !== '..') parts.pop()
-      else if (!isAbsolute) parts.push('..')
+      if (parts.length > floor && parts[parts.length - 1] !== '..') parts.pop()
+      else if (!root) parts.push('..')
     } else {
       parts.push(part)
     }
   }
-  return (isAbsolute ? '/' : '') + parts.join('/')
+  return root + parts.join('/')
+}
+
+/** A `/`-separated path's root: `//` for a UNC path, `/`, a drive (`C:/`, upper case), or '' when it is relative. */
+function rootOf(slashed: string): string {
+  if (/^\/\/[^/]/.test(slashed)) return '//'
+  if (slashed.startsWith('/')) return '/'
+  return /^[A-Za-z]:(\/|$)/.test(slashed) ? `${slashed.charAt(0).toUpperCase()}:/` : ''
 }
 
 /**
@@ -836,6 +849,48 @@ export function displayPathOf(path: string, cwd: string | null): string {
   // `normalizePath` keeps a trailing `/` only for the root itself: cwd `/` gives prefix `/`, not `//`.
   const prefix = `${root.replace(/\/$/, '')}/`
   return target.startsWith(prefix) ? target.slice(prefix.length) : target
+}
+
+/** Where a marketplace keeps its manifest, below its folder. */
+const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
+
+/**
+ * The marketplace file `cwd` would have if it were a marketplace, then that of every folder above
+ * it, nearest first, down to its root: `/`, a drive (`C:/`) or a UNC share (`//server/share`).
+ * A relative `cwd` names no folder to walk, so it has none.
+ */
+export function marketplaceCandidatesOf(cwd: string): string[] {
+  const path = normalizePath(cwd)
+  const root = rootOf(path)
+  if (!root) return []
+  const parts = path.slice(root.length).split('/').filter(Boolean)
+  // A UNC path's server and share are its root folder; nothing sits above them.
+  const top = root === '//' ? Math.min(UNC_ROOT_PARTS, parts.length) : 0
+  const candidates: string[] = []
+  for (let depth = parts.length; depth >= top; depth--) {
+    const folder = root + parts.slice(0, depth).join('/')
+    candidates.push(folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE)
+  }
+  return candidates
+}
+
+/**
+ * The mods folder: a set `modsDir` always wins. Otherwise the `mods/` of the nearest folder at or
+ * above `cwd` whose marketplace file is among `existing`, the way /mod-builder:build finds it, and
+ * `fallback` (the plugin's own) when `cwd` is unknown or no marketplace is above it.
+ */
+export function modsDirFor(configured: string, cwd: string | null, existing: readonly string[], fallback: string): string {
+  if (configured) return normalizePath(configured)
+  const found = cwd === null ? undefined : marketplaceCandidatesOf(cwd).find(candidate => existing.includes(candidate))
+  return found === undefined ? normalizePath(fallback) : `${found.slice(0, -MARKETPLACE_FILE.length)}/mods`
+}
+
+/**
+ * "Ready to share" marks as `<modsDir>/<name>`. Before 0.2.9 a mark was the bare name, of a mod
+ * in the one folder Mod Lab watched (`legacyDir`), so a bare one is read as that folder's.
+ */
+export function freshIdsOf(stored: readonly string[], legacyDir: string): string[] {
+  return stored.map(id => (id.includes('/') ? id : `${legacyDir}/${id}`))
 }
 
 /** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */
@@ -988,6 +1043,21 @@ export function toastOfRun(mod: string, result: RunResult): string {
   return result.ok ? `✓ ${mod}: ${result.summary}` : `✕ ${mod}: ${result.summary}. Press F in Mod Lab to fix`
 }
 
+/** The toast of a run that threw before its result was stored (a scan or the store write failed). */
+export function toastOfRunError(mod: string, kind: RunKind, error: unknown): string {
+  return `✕ ${mod}: ${kind === 'Typecheck' ? 'Type-check' : kind} stopped before its result was saved (${cut(errorText(error), 120)})`
+}
+
+/** Whether `entry`'s own row (same mod, kind and start) is still in runs: a newer run replaces an orphan's row. */
+export function hasRun(all: readonly Run[], entry: Run): boolean {
+  return all.some(one => one.mod === entry.mod && one.kind === entry.kind && one.startedAt === entry.startedAt)
+}
+
+/** The runs once streamed `counts` land on `entry`'s own row: same mod, kind and start. */
+export function withProgress(all: readonly Run[], entry: Run, counts: { passed: number; failed: number }): Run[] {
+  return all.map(one => (one.mod === entry.mod && one.kind === entry.kind && one.startedAt === entry.startedAt ? { ...one, ...counts } : one))
+}
+
 /** Test lines streamed so far → the counts: bun prints one `(pass)` or `(fail)` line per test. */
 export function countStreamed(text: string): { passed: number; failed: number } {
   let passed = 0
@@ -1116,6 +1186,41 @@ export function liveReports(
   return live
 }
 
+/** How long past its time limit a run still counts: one that is ending (its scan, its store write) is not an orphan. */
+export const RUN_GRACE_MS = 30_000
+
+/** The runs still in flight at `now`. A row older than the time limit plus the grace lost its run (a reload ended it). */
+export function liveRuns(all: readonly Run[], now: number, limitMs: number): Run[] {
+  return all.filter(one => now - one.startedAt <= limitMs + RUN_GRACE_MS)
+}
+
+/** `testTimeoutMinutes`: its default, and its most (ten minutes is the most `$.process.run` allows). */
+export const RUN_MINUTES = 3
+export const RUN_MINUTES_MAX = 10
+const RUN_MS_MIN = 1000
+
+/** The `testTimeoutMinutes` option as a time limit in whole ms: minutes above 0 (or their text), at most ten, at least a second; anything else is three minutes. */
+export function runLimitMsOf(raw: unknown): number {
+  const minutes = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : Number.NaN
+  if (!Number.isFinite(minutes) || minutes <= 0) return RUN_MINUTES * 60_000
+  return Math.max(RUN_MS_MIN, Math.round(Math.min(minutes, RUN_MINUTES_MAX) * 60_000))
+}
+
+/** Whether a check that ran `elapsedMs` used its whole time limit. */
+export function isOverLimit(elapsedMs: number, limitMs: number): boolean {
+  return elapsedMs >= limitMs
+}
+
+/** A time limit in minutes, to two places, as it is shown. */
+export function limitMinutesOf(limitMs: number): number {
+  return Math.round(limitMs / 600) / 100
+}
+
+/** The summary of a check stopped at its time limit: "timed out after 3 minutes". */
+export function timeoutText(limitMs: number): string {
+  return `timed out after ${plural(limitMinutesOf(limitMs), 'minute')}`
+}
+
 // ── Logging ───────────────────────────────────────────────────────────────
 
 export const LOG_LEVELS = ['off', 'normal', 'verbose', 'debug'] as const
@@ -1220,19 +1325,22 @@ export function outputTail(output: string, count = 20): string[] {
 
 // ── /mod-builder config ───────────────────────────────────────────────────
 
-export type OptionName = 'logging' | 'autoRerun' | 'autoOpen' | 'modsDir'
-type OptionField = { name: OptionName; kind: 'choice' | 'boolean' | 'folder'; choices?: readonly string[]; values: string }
+export type OptionName = 'logging' | 'autoRerun' | 'autoOpen' | 'modsDir' | 'testTimeoutMinutes'
+type OptionField = { name: OptionName; kind: 'choice' | 'boolean' | 'folder' | 'minutes'; choices?: readonly string[]; values: string }
 export const OPTION_FIELDS: readonly OptionField[] = [
   { name: 'logging', kind: 'choice', choices: LOG_LEVELS, values: 'off · normal · verbose · debug' },
   { name: 'autoRerun', kind: 'boolean', values: 'on · off' },
   { name: 'autoOpen', kind: 'boolean', values: 'on · off' },
   { name: 'modsDir', kind: 'folder', values: 'a folder path, or default' },
+  { name: 'testTimeoutMinutes', kind: 'minutes', values: `minutes, at most ${RUN_MINUTES_MAX}, or default` },
 ]
+/** The listing's name column: as wide as the longest name. */
+const OPTION_COLUMN = Math.max(...OPTION_FIELDS.map(f => f.name.length))
 export const CONFIG_USAGE = 'Usage: /mod-builder config [list] · /mod-builder config <option> <value>'
 
 export type ConfigCommand =
   | { kind: 'list' }
-  | { kind: 'set'; name: OptionName; value: string | boolean }
+  | { kind: 'set'; name: OptionName; value: string | boolean | number }
   | { kind: 'error'; text: string }
 
 /** `/mod-builder config …` words → what to do. */
@@ -1255,6 +1363,13 @@ export function parseConfigCommand(words: readonly string[]): ConfigCommand {
     if (['off', 'false', 'no'].includes(word)) return { kind: 'set', name: field.name, value: false }
     return { kind: 'error', text: `${field.name} must be on or off.` }
   }
+  if (field.kind === 'minutes') {
+    if (raw.toLowerCase() === 'default') return { kind: 'set', name: field.name, value: '' }
+    const minutes = Number(raw)
+    return Number.isFinite(minutes) && minutes > 0 && minutes <= RUN_MINUTES_MAX
+      ? { kind: 'set', name: field.name, value: minutes }
+      : { kind: 'error', text: `${field.name} must be a number of minutes above 0, at most ${RUN_MINUTES_MAX}.` }
+  }
   return { kind: 'set', name: field.name, value: raw.toLowerCase() === 'default' ? '' : raw }
 }
 
@@ -1264,8 +1379,9 @@ export function isOwnRow(owner: string | undefined, plugin: string): boolean {
 }
 
 /** The listing's values once `name` is set to `value`; `defaultDir` is the folder an empty `modsDir` means. */
-export function valuesAfterSet(name: OptionName, value: string | boolean, defaultDir: string): Partial<OptionValues> {
+export function valuesAfterSet(name: OptionName, value: string | boolean | number, defaultDir: string): Partial<OptionValues> {
   if (name === 'logging') return { logging: logLevelOf(value) }
+  if (name === 'testTimeoutMinutes') return { testTimeoutMinutes: limitMinutesOf(runLimitMsOf(value)) }
   if (name === 'autoRerun') return { autoRerun: value === true }
   if (name === 'autoOpen') return { autoOpen: value === true }
   const dir = String(value)
@@ -1273,7 +1389,7 @@ export function valuesAfterSet(name: OptionName, value: string | boolean, defaul
 }
 
 /** Current values as `/mod-builder config` lists them. */
-export type OptionValues = { logging: LogLevel; autoRerun: boolean; autoOpen: boolean; modsDir: string; modsDirShown: string }
+export type OptionValues = { logging: LogLevel; autoRerun: boolean; autoOpen: boolean; modsDir: string; modsDirShown: string; testTimeoutMinutes: number }
 
 /** The `/mod-builder config` listing: each option, its value and what it takes, then the log file. */
 export function configListText(values: OptionValues, logFile: string): string {
@@ -1282,8 +1398,9 @@ export function configListText(values: OptionValues, logFile: string): string {
     autoRerun: values.autoRerun ? 'on' : 'off',
     autoOpen: values.autoOpen ? 'on' : 'off',
     modsDir: values.modsDir ? values.modsDirShown : `default (${values.modsDirShown})`,
+    testTimeoutMinutes: plural(values.testTimeoutMinutes, 'minute'),
   }
-  const rows = OPTION_FIELDS.map(f => `  ${f.name.padEnd(10)} ${shown[f.name].padEnd(28)} ${f.values}`)
+  const rows = OPTION_FIELDS.map(f => `  ${f.name.padEnd(OPTION_COLUMN)} ${shown[f.name].padEnd(28)} ${f.values}`)
   const log =
     values.logging === 'off' ? 'Log file: none (logging is off)' : logFile ? `Log file: ${logFile}` : 'Log file: not written yet this session'
   return ['mod-builder options (change one: /mod-builder config <option> <value>)', ...rows, log].join('\n')

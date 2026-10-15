@@ -20,6 +20,10 @@ Re-check [field] items against the d.ts after a Claude Code update.
   no signal. It rejects when dismissed, so wrap it in the guard's `.catch`.
 - **[d.ts]** A hot reload cancels pending `$.clock` waits and timers. Module variables restart, while
   `$.state` and `$.store` survive.
+- **[d.ts]** A change to a plugin's options reloads it, and `register` runs again with the new
+  options. `session.start` fires "once per fresh load of one" plugin: "an enable, a worker respawn,
+  or a reload (changed modules only ...)" (2.1.300). Inferred, not yet probed: an options reload
+  fires `session.start` too, so a mod can clear there what its old module left in atoms.
 
 ## Registration
 
@@ -174,6 +178,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** Calling `return()` on a `$.process.spawn` stream while its child is silent ends the
   `for await` loop at once and kills the child: a `sleep 37` was gone 10 ms later. That is
   enough to enforce a timeout; no `timeout` wrapper is needed.
+- **[d.ts]** A `$.process.spawn` stream is a `HookStream`: its `result` "rejects if the stream is
+  closed before" its end. After `return()`, put a catch on `stream.result` if nothing awaits it.
+- **[d.ts]** At `$.process.run`'s `timeoutMs` (30 s if absent, ten minutes at most) the child "is
+  killed and the call rejects". It also "rejects when the command cannot start" (2.1.300). Mod Lab
+  tells the two apart by the time elapsed.
 - **[probe]** Under `claude plugin test`, a mod's `$.agent.spawn` never gets an `agentId`. The test's
   `agent.spawn` stub has to answer the event's shape `{ model }` (`{ value: … }` is skipped with
   "returned neither { model } nor { deny }"), and an `agentId` in that answer is dropped. A
@@ -209,6 +218,8 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** With a relative `--plugin-dir` (`claude --plugin-dir plugins/mod-builder`), after `/cd`
   the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
   installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
+  (Probed with Mod Lab before 0.2.9, whose default `modsDir` came from the plugin's own folder. From
+  0.2.9 it follows the working directory, so check the version in the session-start log line instead.)
 
 ## Testing and checking
 

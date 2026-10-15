@@ -1,6 +1,8 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { resultOf, signatureOf } from '../hooks/mod-builder-logic'
+
 import { testFail } from './fixtures/test-fail'
 import { testNone } from './fixtures/test-none'
 import { testPass } from './fixtures/test-pass'
@@ -39,7 +41,7 @@ const modFiles = (name: string, folder = MODS): Disk => ({
 /** Every file's mtime is `ms`, unless `byPath` names its own. */
 type Mtimes = { ms: number; byPath?: Record<string, number> }
 
-function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[]) {
+function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output } = {}, isPlaced = true, hold?: Promise<void>, mtime: Mtimes = { ms: 1000 }, listHold?: Promise<void>, configRows?: { key: string; plugin: string }[], seeded: Readonly<Record<string, unknown>> = {}) {
   const seen = {
     toasts: [] as string[],
     status: [] as (string | undefined)[],
@@ -53,22 +55,38 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     sessionId: 's1-session',
     cwd: '/m' as string | null,
     failReads: [] as string[],
+    /** Every path `$.fs.exists` was asked about. */
+    probed: [] as string[],
     denySet: '',
     /** A store key whose writes are refused. */
     denyStoreSet: '',
+    /** A store key whose reads are refused. */
+    denyStoreGet: '',
+    /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
+    holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next fs.list of `path` waits for `until`, once, and sets `isReached`. */
     holdList: null as { path: string; until: Promise<void>; isReached: boolean } | null,
+    timeouts: [] as (number | undefined)[],
+    /** While set, a test run never ends, as a Test that hangs does. */
+    stallTests: false,
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  // The store in memory, as mock.store keeps it (values read back as JSON), with writes that can be refused.
-  const stored = new Map<string, string>()
+  // The store in memory, as mock.store keeps it (values read back as JSON), with reads and writes that can be refused.
+  const stored = new Map<string, string>(Object.entries(seeded).map(([key, value]) => [key, JSON.stringify(value)]))
   on('store.get', ($, e) => {
-    const text = stored.get((e as { key: string }).key)
+    const key = (e as { key: string }).key
+    if (seen.denyStoreGet === key) return { deny: 'EIO: store read failed' }
+    const text = stored.get(key)
     return { value: text === undefined ? undefined : JSON.parse(text) } as never
   })
-  on('store.set', ($, e) => {
+  on('store.set', async ($, e) => {
     const { key, value } = e as { key: string; value: unknown }
     if (seen.denyStoreSet === key) return { deny: 'EIO: store write failed' }
+    const held = seen.holdStoreSet
+    if (held?.key === key && !held.isReached) {
+      held.isReached = true
+      await held.until
+    }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
@@ -101,7 +119,11 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     if (seen.failReads.includes(path)) return { deny: 'EIO: read failed' }
     return path in disk ? ({ value: disk[path] } as never) : { deny: 'ENOENT' }
   })
-  on('fs.exists', ($, e) => ({ value: (e as { path: string }).path in disk }) as never)
+  on('fs.exists', ($, e) => {
+    const path = (e as { path: string }).path
+    seen.probed.push(path)
+    return { value: path in disk } as never
+  })
   on('fs.write', ($, e) => (seen.writes.push({ path: (e as { path: string }).path, text: (e as { text: string }).text }), { value: undefined }) as never)
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
@@ -109,14 +131,16 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
-  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
+  const rows = configRows ?? ['modsDir', 'autoOpen', 'autoRerun', 'logging', 'testTimeoutMinutes'].map(f => ({ key: `mod-builder.${f}`, plugin: 'mod-builder@claudemod' }))
   on('config.list', () => ({ value: rows.map(r => ({ key: r.key, label: r.key, kind: 'text', value: '', provider: { plugin: r.plugin }, isLocked: false })) }) as never)
   on('config.set', ($, e) => seen.denySet ? { deny: seen.denySet } : (seen.sets.push({ key: (e as { key: string }).key, value: (e as { value: unknown }).value }), { value: (e as { value: unknown }).value }) as never)
   // Tests run to the end through process.run: the kit has no stub for the
   // streaming process.spawn, so Mod Lab's fallback answers instead.
   on('process.run', async ($, e) => {
     seen.argv.push([...e.argv])
+    seen.timeouts.push(e.init?.timeoutMs)
     if (hold) await hold
+    if (seen.stallTests && e.argv[2] === 'test') await new Promise<void>(() => undefined)
     const out = (e.argv.includes('validate') ? outputs.validate : outputs.test) ?? { exitCode: 0, stdout: '' }
     if (out.throws) throw new Error('could not start')
     return { value: { ...out, stderr: out.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -467,6 +491,264 @@ describe('progress', () => {
   })
 })
 
+describe('a run that does not end', () => {
+  const MINUTE = 60_000
+  /** testTimeoutMinutes 0.1: a 6 s limit keeps these tests quick (the clock ticks every 250 ms). */
+  const SHORT = { options: { modsDir: MODS, testTimeoutMinutes: 0.1 } }
+  const LIMIT = 6000
+  const GRACE = 30_000
+  const reportTest = ($: Engine) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Test', status: 'passed' } as never)
+
+  test('a failure after the tests ran does not leave the row: the next Test starts', OPTIONS, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    seen.denyStoreSet = `modlab:results:${MODS}`
+    release()
+    await clock.advance(500)
+    seen.denyStoreSet = ''
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a row older than testTimeoutMinutes plus 30 s is an orphan: a new Test replaces it, a younger row still blocks', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(LIMIT / 2)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    // Past the time limit but inside the grace: the run may still be ending (its scan, its store write).
+    await clock.advance(LIMIT / 2 + 5000)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(1)
+    await clock.advance(GRACE)
+    await reportTest($)
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('an orphan row leaves the band and the pane: T starts a new Test', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'band below' }) as never)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    const during = await mountBand($)
+    expect(await during.find({ type: 'Text', text: /^git-branch$/ })).toBeDefined()
+    await during.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const after = await mountBand($)
+    expect(await after.find({ type: 'Text', text: /^git-branch$/ })).toBeUndefined()
+    await after.unmount()
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('an orphan row is dropped by the clock and the stage stops reading running, with nothing else happening', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    const during = await mountPane($)
+    expect(await during.find({ type: 'Text', text: /running tests/ })).toBeDefined()
+    await during.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
+  })
+
+  test('a fresh load clears the rows its module before left: T starts at once', SHORT, async ($, on) => {
+    const hold = new Promise<void>(() => undefined)
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv.length).toBe(1)
+    // A reload fires session.start for the fresh module; the old module's continuations went with it.
+    await start($)
+    await clock.advance(10)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+  })
+
+  test('a run whose row was replaced while its scan stalled starts no process', SHORT, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdList.isReached).toBe(true)
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    release()
+    await clock.advance(500)
+    expect(seen.argv.length).toBe(1)
+  })
+
+  test('a run whose row was replaced while its result was being saved toasts nothing', SHORT, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    let release = () => {}
+    seen.holdStoreSet = { key: `modlab:results:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdStoreSet.isReached).toBe(true)
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+    release()
+    await clock.advance(500)
+    expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
+  })
+
+  test('a run whose row was replaced while its process ran neither saves nor toasts its result', SHORT, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    await clock.advance(LIMIT + GRACE + 5000)
+    const pane = await mountPane($)
+    await pane.press({ key: 'test' })
+    await clock.advance(10)
+    expect(seen.argv.length).toBe(2)
+    release()
+    await clock.advance(500)
+    expect(seen.toasts.filter(text => text.startsWith('✓ git-branch: '))).toHaveLength(1)
+  })
+
+  test('an orphan row does not hold back the auto re-run', SHORT, async ($, on) => {
+    const mtime = { ms: 1000 }
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(500)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    seen.stallTests = true
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.argv).toHaveLength(3)
+    await clock.advance(LIMIT + GRACE + 5000)
+    seen.stallTests = false
+    mtime.ms = 5000
+    await $.turn.complete({ answer: 'edited' } as never)
+    await clock.advance(1000)
+    expect(seen.argv.slice(3).map(argv => argv[2])).toEqual(['validate', 'test'])
+  })
+
+  test('a run whose scan throws says so, and the pane stops showing it running', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    // The run's own scan stops at the mod's folder; reading modlab:done after it then fails.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(10)
+    await ui.unmount()
+    expect(seen.holdList.isReached).toBe(true)
+    seen.denyStoreGet = `modlab:done:${MODS}`
+    release()
+    await clock.advance(10)
+    seen.denyStoreGet = ''
+    await clock.advance(500)
+    expect(seen.toasts.some(text => text.startsWith('✕ git-branch: Test stopped before its result was saved ('))).toBe(true)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /running tests/ })).toBeUndefined()
+  })
+
+  test('a Validate that process.run stops at the time limit reads as timed out; one refused sooner could not run', SHORT, async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: '', throws: true } }, true, hold)
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(LIMIT + 1000)
+    release()
+    await clock.advance(10)
+    expect(seen.toasts).toContain('✕ git-branch: timed out after 0.1 minutes. Press F in Mod Lab to fix')
+    await ui.unmount()
+    const again = await mountPane($)
+    await again.press({ key: 'validate' })
+    await clock.advance(10)
+    expect(seen.toasts.at(-1)).toBe('✕ git-branch: could not run. Press F in Mod Lab to fix')
+  })
+
+  test('a Test run is given testTimeoutMinutes as its time limit', { options: { modsDir: MODS, testTimeoutMinutes: 5 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.timeouts).toEqual([5 * MINUTE])
+  })
+
+  test('the time limit of a Test run stops at the engine\'s ten minutes', { options: { modsDir: MODS, testTimeoutMinutes: 30 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'), { test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'test' })
+    await clock.advance(500)
+    expect(seen.timeouts).toEqual([10 * MINUTE])
+  })
+})
+
 describe('selection', () => {
   test('a running lab_report selects the mod being built', OPTIONS, async ($, on) => {
     const { clock } = world(on, { ...modFiles('git-branch'), ...modFiles('duet') })
@@ -711,7 +993,7 @@ describe('a results write that fails', () => {
     const { seen, clock } = world(on, modFiles('git-branch'), { validate: { exitCode: 0, stdout: validateClean } })
     await start($)
     await clock.advance(10)
-    seen.denyStoreSet = 'modlab:results'
+    seen.denyStoreSet = `modlab:results:${MODS}`
     const ui = await mountPane($)
     await ui.press({ key: 'validate' })
     await clock.advance(500)
@@ -1120,16 +1402,470 @@ describe('logging (Change 0.2.2)', () => {
     await clock.advance(3000)
     const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
     const listed = (await run('config')).text ?? ''
-    expect(listed).toContain('logging    normal')
-    expect(listed).toContain('modsDir    /m/mods')
+    expect(listed).toContain('logging            normal')
+    expect(listed).toContain('modsDir            /m/mods')
     expect(listed).toMatch(/Log file: \/home\/u\/\.claude\/mod-builder-data\/logs\/\d{4}-\d{2}-\d{2}-s1-sessi\.log/)
     const changed = (await run('config logging verbose')).text ?? ''
     expect(changed).toStartWith('logging is now verbose.')
-    expect(changed).toContain('logging    verbose')
+    expect(changed).toContain('logging            verbose')
     expect(seen.sets).toEqual([{ key: 'mod-builder.logging', value: 'verbose' }])
     expect((await run('config logging loud')).text).toBe('logging must be one of off · normal · verbose · debug.')
     // The change line reaches the file before the set, which reloads the plugin.
     expect(lastLog(seen)).toContain('NORMAL  config  logging changing  {"value":"verbose"}')
     expect((await run('help')).text).toBe('Usage: /mod-builder config [list] · /mod-builder config <option> <value>')
+  })
+})
+
+describe('testTimeoutMinutes in /mod-builder config (PR #55 review)', () => {
+  test('the listing shows the time limit; a change writes its /config row', { options: { modsDir: MODS, testTimeoutMinutes: 2 } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    expect((await run('config')).text).toContain('testTimeoutMinutes 2 minutes')
+    const changed = (await run('config testTimeoutMinutes 5')).text ?? ''
+    expect(changed).toStartWith('testTimeoutMinutes is now 5.')
+    expect(changed).toContain('testTimeoutMinutes 5 minutes')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: 5 }])
+  })
+
+  test('default clears its /config row, and the listing shows the default it then means', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const run = (args: string) => $.command.run({ command: 'mod-builder', args, origin: COMPOSER, presentation: PRESENTATION }) as Promise<{ text?: string }>
+    const changed = (await run('config testTimeoutMinutes default')).text ?? ''
+    expect(changed).toStartWith('testTimeoutMinutes is now default.')
+    expect(changed).toContain('testTimeoutMinutes 3 minutes')
+    expect(seen.sets).toEqual([{ key: 'mod-builder.testTimeoutMinutes', value: '' }])
+  })
+})
+
+describe('modsDir set', () => {
+  test('a set modsDir is never walked: no marketplace is looked for at start, at a scan or in /mod-builder config (PR #57 review round 2)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), ['/m/.claude-plugin/marketplace.json']: '{ "plugins": [] }' })
+    seen.cwd = '/m/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })
+    await $.turn.complete({ answer: 'done' } as never)
+    await clock.advance(1000)
+    expect(seen.probed.filter(path => path.endsWith('/.claude-plugin/marketplace.json'))).toEqual([])
+  })
+})
+
+describe('modsDir not set: the mods folder follows the working directory', () => {
+  const WT = '/w/wt'
+  const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+  const startedLine = (seen: { logs: string[] }) => seen.logs.find(line => line.includes('Mod Lab started')) ?? ''
+
+  test('a session in a worktree lists that worktree\'s mods', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /…\/wt\/mods/ })).toBeDefined()
+  })
+
+  test('Validate runs against the worktree\'s mod folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ key: 'validate' })).toBeDefined()
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    expect(seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${WT}/mods/alpha`]])
+  })
+
+  test('a worktree inside the main checkout lists the worktree\'s mods, not the main checkout\'s', async ($, on) => {
+    const inner = '/w/main/scratch/wt'
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/main'),
+      ...modFiles('alpha', '/w/main/mods'),
+      ...marketplaceAt(inner),
+      ...modFiles('beta', `${inner}/mods`),
+    })
+    seen.cwd = `${inner}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+  })
+
+  test('a /cd into another worktree takes effect at the next scan', async ($, on) => {
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    expect(await before.find({ type: 'Text', text: /beta/ })).toBeUndefined()
+    await before.unmount()
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await after.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+  })
+
+  test('a /cd out of every marketplace goes back to the plugin\'s own mods folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const inside = await mountPane($)
+    expect(await inside.find({ type: 'Text', text: /alpha/ })).toBeDefined()
+    await inside.unmount()
+    seen.cwd = '/elsewhere'
+    await command($, 'alpha')
+    await clock.advance(10)
+    const outside = await mountPane($)
+    expect(await outside.find({ type: 'Text', text: /alpha/ })).toBeUndefined()
+    expect(await outside.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeDefined()
+  })
+
+  test('the session-start log line names the worktree\'s mods folder', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    expect(startedLine(seen)).toContain(`"modsDir":"${WT}/mods"`)
+  })
+
+  test('the session-start log line names the main checkout\'s mods folder when the session starts there', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt('/w/main'), ...modFiles('alpha', '/w/main/mods') })
+    seen.cwd = '/w/main'
+    await start($)
+    await clock.advance(10)
+    expect(startedLine(seen)).toContain('"modsDir":"/w/main/mods"')
+  })
+
+  test('/mod-builder config lists the worktree\'s mods folder as the default', async ($, on) => {
+    const { seen, clock } = world(on, { ...marketplaceAt(WT), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = `${WT}/plugins/x`
+    await start($)
+    await clock.advance(10)
+    const listed = ((await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }).text ?? ''
+    expect(listed).toContain('modsDir            default (…/wt/mods)')
+  })
+})
+
+describe('modsDir not set: each mods folder keeps its own results', () => {
+  // Two worktrees, each with a mod named alpha whose files are alike.
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const alphaIn = (folder: string): Disk => ({
+    ...modFiles('alpha', `${folder}/mods`),
+    [`${folder}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'alpha', source: './mods/alpha', version: '0.1.0' }] }),
+  })
+  const passing = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+
+  async function cdTo($: Engine, w: ReturnType<typeof world>, folder: string) {
+    w.seen.cwd = `${folder}/plugins/x`
+    await command($, 'alpha')
+    await w.clock.advance(10)
+  }
+
+  async function validateAndTest($: Engine, w: ReturnType<typeof world>) {
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.press({ key: 'test' })
+    await w.clock.advance(500)
+    await ui.unmount()
+  }
+
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('the same-named mod in another worktree starts unchecked, and going back finds the first one\'s results', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+    await cdTo($, w, TWO)
+    expect(await shows($, /^ready to share$/)).toBe(false)
+    expect(await shows($, /next: Validate/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a mod turning green is announced in each worktree, though one of the same name already was', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    await cdTo($, w, TWO)
+    await validateAndTest($, w)
+    expect(w.seen.notified).toEqual(['alpha is ready to share', 'alpha is ready to share'])
+  })
+
+  test('an edit started in one worktree leaves the same-named mod in another as it was', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await validateAndTest($, w)
+    await cdTo($, w, ONE)
+    await validateAndTest($, w)
+    await w.clock.advance(5000)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'passed' } as never)
+    await w.clock.advance(10)
+    expect(await shows($, /^edit · update Spec for this change$/)).toBe(true)
+    await cdTo($, w, TWO)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a run keeps its result with the folder it ran in, after a /cd while it runs', async ($, on) => {
+    let release = () => {}
+    const hold = new Promise<void>(resolve => (release = resolve))
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing, true, hold)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(10)
+    await ui.unmount()
+    await cdTo($, w, TWO)
+    release()
+    await w.clock.advance(500)
+    expect(w.seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${ONE}/mods/alpha`]])
+    expect(await shows($, /next: Validate/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /next: Test/)).toBe(true)
+  })
+})
+
+describe('modsDir not set: what the pane does acts on the folder it shows (PR #57 review)', () => {
+  const ONE = '/w/one'
+  const TWO = '/w/two'
+  const marketplaceOf = (folder: string, plugins: object[]): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins }) })
+  const ALPHA_ENTRY = { name: 'alpha', source: './mods/alpha', version: '0.1.0' }
+  const alphaIn = (folder: string): Disk => ({
+    ...modFiles('alpha', `${folder}/mods`),
+    [`${folder}/mods/alpha/README.md`]: '# Alpha\n\n## What it reaches\n',
+    ...marketplaceOf(folder, [ALPHA_ENTRY]),
+  })
+  const passing = { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }
+
+  async function cdTo($: Engine, w: ReturnType<typeof world>, folder: string) {
+    w.seen.cwd = `${folder}/plugins/x`
+    await command($, 'alpha')
+    await w.clock.advance(10)
+  }
+
+  async function press($: Engine, w: ReturnType<typeof world>, ...keys: string[]) {
+    const ui = await mountPane($)
+    for (const key of keys) {
+      await ui.press({ key })
+      await w.clock.advance(500)
+    }
+    await ui.unmount()
+  }
+
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('V after a /cd with no scan since runs the folder the pane shows, and stamps the result from that folder', async ($, on) => {
+    const one = alphaIn(ONE)
+    const mtime: Mtimes = { ms: 1000, byPath: Object.fromEntries(Object.keys(one).map(path => [path, 2000])) }
+    const w = world(on, { ...one, ...alphaIn(TWO) }, passing, true, undefined, mtime)
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    const ui = await mountPane($)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await ui.press({ key: 'validate' })
+    await w.clock.advance(500)
+    await ui.unmount()
+    expect(w.seen.argv).toEqual([['claude', 'plugin', 'validate', '--json', `${ONE}/mods/alpha`]])
+    await cdTo($, w, ONE)
+    expect(await shows($, /next: Test/)).toBe(true)
+  })
+
+  test('the end-of-turn re-run checks the folder it judged, though a /cd lands during its first run', async ($, on) => {
+    const mtime: Mtimes = { ms: 1000 }
+    const box: { w?: ReturnType<typeof world>; moveOnRun: boolean } = { moveOnRun: false }
+    // Awaited by every process.run: the first one after arming moves the session to TWO.
+    const moving = {
+      then(resolve: () => void) {
+        if (box.moveOnRun && box.w) {
+          box.moveOnRun = false
+          box.w.seen.cwd = `${TWO}/plugins/x`
+        }
+        resolve()
+      },
+    } as unknown as Promise<void>
+    const w = world(on, { ...alphaIn(ONE), ...modFiles('beta', `${ONE}/mods`), ...alphaIn(TWO) }, passing, true, moving, mtime)
+    box.w = w
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    for (const name of ['alpha', 'beta']) {
+      await command($, name)
+      await w.clock.advance(10)
+      await press($, w, 'validate')
+    }
+    expect(w.seen.argv.map(argv => argv[4])).toEqual([`${ONE}/mods/alpha`, `${ONE}/mods/beta`])
+    mtime.ms = 5000
+    box.moveOnRun = true
+    await $.turn.complete({ answer: 'edited' } as never)
+    await w.clock.advance(1000)
+    expect(w.seen.argv.slice(2).map(argv => argv[4])).toEqual([`${ONE}/mods/alpha`, `${ONE}/mods/beta`])
+  })
+
+  test('a lab_report after a /cd with no scan since records the edit in the folder the session is in', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'validate', 'test')
+    await cdTo($, w, ONE)
+    await press($, w, 'validate', 'test')
+    await w.clock.advance(5000)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'alpha', stage: 'Spec', status: 'passed' } as never)
+    await w.clock.advance(10)
+    expect(await shows($, /^edit · update Spec for this change$/)).toBe(true)
+    await cdTo($, w, ONE)
+    expect(await shows($, /^ready to share$/)).toBe(true)
+  })
+
+  test('a README open in one folder closes when a scan moves to another', async ($, on) => {
+    const w = world(on, { ...alphaIn(ONE), ...alphaIn(TWO) }, passing)
+    const isReadmeOpen = async () => {
+      const ui = await mountPane($)
+      const back = await ui.find({ key: 'back' })
+      await ui.unmount()
+      return back !== undefined
+    }
+    w.seen.cwd = `${ONE}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'readme')
+    expect(await isReadmeOpen()).toBe(true)
+    w.seen.cwd = `${TWO}/plugins/x`
+    await $.turn.complete({ answer: 'moved' } as never)
+    await w.clock.advance(1000)
+    expect(await isReadmeOpen()).toBe(false)
+  })
+
+  test('"ready to share" stays with the folder a mod turned green in: a same-named mod already green elsewhere reads clean', async ($, on) => {
+    const disk = { ...alphaIn(ONE), ...alphaIn(TWO), ...marketplaceOf(TWO, []) }
+    const w = world(on, disk, passing)
+    // In TWO, alpha passes Validate and Test but isn't listed for sharing yet, so it isn't green.
+    w.seen.cwd = `${TWO}/plugins/x`
+    await start($)
+    await w.clock.advance(10)
+    await press($, w, 'validate', 'test')
+    expect(await shows($, /^ready to share$/)).toBe(false)
+    Object.assign(disk, marketplaceOf(TWO, [ALPHA_ENTRY]))
+    await cdTo($, w, ONE)
+    await press($, w, 'validate', 'test')
+    expect(await shows($, /^ready to share$/)).toBe(true)
+    // Back in TWO, alpha is now green from a quiet scan, never announced there.
+    await cdTo($, w, TWO)
+    expect(await shows($, /next: /)).toBe(false)
+    expect(await shows($, /^ready to share$/)).toBe(false)
+  })
+})
+
+describe('upgrade: records kept before 0.2.9, under one key for every folder (PR #57 review)', () => {
+  const codeSig = signatureOf(['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'hooks/git-branch-logic.ts', 'tests/git-branch-logic.test.ts'].map(name => `${name}@1000`))
+  // What 0.2.8 and earlier stored after V and T, for a mod that was announced.
+  const legacy = {
+    'modlab:results': {
+      'git-branch': {
+        Validate: { ...resultOf('Validate', 0, validateClean, 1000, 100, 2000), codeSig },
+        Test: { ...resultOf('Test', 0, testPass, 1000, 100, 2000), codeSig },
+      },
+    },
+    'modlab:done': { 'git-branch': codeSig },
+  }
+  const sharedIn = (folder: string): Disk => ({
+    ...modFiles('git-branch', `${folder}/mods`),
+    [`${folder}/mods/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n',
+    [`${folder}/.claude-plugin/marketplace.json`]: JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+  })
+
+  test('the folder they described (here a pinned modsDir) reads them: its mods stay checked, nothing re-runs or is announced again', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, sharedIn('/m'), {}, true, undefined, { ms: 1000 }, undefined, undefined, legacy)
+    await start($)
+    await clock.advance(10)
+    await $.turn.complete({ answer: 'upgraded' } as never)
+    await clock.advance(1000)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /next: / })).toBeUndefined()
+    expect(seen.argv).toEqual([])
+    expect(seen.notified).toEqual([])
+  })
+
+  test('a session in another folder does not read them', async ($, on) => {
+    const { seen, clock } = world(on, sharedIn('/w/one'), {}, true, undefined, { ms: 1000 }, undefined, undefined, legacy)
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /next: Validate/ })).toBeDefined()
+  })
+})
+
+describe('the scan publishes its folder and its mods together (PR #57 review round 2)', () => {
+  test('every state write that carries mods carries the folder they were judged in, across a /cd', async ($, on) => {
+    const disk: Disk = {
+      ['/w/one/.claude-plugin/marketplace.json']: '{ "plugins": [] }',
+      ...modFiles('alpha', '/w/one/mods'),
+      ['/w/two/.claude-plugin/marketplace.json']: '{ "plugins": [] }',
+      ...modFiles('beta', '/w/two/mods'),
+    }
+    const { seen, clock } = world(on, disk)
+    // Watches Mod Lab's writes on their way to the kit's state, which answers beneath.
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($, e, next) => {
+      const { plugin, key, value } = e as unknown as { plugin: string; key: string; value: unknown }
+      if (plugin === 'mod-builder') writes.push({ key, value })
+      return next(e)
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const carryingMods = writes.filter(({ value }) => Array.isArray(value) ? value.some(one => (one as { lights?: unknown }).lights) : Array.isArray((value as { views?: unknown } | null)?.views))
+    expect(carryingMods.length).toBeGreaterThan(1)
+    const expected: Record<string, string[]> = { '/w/one/mods': ['alpha'], '/w/two/mods': ['beta'] }
+    for (const { value } of carryingMods) {
+      const verdict = value as { modsDir?: unknown; views?: { name: string }[] }
+      expect(typeof verdict.modsDir).toBe('string')
+      expect((verdict.views ?? []).map(view => view.name)).toEqual(expected[verdict.modsDir as string] ?? ['?'])
+    }
   })
 })

@@ -12,7 +12,7 @@ The plugin has three parts:
 | **Mod Lab** (mod) | `/modlab` | Tracks every mod in your mods folder through eight stages, live, on every surface a mod can draw on. |
 
 Both skills build on Claude Code's built-in `plugin-authoring` skill for the API. They add house
-conventions, a UI-state checklist, 14 patterns and a list of 43 engine gotchas, each tagged by how
+conventions, a UI-state checklist, 14 patterns and a list of 65 engine gotchas, each tagged by how
 it was verified.
 
 ## Mod Lab
@@ -82,14 +82,14 @@ it was verified.
 | 7 | README | it has "What it reaches" and no template comments | it's saved again |
 | 8 | Share | the marketplace lists the mod | the marketplace lists the new version |
 
-An edit starts a **build generation** with its first report. Everything that passed before turns
-`◌` and turns green again as the change redoes it. The generation ends, and "ready to share"
+An edit starts a **build generation** with its first report. Every stage that passed before turns
+`◌`, except Scaffold and Register, which stay green, and turns green again as the change redoes it. The generation ends, and "ready to share"
 fires again, when all eight are green.
 
-**Checks re-run themselves.** With `autoRerun` on (the default), at the end of each of Claude's
-turns Mod Lab rescans every mod. Edits made by any tool count, Bash included. Any mod whose
-Validate or Test went stale gets Validate re-run, then Test if Validate passes. Nothing runs
-mid-turn or on a timer.
+**Checks re-run themselves.** At the end of each of Claude's turns (not a subagent's), Mod Lab rescans every mod. Edits from any
+tool count, Bash included. With `autoRerun` on (the default), it then re-runs what went stale: a
+stale Validate runs again, followed by Test if Validate passes and Test has run before; a stale
+Test alone runs again if Validate passed. Nothing runs mid-turn or on a timer.
 
 ## Try it
 
@@ -132,16 +132,18 @@ claude plugin marketplace add ./mod-builder
 Edits to the folder load with `/reload-plugins`. While developing:
 `claude --plugin-dir plugins/mod-builder`.
 
-Each way of loading the plugin (`--plugin-dir`, or an installed copy) keeps its own store. If you
-switch, Validate and Test show `○` until you press V and T once.
+Each way of loading the plugin (`--plugin-dir`, or an installed copy) keeps its own store, and
+within it each mods folder keeps its own results. If you switch either one (another way of loading,
+or a `/cd` into another worktree), Validate and Test show `○` until you press V and T once.
 
 ## Options
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `modsDir` | empty: the `mods/` next to the plugin's marketplace | The folder whose child folders Mod Lab tracks. In your own project, set it to your `mods/`. |
+| `modsDir` | empty: the `mods/` of the marketplace nearest the session's working directory, else the one next to this plugin | The folder whose child folders Mod Lab tracks. Empty, it is found the way `/mod-builder:build` finds where to write, so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan. In another repository with a `.claude-plugin/marketplace.json`, that is its `mods/`, and the pane says `No mods yet.` if it keeps its plugins elsewhere. Set it to pin one folder. |
 | `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
-| `autoRerun` | `true` | At the end of each of Claude's turns, re-run Validate (then Test, if Validate passes) for any mod whose checks went stale |
+| `autoRerun` | `true` | At the end of each of Claude's turns, re-run stale checks: a stale Validate, then Test if Validate passes and Test has run before; a stale Test alone, if Validate passed |
+| `testTimeoutMinutes` | `3` | How long a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10; fractions are fine). When Mod Lab loads, it clears checks a reload left shown as running. One still shown as running 30 s past this stops counting: V, T and K light again and the auto re-run goes on |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
 
 `/mod-builder config` lists these with their current values and this session's log file; `/mod-builder config <option> <value>` changes one (for example `/mod-builder config logging verbose`). They're also in `/config`.
@@ -154,12 +156,14 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
-| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. |
-| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
+| Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (its child is killed) and shown as timed out. |
+| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. With `modsDir` empty, checks whether `.claude-plugin/marketplace.json` exists in the working directory and then each folder above it, stopping at the first found, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
+| Prompt box | `$.prompt.fill` puts `/mod-builder:build ` (N, or `/modlab new <idea>`) or a fix request (F) in the prompt box; it never submits |
+| Notifications | `$.ui.notify`: a native notification when a mod is ready to share |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |
-| Session | Reads the working directory (to name a mod's folder the way the session reads it) and the session id (to name the log file) |
-| Store | Its own `$.store`: last results per mod, which mods were announced, and edit generations |
+| Session | Reads the working directory (to find the mods folder when `modsDir` is empty, and to name a mod's folder the way the session reads it) and the session id (to name the log file) |
+| Store | Its own `$.store`, one set of keys per mods folder: last results per mod, which mods were announced, and edit generations |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
 | Tools it adds | `lab_report`, which records progress and runs nothing beyond the Validate and Test above |
@@ -169,7 +173,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 
 ```
 claude plugin validate plugins/mod-builder
-claude plugin test plugins/mod-builder               # 46 tests: logic and UI
+claude plugin test plugins/mod-builder               # 166 tests: logic and UI
 bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # all five archetypes
 ```
 
@@ -179,6 +183,7 @@ bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # all five a
   templates.
 - `SPEC.md` is Mod Lab's own spec, written from the skill's template. Its Design section records
   how the pane follows the Claude Design mockups, and its Edits section covers build generations.
-- `design/` holds the two Claude Design briefs (the pane mockups, and the repo README).
+- `design/` holds the Claude Design briefs: the repo README, its visuals (hero and feature strip),
+  and the pane mockups (superseded, kept for history).
 
-Built on Claude Code 2.1.296. Function hooks are early access, so the API may change between releases.
+CI tests it on Claude Code 2.1.296. Function hooks are early access, so the API may change between releases.
