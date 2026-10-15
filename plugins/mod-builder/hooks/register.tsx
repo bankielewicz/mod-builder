@@ -393,9 +393,12 @@ async function refreshStatus($: Engine): Promise<void> {
 
 // ── The clock: runs only while something is live ─────────────────────────
 
-/** A reload cancels the clock but keeps the runs atom: tick while rows remain, so an orphan is dropped once it ages out. */
-async function resumeClock($: Engine): Promise<void> {
-  if ((await read($, runs)).length) startClock($)
+/**
+ * session.start fires once per fresh load of this module (claude-code.d.ts), and the runs atom
+ * outlives the module that wrote it. So at that moment no row has a live run: clear them all.
+ */
+async function clearLeftRuns($: Engine): Promise<void> {
+  if ((await read($, runs)).length) await update($, runs, () => [])
 }
 
 function startClock($: Engine): void {
@@ -527,6 +530,13 @@ async function execute($: Engine, entry: Run, dir: string): Promise<{ exitCode: 
   }
 }
 
+/** Whether a newer run took this run's row (it outlived the limit and the grace): then it must not start or save anything. */
+async function isSuperseded($: Engine, entry: Run): Promise<boolean> {
+  if (Lab.hasRun(await read($, runs), entry)) return false
+  logEvent($, 'normal', 'run', `${entry.mod} ${entry.kind} superseded`, { startedAt: entry.startedAt })
+  return true
+}
+
 /** Runs a check and judges it. One that throws fails: as timed out at its time limit, else as "could not run". */
 async function resultOfRun($: Engine, entry: Run, dir: string, stamp: number): Promise<Lab.RunResult> {
   const { mod, kind, startedAt } = entry
@@ -566,10 +576,12 @@ async function run($: Engine, mod: string, kind: RunKind): Promise<void> {
   try {
     startClock($)
     await scan($, false)
+    if (await isSuperseded($, entry)) return
 
     const stamp = factsByMod.get(mod)?.codeMtimeMs ?? startedAt
     const codeSig = factsByMod.get(mod)?.codeSig
     let result = await resultOfRun($, entry, dir, stamp)
+    if (await isSuperseded($, entry)) return
     if (codeSig !== undefined) result = { ...result, codeSig }
     logEvent($, 'normal', 'run', `${mod} ${kind} ${result.ok ? 'passed' : 'failed'}`, { durationMs: result.durationMs, summary: result.summary })
     // A refused write loses this result, but the run still ends and says how it went.
@@ -756,9 +768,9 @@ export const register: Register = (on, options) => {
         inputSchema: Lab.REPORT_SCHEMA,
       })
       .catch((error: unknown) => logCaught($, 'session.start.tool', error))
+    await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
-    void resumeClock($).catch((error: unknown) => logCaught($, 'session.start.clock', error))
     return next(e)
   })
 

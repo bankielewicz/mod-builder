@@ -993,6 +993,11 @@ export function toastOfRunError(mod: string, kind: RunKind, error: unknown): str
   return `✕ ${mod}: ${kind === 'Typecheck' ? 'Type-check' : kind} stopped before its result was saved (${cut(errorText(error), 120)})`
 }
 
+/** Whether `entry`'s own row (same mod, kind and start) is still in runs: a newer run replaces an orphan's row. */
+export function hasRun(all: readonly Run[], entry: Run): boolean {
+  return all.some(one => one.mod === entry.mod && one.kind === entry.kind && one.startedAt === entry.startedAt)
+}
+
 /** The runs once streamed `counts` land on `entry`'s own row: same mod, kind and start. */
 export function withProgress(all: readonly Run[], entry: Run, counts: { passed: number; failed: number }): Run[] {
   return all.map(one => (one.mod === entry.mod && one.kind === entry.kind && one.startedAt === entry.startedAt ? { ...one, ...counts } : one))
