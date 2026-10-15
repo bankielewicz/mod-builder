@@ -18,7 +18,7 @@ You are a read-only code explorer.`
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; hold?: (path: string) => number } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -33,11 +33,15 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
   on('env.get', ($: any, e: any) => (o.denyEnv === e.name ? { deny: 'env unavailable' } : { value: (o.env ?? { HOME: '/home/u' })[e.name] }))
   // `hold`: a read stays in flight for that many promise turns, and `maxReads` counts the most in flight at once.
   let reading = 0
+  const failedOnce = new Set<string>()
   on('fs.read', ($: any, e: any) => {
     seen.reads.push(e.path)
     const text = seen.files[e.path]
-    // `unreadable` paths are listed but can't be read, as a file without read permission.
-    const answer = text === undefined ? { deny: 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : { value: text }
+    // `unreadable` paths are listed but can't be read, as a file without read permission; a `flaky` path's first read
+    // fails as one past the process's open-file limit does, and later reads succeed.
+    const isFlaky = o.flaky?.includes(e.path) && !failedOnce.has(e.path)
+    if (isFlaky) failedOnce.add(e.path)
+    const answer = text === undefined ? { deny: 'ENOENT: no such file' } : o.unreadable?.includes(e.path) ? { deny: 'EACCES: permission denied' } : isFlaky ? { deny: 'EMFILE: too many open files' } : { value: text }
     if (!o.hold) return answer
     reading++
     seen.maxReads = Math.max(seen.maxReads, reading)
@@ -922,6 +926,28 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     expect(sandboxOf(seen.argv[0])).toBe('workspace-write')
     expect(seen.stdin[0]).toContain('Body 0.')
     expect(seen.stdin[0]).not.toContain('Body 4.')
+  })
+
+  test('a folder\'s files are read at most 16 at a time, so a large folder does not open hundreds of files at once (PR #48 review)', { options }, async ($, on) => {
+    const agents: Record<string, string> = {}
+    for (let i = 0; i < 40; i++) agents[`/w/.claude/agents/many-${String(i).padStart(2, '0')}.md`] = agent(`filler-${i}`, READS, 'Filler.')
+    agents['/w/.claude/agents/zz-editor.md'] = agent('editor', EDITS, 'Last by name.')
+    const seen = engine(on, { cwd: IN, agents, hold: () => 3 })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(seen.reads.filter(p => p.includes('/many-')).length).toBe(40)
+    expect(seen.maxReads).toBe(16)
+    expect(seen.stdin[0]).toContain('Last by name.')
+  })
+
+  test('a read that fails once is tried again on its own, so a passing error does not hide a definition and hand the pick to an editing one (PR #48 review)', { options }, async ($, on) => {
+    const near = '/w/pkg/.claude/agents/editor.md'
+    const seen = engine(on, { cwd: IN, flaky: [near], agents: { [near]: agent('editor', READS, 'Near.'), '/w/.claude/agents/editor.md': agent('editor', EDITS, 'Far.') } })
+    await start($, IN)
+    await asks($, 'editor')
+    expect(seen.reads.filter(p => p === near).length).toBe(2)
+    expect(seen.stdin[0]).toContain('Near.')
+    expect(sandboxOf(seen.argv[0])).toBe('read-only')
   })
 
   test('a definition that dropped out of the folder listing is read again when it returns, even with the same size and time', { options }, async ($, on) => {
