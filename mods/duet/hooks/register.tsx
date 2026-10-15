@@ -172,6 +172,8 @@ function logRun($: EngineInterface, task: Task): Promise<void> {
 const AGENT_DEPTH = 8
 /** How many `.md` files duet's own search reads per `.claude/agents` folder. */
 const AGENT_FILES = 500
+/** How many agent files are read at once: enough to overlap the reads, few enough to stay far from the open-file limit. */
+const AGENT_READS = 16
 
 /** Agent files by path, read again only when their size or time changed; the folders are listed on every call. */
 const agentCache = new Map<string, { size: number; mtimeMs: number; text: string }>()
@@ -241,6 +243,18 @@ async function agentText($: EngineInterface, e: AgentEntry): Promise<string> {
   return text
 }
 
+/**
+ * A folder's agent texts in the listing's order, read AGENT_READS at a time. A read that fails is tried once more on
+ * its own, since an error such as too many open files passes; one that fails again is left out, as Claude leaves out
+ * a file it can't read.
+ */
+async function agentTexts($: EngineInterface, entries: AgentEntry[]): Promise<string[]> {
+  const texts: string[] = []
+  for (let i = 0; i < entries.length; i += AGENT_READS) texts.push(...(await Promise.all(entries.slice(i, i + AGENT_READS).map(e => agentText($, e)))))
+  for (const [i, e] of entries.entries()) if (!texts[i]) texts[i] = await agentText($, e)
+  return texts
+}
+
 /** Forgets the cached files under a searched folder that its listing no longer holds, so the cache never outgrows the folders. */
 function pruneAgentCache(dir: string, listed: Set<string>): void {
   for (const path of [...agentCache.keys()]) {
@@ -270,7 +284,7 @@ async function agentDef($: EngineInterface, cwd: string, type: string): Promise<
     const entries = await listAgentFiles($, dir, searched, cut)
     for (const e of entries) listed.add(e.path)
     pruneAgentCache(dir, listed)
-    def = pickAgent(await Promise.all(entries.map(e => agentText($, e))), type)
+    def = pickAgent(await agentTexts($, entries), type)
     if (def) break
   }
   return { def, note: cutText(type, cut) }
