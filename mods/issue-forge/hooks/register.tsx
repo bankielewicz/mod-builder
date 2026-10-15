@@ -161,6 +161,8 @@ let liveWork: { root: string; workRoot: string } | null = null
  * can't be ended, only refused).
  */
 let knownRefs = new Set<string>()
+/** What the person is told when a phase agent's report is kept from the main model (prompt.submit's drop, session.receive's consumed). */
+const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
 /** The last run write queued: updateRun chains each one after it. */
 let runWrites: Promise<void> = Promise.resolve()
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
@@ -1543,7 +1545,13 @@ export const register: Register = (on, raw) => {
 
   // A phase agent's report reaches the main loop as a peer prompt; the pane already has it (C0).
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin?.kind === 'peer' && knownRefs.size > 0 && isOwnHandback(e.text, [...knownRefs])) return { drop: 'issue-forge: a phase agent finished; the pane has the result.' }
+    if (e.origin?.kind === 'peer' && knownRefs.size > 0 && isOwnHandback(e.text, [...knownRefs])) return { drop: HANDBACK_DROP }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // A named agent is a teammate with agent teams on: its report is a mailbox delivery, which raises no prompt.submit (#27, probed on 2.1.296).
+  on('session.receive', async ($, e, next) => {
+    if (e.origin && 'teammate' in e.origin && knownRefs.has(e.origin.teammate)) return { consumed: HANDBACK_DROP }
     return next(e)
   }).catch(($, e, next) => next(e))
 
