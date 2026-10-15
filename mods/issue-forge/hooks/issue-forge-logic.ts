@@ -1653,9 +1653,14 @@ export function startChoices(ctx: StartContext): StartMenu | null {
   }
 }
 
-/** The chosen label's action; no answer possible, or free text under Other, is the menu's fallback. */
-export function startAnswer(menu: StartMenu, answer: string | null): StartAction {
-  return menu.options.find(o => o.label === answer)?.action ?? menu.fallback
+/**
+ * The chosen label's action. Where a person could answer, Esc or free text under Other cancels; only where nobody can
+ * be asked (`claude -p`) does a missing answer take the menu's fallback (PR #51 review, the owner's choice).
+ */
+export function startAnswer(menu: StartMenu, answer: string | null, canAsk: boolean): StartAction {
+  const chosen = menu.options.find(o => o.label === answer)?.action
+  if (chosen) return chosen
+  return answer === null && !canAsk ? menu.fallback : { kind: 'cancel' }
 }
 
 export function keepText(issue: number): string {

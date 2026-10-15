@@ -124,6 +124,8 @@ type Options = { redModel: string; greenModel: string; refactorModel: string; re
 
 let options: Options = { redModel: 'opus', greenModel: 'sonnet', refactorModel: 'opus', redAgentType: 'issue-forge:red', confirmPublish: true }
 let sessionCwd = ''
+/** Whether a person is at the prompt: a dismissed start menu then means Cancel (PR #51 review). */
+let isInteractive = true
 let home = ''
 /** This session's id, read once at session start: what a run's driver names (Change 0.3.0). */
 let sessionId = ''
@@ -1091,7 +1093,7 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number): Pro
   const others = runs.filter(r => isActive(r) && r.id !== drivingRun?.id)
   const menu = startChoices({ issue, base: checkoutBaseOf(local), workspace, driving: drivingRun, others, me: sessionId, now: await $.clock.now() })
   if (!menu) return begin($, at, issue, false)
-  const action = startAnswer(menu, await askOr($, menu.question, menu.options.map(o => o.label)))
+  const action = startAnswer(menu, await askOr($, menu.question, menu.options.map(o => o.label)), isInteractive)
   const isChosen = workspace !== 'here'
   switch (action.kind) {
     case 'start':
@@ -1408,6 +1410,7 @@ export const register: Register = (on, raw) => {
 
   on('session.start', async ($, e, next) => {
     sessionCwd = e.cwd
+    isInteractive = e.isInteractive
     await $.command
       .register({ name: 'issue-forge', description: 'Take a GitHub issue to a pull request, test-first, behind a coverage gate', argumentHint: '<issue> | status | resume | publish | stop | demo' })
       .catch(() => undefined)
