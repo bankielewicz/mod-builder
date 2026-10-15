@@ -682,6 +682,14 @@ describe('prompts, commits, stashes, hand-backs', () => {
     expect(isOwnMailboxHandback({ text: idle }, refs)).toBe(false)
   })
 
+  // A message an agent sends reaches the main conversation; only its final answer goes to the pane (PR #86 review).
+  test('every phase prompt says to report only in the final answer, never by message', () => {
+    for (const phase of ['red', 'green', 'refactor'] as const) {
+      expect(agentPrompt(phase)).toContain('Report only in your final answer')
+      expect(phasePrompt(phase, run())).toContain('Report only in your final answer')
+    }
+  })
+
   // A team that already has the name gives the teammate a suffixed one, which its hand-backs carry (d.ts; PR #86 review).
   test('a spawned agent is known by its id, the name asked for, and the name its team gave it', () => {
     expect(spawnRefs('aissue-forge-16-red-1-2-f00', 'issue-forge-16-red-1', 'issue-forge-16-red-1-2@session-x')).toEqual(['aissue-forge-16-red-1-2-f00', 'issue-forge-16-red-1', 'issue-forge-16-red-1-2'])
