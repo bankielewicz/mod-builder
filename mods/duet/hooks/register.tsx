@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 
@@ -21,6 +21,10 @@ import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScop
 
 const PANE = 'duet'
 const CONFIG_PANE = 'duet-config'
+const SHOW_TEXT = 'Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
+const STILL_BEHIND_TOAST = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
+/** How long after asking for the front the pane is read again (#31). */
+const FRONT_CHECK_MS = 500
 const COLORS = { accent: '#D97757', success: '#7FB685', warn: '#E0B15A', error: '#E06C6C' } as const
 const STATUS_COLOR = { running: COLORS.accent, done: COLORS.success, error: COLORS.error, refused: COLORS.warn } as const
 const YES = 'Yes, send to Codex'
@@ -60,8 +64,27 @@ async function openPane($: EngineInterface): Promise<void> {
   if (!opened.isPlaced) $.ui.toast('Duet needs a wider window. Widen it to see the pane, or watch the status line.')
 }
 
-async function isOpen($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE)
+async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneAction>> {
+  return paneAction(await $.ui.panes(), PANE)
+}
+
+/**
+ * Asks for a pane that is a tab behind another to the front, with the keyboard, for a person who asked to see it (#31).
+ * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
+ */
+async function bringToFront($: EngineInterface): Promise<void> {
+  await $.ui.open({ id: PANE, title: 'Duet', columns: 76, focus: true })
+  $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
+}
+
+async function warnIfBehind($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') $.ui.toast(STILL_BEHIND_TOAST)
+}
+
+/** An open for a command that names the pane: a tab behind another comes to the front, any other pane is opened as before. */
+async function openOrFront($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') void bringToFront($).catch(() => undefined)
+  else await openPane($)
 }
 
 async function refreshStatus($: EngineInterface): Promise<void> {
@@ -682,7 +705,7 @@ async function startDemo($: EngineInterface): Promise<void> {
   await update($, view, () => 'tasks')
   await update($, selected, () => 0)
   await ensureTicker($)
-  await openPane($)
+  await openOrFront($)
 }
 
 // How many task rows the pane last drew; selection never goes past them.
@@ -902,9 +925,13 @@ export const register: Register = (on, raw) => {
       if (sub === 'routes') return { text: routesText(options) }
       if (sub === 'config') return { text: await configure($, rest) }
       if (sub !== '') return { text: 'Usage: /duet [demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>]]' }
-      const wasOpen = await isOpen($)
-      void (wasOpen ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
-      return { text: wasOpen ? 'Closed. /duet to reopen.' : `Opened. ${routesText(options)}` }
+      const action = await paneActionOf($)
+      if (action === 'show') {
+        void bringToFront($).catch(() => undefined)
+        return { text: SHOW_TEXT }
+      }
+      void (action === 'close' ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
+      return { text: action === 'close' ? 'Closed. /duet to reopen.' : `Opened. ${routesText(options)}` }
     } catch {
       return { text: 'something went wrong; see claude --debug.' }
     }
@@ -991,7 +1018,7 @@ export const register: Register = (on, raw) => {
           <Button key="prev" label="Prev" hotkey="k" plain onPress={() => void move($, -1).catch(() => undefined)} />
           <Button key="close" label="Close" hotkey="c" plain onPress={() => void $.ui.close({ id: PANE }).catch(() => undefined)} />
         </Box>
-        {layout !== 'compact' && <Text dimColor>ctrl+x tab: pane keys  ·  r review  s stats  j/k move  c close</Text>}
+        {layout !== 'compact' && <Text dimColor wrap="truncate">ctrl+x tab: keys, again: next tab  ·  r review  s stats  j/k  c close</Text>}
       </Box>
     )
   })

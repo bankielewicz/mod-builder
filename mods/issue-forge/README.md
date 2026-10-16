@@ -40,7 +40,7 @@ Several sessions can each run an issue in the same repository at once, each in i
   it (with `N`, only when this session drives #N)
 - `/issue-forge stop [N]`: ends the run; its branch and commits are kept
 - `/issue-forge demo [state]`: every state of the pane, with nothing real running
-- `/issue-forge`: opens or closes the pane
+- `/issue-forge`: opens the pane, or closes it when it is shown. When it is open as a tab behind another pane, it comes to the front with the keyboard instead of closing; `Esc` returns the keyboard to the prompt
 
 Without `N`, a command means the run the pane shows, even a finished one. If the pane shows none, it
 means the repository's only active run; with several, it lists them and asks you to name one.
@@ -48,7 +48,21 @@ With no active run, `status` and `publish` mean the newest run started from this
 finished one.
 
 Give the pane the keyboard with `ctrl+x tab`. Its keys are `p` publish, `r` resume, `h` hand off,
-`s` stop, `t` status, and in the demo `n` next and `e` end.
+`s` stop, `t` status, and in the demo `n` next and `e` end. A key acts at once, so the two that change a live
+run ask first: Stop ("Stop run #N? Its branch and commits are kept.") and Publish (the question that names the
+branch and base), whatever `confirmPublish` says. Typed as `/issue-forge stop` or `/issue-forge publish`, they
+are immediate. A start or a resume while the pane is behind another tab says so in its answer and leaves the
+keyboard alone.
+
+Reaching the pane when other panes are open: `ctrl+x tab` shows the first tab and gives it the keyboard,
+each press after moves one tab right, and after the last tab the keyboard goes back to the prompt. `Esc` hands
+it back from any tab. A letter that is one of the pane's keys acts at once. To cycle without going through the
+first tab, bind `pane:next` and `pane:previous` (no default key) in `~/.claude/keybindings.json`; it works while a
+pane holds the keyboard:
+
+```json
+{"bindings":[{"context":"Pane","bindings":{"ctrl+x n":"pane:next","ctrl+x p":"pane:previous"}}]}
+```
 
 ## Set up a repository
 

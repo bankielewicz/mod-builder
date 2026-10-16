@@ -50,7 +50,7 @@ The API (function hooks) is **early access**. Everything here was built and veri
    | Band above the prompt | each running stage, with a 15-cell bar that fills on **real** progress (it streams `claude plugin test` output) |
    | Status line badge | `◆ 3 mods · 1 building` |
    | Toasts and a native OS notification | when runs finish, and when a mod is ready to share |
-   | Hotkey buttons | V validate · T test · K types · O readme · J/P move · N new · D demo; `ctrl+x tab` gives the pane the keyboard |
+   | Hotkey buttons | V validate · T test · K types · O readme · J/P move · N new · D demo; `ctrl+x tab` gives the pane the keyboard (again: next tab) |
    | Pre-filled prompts | for a new mod and for fix requests |
    | A model-callable tool, `lab_report` | the skill reports each stage as it works, so the pane lights up live; the disk and exit codes always decide pass or fail |
    | `/modlab demo` | a pretend mod, `aurora`, walks all 8 stages in 12 s, including one failed test that Claude fixes; nothing is written to disk |

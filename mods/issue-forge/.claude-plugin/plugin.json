@@ -1,6 +1,6 @@
 {
   "name": "issue-forge",
-  "version": "0.4.1",
+  "version": "0.6.0",
   "description": "Takes one GitHub issue to a pull request test-first: red, green and refactor subagents, each phase checked by commands and a 95% diff-coverage gate; pushes only after you confirm",
   "author": { "name": "Bryan Ankielewicz" },
   "types": "./types/index.d.ts",

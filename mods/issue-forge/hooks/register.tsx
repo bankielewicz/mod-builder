@@ -77,6 +77,7 @@ import {
   profileStatusText,
   pruneKeys,
   publishAsk,
+  paneAction,
   publishQuestion,
   readdWorktreeCommand,
   releasesOnEnd,
@@ -117,6 +118,12 @@ import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, 
 
 const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
+const SHOW_TEXT = 'bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
+const STILL_BEHIND_TOAST = `${TITLE} is still behind another tab: ctrl+x tab, then again until it shows.`
+/** After a start or a resume opened the pane behind another tab: where it is and how to reach it. */
+const BEHIND = '(ctrl+x tab, then again until it shows)'
+/** How long after asking for the front the pane is read again (#31). */
+const FRONT_CHECK_MS = 500
 const GIT_TIMEOUT = 60_000
 /** Why a phase agent's report is kept from the main model: shown for prompt.submit's drop, only logged for session.receive's consumed (d.ts). */
 const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
@@ -1109,8 +1116,32 @@ async function openPane($: EngineInterface): Promise<void> {
   if (!opened.isPlaced) $.ui.toast(`${TITLE} needs a wider window. Widen it to see the pane, or watch the status line.`)
 }
 
-async function isOpen($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE)
+async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneAction>> {
+  return paneAction(await $.ui.panes(), PANE)
+}
+
+/** Whether the pane is open as a tab behind another; a start or a resume says so in its answer, and never takes the keyboard. */
+async function isBehind($: EngineInterface): Promise<boolean> {
+  return (await paneActionOf($).catch(() => 'open')) === 'show'
+}
+
+/**
+ * Asks for a pane that is a tab behind another to the front, with the keyboard, for a person who asked to see it (#31).
+ * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
+ */
+async function bringToFront($: EngineInterface): Promise<void> {
+  await $.ui.open({ id: PANE, title: TITLE, columns: 76, focus: true })
+  $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
+}
+
+async function warnIfBehind($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') $.ui.toast(STILL_BEHIND_TOAST)
+}
+
+/** An open for a command that names the pane: a tab behind another comes to the front, any other pane is opened as before. */
+async function openOrFront($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') void bringToFront($).catch(() => undefined)
+  else await openPane($)
 }
 
 /** The starting checkout's own profile text: it names the base and the menu's wording, never what runs. */
@@ -1232,9 +1263,10 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
   await prune($, at.repo)
   await update($, demoAtom, () => null)
+  const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, claimed)
-  return `starting ${issueLabel(run)}; the pane shows progress. Nothing is pushed until you say yes.`
+  return `starting ${issueLabel(run)}; ${isBehindNow ? `its pane is behind another tab ${BEHIND}` : 'the pane shows progress'}. Nothing is pushed until you say yes.`
 }
 
 /**
@@ -1294,9 +1326,10 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const now = await $.clock.now()
   const driven = await updateRun($, key, stored => (isAsRead(stored, run) ? advance(back, { type: 'drive', session: sessionId }, now) : null))
   if (!driven) return movedOn(run)
+  const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, driven)
-  return `resuming #${back.issue} at ${back.step}.`
+  return `resuming #${back.issue} at ${back.step}${isBehindNow ? `; its pane is behind another tab ${BEHIND}` : ''}.`
 }
 
 async function publishRun($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
@@ -1383,7 +1416,7 @@ async function showStatus($: EngineInterface): Promise<void> {
 async function startDemo($: EngineInterface, state: DemoState | null): Promise<void> {
   await update($, nowAtom, () => 0)
   await update($, demoAtom, () => state ?? 'running')
-  await openPane($)
+  await openOrFront($)
 }
 
 async function stepDemo($: EngineInterface): Promise<void> {
@@ -1414,12 +1447,29 @@ async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand):
   }
 }
 
+/**
+ * A pane press that stops or publishes a run asks first, whatever `confirmPublish` says: a stray key must not do either (#31).
+ * A typed command stays immediate. The answer that acts is the only yes; a dismissal or no one to answer counts as no.
+ * A press with no run to act on goes on, so the command says why there is nothing to do.
+ */
+async function confirmPress($: EngineInterface, at: Repo, kind: 'stop' | 'publish', issue: number | undefined): Promise<boolean> {
+  const { pick } = await pickFor($, at, issue ?? null, kind === 'stop')
+  if (pick.kind !== 'run' || (kind === 'publish' && pick.run.step !== 'ready')) return true
+  const ask =
+    kind === 'stop'
+      ? { question: `Stop run #${pick.run.issue}? Its branch and commits are kept.`, yes: 'Stop the run', no: 'Keep it running' }
+      : { question: publishQuestion(pick.run), yes: 'Publish', no: 'Not now' }
+  // The choice that changes nothing is listed first.
+  return (await askOr($, ask.question, [ask.no, ask.yes])) === ask.yes
+}
+
 /** A button acts on the run the pane shows (a demo only ends or ignores it), then the also line is read again. */
 async function press($: EngineInterface, kind: 'stop' | 'resume' | 'publish' | 'handoff'): Promise<void> {
   if (await read($, demoAtom)) return kind === 'stop' ? endDemo($) : undefined
   const at = await repoOf($)
   // Hand off acts on this session's drive, whichever run the pane shows.
   const issue = kind === 'handoff' ? undefined : ((await read($, focusAtom)) ?? undefined)
+  if (at && (kind === 'stop' || kind === 'publish') && !(await confirmPress($, at, kind, issue))) return
   $.ui.toast(truncate(await runCommand($, at, { kind, ...(issue === undefined ? {} : { issue }) }), 80))
   if (at) await refreshOthers($, at.repo)
 }
@@ -1565,9 +1615,13 @@ export const register: Register = (on, raw) => {
       const cmd = parseCommand(e.args)
       switch (cmd.kind) {
         case 'toggle': {
-          const wasOpen = await isOpen($)
-          void (wasOpen ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
-          return { text: wasOpen ? 'closed. /issue-forge to reopen.' : `opened. ${USAGE}` }
+          const action = await paneActionOf($)
+          if (action === 'show') {
+            void bringToFront($).catch(() => undefined)
+            return { text: SHOW_TEXT }
+          }
+          void (action === 'close' ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
+          return { text: action === 'close' ? 'closed. /issue-forge to reopen.' : `opened. ${USAGE}` }
         }
         case 'start':
         case 'status':
@@ -1670,7 +1724,7 @@ export const register: Register = (on, raw) => {
         {layout !== 'compact' && (
           <Text dimColor>
             {truncate(
-              [view === 'ready' ? 'p publish' : '', view === 'blocked' || view === 'interrupted' || view === 'elsewhere' ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab focuses the pane']
+              [view === 'ready' ? 'p publish' : '', view === 'blocked' || view === 'interrupted' || view === 'elsewhere' ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab: keys, again: next tab']
                 .filter(Boolean)
                 .join(' · '),
               cols,

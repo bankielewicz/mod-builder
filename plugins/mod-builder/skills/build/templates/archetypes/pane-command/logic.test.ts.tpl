@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { DEMO_ITEMS, moved, rowsThatFit, summaryOf, toggled } from '../hooks/__NAME__-logic'
+import { DEMO_ITEMS, moved, paneAction, rowsThatFit, summaryOf, toggled } from '../hooks/__NAME__-logic'
 
 describe('__NAME__-logic', () => {
   test('summary counts done items, or says it is empty', () => {
@@ -21,5 +21,13 @@ describe('__NAME__-logic', () => {
   test('rows that fit', () => {
     expect(rowsThatFit(30)).toBe(25)
     expect(rowsThatFit(2)).toBe(1)
+  })
+
+  test('a pane command opens a pane that is not listed, closes one that is shown, and shows one behind another tab', () => {
+    expect(paneAction([], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: true }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'x', isShown: true }], 'x')).toBe('close')
+    expect(paneAction([{ id: 'x', isShown: false }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'y', isShown: true }, { id: 'x', isShown: false }], 'x')).toBe('show')
   })
 })

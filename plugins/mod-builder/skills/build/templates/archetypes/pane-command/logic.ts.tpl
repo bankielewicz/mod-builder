@@ -33,3 +33,12 @@ export function toggled(items: readonly Item[], at: number): Item[] {
 export function rowsThatFit(bodyRows: number): number {
   return Math.max(1, bodyRows - 5)
 }
+
+/**
+ * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers.
+ */
+export function paneAction(panes: readonly { id: string; isShown: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id)
+  return !pane ? 'open' : pane.isShown ? 'close' : 'show'
+}

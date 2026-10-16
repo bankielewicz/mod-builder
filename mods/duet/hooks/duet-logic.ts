@@ -1322,3 +1322,12 @@ export function demoTasks(now: number): Task[] {
     { ...base, id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'test-writer', status: 'refused', startedAt: now - 1_100_000, endedAt: now - 1_100_000, description: 'Add tests for the parser', detail: 'limit: 2 Codex runs already running' },
   ]
 }
+
+/**
+ * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers.
+ */
+export function paneAction(panes: readonly { id: string; isShown: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id)
+  return !pane ? 'open' : pane.isShown ? 'close' : 'show'
+}

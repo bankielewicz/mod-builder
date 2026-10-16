@@ -135,7 +135,7 @@ Claude row (duration = `durationMs` of that turn's end minus `startedAt`, tokens
 | name | REQUIRED | `duet` | chosen (short; no built-in `/duet`) |
 | archetype | REQUIRED | pane-command [+ `tool.call {tool:'Agent'}` routing hook in guard form, + `turn.complete` to clear the demo] | request ("one operator interface" + routing) |
 | triggers | REQUIRED | `session.start` (+ `$.agent.register`, 0.2.0), `command.run {command:'duet'}`, `tool.call {tool:'Agent'}`, `turn.complete`, `ui.render {component:'Pane', requestId:'duet'}` | derived |
-| commands | REQUIRED | `/duet` (toggle pane) · `demo` · `review [--base <branch> \| --commit <sha>]` · `stats` · `routes` · `config [list \| models \| <field> <value>]` | request |
+| commands | REQUIRED | `/duet` (open the pane; close it when shown; bring it to the front when it is a tab behind another pane) · `demo` · `review [--base <branch> \| --commit <sha>]` · `stats` · `routes` · `config [list \| models \| <field> <value>]` | request |
 | states drawn | REQUIRED | empty · live · done · error · folded · too-narrow · focus; survey n/a (pane) | ui-states.md |
 | done means | REQUIRED | see below | |
 | state lifetime | ARCH | session atoms (tasks, consent); one runs log per session in `~/.claude/duet-data/sessions/<session>/runs.jsonl` (the shared `runs.jsonl` is legacy, read only) | measurement ask |
@@ -223,7 +223,7 @@ Three example agents are written to this repo's `.claude/agents/` to prove it en
    d4  claude (routed: no) Plan             –  (stays on Claude; not tracked)
  ──────────────────────────────────────────────────────────────────────────
  routes  codex ← general-purpose, Explore   sandbox read-only   max 2
- [ Review diff ]  [ Stats ]  [ Close ]                ctrl+x tab: keys
+ [ Review diff ]  [ Stats ]  [ Close ]    ctrl+x tab: keys, again: next tab
 ```
 
 0.2.0 replaces the routes line with two (full and medium layouts; compact hides them, as before):
@@ -351,7 +351,7 @@ Added in 0.2.0:
 
 Load (`/plugin install duet@claudemod` or `claude --plugin-dir mods/duet`), `codex login` once,
 set `codexAgents` in `/config`, `/duet demo`, `/duet review`, `/duet stats`; `ctrl+x tab` for the
-pane's keys; `/reload-plugins` picks up edits.
+pane's keys (again: the next tab); `/reload-plugins` picks up edits.
 
 ## Change 0.2.1 (2026-10-12)
 
@@ -695,3 +695,14 @@ pane's keys; `/reload-plugins` picks up edits.
 - **gotchas.md** (mod-builder's build skill), two `[probe]` entries from writing these tests, re-probed with a throwaway plugin on 2.1.300: a `process.run` stub's event is `{ argv, init }`, with env and stdin under `init`; a stub that throws is skipped ("no implementation for env.get"), and `{ deny }` is how a stub makes a call reject with a reason.
 - **What gets touched:** `tests/routing.test.ts`, `tests/ui.test.tsx`, `plugins/mod-builder/skills/build/references/gotchas.md`. `plugin.json` and the marketplace entry to 0.2.12. No hooks change.
 - **Review of PR #77** (`/code-review`). The log test held reads for 1000 promise turns (40 missed the race and 80 caught it, on 2.1.296 and 2.1.300), a window a build that spaces the appends further would slip past: it now uses `logGate`, and sets `maxConcurrent: 2` rather than leaning on the default. The overlap test took the first of two concurrent reviews as the admitted one and counted Codex processes after a fixed `advance(1000)`: it now waits on `onCodex`, settles the clock, and accepts either review being admitted; its process count and toasts stay ahead of the answer checks, because hooks from before #5 answer "started" for a refused review too and would hide the `d1` toast. The pane test settles the demo and each press (#45) and asserts its arithmetic first. Not changed: no mod-builder bump for the gotchas lines (as in PR #61; PR #80 holds mod-builder 0.2.16), and the review's note that `review`/`pane` helpers are copied in several describes, which predates this change.
+
+## Change 0.2.13 (2026-10-15)
+
+> Issue #31 (with mod-builder 0.2.21 and issue-forge 0.6.0, one PR): a bare `/duet` closed its pane when the pane was open as a tab behind another pane.
+
+- **Rule:** the pure `paneAction(panes, id)` in `duet-logic.ts` (`open` when no entry has the id, `close` when its entry has `isShown: true`, `show` when `isShown: false`). `/duet` passes it `$.ui.panes()`. `open` and `close` keep today's answers (`Opened. <routes>`, `Closed. /duet to reopen.`). `show` answers `Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.` at once and calls `$.ui.open({ id: 'duet', title: 'Duet', columns: 76, focus: true })` from `bringToFront`, before the hook returns and without awaiting its result. 500 ms later `$.ui.panes()` is read again, and a pane whose `isShown` is still false is named in a toast: `Duet is still behind another tab: ctrl+x tab, then again until it shows.` (the 500 ms re-read is right whether or not `isShown` is already true after the open; the probe that would show it is not run, see mod-builder's gotchas.md).
+- **The keyboard is taken only on a request to see the pane:** `/duet demo` does the same `show` (its answer and state updates are unchanged) when the pane is listed and not shown; a pane that is not listed or is shown opens as before. `/duet config` already opened its config pane with `focus: true` and is unchanged.
+- **Hint:** `ctrl+x tab: keys, again: next tab  ·  r review  s stats  j/k  c close` (69 characters), with `wrap="truncate"` so a narrower pane cuts it rather than wrapping it.
+- **Docs:** README and SPEC (commands table, the pane sketch, the hand-off line) describe the three states, the tab keys and the optional `pane:next`/`pane:previous` binding.
+- **Tests:** logic: `paneAction`. UI: `ui.panes` is a parameter of `engine()`; `ui.close` and `ui.toast` are stubbed; each `ui.open` is recorded whole. A bare `/duet` with the pane hidden answers at once, opens with `focus: true` and closes nothing; by state; the toast when the pane stays behind and none when it came forward; `/duet demo` likewise; the new hint, truncating.
+- **Version:** 0.2.13 in `plugin.json` and the marketplace entry.

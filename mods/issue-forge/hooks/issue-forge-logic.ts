@@ -1890,3 +1890,12 @@ export function checkoutWorkspaceOf(text: string | null): Workspace {
 export function releasesOnEnd(reason: string): boolean {
   return reason !== 'clear' && reason !== 'resume'
 }
+
+/**
+ * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers.
+ */
+export function paneAction(panes: readonly { id: string; isShown: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id)
+  return !pane ? 'open' : pane.isShown ? 'close' : 'show'
+}

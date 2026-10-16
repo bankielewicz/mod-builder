@@ -226,9 +226,41 @@ Re-check [field] items against the d.ts after a Claude Code update.
 
 ## In a live terminal
 
-- **[probe]** A pane takes the keyboard with **`ctrl+x tab`**, which toggles: pressed again, it hands
-  focus back. Escape also returns it. Button `hotkey`s only fire while the pane holds the keyboard;
-  otherwise the keys type into the prompt. Tell the person this in the handoff.
+- **[probe]** A pane takes the keyboard with **`ctrl+x tab`**, which toggles only with one pane: pressed
+  again, it hands the keyboard back. With several panes open it moves through the tabs (below). Escape
+  returns the keyboard from any pane and leaves the shown pane as it is. Button `hotkey`s only fire while
+  the pane holds the keyboard; otherwise the keys type into the prompt. A letter that is one of the
+  pane's hotkeys acts at once (`s` toggled Duet's Stats and the composer stayed empty); a letter that
+  isn't one reaches the composer. Tell the person this in the handoff.
+- **[probe]** With two or more panes open, the frame's first row lists their titles as a tab strip
+  (`│  Duet   Issue Forge   Mod Lab  …│`) and only one pane is shown. A plugin that owns two panes
+  (duet: `duet`, `duet-config`) has both as tabs. Inline terminal layout only; the dock, desktop and
+  mobile layouts were not observed (2026-10-13, 2.1.296, #31).
+- **[probe]** `ctrl+x tab` from the prompt shows the **first** tab and gives it the keyboard, whichever
+  pane had been shown. Pressed again it moves one tab right. On the last tab it leaves that pane shown but
+  hands the keyboard back to the prompt, and the next press shows the first tab again. With a single pane,
+  a second press hands the keyboard back. So "ctrl+x tab focuses the pane" holds for the first tab only
+  (2026-10-13, 2.1.296, #31).
+- **[probe]** What re-opening does to a pane that is open behind another tab (2026-10-13, 2.1.296, #31):
+  - `$.ui.open({ id, title, columns })` without `focus` leaves it hidden; the command's answer still
+    says it is open. A new pane opened by a command is shown.
+  - `$.ui.open({ …, focus: true })` from a command hook brings it to the front and gives it the keyboard
+    (`/duet config` again: the config pane came forward and `j` moved its row).
+  - A bare command that closes its pane whenever it is listed closes a pane that was never on screen.
+    `paneAction` replaces that rule.
+- **[probe]** `pane:next` and `pane:previous` are actions of the `Pane` keybinding context with no default
+  key. Bound in `~/.claude/keybindings.json` as
+  `{"bindings":[{"context":"Pane","bindings":{"ctrl+x n":"pane:next","ctrl+x p":"pane:previous"}}]}`
+  they cycled the tabs and wrapped, but only while a pane held the keyboard; from the prompt `ctrl+x n`
+  did nothing. A session started after the file was written took the binding (2026-10-13, 2.1.296, #31).
+- **[d.ts]** (read in 2.1.301's `claude-code.d.ts`; the issue quotes the same words from 2.1.296) `UiPane.isShown` (from `$.ui.panes()`): "True for the one pane the surface shows; the rest
+  are tabs behind it." `$.ui.panes()` lists only this plugin's panes. `PaneOpenArgs.focus` is "a request,
+  not a grant": the surface focuses and raises the pane only while the prompt has the keys over an empty
+  composer; an element of the band or a pane the person holds, text in the composer, a dialog or a survey
+  each refuse it, and the pane opens without the keyboard. Check `isShown` afterwards to know whether it
+  came forward. Whether `isShown` is already true when `await $.ui.open(…)` returns, or only after a
+  moment, is not probed yet (#31, step 1a): the bundled mods read it in a `$.clock.after(500, …)` callback,
+  which is right either way.
 - **[probe]** The host draws Buttons as `[ Label ]`, with no hotkey letter. If the hotkeys matter,
   name them in a hint line or in the README.
 - **[probe]** `$.ui.status` text shows under the prompt as `⚠ <plugin>: <text>`, and toasts appear in
