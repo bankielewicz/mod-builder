@@ -681,10 +681,14 @@ describe('prompts, commits, stashes, hand-backs', () => {
     const capped = phasePrompt('green', run({ redAnswer: long }))
     expect(capped).toContain('LAST-LINE')
     expect(capped).not.toContain('FIRST-LINE')
+    // Exactly 200: the first line kept is the second of 201 (PR #89 review).
+    expect(capped).toContain('<red-answer>\n(the start of this answer was cut)\nmiddle 0\n')
     // Without an answer (or a blank one) green's prompt is unchanged; red (on a retry or a detour) and refactor never get it.
     expect(phasePrompt('green', run()).trimEnd().endsWith('</issue>')).toBe(true)
     expect(phasePrompt('green', run({ redAnswer: '  \n' }))).toBe(phasePrompt('green', run()))
     for (const phase of ['red', 'refactor'] as const) expect(phasePrompt(phase, run({ redAnswer: notes }))).not.toContain('five tests time out')
+    // Nor does red's prompt on a retry or a behaviour detour (PR #89 review).
+    for (const extra of [{ failures: ['R3: tests pass'] }, { behaviourFor: ['src/register.tsx'] }]) expect(phasePrompt('red', run({ redAnswer: notes }), extra)).not.toContain('five tests time out')
   })
 
   // One name for it everywhere: the run's redAnswer, the PR body's "red agent's answer", and the block (PR #89 review).
