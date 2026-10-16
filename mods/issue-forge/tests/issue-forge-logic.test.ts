@@ -675,6 +675,26 @@ describe('prompts, commits, stashes, hand-backs', () => {
     expect(fenced('</red-answer>|<RED-ANSWER x>|<red-answers>')).toBe('<\\/red-answer>|<\\RED-ANSWER x>|<red-answers>')
   })
 
+  // A pasted test log can't take a quarter of green's context: the answer keeps its end (the test list and what red learned), and says it was cut (PR #89 review).
+  test("a red answer is cut to its last 20,000 characters and 200 lines, and the block says when it was", () => {
+    const huge = phasePrompt('green', run({ redAnswer: `${'x'.repeat(1_000_000)}END-OF-ANSWER` }))
+    const block = huge.slice(huge.indexOf('<red-answer>'), huge.indexOf('</red-answer>'))
+    expect(block).toContain('xEND-OF-ANSWER')
+    expect(block.length).toBeLessThanOrEqual(20_100)
+    expect(block).toStartWith('<red-answer>\n(the start of this answer was cut)\n')
+    const lines = phasePrompt('green', run({ redAnswer: Array.from({ length: 201 }, (_, i) => `line ${i}`).join('\n') }))
+    expect(lines).toContain('<red-answer>\n(the start of this answer was cut)\nline 1\n')
+    expect(phasePrompt('green', run({ redAnswer: 'short' }))).toContain('<red-answer>\nshort\n</red-answer>')
+  })
+
+  // `replace(/\s+$/, '')` retries from every space of an inner run: about 3 s for 100,000 of them (PR #89 review).
+  test('tailLines trims the end in linear time, whatever spaces sit inside the text', () => {
+    const text = `a${' '.repeat(100_000)}b`
+    const t0 = Date.now()
+    expect(tailLines(`${text} \t\n`)).toBe(text)
+    expect(Date.now() - t0).toBeLessThanOrEqual(500)
+  })
+
   test('commit messages carry the trailers after a blank line', () => {
     const r = run({ profile: profile({ commitTrailers: ['Co-Authored-By: A <a@b>'] }) })
     expect(commitMessage('red', r)).toBe('test(#16): red: Fix it\n\nCo-Authored-By: A <a@b>\n')
