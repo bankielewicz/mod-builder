@@ -103,7 +103,7 @@ Set them on the install options screen, or in `/config`.
 
 | Option | Default | What it does |
 |---|---|---|
-| Mods folder (`modsDir`) | the `mods/` of the marketplace nearest your working directory (a git worktree's own), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow your working directory, or set it to pin one folder. |
+| Mods folder (`modsDir`) | the `mods/` of the marketplace nearest the session's project root (a git worktree's own after `/cd`), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow the session (`/cd` moves it; Claude's own `cd` doesn't), or set it to pin one folder; a set one always wins. With it empty, while a build or edit reports its mod's folder (a marketplace's `mods/` in the project's own git repository: its top folder or one of its worktrees), Mod Lab watches that folder, so a worktree edited by path shows up with nothing to type. |
 | `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide, or 110 once you've opened Mod Lab yourself). Typing `/mod-builder:build` or `/mod-builder:edit` opens it whatever this is set to. |
 | `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |
 | `testTimeoutMinutes` | 3 | Minutes a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10). Checks a reload left shown as running are cleared when Mod Lab loads, and one still shown as running 30 s past this stops counting, so neither blocks the next one |

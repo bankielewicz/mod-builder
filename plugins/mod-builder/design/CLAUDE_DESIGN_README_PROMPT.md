@@ -120,7 +120,8 @@ bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh
      `claude plugin marketplace add .` then `/plugin install <name>@<your-marketplace>`. After that,
      `/reload-plugins` picks up edits.
    - Watch it in Mod Lab: `/modlab` finds your project's `mods/` from the marketplace nearest the
-     working directory (set the `modsDir` option only to pin another folder).
+     session's project root, or the folder a build reports (set the `modsDir` option only to pin
+     another folder).
    - Share it: commit the folder; teammates run the two install lines against your repo.
    - Optional CI: copy `plugins/mod-builder/skills/build/ci/ci.yml` to `.github/workflows/`.
 6. **The archetypes:** a 5-row table (when to use each, what it draws).

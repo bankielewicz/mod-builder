@@ -11,7 +11,7 @@
     "modsDir": {
       "type": "directory",
       "title": "Mods folder",
-      "description": "The folder whose child folders are the mods Mod Lab tracks. Empty: the mods/ folder of the marketplace nearest the working directory (a git worktree's own), else the one beside this plugin.",
+      "description": "The folder whose child folders are the mods Mod Lab tracks. Set, it always wins. Empty: the mods folder a build reports (a marketplace's mods/ in the project's own git repository: its top folder or one of its worktrees), else the mods/ of the marketplace nearest the session's project root (a git worktree's own after /cd), else nearest the working directory, else the one beside this plugin.",
       "default": ""
     },
     "autoOpen": {
