@@ -1908,53 +1908,50 @@ describe('new plugins are built with mod-builder, not issue-forge (Change 0.6.0)
     "- `/mod-builder:build` finds its mods folder by walking up from the session's working directory to the nearest `.claude-plugin/marketplace.json` (`plugins/mod-builder/skills/build/SKILL.md`, step 0.2), which is the worktree's.",
   ]
 
-  test('newModGuidance: a line asking to build it with /mod-builder:build is quoted, as far as its own list item goes', () => {
-    const guidance = helper<[string], string[] | null>('newModGuidance')
-    expect(guidance(BODY_18)).toEqual([ISSUE_18])
-    expect(guidance('Please build the new plugin with /mod-builder:build:\n- a guard\n- 0.1.0\n\nThen open a PR.')).toEqual(['Please build the new plugin with /mod-builder:build:', '- a guard', '- 0.1.0'])
-    expect(guidance('- Build it with `/mod-builder:build`, and\n  keep it small.\n  - one nested note\n- next item')).toEqual(['- Build it with `/mod-builder:build`, and', '  keep it small.', '  - one nested note'])
-    expect(guidance('Build it with `/mod-builder:build`.\n## Next\nmore')).toEqual(['Build it with `/mod-builder:build`.'])
-    expect(guidance('BUILD IT WITH /MOD-BUILDER:BUILD\r\nsecond line')).toEqual(['BUILD IT WITH /MOD-BUILDER:BUILD', 'second line'])
+  // The owner's decision after PR #103's review: the reply shows only the line that matched, as the reason.
+  test('newModLine: the one line asking to build it with /mod-builder:build, and nothing after it', () => {
+    const line = helper<[string], string | null>('newModLine')
+    expect(line(BODY_18)).toBe(ISSUE_18)
+    expect(line('Please build the new plugin with /mod-builder:build:\n- a guard\n- 0.1.0\n\nThen open a PR.')).toBe('Please build the new plugin with /mod-builder:build:')
+    expect(line('- Build it with `/mod-builder:build`, and\n  keep it small.')).toBe('- Build it with `/mod-builder:build`, and')
+    expect(line('BUILD IT WITH /MOD-BUILDER:BUILD  \r\nsecond line')).toBe('BUILD IT WITH /MOD-BUILDER:BUILD')
   })
 
-  test('newModGuidance: the fixes that name the skill in passing, a built mod, and no mention at all are not new plugins', () => {
-    const guidance = helper<[string], string[] | null>('newModGuidance')
+  test('newModLine: the fixes that name the skill in passing, a built mod, and no mention at all are not new plugins', () => {
+    const guidance = helper<[string], string | null>('newModLine')
     for (const line of FIXES) expect(guidance(`Intro.\n\n${line}\n\nMore.`)).toBeNull()
     expect(guidance('I built it with `/mod-builder:build` and the README was wrong.')).toBeNull()
     expect(guidance('Fix the build step; it fails with exit 1.')).toBeNull()
     expect(guidance('')).toBeNull()
     // The rule's known misread, pinned so a sharper rule shows up here: a fix that says this would be refused.
-    expect(guidance('the build skill works with `/mod-builder:build` and /mod-builder:edit')).toEqual(['the build skill works with `/mod-builder:build` and /mod-builder:edit'])
+    expect(guidance('the build skill works with `/mod-builder:build` and /mod-builder:edit')).toBe('the build skill works with `/mod-builder:build` and /mod-builder:edit')
   })
 
-  test('newModGuidance: the quote stops at 12 lines and 1,200 characters, marked with …', () => {
-    const guidance = helper<[string], string[] | null>('newModGuidance')
-    const long = ['Build it with /mod-builder:build', ...Array.from({ length: 20 }, (_, i) => `line ${i}`)].join('\n')
-    const byLines = guidance(long) ?? []
-    expect(byLines).toHaveLength(12)
-    expect(byLines[11]).toBe('line 10…')
-    const wide = guidance(`Build it with /mod-builder:build ${'x'.repeat(1300)}`) ?? []
-    expect(wide).toHaveLength(1)
-    expect(wide[0]).toHaveLength(1201)
-    expect(wide[0]?.endsWith('…')).toBe(true)
+  test('newModLine: a line past 1,200 characters is cut there, marked with …', () => {
+    const line = helper<[string], string | null>('newModLine')
+    const wide = line(`Build it with /mod-builder:build ${'x'.repeat(1300)}`) ?? ''
+    expect(wide).toHaveLength(1201)
+    expect(wide.endsWith('…')).toBe(true)
   })
 
-  test('newModReply: names the issue, says nothing started, and lists the steps with the issue\'s guidance quoted', () => {
-    const reply = helper<[{ issue: number; title: string; url: string; ghRepo?: string }, string[]], string>('newModReply')
-    const text = reply({ issue: 18, title: 'New mod tdd-guard', url: 'https://github.com/o/r/issues/18' }, [ISSUE_18])
+  test('newModReply: names the issue, says nothing started, shows the matched line as the author\'s words, and lists the steps', () => {
+    const reply = helper<[{ issue: number; title: string; url: string; ghRepo?: string }, string], string>('newModReply')
+    const text = reply({ issue: 18, title: 'New mod tdd-guard', url: 'https://github.com/o/r/issues/18' }, ISSUE_18)
     expect(text).toBe(
       [
         "#18 asks for a new Claude Code plugin. issue-forge doesn't build new plugins: it takes an issue to a fix, test-first. New plugins are built with mod-builder, whose SPEC is the one approval. Nothing was started.",
         '',
+        "It matched this line of the issue (the author's words; issue-forge hasn't checked them). If it doesn't ask for a new plugin, reword it and start again:",
+        `  > ${ISSUE_18}`,
+        '',
         'Next steps:',
         '1. Run /mod-builder:build and ask for the plugin #18 describes: "New mod tdd-guard" (https://github.com/o/r/issues/18). Read it first with gh issue view 18.',
-        "2. Follow the issue's own guidance (quoted from #18 as its author wrote it):",
-        `   > ${ISSUE_18}`,
-        '3. Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
-        '4. Open a pull request that closes #18.',
+        '2. Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
+        '3. Open a pull request that closes #18.',
       ].join('\n'),
     )
-    expect(reply({ issue: 18, title: 't', url: 'u', ghRepo: 'github.com/o/r' }, ['x'])).toContain('Read it first with gh issue view 18 --repo github.com/o/r.')
+    expect(text).not.toContain("Follow the issue's own guidance")
+    expect(reply({ issue: 18, title: 't', url: 'u', ghRepo: 'github.com/o/r' }, 'x')).toContain('Read it first with gh issue view 18 --repo github.com/o/r.')
     expect(text).not.toContain('mods/tdd-guard/tests')
   })
 
@@ -2003,7 +2000,7 @@ describe('new plugins are built with mod-builder, not issue-forge (Change 0.6.0)
     })
   })
 
-  test('the final block at gate R, at gate F, for a refusal, and in the checkout; the issue\'s guidance is quoted when it has one', () => {
+  test('the final block at gate R, at gate F, for a refusal, and in the checkout; the issue\'s text is never in the steps', () => {
     const atR = advance(run({ step: 'gateR', branch: 'issue-16-fix-it', base: 'main', workRoot: WT16, used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: { ...npGate('R'), newPlugin: { ...NP, isCreated: false } } }, 5) as Run & { blocked: { steps: string[]; isFinal?: boolean; reason: string } }
     expect(atR.step).toBe('blocked')
     expect(atR.blocked.reason).toBe("a phase agent tried to create a new Claude Code plugin (mods/x/.claude-plugin/plugin.json); issue-forge doesn't build new plugins")
@@ -2017,7 +2014,7 @@ describe('new plugins are built with mod-builder, not issue-forge (Change 0.6.0)
     expect(atF.blocked.steps.some(s => s.includes('git worktree remove'))).toBe(false)
     expect(atF.blocked.steps[2]).toContain("not in this run's branch, whose files")
     const quoted = advance(run({ step: 'gateG', body: `Build it with /mod-builder:build\nas a guard.`, branch: 'b', base: 'main', redCommit: 'abcdef1234' }), { type: 'gated', gate: npGate('G') }, 5) as Run & { blocked: { steps: string[] } }
-    expect(quoted.blocked.steps).toContain("Follow the issue's own guidance (quoted from #16 as its author wrote it):\n   > Build it with /mod-builder:build\n   > as a guard.")
+    expect(quoted.blocked.steps.some(step => step.includes('Build it with /mod-builder:build') || step.includes("Follow the issue's own guidance"))).toBe(false)
   })
 
   test('the final block at gate R in the checkout points at the checkout\'s uncommitted files', () => {
@@ -2144,11 +2141,12 @@ describe('PR #103 review', () => {
 
 describe('PR #103 review: the new-plugin rule reads an issue in linear time (/code-review)', () => {
   test('a hostile body is judged at once: a 22 KB line of "build with " no longer backtracks for seconds', () => {
-    const newModGuidance = logic.newModGuidance
+    const newModLine = (logic as Record<string, unknown>).newModLine as (body: string) => string | null
+    expect(typeof newModLine).toBe('function')
     const line = 'build with '.repeat(2000)
     const t = performance.now()
-    expect(newModGuidance(line)).toBeNull()
-    expect(newModGuidance(`${line}/mod-builder:build`)).toEqual([`${line}/mod-builder:build`.slice(0, 1200) + '…'])
+    expect(newModLine(line)).toBeNull()
+    expect(newModLine(`${line}/mod-builder:build`)).toBe(`${line}/mod-builder:build`.slice(0, 1200) + '…')
     expect(Math.round(performance.now() - t)).toBeLessThanOrEqual(200)
   })
 })
@@ -2175,7 +2173,7 @@ describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574
   })
 })
 
-describe('PR #103 review: manifest paths and quotes, at their edges (/code-review)', () => {
+describe('PR #103 review: manifest paths at their edges (/code-review)', () => {
   const manifestOf = (e: Record<string, unknown>) =>
     (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown) => { absolute: string; relative: string } | null }).manifestOf(e, { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' })
   const X = { absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' }
@@ -2190,12 +2188,6 @@ describe('PR #103 review: manifest paths and quotes, at their edges (/code-revie
   test("a manifest is found in any case, as a case-insensitive drive opens it", () => {
     expect(logic.isPluginManifest('mods/x/.Claude-Plugin/Plugin.json')).toBe(true)
     expect(logic.isPluginManifest('mods/x/.Claude-Plugin/marketplace.json')).toBe(false)
-  })
-
-  test('the quote ends at a heading, not at a line that only starts with #', () => {
-    expect(logic.newModGuidance('- Build it with /mod-builder:build\n  #19 asked the same\n')).toEqual(['- Build it with /mod-builder:build', '  #19 asked the same'])
-    expect(logic.newModGuidance('- Build it with /mod-builder:build\n## Next\n')).toEqual(['- Build it with /mod-builder:build'])
-    expect(logic.newModGuidance('- Build it with /mod-builder:build\n#\n')).toEqual(['- Build it with /mod-builder:build'])
   })
 })
 
