@@ -151,7 +151,7 @@ type World = {
   issueUrl?: string
   /** `gh issue view` exits 1 with this on stderr (#25). */
   issueFails?: string
-  /** `git diff --cached --name-only --diff-filter=A -z <merge base>`: paths a phase added (Change 0.6.0). */
+  /** `git diff --cached … --diff-filter=A -z <merge base>`: paths a phase added (Change 0.6.0), found by its filter, not its exact flags. */
   added?: string[]
   /** What $.command.register was given. */
   registered: { name: string; argumentHint?: string }[]
@@ -407,7 +407,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
-    if (s === 'diff --cached --name-only --diff-filter=A -z base0') return ok((world.added ?? []).join('\0'))
+    if (a[0] === 'diff' && a[1] === '--cached' && a.includes('--diff-filter=A') && a.at(-1) === 'base0') return ok((world.added ?? []).join('\0'))
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
     if (a[0] === 'diff' && a[1] === '--cached' && a[2] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--name-only') return ok(world.redPaths.join('\0'))
