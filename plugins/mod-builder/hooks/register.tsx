@@ -209,8 +209,9 @@ const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
 const rootOf = ($: Engine): Promise<string | null> =>
   $.session.root().catch((error: unknown) => (logCaught($, 'session.root', error, 'debug'), null))
 
-/** Sets or clears the pin, with its copy in state for a reload: a write, never a read (see `pin`). */
+/** Sets or clears the pin, with its copy in state for a reload: a write, never a read (see `pin`). An unchanged pin isn't written again. */
 async function setPin($: Engine, next: Lab.Pin | null): Promise<void> {
+  if (pin?.modsDir === next?.modsDir && pin?.root === next?.root) return
   pin = next
   await $.state.set({ plugin: 'mod-builder', key: 'pinned' }, next).catch((error: unknown) => logCaught($, 'state.set', error, 'normal', { key: 'pinned' }))
 }
@@ -263,6 +264,8 @@ async function defaultModsDir($: Engine): Promise<string> {
  * next read outside a render drops it.
  */
 async function currentModsDir($: Engine, isDrawing = false): Promise<string> {
+  // A set modsDir decides alone: no root to read, and a pin stays for when it's cleared.
+  if (configuredDir) return Lab.normalizePath(configuredDir)
   const held = pin
   const root = await rootOf($)
   // A kept pin whose marketplace is gone (a worktree removed after its PR merged) is dropped too (PR #95 review).
