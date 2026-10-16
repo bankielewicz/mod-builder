@@ -918,7 +918,14 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
     stillDriving(run)
     const restore = (reason: string) => ({ type: 'gated' as const, gate, commit, testTail: tests.tail, blockAfter: { reason, next: `restore green's work by hand (git stash apply ${stash.sha.slice(0, 7)})` } })
     if (!hasStash(await gitOut($, root, STASH_LIST_ARGV.slice(1)), stash.sha)) return restore(`stash ${stash.sha.slice(0, 7)} "${stash.message}" is gone`)
-    const applied = await gitWrite($, run, root, stashApplyArgv(stash).slice(1))
+    // The commit is made: a lock that outlasts the apply blocks after it, naming the stash, as any failed restore does.
+    let applied: ProcessRunResult
+    try {
+      applied = await gitWrite($, run, root, stashApplyArgv(stash).slice(1))
+    } catch (err) {
+      if (err instanceof Locked) return restore(`${err.message}; green's work is in stash ${stash.sha.slice(0, 7)} "${stash.message}"`)
+      throw err
+    }
     if (applied.exitCode !== 0) return restore(`could not restore green's work; it is in stash ${stash.sha.slice(0, 7)} "${stash.message}"`)
   }
   return { type: 'gated', gate, commit, testTail: tests.tail }
