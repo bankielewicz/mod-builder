@@ -759,9 +759,16 @@ export function newPluginSteps(c: NewPluginCase): string[] {
   }
   const run = c.run
   const isWorktree = isWorktreeRun(run)
-  const red = run.step === 'gateR' ? undefined : run.redCommit?.slice(0, 7)
+  // What was committed comes from the run's commits, not its gate: G6's detour returns to gate R after red's commit (Codex 4290574818).
+  const red = run.redCommit?.slice(0, 7)
+  const green = run.greenCommit?.slice(0, 7)
+  const stash = run.behaviourFor && run.greenStash ? ` Green's work is in stash ${run.greenStash.sha.slice(0, 7)} "${run.greenStash.message}" (git stash apply ${run.greenStash.sha.slice(0, 7)}).` : ''
   const left = red
-    ? `Nothing past red's commit was committed, and nothing was pushed. ${isWorktree ? `This run's worktree ${run.workRoot} holds red's tests at ${red} and the phase's uncommitted files.` : `This run's branch ${run.branch} holds red's tests at ${red}, and the checkout's uncommitted files (git status lists them) are the phase's.`}`
+    ? `Nothing past ${green ? "green's" : "red's"} commit was committed, and nothing was pushed. ${
+        isWorktree
+          ? `This run's worktree ${run.workRoot} holds red's tests at ${red}${green ? `, green's change at ${green},` : ''} and the phase's uncommitted files.`
+          : `This run's branch ${run.branch} holds red's tests at ${red}${green ? ` and green's change at ${green}` : ''}, and the checkout's uncommitted files (git status lists them) are the phase's.`
+      }${stash}`
     : `Nothing was committed, and nothing was pushed. ${isWorktree ? `This run's worktree ${run.workRoot} holds red's uncommitted files.` : "The checkout's uncommitted files (git status lists them) are red's."}`
   const cleanup = cleanupCommand(run)
   return [
