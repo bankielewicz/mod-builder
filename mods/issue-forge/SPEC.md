@@ -1366,8 +1366,9 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
   So `stash push` also looks for `refs/stash.lock`. The first test of it used a refusal written from git's usual
   wording, not one git prints, and passed on it; 0d29829 replaced it with the captured text.
 - **The lock's path** (Codex P2; reviews 4 and 5). `rev-parse --git-path index.lock` (and `--git-path
-  refs/stash.lock` before a stash push), without `--path-format=absolute`: git before 2.31 prints that option back
-  with exit 0 instead of resolving it. A relative answer (the main checkout's `.git/index.lock`; a linked worktree's
+  refs/stash.lock` before a stash push), without `--path-format=absolute`, which git before 2.31 doesn't know.
+  rev-parse prints an option it doesn't know back with exit 0 instead of failing (shown on 2.53.0 with an invented
+  `--bogus-flag=absolute`; no pre-2.31 git was run), so the old lookup's answer wasn't a path. A relative answer (the main checkout's `.git/index.lock`; a linked worktree's
   is absolute) is joined to the folder. The path is asked before the first attempt, once per folder, so only the
   `fs.exists` call sits between a silent failure and its check. A lock let go in that moment is still missed.
 - **Ownership** (Codex P1; review 2). `stillOwned`, which reads the stored run, runs after each wait, so a takeover
