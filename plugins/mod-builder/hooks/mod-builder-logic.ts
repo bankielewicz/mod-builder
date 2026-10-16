@@ -918,10 +918,39 @@ export function walkStartOf(root: string | null, cwd: string | null): string | n
   return root ?? cwd
 }
 
-/** A build's pinned folder, while the project root is the one it was pinned under or either root is unknown; else null (#92). */
+/** A build's pinned folder, while the project root is the one it was pinned under or can't be read now; else null (#92). */
 export function keptPinOf(pin: Pin | null, root: string | null): Pin | null {
   if (!pin) return null
-  return pin.root === null || root === null || normalizePath(pin.root) === normalizePath(root) ? pin : null
+  return root === null || normalizePath(pin.root) === normalizePath(root) ? pin : null
+}
+
+/** The marketplace file a mods folder belongs to: `<marketplace>/mods` → `<marketplace>/.claude-plugin/marketplace.json`. */
+export function marketplaceFileOf(modsDir: string): string {
+  const dir = normalizePath(modsDir)
+  const cut = dir.lastIndexOf('/')
+  const parent = cut < rootOf(dir).length ? rootOf(dir) : dir.slice(0, cut)
+  return parent.endsWith('/') ? parent + MARKETPLACE_FILE.slice(1) : parent + MARKETPLACE_FILE
+}
+
+/**
+ * Whether a reported folder may be pinned (PR #95 review): a marketplace's `mods/` under the
+ * session's project root, since Validate and Test then run there. The caller checks that the
+ * marketplace file exists. Gives the marketplace file and the normalized root, or why not.
+ */
+export function pinCheckOf(dir: string, root: string | null): { marketplace: string; root: string } | { reason: string } {
+  if (root === null) return { reason: "the project root can't be read" }
+  const folder = normalizePath(dir)
+  const top = normalizePath(root)
+  const prefix = top.endsWith('/') ? top : `${top}/`
+  if (!folder.startsWith(prefix)) return { reason: `${folder} is outside the project root` }
+  if (folder.slice(folder.lastIndexOf('/') + 1) !== 'mods') return { reason: `${folder} isn't a marketplace's mods folder` }
+  return { marketplace: marketplaceFileOf(folder), root: top }
+}
+
+/** A pin as state kept it, or null when it isn't one (no root, or not a pin at all). */
+export function pinOf(value: unknown): Pin | null {
+  const held = value as { modsDir?: unknown; root?: unknown } | null
+  return held && typeof held.modsDir === 'string' && typeof held.root === 'string' ? { modsDir: held.modsDir, root: held.root } : null
 }
 
 /**
@@ -1300,11 +1329,14 @@ export const REPORT_SCHEMA = {
   additionalProperties: false,
 } as const
 
-/** A `lab_report` call's arguments → a checked report, with the mods folder its `path` names (#92), or the reason it was refused. */
+/**
+ * A `lab_report` call's arguments → a checked report, with the mods folder its `path` names (#92), or
+ * the reason it was refused. A malformed `path` keeps the report and says why it was ignored (PR #95 review).
+ */
 export function reportOf(
   input: Record<string, unknown>,
   now: number,
-): { mod: string; report: Reported; dir?: string } | { error: string } {
+): { mod: string; report: Reported; dir?: string; pathIgnored?: string } | { error: string } {
   const mod = typeof input.mod === 'string' ? input.mod.trim() : ''
   const stage = STAGES.find(one => one === input.stage)
   const status = (['running', 'passed', 'failed'] as const).find(one => one === input.status)
@@ -1316,9 +1348,9 @@ export function reportOf(
   if (input.path === undefined) return { mod, report }
   const path = typeof input.path === 'string' ? normalizePath(input.path.trim()) : ''
   const root = rootOf(path)
-  if (!root) return { error: "path must be the absolute path of the mod's folder." }
+  if (!root) return { mod, report, pathIgnored: "path must be the absolute path of the mod's folder" }
   const cut = path.lastIndexOf('/')
-  if (path.slice(cut + 1) !== mod) return { error: `path must end with the mod's folder name, ${mod}.` }
+  if (path.slice(cut + 1) !== mod) return { mod, report, pathIgnored: `path must end with the mod's folder name, ${mod}` }
   return { mod, report, dir: cut < root.length ? root : path.slice(0, cut) }
 }
 

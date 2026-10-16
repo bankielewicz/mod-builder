@@ -215,6 +215,15 @@ async function setPin($: Engine, next: Lab.Pin | null): Promise<void> {
   await $.state.set({ plugin: 'mod-builder', key: 'pinned' }, next).catch((error: unknown) => logCaught($, 'state.set', error, 'normal', { key: 'pinned' }))
 }
 
+/** The pin a report's folder makes, or why it makes none: a set `modsDir`, or `Lab.pinCheckOf`'s reasons (PR #95 review). */
+async function pinFor($: Engine, dir: string): Promise<{ pin: Lab.Pin } | { reason: string }> {
+  if (configuredDir) return { reason: 'the modsDir option is set' }
+  const check = Lab.pinCheckOf(dir, await rootOf($))
+  if ('reason' in check) return check
+  if (!(await exists($, check.marketplace))) return { reason: `no marketplace holds ${Lab.normalizePath(dir)}` }
+  return { pin: { modsDir: Lab.normalizePath(dir), root: check.root } }
+}
+
 /**
  * The marketplace file nearest `start`, the folder the walk starts in: candidates are probed
  * nearest first and the first one found ends the walk (each probe is slow on /mnt/c).
@@ -247,10 +256,13 @@ async function defaultModsDir($: Engine): Promise<string> {
 async function currentModsDir($: Engine, isDrawing = false): Promise<string> {
   const held = pin
   const root = await rootOf($)
-  const isWalked = !configuredDir && !Lab.keptPinOf(held, root)
+  // A kept pin whose marketplace is gone (a worktree removed after its PR merged) is dropped too (PR #95 review).
+  const kept = Lab.keptPinOf(held, root)
+  const live = kept && (await exists($, Lab.marketplaceFileOf(kept.modsDir))) ? kept : null
+  const isWalked = !configuredDir && !live
   const cwd = isWalked && root === null ? await cwdOf($) : null
   const existing = isWalked ? await nearestMarketplace($, Lab.walkStartOf(root, cwd)) : []
-  const watched = Lab.watchedDirOf(held, root, configuredDir, cwd, existing, pluginModsDirOf($))
+  const watched = Lab.watchedDirOf(live, root, configuredDir, cwd, existing, pluginModsDirOf($))
   // A changed root dropped the pin, unless a report has pinned another folder meanwhile.
   if (held && !watched.pin && pin === held && !isDrawing) await setPin($, null)
   return watched.dir
@@ -960,7 +972,7 @@ export const register: Register = (on, options) => {
       })
       .catch((error: unknown) => logCaught($, 'session.start.tool', error))
     // A pin from before a reload (#92), before the first scan reads the folder.
-    pin = await read($, pinned).catch((error: unknown) => (logCaught($, 'session.start.pin', error), null))
+    pin = Lab.pinOf(await read($, pinned).catch((error: unknown) => (logCaught($, 'session.start.pin', error), null)))
     await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
@@ -1049,10 +1061,13 @@ export const register: Register = (on, options) => {
     logEvent($, 'verbose', 'lab_report', `${mod} ${report.stage} ${report.status}`, report.note ? { note: report.note } : undefined)
     // A report with `path` pins its folder for the session (#92), before anything reads the folder. It is
     // handled in its own folder: another report may move the pin while this one awaits the write. A set
-    // `modsDir` wins over `path` (PR #95 review).
-    const pinDir = configuredDir ? undefined : checked.dir
-    const ignored = checked.dir !== undefined && pinDir === undefined ? ' path ignored: the modsDir option is set.' : ''
-    if (pinDir !== undefined) await setPin($, { modsDir: pinDir, root: await rootOf($) })
+    // `modsDir` wins over `path`, and only a marketplace's mods folder under the project root is pinned,
+    // since Validate and Test run there (PR #95 review). Any other path is ignored and the reply says why.
+    const pinning = checked.dir === undefined ? null : await pinFor($, checked.dir)
+    const pinDir = pinning && 'pin' in pinning ? pinning.pin.modsDir : undefined
+    const why = checked.pathIgnored ?? (pinning && 'reason' in pinning ? pinning.reason : undefined)
+    const ignored = why === undefined ? '' : ` path ignored: ${why}.`
+    if (pinning && 'pin' in pinning) await setPin($, pinning.pin)
     const modsDir = pinDir ?? (await currentModsDir($))
     // A Spec report on a mod the last written rows of this folder don't list waits for a scan before it reads
     // any state: the first `get` fixes the moment every read of this dispatch sees (#10, #79). A listed mod's rows are enough.

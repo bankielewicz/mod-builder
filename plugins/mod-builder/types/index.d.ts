@@ -26,8 +26,8 @@ export type Reported = {
   dir?: string
 }
 
-/** A build's mods folder, pinned for the session by a `lab_report` with `path`, and the project root it was pinned under (null when it couldn't be read) (#92). */
-export type Pin = { modsDir: string; root: string | null }
+/** A build's mods folder, pinned for the session by a `lab_report` with `path`, and the project root it was pinned under (#92). */
+export type Pin = { modsDir: string; root: string }
 
 /** One mod as the pane, band and status line draw it. */
 export type ModView = {
