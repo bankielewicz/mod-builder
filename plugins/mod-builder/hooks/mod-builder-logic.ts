@@ -924,6 +924,15 @@ export function keptPinOf(pin: Pin | null, root: string | null): Pin | null {
   return root === null || normalizePath(pin.root) === normalizePath(root) ? pin : null
 }
 
+/**
+ * The report a row in `dir` shows: one made in that folder, or one with no folder (stored before 0.2.16).
+ * `reported` keeps one report per mod name, so a same-named mod in another folder must not light this row (PR #95 review).
+ */
+export function reportIn(report: Reported | undefined, dir: string): Reported | null {
+  if (!report) return null
+  return report.dir === undefined || report.dir === dir ? report : null
+}
+
 /** The marketplace file a mods folder belongs to: `<marketplace>/mods` → `<marketplace>/.claude-plugin/marketplace.json`. */
 export function marketplaceFileOf(modsDir: string): string {
   const dir = normalizePath(modsDir)

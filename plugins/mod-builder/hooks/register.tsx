@@ -451,7 +451,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         facts,
         results[facts.name] ?? {},
         inFlight.filter(one => one.mod === facts.name),
-        reports[facts.name] ?? null,
+        Lab.reportIn(reports[facts.name], dir),
         freshIds.includes(freshIdOf(facts.name)),
         generations[facts.name]?.since ?? null,
         generations[facts.name]?.fromVersion ?? null,
