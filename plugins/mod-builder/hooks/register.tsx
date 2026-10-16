@@ -861,12 +861,9 @@ async function openPane($: Engine): Promise<void> {
   if (!opened.isPlaced) $.ui.toast(NARROW_TOAST)
 }
 
-/**
- * What a bare /modlab does with the pane. A pane waiting undrawn is open but not placed: it is no tab behind another, so it
- * counts as not listed and the person's command seats it.
- */
+/** What a bare /modlab does with the pane; `paneAction` counts a pane waiting undrawn as not listed. */
 async function paneActionOf($: Engine): Promise<ReturnType<typeof Lab.paneAction>> {
-  return Lab.paneAction((await $.ui.panes()).filter(pane => pane.isPlaced), PANE)
+  return Lab.paneAction(await $.ui.panes(), PANE)
 }
 
 /**
