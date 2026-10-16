@@ -396,10 +396,12 @@ describe('/duet provider', () => {
     const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => new Promise<Reply>(res => { release = res }) })
     await start($)
     await run($, 'provider key google')
-    const ui = await mount($)
+    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })   // wide: a 76-column pane cuts the test column
     await ui.press({ key: 'prov-test' })
+    await seen.clock.advance(1)
     expect(await ui.find({ type: 'Text', text: /testing… GET \/models/ })).toBeDefined()
     await seen.clock.advance(30_000)
+    await seen.clock.advance(1)
     expect(await ui.find({ type: 'Text', text: /✕ not sent: no reply within 30 s/ })).toBeDefined()
     release(MODELS)
     await seen.clock.settle()
@@ -456,7 +458,7 @@ describe('/duet provider', () => {
     ;(on as any)('config.list', () => ({ value: ['apiCustomUrl', 'apiCustomModel'].map(f => ({ key: `duet.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'duet' }, isLocked: false })) }))
     const sets: unknown[] = []
     ;(on as any)('config.set', ($: any, e: any) => (sets.push([e.key, e.value]), { value: e.value }))
-    const seen = engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, fetch: () => PROBE })
+    const seen = engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, fetch: url => (url.endsWith('/models') ? MODELS : PROBE) })
     await start($)
     expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+key …cdef from env · gw.example.com/)
     expect(await run($, 'provider test custom')).toMatch(/custom: ok/)
