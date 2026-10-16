@@ -260,7 +260,10 @@ Re-check [field] items against the d.ts after a Claude Code update.
   each refuse it, and the pane opens without the keyboard. Check `isShown` afterwards to know whether it
   came forward. Whether `isShown` is already true when `await $.ui.open(…)` returns, or only after a
   moment, is not probed yet (#31, step 1a): the bundled mods read it in a `$.clock.after(500, …)` callback,
-  which is right either way.
+  which is right either way. `UiPane.isPlaced` is "False while it waits undrawn: opened unasked on a
+  terminal too narrow for an unrequested pane", and "False on every row, none shown or focused, while an
+  open answers `no-surface`". Such a row has `isShown: false` but is no tab behind another, so
+  `paneAction` counts it as not listed (PR #96, Codex P2).
 - **[probe]** The host draws Buttons as `[ Label ]`, with no hotkey letter. If the hotkeys matter,
   name them in a hint line or in the README.
 - **[probe]** `$.ui.status` text shows under the prompt as `⚠ <plugin>: <text>`, and toasts appear in

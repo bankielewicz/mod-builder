@@ -80,9 +80,10 @@ on('command.run', { command: NAME }, async ($, e) => {
   at once, then ask for the front in the detached block: `$.ui.open({ …, focus: true })`, and read
   `$.ui.panes()` again in a `$.clock.after(500, …)` callback; a pane whose `isShown` is still false is
   named in a toast (`<Title> is still behind another tab: ctrl+x tab, then again until it shows.`).
-  A pane that waits undrawn (an unasked open on a narrow terminal) is open but not placed: the person's
-  command seats it with `$.ui.open`, so filter `$.ui.panes()` to placed panes before `paneAction`
-  (Mod Lab does) and open it rather than fold it.
+  A pane that waits undrawn (an unasked open on a narrow terminal) is open but not placed: it is no
+  tab behind another, and the person's command seats it with `$.ui.open`. Pass `$.ui.panes()` whole:
+  `paneAction` counts a row with `isPlaced: false` as not listed, so the command opens it (and
+  `openPane` toasts the narrow window) rather than folding it or asking for the front.
 - Take the keyboard (`focus: true`) only on an explicit request to see the pane: a bare command's
   `show`, a `demo`, a command that names something in the pane. Never on a start, a resume or a
   background open.

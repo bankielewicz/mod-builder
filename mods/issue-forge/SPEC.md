@@ -1302,6 +1302,6 @@ round takes. It supersedes items 1 and 3 above.
 
 **Tests** (`tests/issue-forge-logic.test.ts`, `tests/ui.test.tsx`): `paneAction`; a bare `/issue-forge` with the pane hidden (answer, `focus: true`, no close), by state, the toast and its absence; the demo likewise; start and resume answers with the pane hidden, opened without `focus`; Stop with `Keep it running` and then `Stop the run`, with no one to answer; Publish with `Not now` and `confirmPublish: false`, then `Publish`; the hint.
 
-**Not verified.** `$.ui.ask` from a pane press: C0 verified it from a detached promise (above), not from `onPress`; the issue's live step 5 settles it. `isShown` for an open but unplaced pane (`isPlaced: false`), which `paneAction` treats as `show`; and `isShown` on surfaces other than the terminal's inline layout.
+**Not verified.** `$.ui.ask` from a pane press: C0 verified it from a detached promise (above), not from `onPress`; the issue's live step 5 settles it. `isShown` on surfaces other than the terminal's inline layout. (An open but unplaced pane, `isPlaced: false`, was listed here as treated as `show`; PR #96 review round 1 below makes it `open`.)
 
 **Version:** 0.6.0 in `plugin.json` and the marketplace entry: a minor bump, since a pane key now asks where it acted at once. 0.4.2 is held by #78 (PR #89) and 0.5.0 by #26 (PR #87), so this is the next free minor. It may need renumbering when the PR merges.
