@@ -50,7 +50,8 @@ write the code yourself. Never copy-paste their code, and never install, `--plug
    or `failed` when it ends, and `path` is the mod folder's absolute path (`<mods>/<name>`, from 2).
    Pass `path` on every report: Mod Lab then watches the folder you write to, even when the session's
    working directory is somewhere else, such as a git worktree edited by path. It takes only a
-   marketplace's `mods/` under the project root, and its reply says when it ignored `path`. The stages map to steps: Spec → 2, Scaffold → 3.1, Logic → 3.2,
+   marketplace's `mods/` in the project's own git repository (its top folder or one of its worktrees),
+   and its reply says when it ignored `path`. The stages map to steps: Spec → 2, Scaffold → 3.1, Logic → 3.2,
    Register → 3.3–3.5, Validate and Test → 4, README and Share → 5. If the tool isn't there, skip
    reporting.
 

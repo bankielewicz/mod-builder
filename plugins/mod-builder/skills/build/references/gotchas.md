@@ -247,6 +247,7 @@ Re-check [field] items against the d.ts after a Claude Code update.
   (`/cd` and a worktree move change it, per the d.ts). Probed headless with a throwaway mod whose tool
   returned both values (#92). So a mod that must not follow Claude's shell walks from the root; Mod Lab
   does, from 0.2.20. 2.1.296's binary also defines `$.session.root` (`root:()=>t("session.root",{})`).
+- **[field]** A worktree's `.git` is a file, `gitdir: <common>/worktrees/<name>`, and a repository top's `.git` is a folder. Mod Lab reads these to tell whether a reported folder is the project's own repository (from 0.2.20). A worktree that Windows git created and that is read under WSL names a `C:/…` gitdir, which doesn't match a `/mnt/c/…` root, so it is refused, not misread. Newer git can also write a relative gitdir (`git worktree add --relative-paths`); Mod Lab resolves it against the worktree.
 - **[probe]** With a relative `--plugin-dir` (`claude --plugin-dir plugins/mod-builder`), after `/cd`
   the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
   installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
