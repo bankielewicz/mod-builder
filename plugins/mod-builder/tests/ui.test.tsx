@@ -3774,13 +3774,17 @@ describe('a rescan after a tool batch (#100)', () => {
     await clock.settle()
     let release = () => {}
     seen.holdList = { path: MODS, isReached: false, until: new Promise<void>(resolve => (release = resolve)) }
-    void batch($, [write(`${MODS}/alpha/hooks/alpha-logic.ts`)])
-    for (let i = 0; i < 50 && !seen.holdList.isReached; i++) await clock.advance(1)
-    expect(seen.holdList.isReached).toBe(true)
-    Object.assign(disk, manifest('beta'))
     const from = seen.reads.length
-    await batch($, [write(`${MODS}/beta/.claude-plugin/plugin.json`)])
-    release()
+    try {
+      void batch($, [write(`${MODS}/alpha/hooks/alpha-logic.ts`)])
+      for (let i = 0; i < 50 && !seen.holdList.isReached; i++) await clock.advance(1)
+      expect(seen.holdList.isReached).toBe(true)
+      Object.assign(disk, manifest('beta'))
+      await batch($, [write(`${MODS}/beta/.claude-plugin/plugin.json`)])
+    } finally {
+      // A failed step above must not leave the scan held, or settle() hangs and the run ends in a timeout.
+      release()
+    }
     await clock.settle()
     // The pass after the held one reads beta. (A description shows only for the picked row, alpha here.)
     expect(specReads(seen, from)).toEqual([`${MODS}/alpha/SPEC.md`, `${MODS}/beta/SPEC.md`])
@@ -3800,6 +3804,105 @@ describe('a rescan after a tool batch (#100)', () => {
     expect((await ui.findAll({ type: 'Text', text: /^ new-mod ?$/ })).length).toBe(1)
     expect(await ui.find({ type: 'Text', text: /^1 building$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /folder not written yet/ })).toBeDefined()
+  })
+})
+
+// PR #109 review round 1 (Codex's four threads and a /code-review at xhigh).
+describe('a rescan after a tool batch: review round 1 (#100)', () => {
+  type Call = { tool_name: string; tool_input: unknown }
+  const batch = ($: Engine, calls: readonly Call[]) =>
+    $.classic.PostToolBatch({ tool_calls: calls.map((call, at) => ({ ...call, tool_use_id: `t${at}` })) } as never)
+  const write = (file_path: string): Call => ({ tool_name: 'Write', tool_input: { file_path, content: 'x' } })
+  const bash: Call = { tool_name: 'Bash', tool_input: { command: 'git rebase origin/main' } }
+  const MARKET = '/m/.claude-plugin/marketplace.json'
+  const specReads = (seen: { reads: string[] }, from: number) => seen.reads.slice(from).filter(path => path.endsWith('/SPEC.md')).sort()
+  async function shows($: Engine, text: RegExp): Promise<boolean> {
+    const ui = await mountPane($)
+    const found = await ui.find({ type: 'Text', text })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  test('a batch of read-only tools looks at nothing, not even where the mods folder is', async ($, on) => {
+    const { seen, clock } = world(on, { [MARKET]: '{ "plugins": [] }', ...modFiles('alpha') })
+    await start($)
+    await clock.settle()
+    const [roots, reads, lists] = [seen.rootReads, seen.reads.length, seen.listed.length]
+    await batch($, [{ tool_name: 'Read', tool_input: { file_path: `${MODS}/alpha/SPEC.md` } }, { tool_name: 'Grep', tool_input: { pattern: 'x' } }, { tool_name: 'Glob', tool_input: { pattern: '*' } }])
+    await clock.settle()
+    expect([seen.rootReads, seen.reads.length, seen.listed.length]).toEqual([roots, reads, lists])
+  })
+
+  test('a Bash batch that moved the marketplace reads every mod again (Codex 4296025346)', OPTIONS, async ($, on) => {
+    const mtime: Mtimes = { ms: 1000, byPath: {} }
+    const { seen, clock } = world(on, { [MARKET]: '{ "plugins": [] }', ...modFiles('alpha'), ...modFiles('beta') }, {}, true, undefined, mtime)
+    await start($)
+    await clock.settle()
+    const from = seen.reads.length
+    mtime.byPath![MARKET] = 9000
+    await batch($, [bash])
+    await clock.settle()
+    expect(specReads(seen, from)).toEqual([`${MODS}/alpha/SPEC.md`, `${MODS}/beta/SPEC.md`])
+  })
+
+  test('an Edit of the marketplace reads every mod again (Codex 4296025346)', OPTIONS, async ($, on) => {
+    const mtime: Mtimes = { ms: 1000, byPath: {} }
+    const { seen, clock } = world(on, { [MARKET]: '{ "plugins": [] }', ...modFiles('alpha'), ...modFiles('beta') }, {}, true, undefined, mtime)
+    await start($)
+    await clock.settle()
+    const from = seen.reads.length
+    mtime.byPath![MARKET] = 9000
+    await batch($, [{ tool_name: 'Edit', tool_input: { file_path: MARKET, old_string: 'a', new_string: 'b' } }])
+    await clock.settle()
+    expect(specReads(seen, from)).toEqual([`${MODS}/alpha/SPEC.md`, `${MODS}/beta/SPEC.md`])
+  })
+
+  test('a folder that was not a mod and becomes one in a Bash batch is read (Codex 4296025357)', OPTIONS, async ($, on) => {
+    const disk = { ...modFiles('alpha'), [`${MODS}/foo/notes.txt`]: 'not a mod yet' }
+    const { seen, clock } = world(on, disk)
+    await start($)
+    await clock.settle()
+    expect(await shows($, /foo/)).toBe(false)
+    const from = seen.reads.length
+    Object.assign(disk, { [`${MODS}/foo/SPEC.md`]: '# foo\n| archetype | REQUIRED | band | x |\nDone.\n' })
+    await batch($, [bash])
+    await clock.settle()
+    expect(specReads(seen, from)).toEqual([`${MODS}/foo/SPEC.md`])
+    expect(await shows($, /foo/)).toBe(true)
+  })
+
+  test('a mods folder that fails to list during a batch keeps the rows and the picked mod (PR #109 review)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('alpha'), ...modFiles('beta') })
+    await start($)
+    await clock.settle()
+    await command($, 'beta')
+    await clock.settle()
+    seen.failLists.push(MODS)
+    await batch($, [write(`${MODS}/alpha/hooks/alpha-logic.ts`)])
+    await clock.settle()
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^ alpha ?$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /The beta mod\./ })).toBeDefined()
+  })
+
+  test('a batch that turns a mod green announces it once; a batch that changes nothing announces nothing more', OPTIONS, async ($, on) => {
+    const disk: Disk = { ...modFiles('git-branch'), ['/m/.claude-plugin/marketplace.json']: JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch' }] }) }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    await ui.press({ key: 'test' })
+    await clock.advance(1000)
+    await ui.unmount()
+    expect(seen.notified).toEqual([])
+    Object.assign(disk, { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+    await batch($, [write(`${MODS}/git-branch/README.md`)])
+    await clock.settle()
+    await batch($, [write(`${MODS}/git-branch/README.md`)])
+    await clock.settle()
+    expect(seen.notified).toEqual(['git-branch is ready to share'])
   })
 })
 
