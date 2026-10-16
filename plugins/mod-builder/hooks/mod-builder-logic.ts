@@ -348,8 +348,8 @@ export function isTestFile(file: string): boolean {
   return /\.test\.tsx?$/.test(file)
 }
 
-/** Whether a nested file (named by its path from the mod folder) is logic under hooks/ or a test under tests/. Freshness only: existence stays top-level. */
-export function isNestedLogicOrTest(path: string): boolean {
+/** Whether a file, named by its path from the mod folder, is logic under hooks/ or a test under tests/, at any depth. Freshness only: existence stays top-level. */
+export function isLogicOrTestPath(path: string): boolean {
   const base = path.slice(path.lastIndexOf('/') + 1)
   if (path.startsWith('hooks/')) return isLogicModule(base)
   return path.startsWith('tests/') && isTestFile(base)
@@ -1142,12 +1142,8 @@ export function factsOf(read: FolderRead): FileFacts | null {
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}
   const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
-  // Named by path from the mod folder, as in `code`.
-  const logic = [
-    ...inFolder('hooks', read.hooks.filter(entry => isLogicModule(entry.name))),
-    ...inFolder('tests', read.tests.filter(entry => isTestFile(entry.name))),
-    ...nested.filter(entry => entry.kind === 'file' && isNestedLogicOrTest(entry.name)),
-  ]
+  // The code files that are logic modules or tests, top-level or nested: one rule for logicMtimeMs and logicSig.
+  const logic = code.filter(entry => isLogicOrTestPath(entry.name))
   const codeSig = sigOf(code)
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
   return {
