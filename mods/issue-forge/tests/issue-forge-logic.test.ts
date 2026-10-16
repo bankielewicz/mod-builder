@@ -2111,4 +2111,23 @@ describe('PR #103 review', () => {
     expect(record(mine, 'another-run', 'me', P, 5)).toBeNull()
     expect(record(null, mine.id, 'me', P, 5)).toBeNull()
   })
+
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+  const gate = (g: 'R' | 'G' | 'F') => ({ gate: g, passed: false, checks: [{ id: g === 'R' ? 'R4' : 'G8', passed: false, detail: 'd' }], newPlugin: { path: P, isCreated: true } })
+  const stepsOf = (over: Partial<Run>) => (advance(run({ branch: 'b', base: 'main', ...over }), { type: 'gated', gate: gate(over.step === 'gateR' ? 'R' : over.step === 'gateF' ? 'F' : 'G') }, 5) as Run & { blocked: { steps: string[] } }).blocked.steps
+
+  test("a final block's steps name what was committed from the run's commits, not its gate: green's commit at gate F (Codex 4290574818)", () => {
+    const atF = stepsOf({ step: 'gateF', workRoot: WT, redCommit: 'abcdef1234', greenCommit: 'bcdef12345', used: { red: 1, green: 1, refactor: 1 } })
+    expect(atF[0]).toBe(`Nothing past green's commit was committed, and nothing was pushed. This run's worktree ${WT} holds red's tests at abcdef1, green's change at bcdef12, and the phase's uncommitted files.`)
+    expect(atF).toContain("Red's tests can serve the build's logic-first step as reference: git show abcdef1")
+    const here = stepsOf({ step: 'gateF', redCommit: 'abcdef1234', greenCommit: 'bcdef12345', used: { red: 1, green: 1, refactor: 1 } })
+    expect(here[0]).toBe("Nothing past green's commit was committed, and nothing was pushed. This run's branch b holds red's tests at abcdef1 and green's change at bcdef12, and the checkout's uncommitted files (git status lists them) are the phase's.")
+  })
+
+  test("a final block's steps at gate R after G6's detour name red's commit and the stash that holds green's work (Codex 4290574818)", () => {
+    const stash = { sha: '5678abcdef', message: 'issue-forge #16 green before the behaviour test' }
+    const detour = stepsOf({ step: 'gateR', workRoot: WT, redCommit: 'abcdef1234', behaviourFor: ['hooks/register.tsx'], greenStash: stash, used: { red: 1, green: 1, refactor: 0 } })
+    expect(detour[0]).toBe(`Nothing past red's commit was committed, and nothing was pushed. This run's worktree ${WT} holds red's tests at abcdef1 and the phase's uncommitted files. Green's work is in stash 5678abc "issue-forge #16 green before the behaviour test" (git stash apply 5678abc).`)
+    expect(detour).toContain("Red's tests can serve the build's logic-first step as reference: git show abcdef1")
+  })
 })
