@@ -2120,6 +2120,20 @@ describe('new plugins are mod-builder\'s (Change 0.5.0)', () => {
     expect((await run($, 'status')).text).toContain("1. Nothing past red's commit was committed, and nothing was pushed.")
   })
 
+  test('red adding a plugin manifest blocks final at gate R, with nothing committed', async ($, on) => {
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', MANIFEST], redPaths: ['tests/a.test.ts'], added: ['tests/a.test.ts', MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.argv.some(a => a[0] === 't')).toBe(false)
+    expect(w.commits).toEqual([])
+    expect(w.spawned).toEqual([])
+    const status = (await run($, 'status')).text as string
+    expect(status).toContain(`blocked at gateR: a phase agent created a new Claude Code plugin (${MANIFEST})`)
+    expect(status).toContain('1. Nothing was committed, and nothing was pushed.')
+    expect(status).not.toContain('git show')
+  })
+
   test('a final block\'s hint line offers stop and status, not resume', async ($, on) => {
     const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', MANIFEST], sinceRed: [MANIFEST], redPaths: ['tests/a.test.ts'], added: [MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
     await start($)
