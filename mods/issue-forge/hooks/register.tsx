@@ -578,7 +578,8 @@ async function forkCheck($: EngineInterface, root: string, repo: string, stray: 
   if (!view || view.exitCode !== 0) return block(`could not read ${repoLabel(headRepo)} from gh: ${firstLine(view?.stderr ?? 'gh repo view did not finish')}`, 'check gh and your access to the fork')
   if (!isForkOf(view.stdout, repo)) return block(`origin ${repoLabel(headRepo)} isn't a fork of ${repoLabel(repo)}`, `point origin at your fork of ${repoLabel(repo)}`)
   const owner = ownerOf(headRepo)
-  const type = await $.process.run(['gh', 'api', `users/${owner}`, '--jq', '.type'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  // gh api asks github.com unless told the host (Codex on PR #87).
+  const type = await $.process.run(['gh', 'api', '--hostname', hostOf(headRepo), `users/${owner}`, '--jq', '.type'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
   if (!type || type.exitCode !== 0) return block(`could not tell whether ${owner} is a user or an organization: ${firstLine(type?.stderr ?? 'gh api did not finish')}`, 'check gh')
   if (type.stdout.trim() === 'Organization') return block("gh pr create can't name an organization's fork as the head (cli/cli#10093)", `point origin at a fork in a personal account, not ${owner}'s`)
   return { baseRemote: base.remote, headRepo }
