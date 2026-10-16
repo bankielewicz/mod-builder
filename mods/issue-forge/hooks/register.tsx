@@ -171,6 +171,8 @@ let liveWork: { root: string; workRoot: string } | null = null
 let knownRefs = new Set<string>()
 /** The last run write queued: updateRun chains each one after it. */
 let runWrites: Promise<void> = Promise.resolve()
+/** Where git keeps each folder's index lock, asked once per folder (PR #88 review). */
+const indexLocks: Record<string, string> = {}
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
 
 function readOptions(raw: unknown): Options {
@@ -237,18 +239,30 @@ class Locked extends Error {
  * comes back as it is.
  */
 async function gitWrite($: EngineInterface, run: Run, root: string, args: string[], stdin?: string) {
-  let lockPath: string | undefined
+  // Known before the call: the file is a silent stash failure's only sign, and the other process may let it go soon after.
+  const indexLock = await indexLockOf($, root)
   for (let attempt = 1; ; attempt++) {
     const r = await git($, root, args, stdin)
     if (r.exitCode === 0) return r
-    // A linked worktree's lock is under the main .git folder: git says where, once.
-    lockPath ??= (await git($, root, ['rev-parse', '--path-format=absolute', '--git-path', 'index.lock'])).stdout.trim() || 'index.lock'
     const text = `${r.stderr}\n${r.stdout}`
-    if (!isLockError(text) && !(await $.fs.exists(lockPath))) return r
-    if (attempt === INDEX_ATTEMPTS) throw new Locked(lockPathOf(text) ?? lockPath)
+    if (!isLockError(text) && !(await $.fs.exists(indexLock))) return r
+    if (attempt === INDEX_ATTEMPTS) throw new Locked(lockPathOf(text) ?? indexLock)
     await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
     stillDriving(run)
   }
+}
+
+/**
+ * The folder's index lock: a linked worktree's is under the main .git folder, and git says where. Without
+ * `--path-format=absolute`, which git before 2.31 prints back instead of reading, so a relative answer is joined here.
+ */
+async function indexLockOf($: EngineInterface, root: string): Promise<string> {
+  const known = indexLocks[root]
+  if (known) return known
+  const r = await git($, root, ['rev-parse', '--git-path', 'index.lock'])
+  const path = r.exitCode === 0 ? r.stdout.trim() : ''
+  if (!path) return `${root}/.git/index.lock`
+  return (indexLocks[root] = isAbsolutePath(path) ? path : `${root}/${path}`)
 }
 
 /** gitWrite for a call that must succeed: a failure throws, as gitOut's does. */
