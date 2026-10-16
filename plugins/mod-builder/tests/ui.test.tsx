@@ -1,7 +1,7 @@
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { resultOf, signatureOf } from '../hooks/mod-builder-logic'
+import { REPORT_TTL_MS, resultOf, signatureOf } from '../hooks/mod-builder-logic'
 
 import { testFail } from './fixtures/test-fail'
 import { testNone } from './fixtures/test-none'
@@ -71,6 +71,14 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     timeouts: [] as (number | undefined)[],
     /** While set, a test run never ends, as a Test that hangs does. */
     stallTests: false,
+    /** The ids `$.ui.panes()` lists as open and drawn. */
+    panes: [] as string[],
+    /** The ids `$.ui.panes()` lists as open but waiting undrawn (an unasked open on a narrow terminal). */
+    waiting: [] as string[],
+    /** Every id `$.ui.close` was asked to close. */
+    closed: [] as string[],
+    /** While set, `$.ui.open` is refused with this reason. */
+    denyOpen: '',
   }
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   // The store in memory, as mock.store keeps it (values read back as JSON), with reads and writes that can be refused.
@@ -155,8 +163,9 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.toast', ($, e) => (seen.toasts.push((e as { text: string }).text), { value: undefined }) as never)
   on('ui.status', ($, e) => (seen.status.push((e as { text?: string }).text), { value: undefined }) as never)
   on('ui.notify', ($, e) => (seen.notified.push((e as { text: string }).text), { value: { isSent: true, channel: 'terminal' } }) as never)
-  on('ui.open', ($, e) => (seen.opened.push(e.id), { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } }) as never)
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.open', ($, e) => (seen.denyOpen ? { deny: seen.denyOpen } : (seen.opened.push(e.id), { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } })) as never)
+  on('ui.panes', () => ({ value: [...seen.panes.map(id => ({ id, title: id, isPlaced: true })), ...seen.waiting.map(id => ({ id, title: id, isPlaced: false }))] }) as never)
+  on('ui.close', ($, e) => (seen.closed.push((e as { id: string }).id), { value: undefined }) as never)
   on('prompt.fill', ($, e) => (seen.filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }) as never)
   return { seen, clock }
 }
@@ -769,6 +778,235 @@ describe('selection', () => {
     const after = await mountPane($)
     expect(await after.find({ type: 'Text', text: /^ duet $/ })).toBeDefined()
     expect(await after.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+  })
+})
+
+describe('a mod reported before its folder exists (#19)', () => {
+  const report = ($: Engine, mod: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod, stage: 'Spec', status: 'running' } as never)
+  /** Every row named `new-mod`, picked (` new-mod `) or not (` new-mod`); the detail header is bare, so not counted. */
+  const rowsOf = async (ui: Awaited<ReturnType<typeof mountPane>>) => (await ui.findAll({ type: 'Text', text: /^ new-mod ?$/ })).length
+  const ACTIONS = ['validate', 'test', 'typecheck', 'readme', 'fix']
+
+  test('a Spec report for a mod with no folder adds its row: folder note, counted as building, no actions', OPTIONS, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /folder not written yet: .*new-mod\// })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^2 mods$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^1 building$/ })).toBeDefined()
+    for (const key of ACTIONS) expect(await ui.find({ key })).toBeUndefined()
+  })
+
+  test('/modlab <name> selects the placeholder row instead of saying there is no such mod', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    await command($, 'git-branch')
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /^ git-branch $/ })).toBeDefined()
+    await before.unmount()
+    await command($, 'new-mod')
+    await clock.advance(10)
+    expect(seen.toasts.filter(text => text.startsWith('No mod named'))).toEqual([])
+    const after = await mountPane($)
+    expect(await after.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await after.find({ type: 'Text', text: /folder not written yet/ })).toBeDefined()
+  })
+
+  test('once the folder has its SPEC, the next scan shows the real row and the placeholder is gone', OPTIONS, async ($, on) => {
+    const disk: Disk = modFiles('git-branch')
+    const { clock } = world(on, disk)
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    const placeholder = await mountPane($)
+    expect(await placeholder.find({ type: 'Text', text: /folder not written yet/ })).toBeDefined()
+    expect(await placeholder.find({ key: 'validate' })).toBeUndefined()
+    expect(await rowsOf(placeholder)).toBe(1)
+    await placeholder.unmount()
+    Object.assign(disk, { [`${MODS}/new-mod/SPEC.md`]: '# new-mod\n| archetype | REQUIRED | band | x |\nDone.\n' })
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const real = await mountPane($)
+    expect(await real.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await real.find({ type: 'Text', text: /mods\/new-mod\// })).toBeDefined()
+    expect(await real.find({ type: 'Text', text: /folder not written yet/ })).toBeUndefined()
+    expect(await real.find({ key: 'validate' })).toBeDefined()
+    expect(await rowsOf(real)).toBe(1)
+  })
+
+  test('a placeholder whose running report expires leaves the list at the next tick, with no turn or command (Codex P2, PR #80)', OPTIONS, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await rowsOf(before)).toBe(1)
+    await before.unmount()
+    await clock.advance(REPORT_TTL_MS + 1000)
+    await clock.settle()
+    const after = await mountPane($)
+    expect(await rowsOf(after)).toBe(0)
+    expect(await after.find({ type: 'Text', text: /^1 building$/ })).toBeUndefined()
+  })
+
+  test('a placeholder is listed only in the mods folder its report was made in, across a /cd (Codex P2, PR #80)', async ($, on) => {
+    const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    const two = await mountPane($)
+    expect(await two.find({ type: 'Text', text: /beta/ })).toBeDefined()
+    expect(await rowsOf(two)).toBe(0)
+    await two.unmount()
+    seen.cwd = '/w/one/plugins/x'
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const one = await mountPane($)
+    expect(await rowsOf(one)).toBe(1)
+    expect(await one.find({ type: 'Text', text: /folder not written yet: .*one\/mods\/new-mod\// })).toBeDefined()
+  })
+
+  test('a report that lands while a tick retires the last one keeps the clock, so its placeholder still expires (Codex P2, PR #80 round 2)', { ...OPTIONS, timeoutMs: 20_000 }, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    // Once armed, the first read of the rows right after a read of the builds (the tick's expiry check)
+    // waits for `until`: a report sent meanwhile lands after the tick took its builds and before it stops the clock.
+    const hold = { isArmed: false, isReached: false, until: Promise.resolve() }
+    let lastKey = ''
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder') {
+        if (hold.isArmed && key === 'judged' && lastKey === 'building') {
+          hold.isArmed = false
+          hold.isReached = true
+          await hold.until
+        }
+        lastKey = key
+      }
+      return next(e)
+    })
+    const lateRows = async () => {
+      const ui = await mountPane($)
+      const count = (await ui.findAll({ type: 'Text', text: /^ late-mod ?$/ })).length
+      await ui.unmount()
+      return count
+    }
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    // Ticks come every 250 ms from the report; the one at REPORT_TTL_MS is the first that finds it expired.
+    await clock.advance(REPORT_TTL_MS - 600)
+    await clock.advance(500)
+    let release = () => {}
+    Object.assign(hold, { isArmed: true, until: new Promise<void>(resolve => (release = resolve)) })
+    await clock.advance(250)
+    expect(hold.isReached).toBe(true)
+    await report($, 'late-mod')
+    release()
+    await clock.advance(10)
+    await clock.settle()
+    const between = await mountPane($)
+    expect(await rowsOf(between)).toBe(0)
+    await between.unmount()
+    expect(await lateRows()).toBe(1)
+    await clock.advance(REPORT_TTL_MS + 1000)
+    await clock.settle()
+    expect(await lateRows()).toBe(0)
+  })
+
+  test('a live running report a fresh module finds at session start keeps a clock, so its placeholder still expires (Codex P2, PR #80 round 3)', { ...OPTIONS, timeoutMs: 20_000 }, async ($, on) => {
+    const { clock } = world(on, modFiles('git-branch'))
+    // As after a reload: state kept a running report from the module before, and this module has no clock.
+    const report = { stage: 'Spec', status: 'running', since: Date.parse('2026-10-12T10:00:00Z'), dir: MODS }
+    const restored: Record<string, unknown> = { reported: { 'new-mod': report }, building: { [MODS]: { 'new-mod': report } } }
+    const written = new Set<string>()
+    on('state.set', (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder') written.add(key)
+      return next(e)
+    })
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key in restored && !written.has(key)) return { value: { version: 1, value: restored[key] } } as never
+      return next(e)
+    })
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await rowsOf(before)).toBe(1)
+    await before.unmount()
+    await clock.advance(REPORT_TTL_MS + 1000)
+    await clock.settle()
+    const after = await mountPane($)
+    expect(await rowsOf(after)).toBe(0)
+    expect(await after.find({ type: 'Text', text: /^1 building$/ })).toBeUndefined()
+  })
+
+  test('same-named new mods built in two mods folders each keep their placeholder (Codex P2, PR #80 round 4)', async ($, on) => {
+    const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+    const { seen, clock } = world(on, {
+      ...marketplaceAt('/w/one'),
+      ...modFiles('alpha', '/w/one/mods'),
+      ...marketplaceAt('/w/two'),
+      ...modFiles('beta', '/w/two/mods'),
+    })
+    seen.cwd = '/w/one/plugins/x'
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    seen.cwd = '/w/two/plugins/x'
+    await command($, 'beta')
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    seen.cwd = '/w/one/plugins/x'
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const one = await mountPane($)
+    expect(await rowsOf(one)).toBe(1)
+    expect(await one.find({ type: 'Text', text: /folder not written yet: .*one\/mods\/new-mod\// })).toBeDefined()
+  })
+
+  test('a repeated Spec running for a placeholder starts no edit, so the SPEC written next is not stale', OPTIONS, async ($, on) => {
+    const disk: Disk = modFiles('git-branch')
+    const { clock } = world(on, disk)
+    await start($)
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    await report($, 'new-mod')
+    await clock.advance(10)
+    Object.assign(disk, { [`${MODS}/new-mod/SPEC.md`]: '# new-mod\n| archetype | REQUIRED | band | x |\nDone.\n' })
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'new-mod', stage: 'Spec', status: 'passed' } as never)
+    await clock.advance(10)
+    await command($, 'new-mod')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^ new-mod $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^edit · / })).toBeUndefined()
   })
 })
 
@@ -1506,6 +1744,165 @@ describe('command', () => {
     await clock.advance(3_000)
     const ui = await mountPane($)
     expect(await ui.find({ type: 'Text', text: /^No mods yet\.$/ })).toBeDefined()
+  })
+})
+
+describe('the pane opens from the command itself (#90)', () => {
+  // An open made after the command's hook returns is "unasked", and the engine leaves it undrawn below 144 columns.
+  // Each test holds the scan or checks right after the command returns: the pane must already be open.
+  const typed = ($: Engine, name: string, args: string) => $.command.run({ command: name, args, origin: COMPOSER, presentation: PRESENTATION })
+  const holdModsList = (seen: ReturnType<typeof world>['seen']) => {
+    let release = () => {}
+    seen.holdList = { path: MODS, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    return () => release()
+  }
+
+  test('/modlab opens the pane before its scan of the mods folder ends', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    const release = holdModsList(seen)
+    expect((await command($, '')).text).toBe('Mod Lab opened.')
+    expect(seen.opened).toEqual(['modlab'])
+    await clock.advance(10)
+    expect(seen.holdList!.isReached).toBe(true)
+    release()
+    await clock.advance(10)
+    expect(seen.opened).toEqual(['modlab'])
+  })
+
+  test('/modlab <mod> opens the pane before its scan ends, then selects the mod', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), ...modFiles('duet') })
+    await start($)
+    await clock.advance(10)
+    const release = holdModsList(seen)
+    expect((await command($, 'duet')).text).toBe('Mod Lab: duet.')
+    expect(seen.opened).toEqual(['modlab'])
+    await clock.advance(10)
+    release()
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+    expect(seen.toasts.filter(text => text.startsWith('No mod named'))).toEqual([])
+  })
+
+  test('/modlab <listed mod> shows it in the first frame, before the scan lands (PR #93 review)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('git-branch'), ...modFiles('duet') })
+    await start($)
+    await clock.advance(10)
+    const release = holdModsList(seen)
+    await command($, 'duet')
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+    await ui.unmount()
+    release()
+    await clock.advance(10)
+  })
+
+  test('/modlab <mod> still selects the mod when the open is refused (PR #93 review)', OPTIONS, async ($, on) => {
+    const disk = modFiles('git-branch')
+    const { seen, clock } = world(on, disk)
+    await start($)
+    await clock.advance(10)
+    // Not listed yet: only the command's own scan can find it.
+    Object.assign(disk, modFiles('duet'))
+    seen.denyOpen = 'no panes here'
+    await command($, 'duet')
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+  })
+
+  test('/modlab <name> with no such mod opens the pane on the list and says so', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    await command($, 'nope')
+    expect(seen.opened).toEqual(['modlab'])
+    await clock.advance(10)
+    expect(seen.toasts.filter(text => text.startsWith('No mod named nope'))).toHaveLength(1)
+  })
+
+  test('/modlab demo has opened the pane when the command returns', OPTIONS, async ($, on) => {
+    const { seen } = world(on, {})
+    await start($)
+    expect((await command($, 'demo')).text).toContain('Nothing is written to disk')
+    expect(seen.opened).toEqual(['modlab'])
+  })
+
+  for (const name of ['mod-builder:build', 'mod-builder:edit']) {
+    test(`a typed /${name} opens the pane, then runs the skill`, OPTIONS, async ($, on) => {
+      const { seen } = world(on, modFiles('git-branch'))
+      // What was open when the skill ran: the open must come first, in the hook, not after it.
+      let openedWhenRun: string[] | null = null
+      on('command.run', ($, e) => ((openedWhenRun = [...seen.opened]), { text: `ran ${e.command} ${e.args}` }) as never)
+      await start($)
+      expect((await typed($, name, 'git-branch')).text).toBe(`ran ${name} git-branch`)
+      expect(openedWhenRun).toEqual(['modlab'])
+    })
+  }
+
+  test('a typed /mod-builder:edit leaves an open pane as it is (guard: passes before #90)', OPTIONS, async ($, on) => {
+    const { seen } = world(on, modFiles('git-branch'))
+    on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+    await start($)
+    seen.panes = ['modlab']
+    expect((await typed($, 'mod-builder:edit', 'git-branch')).text).toBe('ran mod-builder:edit git-branch')
+    expect(seen.opened).toEqual([])
+  })
+
+  test('/modlab on a drawn pane folds it (guard)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    seen.panes = ['modlab']
+    expect((await command($, '')).text).toBe('Mod Lab folded to the status line. /modlab to reopen.')
+    await clock.advance(10)
+    expect(seen.closed).toEqual(['modlab'])
+    expect(seen.opened).toEqual([])
+  })
+
+  test('/modlab on a pane waiting undrawn opens it rather than folding it (PR #93 review)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    seen.waiting = ['modlab']
+    expect((await command($, '')).text).toBe('Mod Lab opened.')
+    await clock.advance(10)
+    expect(seen.opened).toEqual(['modlab'])
+    expect(seen.closed).toEqual([])
+  })
+
+  test('a typed /mod-builder:edit opens a pane waiting undrawn (PR #93 review)', OPTIONS, async ($, on) => {
+    const { seen } = world(on, modFiles('git-branch'))
+    on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+    await start($)
+    seen.waiting = ['modlab']
+    expect((await typed($, 'mod-builder:edit', 'git-branch')).text).toBe('ran mod-builder:edit git-branch')
+    expect(seen.opened).toEqual(['modlab'])
+  })
+
+  test('a typed /mod-builder:build opens the pane without scanning (PR #93 review, Codex)', OPTIONS, async ($, on) => {
+    // The skill's first report scans; one that joined a scan started here would wait out an extra pass (#93, Codex P2).
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+    await start($)
+    await clock.advance(10)
+    const release = holdModsList(seen)
+    await typed($, 'mod-builder:build', 'a clock band')
+    await clock.advance(10)
+    expect(seen.opened).toEqual(['modlab'])
+    expect(seen.holdList!.isReached).toBe(false)
+    release()
+  })
+
+  test('a refused open still runs the skill (guard: passes before #90)', OPTIONS, async ($, on) => {
+    const { seen } = world(on, modFiles('git-branch'))
+    on('command.run', ($, e) => ({ text: `ran ${e.command} ${e.args}` }) as never)
+    await start($)
+    seen.denyOpen = 'no panes here'
+    expect((await typed($, 'mod-builder:build', 'a clock band')).text).toBe('ran mod-builder:build a clock band')
+    // openForSkill caught it, so the hook's own .catch never ran.
+    expect(seen.logs.some(line => line.includes('command.skill') && line.includes('no panes here'))).toBe(true)
+    expect(seen.logs.some(line => line.includes('hook failed'))).toBe(false)
   })
 })
 

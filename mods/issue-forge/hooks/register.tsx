@@ -44,6 +44,7 @@ import {
   isIndexLockError,
   isLockError,
   isOwnHandback,
+  isOwnMailboxHandback,
   isPrunable,
   isPullUrl,
   isSameRepo,
@@ -89,6 +90,7 @@ import {
   runKey,
   severalText,
   sharedLcovBlock,
+  spawnRefs,
   splitZ,
   stashApplyArgv,
   stashMessage,
@@ -120,6 +122,8 @@ const GIT_TIMEOUT = 60_000
 /** The attempts a git call that writes the index makes against a held lock, a second apart (#28). */
 const INDEX_ATTEMPTS = 5
 const INDEX_WAIT_MS = 1000
+/** Why a phase agent's report is kept from the main model: shown for prompt.submit's drop, only logged for session.receive's consumed (d.ts). */
+const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
 const COLORS: Record<Tone, string | undefined> = { success: '#7FB685', accent: '#D97757', warn: '#E0B15A', error: '#E06C6C', dim: undefined }
 
 const runAtom = atom({ plugin: 'issue-forge', key: 'run' } as const, null)
@@ -814,6 +818,8 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   const routed = routedRedBlock(subagentType, isWorktreeRun(run))
   if (routed) return block(routed.reason, routed.next)
   const name = isOwn ? agentName(run, which) : undefined
+  // Known before the spawn returns, so an agent that stops sooner still has its hand-back taken.
+  if (name) knownRefs.add(name)
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
@@ -837,12 +843,12 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
         liveAgent = null
         liveWork = null
       }
-      await rememberAgents($, run, name ? [agentId, name] : [agentId])
+      await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
     }
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
-  await rememberAgents($, run, name ? [agentId, name] : [agentId])
+  await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
   await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()), (run as Stamped).driveGen)
   await setActivity($, 'agent working')
   try {
@@ -1581,9 +1587,16 @@ export const register: Register = (on, raw) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A phase agent's report reaches the main loop as a peer prompt; the pane already has it (C0).
+  // An unnamed phase agent's report (or a named one's, with agent teams off) reaches the main loop as a peer prompt; the pane already has it (C0).
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin?.kind === 'peer' && knownRefs.size > 0 && isOwnHandback(e.text, [...knownRefs])) return { drop: 'issue-forge: a phase agent finished; the pane has the result.' }
+    if (e.origin?.kind === 'peer' && knownRefs.size > 0 && isOwnHandback(e.text, [...knownRefs])) return { drop: HANDBACK_DROP }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // With agent teams on, a named phase agent is a teammate: its report is an idle notice from its name, and no prompt.submit fires (#27, P4).
+  // Only that notice is consumed; anything else the agent sends reaches the model (PR #86 review).
+  on('session.receive', async ($, e, next) => {
+    if (isOwnMailboxHandback(e, [...knownRefs])) return { consumed: HANDBACK_DROP }
     return next(e)
   }).catch(($, e, next) => next(e))
 

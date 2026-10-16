@@ -247,6 +247,21 @@ export function isGreen(lights: readonly Light[]): boolean {
 // ── Reading files ─────────────────────────────────────────────────────────
 
 /**
+ * The start of a line that ends a paragraph: a blank line, or one that opens an
+ * ATX heading, a list item or a block quote. `$` is the end of the input (no
+ * `m` flag). A heading or quote takes at most three spaces of indent, as in
+ * CommonMark; a list item takes any, since nested items sit deeper. Any `N.`
+ * counts as an item, though CommonMark lets only `1.` interrupt a paragraph.
+ */
+const BLOCK_BREAK = String.raw`(?:[ \t]*(?:\r?\n|$|[-*+][ \t]|\d{1,9}[.)][ \t])| {0,3}(?:#{1,6}(?:[ \t]|$)|>))`
+
+/**
+ * An escaped `\` or backtick, which opens no span, or an inline code span: it
+ * may wrap over lines, but not into another block (CommonMark).
+ */
+const ESCAPE_OR_SPAN = new RegExp(String.raw`\\[\\\x60]|\x60(?:[^\x60\n]|\n(?!${BLOCK_BREAK}))*\x60`, 'g')
+
+/**
  * Whether a SPEC still holds a `<placeholder>`: an angle-bracketed phrase
  * outside fenced code, inline code and HTML comments.
  */
@@ -254,7 +269,7 @@ export function hasPlaceholder(spec: string): boolean {
   const prose = spec
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`\n]*`/g, '')
+    .replace(ESCAPE_OR_SPAN, m => (m.startsWith('\\') ? m : ''))
   return /<(?![/!])[^<>\n]{1,120}>/.test(prose)
 }
 
@@ -714,6 +729,8 @@ export function viewOf(
     gates: validate?.gates ?? [],
     errors: failedRun?.errors ?? [],
     failedStage,
+    // factsOf never returns facts without a manifest or SPEC, so these are the placeholder's (#19).
+    isPlaceholder: !facts.hasSpec && !facts.hasManifest,
   }
 }
 
@@ -809,6 +826,7 @@ export function demoViewAt(elapsedMs: number, beats: readonly Beat[] = demoTimel
     gates: [],
     errors: testFailed ? DEMO_ERRORS : [],
     failedStage: testFailed ? 'Test' : null,
+    isPlaceholder: false,
   }
 }
 
@@ -1013,6 +1031,73 @@ export function factsOf(read: FolderRead): FileFacts | null {
     archetype: slots.archetype ?? null,
     builtOn: slots.built?.replace(/^Claude Code\s+/i, '') ?? null,
   }
+}
+
+/**
+ * The facts of a mod whose folder is not written yet (#19): nothing found, nothing read. Its row
+ * exists only because a build reported it; the next scan that finds the folder replaces it.
+ */
+export function placeholderFacts(name: string): FileFacts {
+  return {
+    name,
+    hasSpec: false,
+    specHasPlaceholder: false,
+    hasManifest: false,
+    hasHooksJson: false,
+    hasLogic: false,
+    hasTests: false,
+    hasRegister: false,
+    hasReadme: false,
+    readmeHasReaches: false,
+    isListed: false,
+    codeMtimeMs: 0,
+    codeSig: signatureOf([]),
+    firstMtimeMs: 0,
+    lastMtimeMs: 0,
+    archetype: null,
+    builtOn: null,
+    version: null,
+    description: null,
+    isReadmeStale: false,
+    specMtimeMs: 0,
+    logicMtimeMs: 0,
+    readmeMtimeMs: 0,
+    listedVersion: null,
+  }
+}
+
+/**
+ * The mods that get a placeholder row (#19): reported as running and found in no folder. `reports`
+ * are the live ones (see `liveReports`), so a running report the skill abandoned has expired, and a
+ * passed or failed one for a missing folder (a typo) never gets a row. Given `dir`, only reports made
+ * in that mods folder count, so a /cd doesn't carry a placeholder into another folder.
+ */
+export function placeholderNames(reports: Readonly<Record<string, Reported>>, factsNames: readonly string[], dir?: string): string[] {
+  return Object.entries(reports)
+    .filter(([name, report]) => report.status === 'running' && !factsNames.includes(name) && (dir === undefined || report.dir === dir))
+    .map(([name]) => name)
+}
+
+/**
+ * The builds still running, per mods folder and mod name (#19): `reported` keeps one report per name,
+ * so same-named new mods in two folders need a record of their own. A running report sets its entry,
+ * a finished one removes it, and expired entries (and folders left empty) are dropped.
+ */
+export function withBuilding(
+  all: Readonly<Record<string, Readonly<Record<string, Reported>>>>,
+  dir: string,
+  mod: string,
+  report: Reported,
+  now: number,
+): Record<string, Record<string, Reported>> {
+  const next: Record<string, Record<string, Reported>> = {}
+  for (const [folder, reports] of Object.entries(all)) {
+    const live = liveReports(reports, now)
+    if (folder === dir) delete live[mod]
+    if (Object.keys(live).length) next[folder] = live
+  }
+  if (report.status === 'running') next[dir] = { ...next[dir], [mod]: report }
+  return next
 }
 
 // ── Runs ──────────────────────────────────────────────────────────────────

@@ -22,6 +22,8 @@ export type Reported = {
   note?: string
   /** When this report arrived, for the band's timer. */
   since: number
+  /** The mods folder the session was in when it reported: a placeholder row shows only there (#19). */
+  dir?: string
 }
 
 /** One mod as the pane, band and status line draw it. */
@@ -50,6 +52,8 @@ export type ModView = {
   gates: Gate[]
   errors: string[]
   failedStage: Stage | null
+  /** Reported by a build before its folder exists: a row with no actions, until a scan finds the folder. */
+  isPlaceholder: boolean
 }
 
 /** A run in flight: which mod, which kind, since when, and how far it has got. */
@@ -76,6 +80,8 @@ declare module 'claude-code' {
       selected: string | null
       runs: Run[]
       reported: Record<string, Reported>
+      /** Builds still running, per mods folder then mod name, for placeholder rows (see `withBuilding`). */
+      building: Record<string, Record<string, Reported>>
       /** The animation clock: frame count and the time it last ticked. */
       frame: { n: number; now: number }
       /** When the demo started, or null when none runs. */

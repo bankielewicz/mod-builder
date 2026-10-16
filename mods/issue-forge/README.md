@@ -172,9 +172,10 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - With agent teams on (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), Claude Code runs the mod's named
   agents as teammates. Inside tmux they default to pane teammates, which can't run them: the red phase
   blocks with `a pane-based teammate cannot run it`, and `--settings '{"teammateMode":"in-process"}'`
-  lets it start. An in-process teammate hands back through `session.receive`, which the mod doesn't
-  consume yet, so the end of each phase starts a turn of the main model (#27). With agent teams off,
-  neither applies.
+  lets it start. An in-process teammate hands back through `session.receive`, and the mod consumes
+  the run's own idle notices, so the end of each phase leaves the main model idle (#27). Anything
+  else a phase agent sends, such as a message it writes, still reaches the main model. With agent
+  teams off, neither applies.
 - A new worktree has only what is committed: no `node_modules` or other untracked setup. Profile
   commands that need them fail in a worktree run (there's no setup command yet).
 - Agents ignore the folder they're spawned in, so in a worktree run the mod moves the live agent's
@@ -258,14 +259,14 @@ table lists everything this one can touch. It is generated from `claude plugin v
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
+| Hooks | `session.start`, `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `session.receive`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
 | Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git`, with `GIT_OPTIONAL_LOCKS=0` (rev-parse, including `--git-common-dir` for each command and, after an index-writing call fails, `--git-path index.lock`, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, remote get-url, push), `gh` (auth status, repo view, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file, and looks for git's `index.lock` when an index-writing git call fails; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
 | Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, and publish (unless `confirmPublish` is off) |
-| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents; a teammate's arrives as `session.receive` and isn't dropped yet, #27) |
+| Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the idle notice the run's own named agent sends the main conversation when it stops, which repeats the answer the pane shows; passes everything else) |
 
 The agents read the issue body, which anyone who can file an issue writes. Run it only on
 repositories and issues you trust. The agents are told to treat the issue as requirements, never
