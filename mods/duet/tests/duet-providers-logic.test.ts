@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
-  PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, parseChatReply, parseEnvFile,
+  PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, isLocalBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
   keyFileExposed, parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
@@ -48,6 +48,8 @@ describe('providers as data', () => {
     expect(isAllowedBaseUrl('https://gw.example/v1?tenant=a')).toBe(false)
     expect(isAllowedBaseUrl('https://gw.example/v1#x')).toBe(false)
     expect(isAllowedBaseUrl('http://localhost:1234/v1?x')).toBe(false)
+    expect(isLocalBaseUrl('http://localhost:1234/v1')).toBe(true)
+    expect(isLocalBaseUrl('https://gw.example.com/v1')).toBe(false)
     expect(isAllowedBaseUrl('')).toBe(false)
     expect(baseUrlOf(providerOf('custom')!, { customUrl: 'https://my-gw.example.com/v1/' })).toBe('https://my-gw.example.com/v1')
     expect(baseUrlOf(providerOf('custom')!, { customUrl: '' })).toBe('')
@@ -72,6 +74,9 @@ describe('key file', () => {
     // a quoted argument that is just the path is.
     for (const text of ['grep -n "duet-data/.env" README.md', 'git commit -m "docs: ~/.claude/duet-data/.env"', "gh pr comment 110 --body 'keys live in ~/.claude/duet-data/.env (600)'"]) expect([text, namesKeyFile(text)]).toEqual([text, false])
     for (const text of ['cat "~/.claude/duet-data/.env"', "cat '/home/u/.claude/duet-data/.env'", 'cat ~/.claude/duet-data/../duet-data/.env']) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    // A Grep's path or glob: the file, or its folder.
+    for (const text of ['/home/u/.claude/duet-data', '~/.claude/duet-data/', '**/duet-data/.env', 'C:\\Users\\u\\.claude\\duet-data']) expect([text, namesKeyFolder(text)]).toEqual([text, true])
+    for (const text of ['/w', '/home/u/.claude', '~/.claude/duet-data-old', '']) expect([text, namesKeyFolder(text)]).toEqual([text, false])
     expect(KEY_FILE_NOTE).toContain('~/.claude/duet-data/.env')
   })
 
@@ -99,6 +104,8 @@ describe('key file', () => {
     for (const v of ['ab"cd', 'a\\ b', 'line1\nline2', '"leading', "it's", 'back\\slash\\', 'tab\there']) expect(parseEnvFile(upsertEnvLine('', 'K', v))).toEqual({ K: v })
     expect(parseEnvFile('K="abc" # it\'s "x"')).toEqual({ K: 'abc' })
     expect(parseEnvFile('K="a\\"b" # c')).toEqual({ K: 'a"b' })
+    // A double-quoted value that is not valid JSON (an unknown escape) is taken between its quotes as written.
+    expect(parseEnvFile('K="a\\qb"')).toEqual({ K: 'a\\qb' })
     expect(serializeEnv({ A: '1', B: 'x y' })).toBe('A=1\nB="x y"\n')
   })
 
@@ -195,7 +202,7 @@ describe('requests and replies', () => {
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"gpt-5","choices":[{"message":{"content":""}}]}' }, 20, at).note).toBe('ok 20ms gpt-5 · 1 token')
     // Codex 4298736527: the model the reply names is redacted and bounded before it reaches the note.
     expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${KEY}","choices":[{"message":{"content":"ok"}}]}` }, 20, at, [KEY]).note).toBe('ok 20ms [redacted] · 1 token')
-    expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${'m'.repeat(5000)}","choices":[{"message":{"content":"ok"}}]}` }, 20, at).note.length).toBeLessThan(100)
+    expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${'m'.repeat(5000)}","choices":[{"message":{"content":"ok"}}]}` }, 20, at).note.length).toBeLessThanOrEqual(99)
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms (model not named) · 1 token')
     // Codex 4297835969: a 2xx that is not a model list is a failed test, never a green ok.
     expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at)).toEqual({ ok: false, status: 200, ms: 20, model: '', note: '✕ 200 no model list in the reply', at })
@@ -243,7 +250,7 @@ describe('pane text', () => {
     expect(authTextOf(providerOf('ollama')!, { key: '', source: 'none' }, '')).toBe('localhost:11434')
     expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, '')).toBe('no URL set')
     expect(authTextOf(providerOf('custom')!, { key: KEY, source: 'file' }, 'https://gw.example.com/v1')).toBe('key …a1b2 · gw.example.com')
-    expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key')
+    expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key · gw.example.com')
     expect(testText(undefined)).toBe('untested')
     expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1 })).toBe('ok 412ms gemini-2.5-pro')
     expect(testText('running')).toBe('testing…')

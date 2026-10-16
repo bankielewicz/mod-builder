@@ -26,6 +26,8 @@ type World = {
   unreadable?: string
   /** fs.write fails with this text. */
   writeDeny?: string
+  /** The session folder `$.session.cwd()` answers. */
+  cwd?: string
 }
 type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; events: string[]; clock: ReturnType<typeof mock.clock> }
 
@@ -34,7 +36,7 @@ function engine(on: any, o: World = {}): Seen {
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
   on('agent.register', () => ({ value: { agent: 'duet:x' } }))
-  on('session.cwd', () => ({ value: '/w' }))
+  on('session.cwd', () => ({ value: o.cwd ?? '/w' }))
   on('session.id', () => ({ value: 's1' }))
   on('env.get', ($: any, e: any) => ({ value: ({ ...(o.noHome ? {} : { HOME: '/home/u' }), ...(o.env ?? {}) } as Record<string, string>)[e.name] }))
   on('fs.read', ($: any, e: any) => (o.unreadable && e.path === KEY_FILE ? { deny: o.unreadable } : e.path in seen.files ? { value: seen.files[e.path] } : { deny: 'ENOENT: no such file' }))
@@ -457,8 +459,10 @@ describe('/duet provider', () => {
     expect(seen.files[KEY_FILE]).toBe(`GEMINI_API_KEY=${KEY}\n`)
     await ui.unmount()
     seen.events.length = 0
+    seen.files[KEY_FILE] = `GEMINI_API_KEY=${KEY}\nXAI_API_KEY=${XAI}\n`
     await run($, 'provider remove google')
     expect(seen.events).toEqual(['write content', 'chmod'])
+    expect(seen.files[KEY_FILE]).toBe(`XAI_API_KEY=${XAI}\n`)
   })
 
   test('two key tests that finish together both land in the shared store (in-session serialization)', async ($, on) => {
@@ -481,7 +485,7 @@ describe('/duet provider', () => {
   })
 
   test('under codexFsScope project the saved note still warns when the session folder holds the key file (Codex 4298736579)', { options: { codexFsScope: 'project' } }, async ($, on) => {
-    const seen = engine(on, { files: { [KEY_FILE]: '' } })
+    const seen = engine(on, { files: { [KEY_FILE]: '' }, cwd: '/home/u' })
     await start($, '/home/u')
     await run($, 'provider key google')
     const ui = await mount($)
