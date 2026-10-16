@@ -1758,3 +1758,14 @@ export function configListText(values: OptionValues, logFile: string): string {
     values.logging === 'off' ? 'Log file: none (logging is off)' : logFile ? `Log file: ${logFile}` : 'Log file: not written yet this session'
   return ['mod-builder options (change one: /mod-builder config <option> <value>)', ...rows, log].join('\n')
 }
+
+/**
+ * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers, whole: a pane waiting undrawn
+ * (`isPlaced: false`, an unasked open on a narrow terminal) is no tab behind another, so it counts as not listed and the
+ * command's open seats it.
+ */
+export function paneAction(panes: readonly { id: string; isShown: boolean; isPlaced: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id && p.isPlaced)
+  return !pane ? 'open' : pane.isShown ? 'close' : 'show'
+}

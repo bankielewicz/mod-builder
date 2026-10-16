@@ -13,6 +13,8 @@ __DESCRIPTION__
 
 <!-- List every subcommand the mod answers, one line each. -->
 
+<!-- Pane mods: say how to reach the pane when other panes are open (ctrl+x tab: first tab, again the next, after the last the prompt; Esc returns the keys), and the optional binding {"bindings":[{"context":"Pane","bindings":{"ctrl+x n":"pane:next","ctrl+x p":"pane:previous"}}]} in ~/.claude/keybindings.json, which works while a pane holds the keyboard. Other mods: delete this. -->
+
 ## Install
 
 From a GitHub marketplace that lists it:

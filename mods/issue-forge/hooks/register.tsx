@@ -97,6 +97,8 @@ import {
   profileStatusText,
   pruneKeys,
   publishAsk,
+  paneAction,
+  pressQuestion,
   publishQuestion,
   readdWorktreeCommand,
   releasesOnEnd,
@@ -140,6 +142,14 @@ import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, Demo
 
 const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
+/** The pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: TITLE, columns: 76 }
+const SHOW_TEXT = 'bringing the pane to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
+const STILL_BEHIND_TOAST = `${TITLE} is still behind another tab: ctrl+x tab, then again until it shows.`
+/** After a start or a resume opened the pane behind another tab: where it is and how to reach it. */
+const BEHIND_TEXT = 'its pane is behind another tab (ctrl+x tab, then again until it shows)'
+/** How long after asking for the front the pane is read again (#31). */
+const FRONT_CHECK_MS = 500
 const GIT_TIMEOUT = 60_000
 /** The attempts a git call that writes the index or a ref makes against a held lock, a second apart (#28). */
 const LOCK_ATTEMPTS = 5
@@ -179,6 +189,8 @@ let drives = 0
 let driving: Drive | null = null
 /** The driven run as last written: the status line's badge. */
 let drivenLast: Run | null = null
+/** The run whose drive has its publish question open; a Publish or Stop press then asks no second one (PR #96 review). */
+let publishAsking: string | null = null
 /** Ends the long command running now (a stop, or its timeout). */
 let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
@@ -589,7 +601,7 @@ async function issueCheck($: EngineInterface, run: Run, repo: string | null): Pr
   if (view.exitCode !== 0) return block(`issue #${run.issue} not found: ${firstLine(view.stderr)}`, 'check the issue number or URL')
   const issue = JSON.parse(view.stdout) as { title: string; body: string; state: string; url: string }
   // gh issue view answers for a pull request's number too.
-  // Final: a pull request's number never becomes an issue's, so resume can't clear it (Change 0.6.0).
+  // Final: a pull request's number never becomes an issue's, so resume can't clear it (Change 0.7.0).
   if (isPullUrl(issue.url)) return { ...block(`#${run.issue} is a pull request, not an issue`, 'pick another issue'), isFinal: true }
   if (issue.state !== 'OPEN') return block(`issue #${run.issue} is ${issue.state.toLowerCase()}`, 'reopen it or pick another issue')
   return { title: issue.title, body: issue.body ?? '', url: issue.url }
@@ -1093,7 +1105,7 @@ async function stagedSince($: EngineInterface, root: string, ref: string): Promi
   return splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '-z', ref]))
 }
 
-/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.6.0); never a run another session took over. */
+/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.7.0); never a run another session took over. */
 async function recordNewPlugin($: EngineInterface, path: string): Promise<void> {
   const d = drivingNow()
   if (!d) return
@@ -1108,7 +1120,7 @@ async function manifestsAt($: EngineInterface, root: string, ref: string): Promi
 }
 
 /**
- * R4 and G8 (Change 0.6.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard
+ * R4 and G8 (Change 0.7.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard
  * refused, unless the base branch's tip has it. Checked before any test runs.
  */
 async function newPluginAt($: EngineInterface, run: Run, root: string) {
@@ -1331,7 +1343,11 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
           const checked = await updateRun($, key, stored => (stored?.id === runId && stored.step === 'ready' && isMine() ? advance(stored, { type: 'merged', merge }, at) : null))
           // One pressed while the result was written takes the run over: only a run still driven is asked about.
           if (!checked || !isMine()) return
-          if (!(await confirmPublish($, checked))) return
+          publishAsking = runId
+          const isYes = await confirmPublish($, checked).finally(() => {
+            if (publishAsking === runId) publishAsking = null
+          })
+          if (!isYes) return
         }
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, key)
@@ -1407,12 +1423,36 @@ function startDrive($: EngineInterface, run: Run, mayAsk = true): void {
 // ── Commands and buttons ──────────────────────────────────────────────────
 
 async function openPane($: EngineInterface): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: 76 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast(`${TITLE} needs a wider window. Widen it to see the pane, or watch the status line.`)
 }
 
-async function isOpen($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE)
+async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneAction>> {
+  return paneAction(await $.ui.panes(), PANE)
+}
+
+/** Whether the pane is open as a tab behind another; a start or a resume says so in its answer, and never takes the keyboard. */
+async function isBehind($: EngineInterface): Promise<boolean> {
+  return (await paneActionOf($).catch(() => 'open')) === 'show'
+}
+
+/**
+ * Asks for a pane that is a tab behind another to the front, with the keyboard, for a person who asked to see it (#31).
+ * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
+ */
+async function bringToFront($: EngineInterface): Promise<void> {
+  await $.ui.open({ ...PANE_ARGS, focus: true })
+  $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
+}
+
+async function warnIfBehind($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') $.ui.toast(STILL_BEHIND_TOAST)
+}
+
+/** An open for a command that names the pane: a tab behind another comes to the front, any other pane is opened as before. */
+async function openOrFront($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') void bringToFront($).catch(() => undefined)
+  else await openPane($)
 }
 
 /** The starting checkout's own profile text: it names the base and the menu's wording, never what runs. */
@@ -1460,7 +1500,7 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
 }
 
 /**
- * The start's own read of the issue (Change 0.6.0): when its body asks for the plugin to be built with mod-builder,
+ * The start's own read of the issue (Change 0.7.0): when its body asks for the plugin to be built with mod-builder,
  * the answer is the next steps, and nothing is stored. A failed read starts as before; preflight reports the cause.
  */
 async function newModStart($: EngineInterface, root: string, issue: number, ghRepo?: string): Promise<string | null> {
@@ -1555,9 +1595,10 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
   await prune($, at.repo)
   await update($, demoAtom, () => null)
+  const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, claimed)
-  return `starting ${issueLabel(run)}; the pane shows progress. Nothing is pushed until you say yes.`
+  return `starting ${issueLabel(run)}; ${isBehindNow ? BEHIND_TEXT : 'the pane shows progress'}. Nothing is pushed until you say yes.`
 }
 
 /**
@@ -1579,7 +1620,7 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const run = pick.run
   await setFocus($, run)
   if (!isActive(run)) return 'no run to resume here.'
-  // A final block is one resume can't clear (Change 0.6.0).
+  // A final block is one resume can't clear (Change 0.7.0).
   if (run.step === 'blocked' && run.blocked?.isFinal) return `#${run.issue} can't be resumed: ${run.blocked.reason}. /issue-forge stop ${run.issue} ends it.`
   const d = drivingNow()
   if (d?.runId === run.id) return `#${run.issue} is running already.`
@@ -1619,12 +1660,13 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const now = await $.clock.now()
   const driven = await updateRun($, key, stored => (isAsRead(stored, run) ? advance(back, { type: 'drive', session: sessionId }, now) : null))
   if (!driven) return movedOn(run)
+  const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, driven)
-  return `resuming #${back.issue} at ${back.step}.`
+  return `resuming #${back.issue} at ${back.step}${isBehindNow ? `; ${BEHIND_TEXT}` : ''}.`
 }
 
-async function publishRun($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
+async function publishRun($: EngineInterface, at: Repo | null, issue: number | null, byPress = false): Promise<string> {
   if (!at) return 'no run to publish here.'
   const { pick } = await pickFor($, at, issue, false)
   if (pick.kind === 'several') return severalText(pick.runs, 'publish', await lineCtx($))
@@ -1634,7 +1676,11 @@ async function publishRun($: EngineInterface, at: Repo | null, issue: number | n
   if (run.step !== 'ready') return `#${run.issue} isn't ready to publish (${run.step}).`
   const d = drivingNow()
   if (d && d.runId !== run.id) return `this session is driving #${d.issue}; /issue-forge handoff first, or publish #${run.issue} from another session.`
-  if (isDrivenElsewhere(run, sessionId) && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
+  if (byPress) {
+    // The drive's own publish question, while it is open, is this press's question: a second one would stack on it.
+    const refused = publishAsking === run.id ? null : await refusedPress($, 'publish', run, isDrivenElsewhere(run, sessionId))
+    if (refused) return refused
+  } else if (isDrivenElsewhere(run, sessionId) && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
   // A drive waiting on the publish question is taken over: when that question is answered, it finds the run moved on.
   if (driving?.runId === run.id) driving = null
   const now = await $.clock.now()
@@ -1644,7 +1690,7 @@ async function publishRun($: EngineInterface, at: Repo | null, issue: number | n
   return `publishing #${run.issue}: pushing ${run.branch} and opening a pull request against ${run.base}.`
 }
 
-async function stopRun($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
+async function stopRun($: EngineInterface, at: Repo | null, issue: number | null, byPress = false): Promise<string> {
   if (!at) return 'no active run here.'
   const { pick } = await pickFor($, at, issue, true)
   if (pick.kind === 'several') return severalText(pick.runs, 'stop', await lineCtx($))
@@ -1652,14 +1698,22 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   const run = pick.run
   await setFocus($, run)
   if (!isActive(run)) return 'no active run here.'
-  const isHere = drivingNow()?.runId === run.id
   // Another session's drive notices the stop within 5 s and ends itself (watch).
-  if (!isHere && isDrivenElsewhere(run, sessionId) && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
+  const isElsewhere = drivingNow()?.runId !== run.id && isDrivenElsewhere(run, sessionId)
+  if (byPress) {
+    // The drive's own publish question is open: a Stop question would stack on it.
+    if (publishAsking === run.id) return `#${run.issue}'s publish question is open; answer it first, then press Stop.`
+    const refused = await refusedPress($, 'stop', run, isElsewhere)
+    if (refused) return refused
+  } else if (isElsewhere && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
+  const isHere = drivingNow()?.runId === run.id
   if (isHere) endLocalDrive()
   const now = await $.clock.now()
   const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
   if (isHere) $.ui.status(undefined)
-  return `stopped #${run.issue}. Its branch ${(stopped ?? run).branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
+  // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
+  if (!stopped) return `#${run.issue} moved on before it could be stopped; /issue-forge status ${run.issue} says where.`
+  return `stopped #${run.issue}. Its branch ${stopped.branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
 }
 
 /** Ends this session's drive and clears it as the driver, keeping the step: any session can resume the run. */
@@ -1708,7 +1762,6 @@ async function showStatus($: EngineInterface): Promise<void> {
 async function startDemo($: EngineInterface, state: DemoState | null): Promise<void> {
   await update($, nowAtom, () => 0)
   await update($, demoAtom, () => state ?? 'running')
-  await openPane($)
 }
 
 async function stepDemo($: EngineInterface): Promise<void> {
@@ -1722,7 +1775,7 @@ async function endDemo($: EngineInterface): Promise<void> {
 type RunCommand = Extract<Command, { kind: 'start' | 'status' | 'resume' | 'publish' | 'stop' | 'handoff' }>
 
 /** A command about a run, by the issue it names (Change 0.3.0). */
-async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand): Promise<string> {
+async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand, byPress = false): Promise<string> {
   if (cmd.kind === 'start') return startRun($, at, cmd.issue, cmd.repo)
   const issue = cmd.issue ?? null
   switch (cmd.kind) {
@@ -1731,21 +1784,33 @@ async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand):
     case 'resume':
       return resumeRun($, at, issue)
     case 'publish':
-      return publishRun($, at, issue)
+      return publishRun($, at, issue, byPress)
     case 'stop':
-      return stopRun($, at, issue)
+      return stopRun($, at, issue, byPress)
     default:
       return handOffRun($, issue)
   }
 }
 
-/** A button acts on the run the pane shows (a demo only ends or ignores it), then the also line is read again. */
+/**
+ * A pane press of Stop or Publish asks first, whatever `confirmPublish` says: a stray key must not do either (#31). The
+ * command asks after its own refusals, about the run it picked, and the one question also covers a run another session
+ * drives (PR #96 review). A typed command stays immediate. Null goes on; otherwise what a no, a dismissal or no one to
+ * answer leaves, as the press's toast.
+ */
+async function refusedPress($: EngineInterface, kind: 'stop' | 'publish', run: Run, isElsewhere: boolean): Promise<string | null> {
+  const ask = pressQuestion(kind, run, await $.clock.now(), isElsewhere)
+  // The choice that changes nothing is listed first.
+  return (await askOr($, ask.question, [ask.no, ask.yes])) === ask.yes ? null : ask.kept
+}
+
+/** A button acts on the run the pane shows (a demo only ends or ignores it; Stop and Publish ask first), then the also line is read again. */
 async function press($: EngineInterface, kind: 'stop' | 'resume' | 'publish' | 'handoff'): Promise<void> {
   if (await read($, demoAtom)) return kind === 'stop' ? endDemo($) : undefined
   const at = await repoOf($)
   // Hand off acts on this session's drive, whichever run the pane shows.
   const issue = kind === 'handoff' ? undefined : ((await read($, focusAtom)) ?? undefined)
-  $.ui.toast(truncate(await runCommand($, at, { kind, ...(issue === undefined ? {} : { issue }) }), 80))
+  $.ui.toast(truncate(await runCommand($, at, { kind, ...(issue === undefined ? {} : { issue }) }, true), 80))
   if (at) await refreshOthers($, at.repo)
 }
 
@@ -1870,7 +1935,7 @@ export const register: Register = (on, raw) => {
     const action = guardAction(e, ctx)
     if (action.kind === 'deny') return { deny: action.reason }
     const call = action.kind === 'rewrite' ? ({ ...e, ...action.patch } as typeof e) : e
-    // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.6.0).
+    // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.7.0).
     const manifest = manifestOf(call, ctx, liveWork?.testGlobs ?? [], liveWork?.baseManifests ?? [])
     if (manifest && !(await $.fs.stat(manifest.absolute).then(() => true, () => false))) {
       await recordNewPlugin($, manifest.relative)
@@ -1897,9 +1962,13 @@ export const register: Register = (on, raw) => {
       const cmd = parseCommand(e.args)
       switch (cmd.kind) {
         case 'toggle': {
-          const wasOpen = await isOpen($)
-          void (wasOpen ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
-          return { text: wasOpen ? 'closed. /issue-forge to reopen.' : `opened. ${USAGE}` }
+          const action = await paneActionOf($)
+          if (action === 'show') {
+            void bringToFront($).catch(() => undefined)
+            return { text: SHOW_TEXT }
+          }
+          void (action === 'close' ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
+          return { text: action === 'close' ? 'closed. /issue-forge to reopen.' : `opened. ${USAGE}` }
         }
         case 'start':
         case 'status':
@@ -1914,6 +1983,8 @@ export const register: Register = (on, raw) => {
           return { text }
         }
         case 'demo':
+          // The open goes out before this hook returns, ahead of the demo's state: an open after that is unasked.
+          await openOrFront($).catch(() => undefined)
           void startDemo($, cmd.state).catch(() => undefined)
           return { text: `demo in the pane: [ Next state ] steps through ${DEMO_STATES.join(', ')}. Nothing real runs.` }
         default:
@@ -1932,7 +2003,7 @@ export const register: Register = (on, raw) => {
     const live = demo ? demoRun(demo, now) : await liveView($)
     const run = live.run
     const view = viewOf(run, live.isDriving, live.me)
-    // A final block is one resume can't clear (Change 0.6.0): no Resume button and no r in the hint.
+    // A final block is one resume can't clear (Change 0.7.0): no Resume button and no r in the hint.
     const canResume = (view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere'
     const others = live.others
     const canHandOff = live.isDriving && (view === 'running' || view === 'ready')
@@ -2005,7 +2076,7 @@ export const register: Register = (on, raw) => {
         {layout !== 'compact' && (
           <Text dimColor>
             {truncate(
-              [view === 'ready' ? 'p publish' : '', canResume ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab focuses the pane']
+              [view === 'ready' ? 'p publish' : '', canResume ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab: keys, again: next tab']
                 .filter(Boolean)
                 .join(' · '),
               cols,

@@ -46,7 +46,7 @@ before the phase's work is committed. Such a stop is final: `/issue-forge stop <
   it (with `N`, only when this session drives #N)
 - `/issue-forge stop [N]`: ends the run; its branch and commits are kept
 - `/issue-forge demo [state]`: every state of the pane, with nothing real running
-- `/issue-forge`: opens or closes the pane
+- `/issue-forge`: opens the pane, or closes it when it is shown. When it is open as a tab behind another pane, it comes to the front with the keyboard instead of closing; `Esc` returns the keyboard to the prompt
 
 Without `N`, a command means the run the pane shows, even a finished one. If the pane shows none, it
 means the repository's only active run; with several, it lists them and asks you to name one.
@@ -54,7 +54,23 @@ With no active run, `status` and `publish` mean the newest run started from this
 finished one.
 
 Give the pane the keyboard with `ctrl+x tab`. Its keys are `p` publish, `r` resume, `h` hand off,
-`s` stop, `t` status, and in the demo `n` next and `e` end.
+`s` stop, `t` status, and in the demo `n` next and `e` end. A key acts at once, so the two that change a live
+run ask first: Stop ("Stop run #N? Its branch and commits are kept.") and Publish (the question that names the
+branch and base), whatever `confirmPublish` says. They ask only once the command would act, so a press it would
+refuse says why at once. A run another session drives is named in that one question (`#N is driven by another
+session (for 2m05s). Stop run #N? …`). Answer no, or dismiss it, and a toast says the run was left as it is.
+Typed as `/issue-forge stop` or `/issue-forge publish`, they are immediate. A start or a resume while the pane is behind another tab says so in its answer and leaves the
+keyboard alone.
+
+Reaching the pane when other panes are open: `ctrl+x tab` shows the first tab and gives it the keyboard,
+each press after moves one tab right, and after the last tab the keyboard goes back to the prompt. `Esc` hands
+it back from any tab. A letter that is one of the pane's keys acts at once. To cycle without going through the
+first tab, bind `pane:next` and `pane:previous` (no default key) in `~/.claude/keybindings.json`; it works while a
+pane holds the keyboard:
+
+```json
+{"bindings":[{"context":"Pane","bindings":{"ctrl+x n":"pane:next","ctrl+x p":"pane:previous"}}]}
+```
 
 ## Set up a repository
 
@@ -161,7 +177,8 @@ starts nothing. If #N has an active run already, you get
 its status instead.
 
 A run records which session drives it. In any other session, Resume, Publish and Stop on that run ask
-`If that session has ended, take it over?` before they act. The mod can't tell a crashed session from a
+`If that session has ended, take it over?` before they act (a press of the pane's Stop or Publish asks its own
+question instead, which names the other session). The mod can't tell a crashed session from a
 live one, so it asks rather than assumes. The driving session checks every 5 seconds and stops its
 drive when another session stopped or took over its run; before a commit, a stash, the push and the pull
 request it checks at once. Resume writes only if the run is still as it read it. A session that ends lets go of its run, but
@@ -283,7 +300,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
-| Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, and publish (unless `confirmPublish` is off) |
+| Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, publish when a run reaches ready (unless `confirmPublish` is off), and a press of the pane's Stop or Publish, whatever `confirmPublish` says (one question, which also names a run another session drives) |
 | Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, or one that would create a new `.claude-plugin/plugin.json`, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the idle notice the run's own named agent sends the main conversation when it stops, which repeats the answer the pane shows; passes everything else) |
 
 The agents read the issue body, which anyone who can file an issue writes. Run it only on

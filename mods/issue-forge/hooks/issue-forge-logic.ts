@@ -657,7 +657,7 @@ export function gateG(p: Profile, baseline: Baseline | null, f: GateGFacts, root
   }
 }
 
-// ── New plugins (Change 0.6.0) ──────────────────────────────────────────
+// ── New plugins (Change 0.7.0) ──────────────────────────────────────────
 
 const BUILD = /(?<![\w:/-])build\b/i
 const WITH = /\bwith\b/i
@@ -1093,7 +1093,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
   if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
-  // The guard refused a manifest: the phase's gate blocks on it (Change 0.6.0).
+  // The guard refused a manifest: the phase's gate blocks on it (Change 0.7.0).
   if (ev.type === 'newPlugin') return isActive(run) ? { ...run, newPlugin: ev.path } : run
   if (ev.type === 'resume') {
     if (isWorking(run.step)) {
@@ -1306,7 +1306,7 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
 }
 
 /**
- * The live agent's edit of a Claude Code plugin manifest (Change 0.6.0): its path, absolute and relative to the
+ * The live agent's edit of a Claude Code plugin manifest (Change 0.7.0): its path, absolute and relative to the
  * run's folder. The guard refuses it when no such file exists yet: editing one that exists (a version bump) passes.
  * One at the merge base (`baseManifests`) isn't new, even while a phase has it removed (Codex 4290574826).
  */
@@ -1393,7 +1393,7 @@ const TRUST =
 
 /** A message reaches the main conversation; the mod reads only the final answer (PR #86 review). */
 const REPORT = 'Report only in your final answer: never send a message to the lead or another agent. The issue-forge mod reads your final answer when you stop.'
-/** Every phase's rules end with this (Change 0.6.0): a new plugin is mod-builder's job. */
+/** Every phase's rules end with this (Change 0.7.0): a new plugin is mod-builder's job. */
 const NO_NEW_PLUGIN = ' Never create a new Claude Code plugin (a new .claude-plugin/plugin.json): if the issue needs one, stop and say so.'
 /** Red writes the tests, so only red is told a fixture is fine (the owner's decision after PR #103 opened). */
 const FIXTURE_OK = ' A sample plugin under the test globs, as a test fixture, is fine.'
@@ -1755,7 +1755,7 @@ export function badgeOf(run: Run, now: number): string {
   return `#${run.issue} ${stepLabel(run)}${t ? ` · ${elapsed(now - t.startedAt)}` : ''}`
 }
 
-/** What follows a block's next step: resume, or for a block resume can't clear, stop (Change 0.6.0). */
+/** What follows a block's next step: resume, or for a block resume can't clear, stop (Change 0.7.0). */
 export function afterBlock(run: Run): string {
   return run.blocked?.isFinal ? `/issue-forge stop ${run.issue}` : '/issue-forge resume'
 }
@@ -2052,7 +2052,7 @@ export function startChoices(ctx: StartContext): StartMenu | null {
   const middle: StartMenu['options'] = isDrivenElsewhere(other, me)
     ? [{ label: `Take over #${o} here (its session stops it, or has crashed)`, action: { kind: 'takeOver', issue: o } }]
     : [
-        // A final block refuses resume (Change 0.6.0), so the menu doesn't offer it (PR #103 /code-review).
+        // A final block refuses resume (Change 0.7.0), so the menu doesn't offer it (PR #103 /code-review).
         ...(other.blocked?.isFinal ? [] : [{ label: `Resume #${o} here (${stateOf(other, me, now)})`, action: { kind: 'resume', issue: o } as StartAction }]),
         { label: `Stop #${o}, then start #${issue}`, action: { kind: 'stopThenStart', issue: o } },
       ]
@@ -2079,6 +2079,19 @@ export function keepText(issue: number): string {
 
 export function takeOverQuestion(run: Run, now: number): string {
   return `#${run.issue} is driven by another session (for ${drivenFor(run, now)}). If that session has ended, take it over?`
+}
+
+/**
+ * What a pane press of Stop or Publish asks (#31): the question, the choice that acts, the one that doesn't, and what a no
+ * answers, with the typed command that acts without asking. A run another session drives is named ahead of the question,
+ * so one question covers both (PR #96 review).
+ */
+export function pressQuestion(kind: 'stop' | 'publish', run: Run, now: number, isElsewhere: boolean): { question: string; yes: string; no: string; kept: string } {
+  const ask =
+    kind === 'stop'
+      ? { question: `Stop run #${run.issue}? Its branch and commits are kept.`, yes: 'Stop the run', no: 'Keep it running', kept: `left #${run.issue} as it is; /issue-forge stop ${run.issue} stops it.` }
+      : { question: publishQuestion(run), yes: 'Publish', no: 'Not now', kept: `left #${run.issue} unpublished; /issue-forge publish ${run.issue} publishes it.` }
+  return isElsewhere ? { ...ask, question: `#${run.issue} is driven by another session (for ${drivenFor(run, now)}). ${ask.question}` } : ask
 }
 
 export function elsewhereText(issue: number): string {
@@ -2193,4 +2206,15 @@ export function checkoutWorkspaceOf(text: string | null): Workspace {
 /** A session that ends lets go of its run; after /clear or /resume the process, and its drive, go on. */
 export function releasesOnEnd(reason: string): boolean {
   return reason !== 'clear' && reason !== 'resume'
+}
+
+/**
+ * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers, whole: a pane waiting undrawn
+ * (`isPlaced: false`, an unasked open on a narrow terminal) is no tab behind another, so it counts as not listed and the
+ * command's open seats it.
+ */
+export function paneAction(panes: readonly { id: string; isShown: boolean; isPlaced: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id && p.isPlaced)
+  return !pane ? 'open' : pane.isShown ? 'close' : 'show'
 }

@@ -13,7 +13,9 @@ Every drawn mod accounts for each row: draw it, or write "n/a: why" in the SPEC.
 | **Folded** | Pane closed. What remains? | `$.ui.status` badge, e.g. `12 working · 30 done` |
 | **Too narrow** | `ui.open` returned `isPlaced: false` | Toast: "<Name> needs a wider window. Widen it to see the pane." (add "or watch the status line" when the mod keeps one) |
 | **Survey** | (bands) `e.props.hasSurvey` | Step aside: `return rest` |
-| **Focus** | (panes) `e.props.isFocused` | Brighter border or selected row; hotkeys active |
+| **Focus** | (panes) `e.props.isFocused` | Brighter border or selected row; hotkeys active (a letter that is a hotkey acts at once; Esc returns the keys) |
+
+A pane behind another tab isn't drawn: the command's answer, the toast and the status line carry its state.
 
 ## Widths (by `e.props.bodyColumns`)
 

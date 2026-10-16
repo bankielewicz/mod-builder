@@ -73,9 +73,25 @@ on('command.run', { command: NAME }, async ($, e) => {
 ```
 
 - Every mod has a `demo` subcommand that shows every state.
-- Toggling a pane checks `(await $.ui.panes()).some(p => p.id === NAME && p.isPlaced)` rather than a
-  saved flag. A pane that waits undrawn (an unasked open on a narrow terminal) is open but not placed:
-  the person's command seats it with `$.ui.open`, so open it rather than fold it.
+- A bare pane command reads `paneAction(await $.ui.panes(), NAME)` (a pure rule in the mod's logic
+  module; the pane-command archetype has it) rather than a saved flag. Three states: `open` when the
+  pane isn't listed, `close` when the surface shows it (`isShown`), and `show` when it is open as a
+  tab behind another pane. Closing a `show` would lose a pane the person never saw. For `show`, answer
+  at once, then ask for the front in the detached block: `$.ui.open({ …, focus: true })`, and read
+  `$.ui.panes()` again in a `$.clock.after(500, …)` callback; a pane whose `isShown` is still false is
+  named in a toast (`<Title> is still behind another tab: ctrl+x tab, then again until it shows.`).
+  A pane that waits undrawn (an unasked open on a narrow terminal) is open but not placed: it is no
+  tab behind another, and the person's command seats it with `$.ui.open`. Pass `$.ui.panes()` whole:
+  `paneAction` counts a row with `isPlaced: false` as not listed, so the command opens it (and
+  `openPane` toasts the narrow window) rather than folding it or asking for the front.
+- Take the keyboard (`focus: true`) only on an explicit request to see the pane: a bare command's
+  `show`, a `demo`, a command that names something in the pane. Never on a start, a resume or a
+  background open.
+- A pane hotkey that stops, publishes or deletes asks first (`$.ui.ask`), whatever the mod's options
+  say; the same action typed as a command stays immediate. A letter that is a hotkey acts at once, so a
+  stray key must not do any of those. Hotkeys that only read or re-run something are left as they are,
+  on purpose: duet's `r` (review; its sending to Codex is governed by `codexConsent`) and Mod Lab's `t`
+  and `v` (run tests, validate).
 
 ## Panes, bands, status
 

@@ -1711,6 +1711,77 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
   })
 })
 
+describe('paneAction: one rule for a bare pane command (#31)', () => {
+  // Read off the namespace, so a rule that is not there yet fails its assertion, not the import.
+  type PaneRow = { id: string; isShown: boolean; isPlaced: boolean }
+  const paneAction = (panes: readonly PaneRow[], id: string): string | undefined =>
+    (logic as unknown as { paneAction?: (panes: readonly PaneRow[], id: string) => string }).paneAction?.(panes, id)
+
+  test('a pane that is not listed opens, whatever other panes are', () => {
+    expect(paneAction([], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: false, isPlaced: true }], 'x')).toBe('open')
+  })
+
+  test('a listed pane the surface shows closes', () => {
+    expect(paneAction([{ id: 'x', isShown: true, isPlaced: true }], 'x')).toBe('close')
+  })
+
+  test('a listed pane that is a tab behind another shows, rather than closing', () => {
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
+  })
+
+  test('only the entry with the id decides: another pane shown or hidden changes nothing', () => {
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }, { id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'y', isShown: false, isPlaced: true }, { id: 'x', isShown: true, isPlaced: true }], 'x')).toBe('close')
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }, { id: 'y', isShown: true, isPlaced: true }], 'y')).toBe('close')
+  })
+
+  test('a pane waiting undrawn (isPlaced: false) is no tab behind another: it counts as not listed, and opens (PR #96 review, Codex P2)', () => {
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: false }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'x', isShown: true, isPlaced: false }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }, { id: 'x', isShown: false, isPlaced: false }], 'x')).toBe('open')
+  })
+
+  test('it takes what $.ui.panes() answers, whole entries included', () => {
+    const entry = (id: string, isShown: boolean) => ({ id, title: id, isShown, isFocused: false, isPlaced: true })
+    expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet-config')).toBe('show')
+    expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet')).toBe('close')
+  })
+})
+
+describe('pressQuestion: what a Stop or Publish press asks, and says when nothing is done (#31, PR #96 review)', () => {
+  // Read off the namespace, so a rule that is not there yet fails its assertion, not the import.
+  type Ask = { question: string; yes: string; no: string; kept: string }
+  const pressQuestion = (kind: 'stop' | 'publish', run: Run, now: number, isElsewhere: boolean): Ask | undefined =>
+    (logic as unknown as { pressQuestion?: (kind: 'stop' | 'publish', run: Run, now: number, isElsewhere: boolean) => Ask }).pressQuestion?.(kind, run, now, isElsewhere)
+  const ready = (extra: Partial<Run> = {}): Run => ({ ...newRun('16-0', ROOT, 16, 0), step: 'ready', branch: 'issue-16-fix-it', base: 'main', ...extra })
+
+  test('Stop asks to stop the run, the choice that acts named Stop the run; the answer to a no says how to stop it without the question', () => {
+    expect(pressQuestion('stop', ready(), 0, false)).toEqual({
+      question: 'Stop run #16? Its branch and commits are kept.',
+      yes: 'Stop the run',
+      no: 'Keep it running',
+      kept: 'left #16 as it is; /issue-forge stop 16 stops it.',
+    })
+  })
+
+  test('Publish asks the publish question; the answer to a no says how to publish without it', () => {
+    expect(pressQuestion('publish', ready(), 0, false)).toEqual({
+      question: 'Push issue-16-fix-it and open a pull request against main?',
+      yes: 'Publish',
+      no: 'Not now',
+      kept: 'left #16 unpublished; /issue-forge publish 16 publishes it.',
+    })
+  })
+
+  test('a run another session drives is named in the one question, ahead of what the press does', () => {
+    const elsewhere = ready({ step: 'green', driver: { session: 's-other', since: 0 } })
+    expect(pressQuestion('stop', elsewhere, 125_000, true)?.question).toBe('#16 is driven by another session (for 2m05s). Stop run #16? Its branch and commits are kept.')
+    expect(pressQuestion('publish', ready({ driver: { session: 's-other', since: 0 } }), 125_000, true)?.question).toBe('#16 is driven by another session (for 2m05s). Push issue-16-fix-it and open a pull request against main?')
+  })
+})
+
 // Issue #26: a fork clone, where origin is the contributor's fork and another remote is the project. A run keeps the
 // remote it fetches the base from (`baseRemote`) and the fork it pushes to (`headRepo`, `host/owner/repo`).
 describe('a fork clone: the base remote, the fork check and the pull request head (#26)', () => {
@@ -1889,9 +1960,9 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
   })
 })
 
-// Change 0.6.0: a new Claude Code plugin is mod-builder's job. A start refuses an issue that asks to build it with
+// Change 0.7.0: a new Claude Code plugin is mod-builder's job. A start refuses an issue that asks to build it with
 // /mod-builder:build; gates R, G and F block a new manifest as a final block with next steps.
-describe('new plugins are built with mod-builder, not issue-forge (Change 0.6.0)', () => {
+describe('new plugins are built with mod-builder, not issue-forge (Change 0.7.0)', () => {
   /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
   function helper<A extends unknown[], R>(name: string): (...args: A) => R {
     const fn = (logic as Record<string, unknown>)[name]
@@ -2056,7 +2127,7 @@ describe('new plugins are built with mod-builder, not issue-forge (Change 0.6.0)
   })
 })
 
-describe('the guard and new plugins (Change 0.6.0)', () => {
+describe('the guard and new plugins (Change 0.7.0)', () => {
   const manifestOf = (e: Record<string, unknown>, ctx: { liveAgent: string | null; known: Set<string>; workRoot: string | null; root: string | null }) =>
     (logic as unknown as { manifestOf?: (e: Record<string, unknown>, ctx: unknown) => { absolute: string; relative: string } | null }).manifestOf?.(e, ctx)
   const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
@@ -2077,7 +2148,7 @@ describe('the guard and new plugins (Change 0.6.0)', () => {
   })
 })
 
-describe('a plugin fixture under the test globs is test data (Change 0.6.0, owner\'s decision after the PR opened)', () => {
+describe('a plugin fixture under the test globs is test data (Change 0.7.0, owner\'s decision after the PR opened)', () => {
   const FIXTURE = 'tests/fixtures/sample/.claude-plugin/plugin.json'
   const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs?: readonly string[]) =>
     (logic as unknown as { manifestOf?: (e: Record<string, unknown>, ctx: unknown, testGlobs?: readonly string[]) => unknown }).manifestOf?.(e, ctx, testGlobs)
