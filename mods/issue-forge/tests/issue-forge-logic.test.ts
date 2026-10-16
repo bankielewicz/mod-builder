@@ -1748,4 +1748,25 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
     expect(plain.baseRemote).toBeUndefined()
     expect(plain.headRepo).toBeUndefined()
   })
+  // PR #87 review: what origin's fetch URL and each push URL name, as resolved, decide the fork (the URLs are never kept).
+  test('forkOfOrigin: every push URL names one repository on the project\'s host that isn\'t the project, and the fetch URL is that fork or the project', () => {
+    const forkOfOrigin = helper<[unknown, unknown[], string], string | null>('forkOfOrigin')
+    const PIN = 'github.com/o/r'
+    const FORK = 'github.com/me/r'
+    const other = (repo: string | null) => ({ other: repo })
+    expect(forkOfOrigin(other(FORK), [other(FORK)], PIN)).toBe(FORK)
+    // Fetching from the project and pushing to the fork is a fork clone too.
+    expect(forkOfOrigin('match', [other(FORK)], PIN)).toBe(FORK)
+    // The same fork in another case is one fork; the first spelling is kept.
+    expect(forkOfOrigin(other(FORK), [other(FORK), other('github.com/Me/R')], PIN)).toBe(FORK)
+    // A fetch URL that is a third repository, or one that can't be read: ls-remote origin would ask what nothing checked.
+    expect(forkOfOrigin(other('github.com/x/r'), [other(FORK)], PIN)).toBe(null)
+    expect(forkOfOrigin(other(null), [other(FORK)], PIN)).toBe(null)
+    // A push URL that is the project, can't be read, is on another host, or is a second repository: no fork.
+    expect(forkOfOrigin(other(FORK), [other(FORK), 'match'], PIN)).toBe(null)
+    expect(forkOfOrigin(other(FORK), [other(FORK), other(null)], PIN)).toBe(null)
+    expect(forkOfOrigin(other('gitlab.com/me/r'), [other('gitlab.com/me/r')], PIN)).toBe(null)
+    expect(forkOfOrigin(other(FORK), [other(FORK), other('github.com/you/r')], PIN)).toBe(null)
+    expect(forkOfOrigin(other(FORK), [], PIN)).toBe(null)
+  })
 })

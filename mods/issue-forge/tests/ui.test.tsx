@@ -111,6 +111,8 @@ type World = {
   canonical?: Record<string, string>
   /** Remotes other than origin, name to fetch URL: `git remote` lists origin and these, sorted; absent, origin alone (#26). */
   remotes?: Record<string, string>
+  /** `gh repo view <repo> --json nameWithOwner,url` for this one repository answers only once `until` settles. */
+  viewHold?: { repo: string; until: Promise<void> }
   /** Per folder, remotes whose fetch URL differs there (a worktree's own config); absent, `remotes` everywhere. */
   remotesIn?: Record<string, Record<string, string>>
   /** `gh repo view <host/owner/repo> --json isFork,parent`: the parent as `owner/name`, or null for a repository that isn't a fork; absent, a fork of o/r (#26). */
@@ -262,7 +264,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'nameWithOwner,url') {
         const [host = '', owner = '', name = ''] = (a[2] ?? '').split('/')
         const nameWithOwner = world.canonical?.[a[2] ?? ''] ?? `${owner}/${name}`
-        return ok(JSON.stringify({ nameWithOwner, url: `https://${host}/${nameWithOwner}` }))
+        const answer = ok(JSON.stringify({ nameWithOwner, url: `https://${host}/${nameWithOwner}` }))
+        return world.viewHold?.repo === a[2] ? world.viewHold.until.then(() => answer) : answer
       }
       if (a[0] === 'issue') {
         world.beforeIssueView?.()
@@ -2287,6 +2290,48 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
     expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
     expect(isPublished(w)).toBe(false)
+  })
+
+  // PR #87 review: origin's fetch URL is part of the fork check, and each URL is read and resolved once.
+  test("start: an origin that fetches from a third repository though it pushes to a fork is no fork clone: the origin block, and the fork isn't looked up", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'https://github.com/x/r.git', pushUrl: 'https://github.com/me/r.git' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from x/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv).not.toContainEqual(FORK_VIEW)
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test('start: an origin that fetches from the project and pushes to the fork is a fork clone', async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'https://github.com/o/r.git', pushUrl: 'https://github.com/me/r.git' })
+    await start($)
+    await started($, w)
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+  })
+
+  test("start: preflight reads origin's push URLs once and asks gh about the fork's name once", async ($, on) => {
+    const w = engine(on, FORK)
+    await start($)
+    await started($, w)
+    const firstFetch = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'fetch')
+    const before = w.argv.slice(0, firstFetch).map(a => a.join(' '))
+    expect(before.filter(a => a === 'git remote get-url --push --all origin')).toHaveLength(1)
+    expect(before.filter(a => a === 'gh repo view github.com/me/r --json nameWithOwner,url')).toHaveLength(1)
+  })
+
+  test("start: the other remotes are looked up together, so one slow gh answer doesn't hold up the rest", async ($, on) => {
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    const w = engine(on, { ...FORK, remotes: { fork2: 'https://github.com/x/r.git', upstream: 'https://github.com/o/r.git' }, viewHold: { repo: 'github.com/x/r', until: held } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a.join(' ') === 'gh repo view github.com/x/r --json nameWithOwner,url'), 'the held lookup')
+    for (let i = 0; i < 10; i++) await w.clock.advance(5)
+    expect(w.argv).toContainEqual(['git', 'remote', 'get-url', 'upstream'])
+    release()
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
   })
 
   // PR #87 review (Codex): the stored base remote is a name; what it fetches from is read again where it is fetched.
