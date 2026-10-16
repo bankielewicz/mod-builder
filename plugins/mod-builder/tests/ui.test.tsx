@@ -61,6 +61,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     /** How many times `session.root` was read. */
     rootReads: 0,
     failReads: [] as string[],
+    /** Folders whose `$.fs.list` fails, as a listing on /mnt/c can during an atomic save. */
+    failLists: [] as string[],
     /** Every path `$.fs.exists` was asked about. */
     probed: [] as string[],
     denySet: '',
@@ -129,6 +131,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('fs.list', async ($, e) => {
     if (listHold && lists++ === 0) await listHold
     const path = (e as { path: string }).path
+    if (seen.failLists.includes(path)) return { deny: 'EBUSY: resource busy or locked' }
     if (seen.holdList?.path === path && !seen.holdList.isReached) {
       seen.holdList.isReached = true
       await seen.holdList.until
@@ -179,7 +182,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.panes', () => ({ value: [...seen.panes.map(id => ({ id, title: id, isPlaced: true })), ...seen.waiting.map(id => ({ id, title: id, isPlaced: false }))] }) as never)
   on('ui.close', ($, e) => (seen.closed.push((e as { id: string }).id), { value: undefined }) as never)
   on('prompt.fill', ($, e) => (seen.filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }) as never)
-  return { seen, clock }
+  // `stored` stands in for another session sharing the store file.
+  return { seen, clock, stored }
 }
 
 async function start($: Engine) {
@@ -1311,6 +1315,363 @@ describe('nested logic edit during a generation (#15, Codex 4254194992)', () => 
     const r = await nested($, on, false)
     expect(r.lines).not.toMatch(/update Logic/)
     expect(r.ready).toBe(true)
+  })
+})
+
+describe('an edit that only deletes or renames a logic or test file (#75)', () => {
+  const manifest = (v: string) => `{ "name": "git-branch", "version": "${v}", "description": "The git-branch mod." }`
+  const market = (v: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: v }] })
+  const at = (path: string) => `${MODS}/git-branch/${path}`
+  const report = ($: Engine, status: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+
+  /**
+   * A green git-branch with the `extra` files is edited. SPEC, README and the manifest are saved (0.1.0 to
+   * 0.1.1, listed), the `remove` files are deleted and the `add` files appear. No logic or test file is saved:
+   * every one left on disk keeps its old mtime, as a rename leaves it. `repeat` sends the Spec report a second
+   * time once the files have changed. Returns the mod's row after the turn that redoes Validate and Test.
+   */
+  async function scenario($: Engine, on: On, change: { extra: string[]; remove: string[]; add?: string[]; repeat?: boolean }) {
+    const mtime: Mtimes = { ms: 1000 }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      ...Object.fromEntries(change.extra.map(path => [at(path), ''])),
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+    await report($, 'running')
+    await adv(10)
+    await report($, 'passed')
+
+    // The edit: files deleted or renamed, SPEC, README and the manifest saved, the version bumped and listed.
+    for (const path of change.remove) delete disk[at(path)]
+    for (const path of change.add ?? []) disk[at(path)] = ''
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+    mtime.ms = t + 100
+    mtime.byPath = Object.fromEntries(Object.keys(disk).filter(path => path.startsWith(at('hooks/')) || path.startsWith(at('tests/'))).map(path => [path, 1000]))
+    await adv(200)
+    if (change.repeat) {
+      await report($, 'running')
+      await adv(10)
+      await report($, 'passed')
+      await adv(10)
+    }
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const row = (await ui.find({ key: 'row-git-branch' }))?.text
+    await ui.unmount()
+    return { row }
+  }
+
+  test('deleting only hooks/lib/parser.ts (plus SPEC, README and the manifest bump) reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/lib/parser.ts'], remove: ['hooks/lib/parser.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('deleting only a top-level tests/*.test.ts while another test file remains reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['tests/extra.test.ts'], remove: ['tests/extra.test.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('deleting only a top-level logic module while another remains reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/old-logic.ts'], remove: ['hooks/old-logic.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('renaming a nested logic file, which keeps its mtime, reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/lib/parser.ts'], remove: ['hooks/lib/parser.ts'], add: ['hooks/lib/lexer.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('a second Spec running after the file is gone keeps the baseline the edit began with', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/lib/parser.ts'], remove: ['hooks/lib/parser.ts'], repeat: true })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  // The scan that ends one edit, with a repeated Spec running read after it, begins the next edit itself (#12).
+  test('the next edit, begun while a scan ends the last one, that only deletes a nested logic file reaches ready to share (guard, PR #97 review)', OPTIONS, async ($, on) => {
+    // SPEC, README and the manifest are newer than every edit below; the logic and test files get their own mtimes.
+    const mtime: Mtimes = { ms: Date.parse('2027-01-01T00:00:00Z'), byPath: {} }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [at('hooks/lib/parser.ts')]: '',
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    const recheck = async () => {
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await adv(500)
+      await ui.press({ key: 'test' })
+      await adv(500)
+      await ui.unmount()
+    }
+    await start($)
+    await adv(10)
+    await recheck()
+
+    // The first edit saves its logic and test files, is redone and re-listed at 0.1.1: it is about to end.
+    await adv(5000)
+    await report($, 'running')
+    for (const path of ['hooks/git-branch-logic.ts', 'tests/git-branch-logic.test.ts', 'hooks/lib/parser.ts']) mtime.byPath![at(path)] = t + 1
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await recheck()
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+
+    // The scan that ends it reads the generations, then waits at git-branch's folder; the next edit begins meanwhile.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await adv(10)
+    expect(seen.holdList.isReached).toBe(true)
+    await adv(5000)
+    await report($, 'running')
+    await adv(10)
+    release()
+    await adv(1000)
+
+    // The next edit only deletes the nested file (no logic or test file is saved), bumps to 0.1.2 and re-lists it.
+    delete disk[at('hooks/lib/parser.ts')]
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.2')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.2')
+    await report($, 'passed')
+    await adv(10)
+    await recheck()
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ ready to share$/)
+  })
+
+  test('a logic file saved after the last scan, before the edit begins, does not redo Logic for it (PR #97 review)', OPTIONS, async ($, on) => {
+    const mtime: Mtimes = { ms: 1000, byPath: {} }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+
+    // Saved outside Claude (an editor, a git checkout), with no scan since: the last scan saw the file before it.
+    mtime.byPath![at('hooks/git-branch-logic.ts')] = t
+    await adv(100)
+    await report($, 'running')
+    await adv(10)
+    // The edit saves SPEC, README and the manifest (bumped and re-listed), and no logic or test file.
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+    for (const path of ['SPEC.md', 'README.md', '.claude-plugin/plugin.json']) mtime.byPath![at(path)] = t
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+
+    ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Logic for this change$/)
+  })
+
+  test('a logic file saved before the repeated Spec running that begins the next edit, after its scan read the folder, does not redo Logic for it (PR #97 review)', OPTIONS, async ($, on) => {
+    // SPEC, README and the manifest are newer than every edit below; the logic and test files get their own mtimes.
+    const mtime: Mtimes = { ms: Date.parse('2027-01-01T00:00:00Z'), byPath: {} }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      // Listed after git-branch, so a scan held at its folder has read git-branch's already.
+      ...modFiles('zz-other'),
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    const recheck = async () => {
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await adv(500)
+      await ui.press({ key: 'test' })
+      await adv(500)
+      await ui.unmount()
+    }
+    await start($)
+    await adv(10)
+    await recheck()
+
+    // The first edit saves its logic and test files, is redone and re-listed at 0.1.1: it is about to end.
+    await adv(5000)
+    await report($, 'running')
+    for (const path of ['hooks/git-branch-logic.ts', 'tests/git-branch-logic.test.ts']) mtime.byPath![at(path)] = t + 1
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await recheck()
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+
+    // The scan that ends it has read git-branch's folder and waits at the next one.
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/zz-other`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await adv(10)
+    expect(seen.holdList.isReached).toBe(true)
+    // Meanwhile a logic file is saved outside Claude, and then the next edit begins.
+    await adv(5000)
+    mtime.byPath![at('hooks/git-branch-logic.ts')] = t
+    await adv(10)
+    await report($, 'running')
+    await adv(10)
+    release()
+    await adv(1000)
+
+    // The next edit saves no logic or test file; it bumps to 0.1.2 and re-lists it.
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.2')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.2')
+    await report($, 'passed')
+    await adv(10)
+    await recheck()
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Logic for this change$/)
+  })
+
+  /**
+   * A green git-branch with hooks/lib/parser.ts is edited: SPEC, README and the manifest are saved (0.1.1,
+   * listed), and no logic or test file. `hooks/lib` can't be listed while `failAt` says so: at the report that
+   * begins the edit only, or from just after it to the end. Returns the mod's row after the turn that redoes Validate and Test.
+   */
+  async function unlistedScenario($: Engine, on: On, failAt: 'start' | 'edit') {
+    const mtime: Mtimes = { ms: 1000, byPath: {} }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [at('hooks/lib/parser.ts')]: '',
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+
+    if (failAt === 'start') seen.failLists = [at('hooks/lib')]
+    await report($, 'running')
+    await adv(10)
+    seen.failLists = failAt === 'edit' ? [at('hooks/lib')] : []
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+    for (const path of ['SPEC.md', 'README.md', '.claude-plugin/plugin.json']) mtime.byPath![at(path)] = t
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const row = (await ui.find({ key: 'row-git-branch' }))?.text
+    await ui.unmount()
+    return row
+  }
+
+  test('a folder under hooks/ that cannot be listed as the edit begins leaves no baseline, rather than one missing its files (PR #97 review)', OPTIONS, async ($, on) => {
+    expect(await unlistedScenario($, on, 'start')).toMatch(/ edit · update Logic for this change$/)
+  })
+
+  test('a folder under hooks/ that cannot be listed during the edit is no delete: Logic is not redone for it (PR #97 review)', OPTIONS, async ($, on) => {
+    expect(await unlistedScenario($, on, 'edit')).toMatch(/ edit · update Logic for this change$/)
+  })
+
+  test('a repeat a session on 0.2.20 wrote (no repeatedFrom) begins the next edit from the scan\'s facts (PR #97 review)', OPTIONS, async ($, on) => {
+    const mtime: Mtimes = { ms: Date.parse('2027-01-01T00:00:00Z'), byPath: {} }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [at('hooks/lib/parser.ts')]: '',
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { seen, clock, stored } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    const recheck = async () => {
+      const ui = await mountPane($)
+      await ui.press({ key: 'validate' })
+      await adv(500)
+      await ui.press({ key: 'test' })
+      await adv(500)
+      await ui.unmount()
+    }
+    await start($)
+    await adv(10)
+    await recheck()
+    await adv(5000)
+    await report($, 'running')
+    for (const path of ['hooks/git-branch-logic.ts', 'tests/git-branch-logic.test.ts', 'hooks/lib/parser.ts']) mtime.byPath![at(path)] = t + 1
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await recheck()
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'edited' } as never)
+    await adv(10)
+    expect(seen.holdList.isReached).toBe(true)
+    // Meanwhile another session, on 0.2.20, records the repeat as it did: a stamp, and no baseline of its own.
+    await adv(5000)
+    const key = `modlab:generations:${MODS}`
+    const generations = JSON.parse(stored.get(key)!) as Record<string, object>
+    stored.set(key, JSON.stringify({ ...generations, 'git-branch': { ...generations['git-branch'], repeatedAt: t } }))
+    release()
+    await adv(1000)
+
+    // The next edit reports its Spec again, then only deletes the nested file, bumps to 0.1.2 and re-lists it.
+    await report($, 'running')
+    await adv(10)
+    delete disk[at('hooks/lib/parser.ts')]
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.2')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.2')
+    await report($, 'passed')
+    await adv(10)
+    await recheck()
+
+    const ui = await mountPane($)
+    expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ ready to share$/)
   })
 })
 
