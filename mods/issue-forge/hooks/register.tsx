@@ -118,10 +118,12 @@ import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, 
 
 const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
+/** The pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: TITLE, columns: 76 }
 const SHOW_TEXT = 'bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
 const STILL_BEHIND_TOAST = `${TITLE} is still behind another tab: ctrl+x tab, then again until it shows.`
 /** After a start or a resume opened the pane behind another tab: where it is and how to reach it. */
-const BEHIND = '(ctrl+x tab, then again until it shows)'
+const BEHIND_TEXT = 'its pane is behind another tab (ctrl+x tab, then again until it shows)'
 /** How long after asking for the front the pane is read again (#31). */
 const FRONT_CHECK_MS = 500
 const GIT_TIMEOUT = 60_000
@@ -1112,7 +1114,7 @@ function startDrive($: EngineInterface, run: Run, mayAsk = true): void {
 // ── Commands and buttons ──────────────────────────────────────────────────
 
 async function openPane($: EngineInterface): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: TITLE, columns: 76 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast(`${TITLE} needs a wider window. Widen it to see the pane, or watch the status line.`)
 }
 
@@ -1130,7 +1132,7 @@ async function isBehind($: EngineInterface): Promise<boolean> {
  * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
  */
 async function bringToFront($: EngineInterface): Promise<void> {
-  await $.ui.open({ id: PANE, title: TITLE, columns: 76, focus: true })
+  await $.ui.open({ ...PANE_ARGS, focus: true })
   $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
 }
 
@@ -1266,7 +1268,7 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, claimed)
-  return `starting ${issueLabel(run)}; ${isBehindNow ? `its pane is behind another tab ${BEHIND}` : 'the pane shows progress'}. Nothing is pushed until you say yes.`
+  return `starting ${issueLabel(run)}; ${isBehindNow ? BEHIND_TEXT : 'the pane shows progress'}. Nothing is pushed until you say yes.`
 }
 
 /**
@@ -1329,7 +1331,7 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, driven)
-  return `resuming #${back.issue} at ${back.step}${isBehindNow ? `; its pane is behind another tab ${BEHIND}` : ''}.`
+  return `resuming #${back.issue} at ${back.step}${isBehindNow ? `; ${BEHIND_TEXT}` : ''}.`
 }
 
 async function publishRun($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {

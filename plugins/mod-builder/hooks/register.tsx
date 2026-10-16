@@ -17,6 +17,8 @@ import * as Lab from './mod-builder-logic'
  */
 
 const PANE = 'modlab'
+/** The pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: 'Mod Lab', columns: 80 }
 const TOOL = 'lab_report'
 const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
@@ -754,7 +756,7 @@ const isPaneOpen = async ($: Engine): Promise<boolean> => (await $.ui.panes()).s
 const isPaneShown = async ($: Engine): Promise<boolean> => (await $.ui.panes()).some(pane => pane.id === PANE && pane.isPlaced)
 
 async function openPane($: Engine): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: 'Mod Lab', columns: 80 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast(NARROW_TOAST)
 }
 
@@ -771,18 +773,18 @@ async function paneActionOf($: Engine): Promise<ReturnType<typeof Lab.paneAction
  * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
  */
 async function bringToFront($: Engine): Promise<void> {
-  await $.ui.open({ id: PANE, title: 'Mod Lab', columns: 80, focus: true })
+  await $.ui.open({ ...PANE_ARGS, focus: true })
   $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch((error: unknown) => logCaught($, 'modlab.front', error)))
+}
+
+async function warnIfBehind($: Engine): Promise<void> {
+  if ((await paneActionOf($)) === 'show') $.ui.toast(STILL_BEHIND_TOAST)
 }
 
 /** An open for a command that names the pane: a tab behind another comes to the front, any other pane is opened as before. */
 async function openOrFront($: Engine): Promise<void> {
   if ((await paneActionOf($)) === 'show') void bringToFront($).catch((error: unknown) => logCaught($, 'modlab.front', error))
   else await openPane($)
-}
-
-async function warnIfBehind($: Engine): Promise<void> {
-  if ((await paneActionOf($)) === 'show') $.ui.toast(STILL_BEHIND_TOAST)
 }
 
 /**

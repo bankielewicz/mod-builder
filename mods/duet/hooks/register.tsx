@@ -20,6 +20,8 @@ import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScop
  */
 
 const PANE = 'duet'
+/** The main pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: 'Duet', columns: 76 }
 const CONFIG_PANE = 'duet-config'
 const SHOW_TEXT = 'Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
 const STILL_BEHIND_TOAST = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
@@ -60,7 +62,7 @@ const mine = new Set<string>()
 // ── Pane, status, ticker ─────────────────────────────────────────────────
 
 async function openPane($: EngineInterface): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: 'Duet', columns: 76 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast('Duet needs a wider window. Widen it to see the pane, or watch the status line.')
 }
 
@@ -73,7 +75,7 @@ async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneA
  * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
  */
 async function bringToFront($: EngineInterface): Promise<void> {
-  await $.ui.open({ id: PANE, title: 'Duet', columns: 76, focus: true })
+  await $.ui.open({ ...PANE_ARGS, focus: true })
   $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
 }
 

@@ -35,8 +35,8 @@ export function rowsThatFit(bodyRows: number): number {
 }
 
 /**
- * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
- * a tab behind another pane. Callers pass what `$.ui.panes()` answers.
+ * What a bare pane command does: `open` a pane that is not listed, `close` one the surface shows, `show` one that is a
+ * tab behind another pane. Callers pass what `$.ui.panes()` answers.
  */
 export function paneAction(panes: readonly { id: string; isShown: boolean }[], id: string): 'open' | 'close' | 'show' {
   const pane = panes.find(p => p.id === id)

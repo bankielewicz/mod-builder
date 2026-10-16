@@ -10,6 +10,8 @@ import { DEMO_ITEMS, moved, paneAction, rowsThatFit, summaryOf, toggled } from '
  */
 
 const PANE = '__NAME__'
+/** The pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: '__TITLE__', columns: 60 }
 /** How long after asking for the front the pane is read again. */
 const FRONT_CHECK_MS = 500
 
@@ -17,7 +19,7 @@ const items = atom({ plugin: '__NAME__', key: 'items' } as const, [])
 const selected = atom({ plugin: '__NAME__', key: 'selected' } as const, 0)
 
 async function openPane($: EngineInterface): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: '__TITLE__', columns: 60 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast('__TITLE__ needs a wider window. Widen it to see the pane.')
 }
 
@@ -30,7 +32,7 @@ async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneA
  * pane: a start or a background open never takes the keyboard. A pane still behind another afterwards is named in a toast.
  */
 async function bringToFront($: EngineInterface): Promise<void> {
-  await $.ui.open({ id: PANE, title: '__TITLE__', columns: 60, focus: true })
+  await $.ui.open({ ...PANE_ARGS, focus: true })
   $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
 }
 
