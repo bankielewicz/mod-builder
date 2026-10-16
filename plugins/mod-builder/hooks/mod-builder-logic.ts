@@ -69,6 +69,8 @@ export type FileFacts = {
    * which no mtime shows. Null when a folder under hooks/ or tests/ couldn't be listed: what it holds is unknown.
    */
   logicSig: string | null
+  /** `quickSigOf` this read's listings: what the stats-only check after a Bash batch compares (Change 0.2.24). */
+  quickSig: string
   /** The version the marketplace lists this mod at, when it does. */
   listedVersion: string | null
 }
@@ -1170,6 +1172,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
     logicSig: (read.unlisted ?? []).some(path => /^(hooks|tests)(\/|$)/.test(path)) ? null : sigOf(logic),
+    quickSig: quickSigOf(read),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
@@ -1208,9 +1211,73 @@ export function placeholderFacts(name: string): FileFacts {
     specMtimeMs: 0,
     logicMtimeMs: 0,
     logicSig: signatureOf([]),
+    quickSig: signatureOf([]),
     readmeMtimeMs: 0,
     listedVersion: null,
   }
+}
+
+// ── A rescan after a tool batch (Change 0.2.24, #100) ─────────────────────
+
+/** The file tools whose input names the one file they change, and the key that holds it (issue-forge has the same map). */
+const EDIT_PATHS: Readonly<Record<string, string>> = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' }
+
+/** One tool call of a `classic.PostToolBatch`, as far as a rescan reads it. */
+export type BatchCall = { tool_name: string; tool_input: unknown }
+
+/** What a batch touched in the watched mods folder: the mods its file tools changed, and whether it ran shell. */
+export type BatchTouch = { mods: string[]; isShell: boolean }
+
+/**
+ * The mods a tool batch's Edit, Write and NotebookEdit changed under `modsDir` (each path's first segment there, not a
+ * file directly in it nor a dot-folder), and whether it ran Bash, whose paths can't be read. Other tools count for nothing.
+ */
+export function batchTouch(calls: readonly BatchCall[], modsDir: string): BatchTouch {
+  const dir = normalizePath(modsDir).replace(/\/$/, '')
+  const mods = new Set<string>()
+  let isShell = false
+  for (const call of calls) {
+    if (call.tool_name === 'Bash') {
+      isShell = true
+      continue
+    }
+    const key = EDIT_PATHS[call.tool_name]
+    const input = call.tool_input
+    const path = key && input && typeof input === 'object' ? (input as Record<string, unknown>)[key] : undefined
+    if (typeof path !== 'string') continue
+    const at = normalizePath(path)
+    if (!at.startsWith(`${dir}/`)) continue
+    const [mod, ...rest] = at.slice(dir.length + 1).split('/')
+    if (mod && !mod.startsWith('.') && rest.length > 0) mods.add(mod)
+  }
+  return { mods: [...mods], isShell }
+}
+
+/** The four listings the stats-only check reads: the mod's folder, `.claude-plugin/`, `hooks/` and `tests/`. */
+export type QuickRead = Pick<FolderRead, 'top' | 'manifestDir' | 'hooks' | 'tests'>
+
+/**
+ * A signature of the files Mod Lab judges that four listings show: SPEC.md, README.md, the manifest, and every entry
+ * directly in hooks/ and tests/ (a subfolder by its own mtime), each by name and mtime. No file is read, and no
+ * subfolder walked: what sits deeper, and types/, agents/, commands/ and skills/, it doesn't see.
+ */
+export function quickSigOf(read: QuickRead): string {
+  const named = (folder: string, entries: readonly Entry[]): string[] => entries.map(entry => `${folder}/${entry.name}@${entry.mtimeMs}`)
+  return signatureOf([
+    ...named('', read.top.filter(entry => entry.kind === 'file' && (entry.name === 'SPEC.md' || entry.name === 'README.md'))),
+    ...named('.claude-plugin', read.manifestDir.filter(entry => entry.name === 'plugin.json')),
+    ...named('hooks', read.hooks),
+    ...named('tests', read.tests),
+  ])
+}
+
+/** What a scan pass reads: every mod (`isFull`), the mods whose quick signature moved (`isQuick`), and the named `mods`. */
+export type ScanRequest = { isFull: boolean; isQuick: boolean; mods: readonly string[] }
+
+/** Two requests as one pass: a full one wins, quick ORs, named mods union (the queued one first). */
+export function mergeScanRequests(queued: ScanRequest | null, next: ScanRequest): ScanRequest {
+  if (!queued) return next
+  return { isFull: queued.isFull || next.isFull, isQuick: queued.isQuick || next.isQuick, mods: [...new Set([...queued.mods, ...next.mods])] }
 }
 
 /**
