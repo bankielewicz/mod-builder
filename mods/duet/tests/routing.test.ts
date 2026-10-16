@@ -1452,3 +1452,15 @@ describe('0.3.0: the consent question names the provider key file where Codex ca
   })
 })
 
+describe('0.3.0: provider keys are never blanked for Codex (the owner\'s decision at review)', () => {
+  test('a routed call leaves GEMINI_API_KEY and OPENROUTER_API_KEY out of the blanked env, so a Codex env_key keeps working', { options: { codexAgents: 'general-purpose', codexConsent: 'allow' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await $.tool.call(call() as never)
+    const env = seen.env[0]!
+    for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY', 'DUET_CUSTOM_API_KEY']) expect([k, env[k]]).toEqual([k, undefined])
+    expect(env.ANTHROPIC_API_KEY).toBe('')
+    expect(env.OPENAI_API_KEY).toBeUndefined()
+  })
+})
+

@@ -28,7 +28,7 @@ describe('providers as data', () => {
     expect(providerOf('nope')).toBeUndefined()
   })
 
-  test('the key names are the exact list the env tests blank, OPENAI_API_KEY apart', () => {
+  test('the key names duet stores are the exact list the env tests pass through to Codex; none of them is blanked', () => {
     expect([...PROVIDER_KEY_NAMES].sort()).toEqual([...PROVIDER_KEYS].sort())
     expect(PROVIDER_KEY_NAMES).not.toContain('OPENAI_API_KEY')
     expect(PROVIDER_KEY_NAMES).toContain('GEMINI_API_KEY')

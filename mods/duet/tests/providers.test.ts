@@ -42,6 +42,7 @@ function engine(on: any, o: World = {}): Seen {
   on('fs.read', ($: any, e: any) => (o.unreadable && e.path === KEY_FILE ? { deny: o.unreadable } : e.path in seen.files ? { value: seen.files[e.path] } : { deny: 'ENOENT: no such file' }))
   on('fs.write', ($: any, e: any) => (seen.events.push(`write ${e.text === '' ? 'empty' : 'content'}`), o.writeDeny ? { deny: o.writeDeny } : ((seen.files[e.path] = e.text), { value: undefined })))
   on('tool.call', { tool: 'Grep' }, () => ({ result: { mode: 'content', numLines: 1, content: 'found' } }))
+  on('tool.call', { tool: 'Glob' }, () => ({ result: { filenames: ['/w/a'], durationMs: 1, numFiles: 1, truncated: false } }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'ran', stderr: '' } }))
   on('tool.call', { tool: 'Read' }, () => ({ result: { type: 'text', file: { filePath: '/w/x', content: 'read', numLines: 1, startLine: 1, totalLines: 1 } } }))
   on('fs.exists', ($: any, e: any) => ({ value: e.path in seen.files }))
@@ -487,6 +488,13 @@ describe('/duet provider', () => {
     }
     const ok: any = await $.tool.call({ tool: 'Grep', pattern: 'duet-data/.env', path: '/w' } as never)
     expect(ok.deny).toBeUndefined()
+    // Glob too: a listing of the folder or a pattern that reaches the file (the owner's layer 4).
+    for (const input of [{ pattern: '*', path: '/home/u/.claude/duet-data' }, { pattern: '**/duet-data/.env' }, { pattern: '.env', path: '~/.claude/duet-data/' }]) {
+      const r: any = await $.tool.call({ tool: 'Glob', ...input } as never)
+      expect([input, r.deny]).toEqual([input, expect.stringMatching(/duet: that file holds API keys/)])
+    }
+    const globOk: any = await $.tool.call({ tool: 'Glob', pattern: '**/*.ts', path: '/w' } as never)
+    expect(globOk.deny).toBeUndefined()
     const bash: any = await $.tool.call({ tool: 'Bash', command: 'grep -n "duet-data/.env" README.md' } as never)
     expect(bash.deny).toBeUndefined()
   })
