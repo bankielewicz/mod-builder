@@ -1757,7 +1757,7 @@ and so are the final block at gate F and the quoted guidance; those wait for the
 
 **Declined, with the reason.**
 - **A manifest under a path git ignores** isn't seen by R4/G8 (Codex 4290574800). That's true, but `git add -A` never stages such a file, so no commit or push can carry it and the promise holds. Codex's remedy, listing the working tree's ignored files, would find every plugin under `node_modules`, plugin caches and, in this repository, `tmp/` and the worktrees in `scratch/`. The design spec's known gap now names it.
-- **`fs.stat` reading a denied path as missing.** `$.fs.exists` reads it the same way (the UI harness's `existsHidden` models it), so swapping helpers gains nothing. A denied path inside the run's own folder is not a case seen so far.
+- **`fs.stat` reading a denied path as missing.** `$.fs.exists` reads it the same way (the UI harness's `fsBlind` models it), so swapping helpers gains nothing. A denied path inside the run's own folder is not a case seen so far.
 
 **Open, for the owner.**
 - **Item 2's rule.** Codex (4290574811) and the review show lines it misreads: "The build fails with `/mod-builder:build` when …", "Do not build this with `/mod-builder:build`", and "I tried to build with `/mod-builder:build` but it crashed". Item 2 accepts such misreads ("No override: an issue the rule misreads can be reworded"). R4 and G8 still catch a real new plugin, so the start check only saves a run's cost.
