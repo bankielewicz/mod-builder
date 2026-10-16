@@ -23,8 +23,10 @@ environment has no file system, network or process access. Claude Code's API dec
 and probes in this repo agree (each in
 [gotchas.md](../plugins/mod-builder/skills/build/references/gotchas.md#testing-and-checking)):
 
-- On 2.1.296, test code found no `process`, `require`, `fetch` or `Bun`, and a test file that
-  imports `node:fs` or uses `import()` didn't load.
+- On 2.1.296 and 2.1.301 (#9, then #98), test code finds no `process`, `fetch`, `Bun` or the other
+  globals gotchas.md lists, and can't call `require`. Code from strings (eval and the function
+  constructors) throws. A test file that imports `node:fs` or uses `import()` doesn't load: the run
+  reports `(fail) the file did not load`.
 - On 2.1.300, neither command started a `SessionStart` command hook in `hooks/hooks.json` or a
   `.mcp.json` server, the two shapes probed. A live `claude --plugin-dir` session started both.
 - On 2.1.300, neither command ran shell in a command or skill body (`` !`…` ``) or started an
@@ -35,6 +37,22 @@ Those are the builds checked; Claude Code changes between builds. Mod Lab only r
 have already validated or tested in this install. To turn it off, set `autoRerun` to off in
 `/config`. Separately, when a skill's `lab_report` says a Validate or Test stage finished, Mod Lab
 runs that check on the mod the report names.
+
+Two checks watch for a build that changes the sandbox:
+
+- A canary test in mod-builder's own suite, `plugins/mod-builder/tests/sandbox.test.ts`, asserts the
+  globals, the `require` call and code from strings, so a build where any of them changes turns the
+  suite red. It runs when CI runs, on the pinned build, and when you run
+  `claude plugin test plugins/mod-builder` on yours.
+- A test can't check that its own file didn't load, so the loader's refusal of `import()` and
+  `node:fs`, the main way a test would reach the file system, is checked by
+  `plugins/mod-builder/skills/build/scripts/check-sandbox.mjs`. It loads a fixture plugin and expects
+  those files refused, and fails when the canary's list and gotchas.md's differ. CI runs it, on the
+  pinned build only.
+
+Neither re-checks your installed build after a Claude Code update by itself. For that build, run
+`claude plugin test plugins/mod-builder` and `node plugins/mod-builder/skills/build/scripts/check-sandbox.mjs`,
+or re-probe (#107).
 
 What the sandbox doesn't stop is a test that loops or uses up memory. It runs until
 `testTimeoutMinutes` (3 minutes by default) and is then killed. Mod Lab keeps only the lines of its

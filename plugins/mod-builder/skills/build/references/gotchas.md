@@ -360,9 +360,23 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `mcpServers` path.
 - **[d.ts] [probe]** The d.ts header (2.1.296, unchanged on 2.1.299 and 2.1.300) says `claude plugin
   test` runs test files "in an environment like the one a plugin's hooks run in (no fs, network or
-  process)". Issue #9's audit run probed it on 2.1.296 (not re-run since): in test code, `process`,
-  `Bun`, `Deno`, `require`, `fetch`, `WebSocket`, `XMLHttpRequest` and `Worker` are `undefined`,
-  and a test file holding `import()` or `import … from 'node:fs'` doesn't load.
+  process)". Probed on 2.1.296 (#9) and again on 2.1.296 and 2.1.301 (#98, 2026-10-16), the same each time:
+  - These globals are `undefined` on `globalThis` (the canary's list): `process`, `Bun`, `Deno`, `fetch`,
+    `WebSocket`, `XMLHttpRequest`, `Worker`.
+  - `require` can't be called: a bare `typeof require` reads `function` (the transpiler folds it), but
+    `require('node:fs')` throws `ReferenceError: require is not defined`, and `globalThis.require` is
+    `undefined`, as it is even where `require` works (node CommonJS).
+  - Code from strings is off: the global eval exists (`typeof` is `function`), but it and the `Function`,
+    async function, generator and async generator constructors throw `EvalError: Code generation from
+    strings disallowed for this context`.
+  - A test file holding `import()`, or a top-level `import … from 'node:fs'`, doesn't load: the run reports
+    `(fail) the file did not load` ("a dynamic import(); …" and `cannot import "node:fs" …`), which counts
+    as a failure and exits 1. This refusal and the code-from-strings switch are independent.
+
+  `plugins/mod-builder/tests/sandbox.test.ts` (the canary) asserts the globals, the `require` call and code
+  from strings, so the suite turns red on a build where any changes. A test can't check that its own file
+  didn't load, so `skills/build/scripts/check-sandbox.mjs` (CI) checks the loader against a fixture, and
+  fails when the canary's list and the one above differ.
 - **[field]** `claude plugin test` only collects `*.test.ts(x)`. Other spec files are ignored.
 - **[probe]** In a test, nothing sits beneath the mod. Every `$` call it makes needs an answer from
   `on(...)`, `session.start` included (`on('session.start', ($, e) => ({ cwd: e.cwd }))`). One stub
