@@ -2209,6 +2209,21 @@ describe('a held git index lock (#28)', () => {
     expect(callsOf(w, 'commit').length).toBe(5)
   })
 
+  // PR #88 review (Codex 4290283822): `cannot lock ref` also opens git's refusal of a broken ref, which no lock file
+  // explains. git 2.53.0's text, captured in a scratch repository with the branch's ref file overwritten.
+  test('gate R: a commit refused for a broken ref is not blamed on a lock: the block is git\'s own failure', async ($, on) => {
+    const broken = `fatal: cannot lock ref 'HEAD': unable to resolve reference 'refs/heads/${BRANCH}': reference broken\n`
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5, broken).map(f => ({ ...f, isLocked: false })) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: unexpected: git commit failed: fatal: cannot lock ref 'HEAD': unable to resolve reference 'refs/heads/${BRANCH}': reference broken`)
+    expect(status).not.toContain('another git process')
+    expect(w.commits).toEqual([])
+  })
+
   // git 2.53.0 names no lock here: stderr is only this line, exit 1, and the tree is left as it was.
   const STASH_LOCKED: GitFail = { stderr: 'Cannot save the current status\n', code: 1, isLocked: false, isStashLocked: true }
 
