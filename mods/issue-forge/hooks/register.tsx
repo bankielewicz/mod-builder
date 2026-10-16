@@ -199,8 +199,15 @@ function refsOf(run: Run | null): string[] {
 // ── Outside world ─────────────────────────────────────────────────────────
 
 /** git takes no optional locks, so the run's own `git status` doesn't refresh the index while an agent's or the user's git needs it (#28). */
+const GIT_ENV = { GIT_OPTIONAL_LOCKS: '0' }
+
+/** The env a command runs with: git's, for git; the profile's commands run as the user wrote them (PR #88 review). */
+function envOf(argv: string[]): { env?: Record<string, string> } {
+  return argv[0] === 'git' ? { env: GIT_ENV } : {}
+}
+
 async function git($: EngineInterface, root: string, args: string[], stdin?: string) {
-  return $.process.run(['git', ...args], { cwd: root, timeoutMs: GIT_TIMEOUT, env: { GIT_OPTIONAL_LOCKS: '0' }, ...(stdin === undefined ? {} : { stdin }) })
+  return $.process.run(['git', ...args], { cwd: root, timeoutMs: GIT_TIMEOUT, env: GIT_ENV, ...(stdin === undefined ? {} : { stdin }) })
 }
 
 /**
@@ -304,7 +311,7 @@ function firstLine(text: string): string {
 }
 
 async function rootOf($: EngineInterface): Promise<string | null> {
-  const r = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: sessionCwd || undefined, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  const r = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: sessionCwd || undefined, timeoutMs: GIT_TIMEOUT, env: GIT_ENV }).catch(() => null)
   return r && r.exitCode === 0 ? r.stdout.trim() : null
 }
 
@@ -421,7 +428,7 @@ async function runLong($: EngineInterface, argv: string[], root: string, minutes
   let isTimedOut = false
   let isStopped = false
   let hasStarted = false
-  const stream = $.process.spawn({ argv, cwd: root })
+  const stream = $.process.spawn({ argv, cwd: root, ...envOf(argv) })
   const end = () => void stream.return(undefined as never).catch(() => undefined)
   const timer = $.clock.after(minutes * 60_000, () => {
     isTimedOut = true
@@ -505,7 +512,7 @@ async function offBranch($: EngineInterface, run: Run): Promise<Blocked | null> 
 
 async function runShort($: EngineInterface, argv: string[], root: string, minutes: number, why: unknown): Promise<CommandResult> {
   try {
-    const r = await $.process.run(argv, { cwd: root, timeoutMs: Math.min(minutes * 60_000, 600_000) })
+    const r = await $.process.run(argv, { cwd: root, timeoutMs: Math.min(minutes * 60_000, 600_000), ...envOf(argv) })
     return { exit: r.exitCode, isTimedOut: false, tail: tailLines(`${r.stdout}\n${r.stderr}`) }
   } catch (err) {
     return { exit: null, isTimedOut: /time/i.test(String(err)), tail: `could not run ${argv.join(' ')}: ${String(err)} (spawn: ${String(why)})` }
