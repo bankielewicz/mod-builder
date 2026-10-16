@@ -9,13 +9,24 @@ const DATA = '/home/u/.claude/duet-data'
 const LEGACY_LOG = `${DATA}/runs.jsonl`
 const RUN = (provider: 'codex' | 'claude', type: string) => JSON.stringify({ id: 'd1', at: 0, provider, kind: 'agent', type, model: '', ms: 4000, tokens: 900, ok: true }) + '\n'
 
+/**
+ * What the pane stubs list and record (#31). `panes` is what `$.ui.panes()` answers (`isShown: false` is a tab behind another
+ * pane); a listed pane comes to the front once it was opened while `showOnOpen` is set. `opens` takes every `$.ui.open`
+ * whole, `focus` included; `closed` every `$.ui.close`; `toasts` every `$.ui.toast`.
+ */
+type PaneWorld = { panes?: { id: string; isShown: boolean }[]; showOnOpen?: boolean; opens?: any[]; closed?: string[]; toasts?: string[] }
+
 /** `sessions`: each session folder's runs.jsonl, by folder name; the legacy log holds one codex Explore run. Returns the test's clock. */
-function engine(on: any, opened: string[], sessions: Record<string, string> = {}) {
+function engine(on: any, opened: string[], sessions: Record<string, string> = {}, world: PaneWorld = {}) {
   const clock = mock.clock(on)
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
-  on('ui.open', ($: any, e: any) => (opened.push(e.id), { value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.open', ($: any, e: any) => (opened.push(e.id), world.opens?.push({ ...e }), { value: { isPlaced: true } }))
+  on('ui.panes', () => ({
+    value: (world.panes ?? []).map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: true, isShown: pane.isShown || (world.showOnOpen === true && opened.includes(pane.id)) })),
+  }))
+  on('ui.close', ($: any, e: any) => (world.closed?.push(e.id), { value: undefined }))
+  on('ui.toast', ($: any, e: any) => (world.toasts?.push(e.text), { value: undefined }))
   on('env.get', () => ({ value: '/home/u' }))
   on('session.id', () => ({ value: 's1' }))
   // With no session logs the sessions folder is not there, as before a first run: listing it fails.
@@ -124,6 +135,105 @@ describe('ui', () => {
       ui = await mount($, 'terminal', props)
       expect([press, (await ui.find({ type: 'Text', text: /▸ d4 / })) !== undefined]).toEqual([press, true])
     }
+    await ui.unmount()
+  })
+})
+
+describe('a pane behind another tab is brought to the front, not closed (#31)', () => {
+  const SHOW = 'Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
+  const STILL_BEHIND = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
+  const HIDDEN = [{ id: 'duet', isShown: false }]
+  // The read after the open may come at once or after 500 ms (the probe of #31 decides), so each test lets 1 s pass.
+  const SETTLED_MS = 1000
+
+  const world = (extra: PaneWorld = {}) => ({ opens: [] as any[], closed: [] as string[], toasts: [] as string[], ...extra })
+  const duet = ($: any, args: string) => $.command.run({ command: 'duet', args, origin: COMPOSER, presentation: PRESENTATION })
+
+  test('a bare /duet answers at once, opens the hidden pane with the keyboard, and closes nothing', async ($, on) => {
+    const w = world({ panes: HIDDEN })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await duet($, '')).text).toBe(SHOW)
+    await clock.advance(SETTLED_MS)
+    expect(w.closed).toEqual([])
+    expect(w.opens.at(-1)).toMatchObject({ id: 'duet', title: 'Duet', columns: 76, focus: true })
+  })
+
+  test('a bare /duet by pane state: not listed opens without the keyboard, shown closes, hidden is brought to the front', async ($, on) => {
+    const w = world({ panes: [] })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await duet($, '')).text).toMatch(/^Opened\. /)
+    await clock.advance(10)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    w.opens.length = 0
+    w.panes = [{ id: 'duet', isShown: true }]
+    expect((await duet($, '')).text).toBe('Closed. /duet to reopen.')
+    await clock.advance(10)
+    expect(w.closed).toEqual(['duet'])
+    expect(w.opens).toEqual([])
+    w.closed.length = 0
+    w.panes = HIDDEN
+    expect((await duet($, '')).text).toBe(SHOW)
+    await clock.advance(SETTLED_MS)
+    expect(w.closed).toEqual([])
+    expect(w.opens.at(-1)).toMatchObject({ id: 'duet', focus: true })
+  })
+
+  test('a pane still behind another tab after the open is named in a toast', async ($, on) => {
+    const w = world({ panes: HIDDEN })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await duet($, '')
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'duet', focus: true })
+    expect(w.toasts).toContain(STILL_BEHIND)
+  })
+
+  test('a pane that came forward after the open gets no toast', async ($, on) => {
+    const w = world({ panes: HIDDEN, showOnOpen: true })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await duet($, '')).text).toBe(SHOW)
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'duet', focus: true })
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/duet demo with the pane hidden keeps its answer and brings the pane forward with the keyboard; with none listed it opens plain', async ($, on) => {
+    const w = world({ panes: HIDDEN })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await duet($, 'demo')).text).toMatch(/demo tasks/)
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'duet', title: 'Duet', columns: 76, focus: true })
+    expect(w.closed).toEqual([])
+    expect(w.toasts).toContain(STILL_BEHIND)
+    w.opens.length = 0
+    w.panes = []
+    await duet($, 'demo')
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+  })
+
+  test('/duet demo with the pane hidden gets no toast once the pane came forward', async ($, on) => {
+    const w = world({ panes: HIDDEN, showOnOpen: true })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await duet($, 'demo')
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'duet', focus: true })
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('the pane hint holds for any tab, and a narrower pane cuts it rather than wrapping it', async ($, on) => {
+    engine(on, [])
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    const ui = await mount($, 'terminal')
+    const hint = await ui.find({ type: 'Text', text: /^ctrl\+x tab: keys, again: next tab {2}· {2}r review {2}s stats {2}j\/k {2}c close$/ })
+    expect(hint).toBeDefined()
+    expect(hint?.props.wrap).toBe('truncate')
+    expect(await ui.find({ type: 'Text', text: /pane keys/ })).toBeUndefined()
     await ui.unmount()
   })
 })

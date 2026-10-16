@@ -73,8 +73,14 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     stallTests: false,
     /** The ids `$.ui.panes()` lists as open and drawn. */
     panes: [] as string[],
+    /** The ids `$.ui.panes()` lists as open and drawn, but as a tab behind another pane (`isShown: false`, #31). */
+    hidden: [] as string[],
     /** The ids `$.ui.panes()` lists as open but waiting undrawn (an unasked open on a narrow terminal). */
     waiting: [] as string[],
+    /** Every `$.ui.open` the stub answered, whole: `focus` included (#31). */
+    opens: [] as { id: string; title?: string; columns?: number; focus?: boolean }[],
+    /** While set, a pane that was opened comes to the front (`isShown: true`) in the next `$.ui.panes()` (#31). */
+    showOnOpen: false,
     /** Every id `$.ui.close` was asked to close. */
     closed: [] as string[],
     /** While set, `$.ui.open` is refused with this reason. */
@@ -163,8 +169,10 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.toast', ($, e) => (seen.toasts.push((e as { text: string }).text), { value: undefined }) as never)
   on('ui.status', ($, e) => (seen.status.push((e as { text?: string }).text), { value: undefined }) as never)
   on('ui.notify', ($, e) => (seen.notified.push((e as { text: string }).text), { value: { isSent: true, channel: 'terminal' } }) as never)
-  on('ui.open', ($, e) => (seen.denyOpen ? { deny: seen.denyOpen } : (seen.opened.push(e.id), { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } })) as never)
-  on('ui.panes', () => ({ value: [...seen.panes.map(id => ({ id, title: id, isPlaced: true })), ...seen.waiting.map(id => ({ id, title: id, isPlaced: false }))] }) as never)
+  on('ui.open', ($, e) => (seen.denyOpen ? { deny: seen.denyOpen } : (seen.opened.push(e.id), seen.opens.push({ ...e }), { value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } })) as never)
+  // As the engine lists them (UiPane): `isShown` is true for the one pane the surface shows, false for the tabs behind it.
+  const listed = (id: string, isShown: boolean, isPlaced: boolean) => ({ id, title: id, isShown: isShown || (seen.showOnOpen && seen.opened.includes(id)), isFocused: false, isPlaced })
+  on('ui.panes', () => ({ value: [...seen.panes.map(id => listed(id, true, true)), ...seen.hidden.map(id => listed(id, false, true)), ...seen.waiting.map(id => listed(id, false, false))] }) as never)
   on('ui.close', ($, e) => (seen.closed.push((e as { id: string }).id), { value: undefined }) as never)
   on('prompt.fill', ($, e) => (seen.filled.push(e.text), { isFilled: true, text: e.text, cursor: e.text.length }) as never)
   return { seen, clock }
@@ -1778,6 +1786,7 @@ describe('the pane opens from the command itself (#90)', () => {
     const release = holdModsList(seen)
     expect((await command($, 'duet')).text).toBe('Mod Lab: duet.')
     expect(seen.opened).toEqual(['modlab'])
+    expect(seen.opens.map(open => open.focus)).toEqual([undefined])
     await clock.advance(10)
     release()
     await clock.advance(10)
@@ -1828,6 +1837,8 @@ describe('the pane opens from the command itself (#90)', () => {
     await start($)
     expect((await command($, 'demo')).text).toContain('Nothing is written to disk')
     expect(seen.opened).toEqual(['modlab'])
+    // No pane was listed: a plain open, never the keyboard (#31).
+    expect(seen.opens.map(open => open.focus)).toEqual([undefined])
   })
 
   for (const name of ['mod-builder:build', 'mod-builder:edit']) {
@@ -1903,6 +1914,140 @@ describe('the pane opens from the command itself (#90)', () => {
     // openForSkill caught it, so the hook's own .catch never ran.
     expect(seen.logs.some(line => line.includes('command.skill') && line.includes('no panes here'))).toBe(true)
     expect(seen.logs.some(line => line.includes('hook failed'))).toBe(false)
+  })
+})
+
+describe('a pane behind another tab is brought to the front, not closed (#31)', () => {
+  const SHOW = 'Bringing Mod Lab to the front; it has the keyboard, Esc returns it to the prompt.'
+  const STILL_BEHIND = 'Mod Lab is still behind another tab: ctrl+x tab, then again until it shows.'
+  // The read after the open may come at once or after 500 ms (the probe of #31 decides), so each test lets 1 s pass.
+  const SETTLED_MS = 1000
+
+  test('a bare /modlab answers at once, opens the hidden pane with the keyboard, and closes nothing', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    seen.hidden = ['modlab']
+    expect((await command($, '')).text).toBe(SHOW)
+    await clock.advance(SETTLED_MS)
+    expect(seen.closed).toEqual([])
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', title: 'Mod Lab', columns: 80, focus: true })
+  })
+
+  test('a bare /modlab by pane state: not listed opens without the keyboard, shown folds, hidden is brought to the front; a background open never takes the keyboard', { options: { modsDir: MODS, autoOpen: true } }, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    expect((await command($, '')).text).toBe('Mod Lab opened.')
+    await clock.advance(10)
+    expect(seen.opens.map(open => open.focus)).toEqual([undefined])
+    seen.opens.length = 0
+    seen.panes = ['modlab']
+    expect((await command($, '')).text).toBe('Mod Lab folded to the status line. /modlab to reopen.')
+    await clock.advance(10)
+    expect(seen.closed).toEqual(['modlab'])
+    expect(seen.opens).toEqual([])
+    seen.closed.length = 0
+    seen.panes = []
+    seen.hidden = ['modlab']
+    expect((await command($, '')).text).toBe(SHOW)
+    await clock.advance(SETTLED_MS)
+    expect(seen.closed).toEqual([])
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    // autoOpen on a running report is a background open: a plain open, with the keyboard left alone.
+    seen.hidden = []
+    seen.opens.length = 0
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Logic', status: 'running' } as never)
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.map(open => open.focus)).toEqual([undefined])
+  })
+
+  test('a pane still behind another tab after the open is named in a toast', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    seen.hidden = ['modlab']
+    await command($, '')
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    expect(seen.toasts).toContain(STILL_BEHIND)
+  })
+
+  test('a pane that came forward after the open gets no toast', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    seen.hidden = ['modlab']
+    seen.showOnOpen = true
+    expect((await command($, '')).text).toBe(SHOW)
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    expect(seen.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/modlab demo with the pane hidden keeps its answer and brings the pane forward with the keyboard', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, {})
+    await start($)
+    seen.hidden = ['modlab']
+    expect((await command($, 'demo')).text).toContain('Nothing is written to disk')
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    expect(seen.closed).toEqual([])
+    expect(seen.toasts).toContain(STILL_BEHIND)
+  })
+
+  test('/modlab demo with the pane hidden gets no toast once the pane came forward', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, {})
+    await start($)
+    seen.hidden = ['modlab']
+    seen.showOnOpen = true
+    await command($, 'demo')
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    expect(seen.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/modlab <mod> with the pane hidden selects the mod and brings the pane forward with the keyboard', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('duet'), ...modFiles('git-branch') })
+    await start($)
+    await clock.advance(10)
+    const before = await mountPane($)
+    expect(await before.find({ type: 'Text', text: /mods\/duet\// })).toBeDefined()
+    await before.unmount()
+    seen.hidden = ['modlab']
+    await command($, 'git-branch')
+    await clock.advance(SETTLED_MS)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /mods\/git-branch\// })).toBeDefined()
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    expect(seen.closed).toEqual([])
+  })
+
+  test('/modlab <mod> with the pane hidden names a pane that stays behind, and says nothing once it came forward', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, { ...modFiles('duet'), ...modFiles('git-branch') })
+    await start($)
+    await clock.advance(10)
+    seen.hidden = ['modlab']
+    await command($, 'git-branch')
+    await clock.advance(SETTLED_MS)
+    expect(seen.toasts).toContain(STILL_BEHIND)
+    // The pane is a tab behind again, and this time it comes forward on the open.
+    seen.toasts.length = 0
+    seen.opened.length = 0
+    seen.showOnOpen = true
+    await command($, 'duet')
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.at(-1)).toMatchObject({ id: 'modlab', focus: true })
+    expect(seen.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('the pane hint holds for any tab: ctrl+x tab, again for the next tab, then the keys', OPTIONS, async ($, on) => {
+    const { clock } = world(on, { ...modFiles('git-branch'), ...modFiles('duet') })
+    await start($)
+    await clock.advance(10)
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^ctrl\+x tab \(again: next tab\), then .+ · esc to leave$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ctrl\+x tab, then / })).toBeUndefined()
   })
 })
 

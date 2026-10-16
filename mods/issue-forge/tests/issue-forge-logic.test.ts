@@ -1675,3 +1675,36 @@ describe('an issue URL and the repository a run is pinned to (#25)', () => {
     expect((demoRun('ready', 0).run as Run & { ghRepo?: string }).ghRepo).toBe('github.com/bankielewicz/mod-builder')
   })
 })
+
+describe('paneAction: one rule for a bare pane command (#31)', () => {
+  // Read off the namespace, so a rule that is not there yet fails its assertion, not the import.
+  type PaneRow = { id: string; isShown: boolean }
+  const paneAction = (panes: readonly PaneRow[], id: string): string | undefined =>
+    (logic as unknown as { paneAction?: (panes: readonly PaneRow[], id: string) => string }).paneAction?.(panes, id)
+
+  test('a pane that is not listed opens, whatever other panes are', () => {
+    expect(paneAction([], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: true }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: false }], 'x')).toBe('open')
+  })
+
+  test('a listed pane the surface shows closes', () => {
+    expect(paneAction([{ id: 'x', isShown: true }], 'x')).toBe('close')
+  })
+
+  test('a listed pane that is a tab behind another shows, rather than closing', () => {
+    expect(paneAction([{ id: 'x', isShown: false }], 'x')).toBe('show')
+  })
+
+  test('only the entry with the id decides: another pane shown or hidden changes nothing', () => {
+    expect(paneAction([{ id: 'y', isShown: true }, { id: 'x', isShown: false }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'y', isShown: false }, { id: 'x', isShown: true }], 'x')).toBe('close')
+    expect(paneAction([{ id: 'x', isShown: false }, { id: 'y', isShown: true }], 'y')).toBe('close')
+  })
+
+  test('it takes what $.ui.panes() answers, whole entries included', () => {
+    const entry = (id: string, isShown: boolean) => ({ id, title: id, isShown, isFocused: false, isPlaced: true })
+    expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet-config')).toBe('show')
+    expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet')).toBe('close')
+  })
+})
