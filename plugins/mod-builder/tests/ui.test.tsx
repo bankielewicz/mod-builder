@@ -3778,10 +3778,12 @@ describe('a rescan after a tool batch (#100)', () => {
     for (let i = 0; i < 50 && !seen.holdList.isReached; i++) await clock.advance(1)
     expect(seen.holdList.isReached).toBe(true)
     Object.assign(disk, manifest('beta'))
+    const from = seen.reads.length
     await batch($, [write(`${MODS}/beta/.claude-plugin/plugin.json`)])
     release()
     await clock.settle()
-    expect(await shows($, /The beta mod\./)).toBe(true)
+    // The pass after the held one reads beta. (A description shows only for the picked row, alpha here.)
+    expect(specReads(seen, from)).toEqual([`${MODS}/alpha/SPEC.md`, `${MODS}/beta/SPEC.md`])
   })
 
   test('a rescan while a running report has a placeholder row keeps the row and its report (owner, at approval)', OPTIONS, async ($, on) => {
