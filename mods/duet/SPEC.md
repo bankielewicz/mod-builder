@@ -698,7 +698,7 @@ pane's keys (again: the next tab); `/reload-plugins` picks up edits.
 
 ## Change 0.2.13 (2026-10-15)
 
-> Issue #31 (with mod-builder 0.2.21 and issue-forge 0.6.0, one PR): a bare `/duet` closed its pane when the pane was open as a tab behind another pane.
+> Issue #31 (with mod-builder 0.2.22 and issue-forge 0.6.0, one PR): a bare `/duet` closed its pane when the pane was open as a tab behind another pane.
 
 - **Rule:** the pure `paneAction(panes, id)` in `duet-logic.ts` (`open` when no entry has the id, `close` when its entry has `isShown: true`, `show` when `isShown: false`). `/duet` passes it `$.ui.panes()`. `open` and `close` keep today's answers (`Opened. <routes>`, `Closed. /duet to reopen.`). `show` answers `Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.` at once and calls `$.ui.open({ id: 'duet', title: 'Duet', columns: 76, focus: true })` from `bringToFront`, before the hook returns and without awaiting its result. 500 ms later `$.ui.panes()` is read again, and a pane whose `isShown` is still false is named in a toast: `Duet is still behind another tab: ctrl+x tab, then again until it shows.` (the 500 ms re-read is right whether or not `isShown` is already true after the open; the probe that would show it is not run, see mod-builder's gotchas.md).
 - **The keyboard is taken only on a request to see the pane:** `/duet demo` does the same `show` (its answer and state updates are unchanged) when the pane is listed and not shown; a pane that is not listed or is shown opens as before. `/duet config` already opened its config pane with `focus: true` and is unchanged.

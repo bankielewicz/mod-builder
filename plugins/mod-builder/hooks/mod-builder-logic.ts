@@ -64,6 +64,11 @@ export type FileFacts = {
   specMtimeMs: number
   logicMtimeMs: number
   readmeMtimeMs: number
+  /**
+   * The logic modules and test files (subfolders included) by path and mtime: a delete or a rename changes it,
+   * which no mtime shows. Null when a folder under hooks/ or tests/ couldn't be listed: what it holds is unknown.
+   */
+  logicSig: string | null
   /** The version the marketplace lists this mod at, when it does. */
   listedVersion: string | null
 }
@@ -111,6 +116,12 @@ export type Results = Partial<Record<RunKind, RunResult>>
 // ── Stages ────────────────────────────────────────────────────────────────
 
 /**
+ * An edit under way (a build generation): when it began, and the version and the logic and test files
+ * (`logicSig`) it began from. A `logicSig` that is absent or null leaves Logic to the mtime rule.
+ */
+export type Edit = { since: number; fromVersion: string | null; logicSig?: string | null }
+
+/**
  * The eight lights of one mod, from the disk, the stored runs and what runs
  * now. The disk and exit codes decide passed or failed; a report from the
  * model only ever adds `running` (SPEC non-negotiable 2).
@@ -120,11 +131,13 @@ export function lightsOf(
   results: Results,
   running: readonly RunKind[],
   reported: Reported | null,
-  sinceMs: number | null = null,
-  fromVersion: string | null = null,
+  edit: Edit | null = null,
 ): Light[] {
-  // During an edit (sinceMs set), evidence older than the edit's start is stale:
+  // During an edit, evidence older than the edit's start is stale:
   // it passed before, and has to be redone for this change.
+  const sinceMs = edit?.since ?? null
+  const fromVersion = edit?.fromVersion ?? null
+  const fromLogicSig = edit?.logicSig ?? null
   const isOld = (atMs: number): boolean => sinceMs !== null && atMs < sinceMs
   const runLight = (kind: 'Validate' | 'Test'): Light => {
     if (running.includes(kind)) return 'running'
@@ -136,6 +149,10 @@ export function lightsOf(
   }
   const fileLight = (isDone: boolean, savedMs?: number): Light =>
     !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
+  // A delete or a rename saves no file, so a logic or test file changed since the edit began counts too:
+  // Logic is then judged with no mtime, which is never old.
+  // A signature that couldn't be read, then or now, shows nothing either way.
+  const isLogicChanged = fromLogicSig !== null && facts.logicSig !== null && fromLogicSig !== facts.logicSig
   // During an edit, Share needs a new version (not the one the edit started from) that the marketplace lists.
   const isReShared =
     sinceMs === null ||
@@ -144,7 +161,7 @@ export function lightsOf(
   const lights: Light[] = [
     fileLight(facts.hasSpec && !facts.specHasPlaceholder, facts.specMtimeMs),
     fileLight(facts.hasManifest && facts.hasHooksJson),
-    fileLight(facts.hasLogic && facts.hasTests, facts.logicMtimeMs),
+    fileLight(facts.hasLogic && facts.hasTests, isLogicChanged ? undefined : facts.logicMtimeMs),
     fileLight(facts.hasRegister),
     runLight('Validate'),
     runLight('Test'),
@@ -338,8 +355,8 @@ export function isTestFile(file: string): boolean {
   return /\.test\.tsx?$/.test(file)
 }
 
-/** Whether a nested file (named by its path from the mod folder) is logic under hooks/ or a test under tests/. Freshness only: existence stays top-level. */
-export function isNestedLogicOrTest(path: string): boolean {
+/** Whether a file, named by its path from the mod folder, is logic under hooks/ or a test under tests/, at any depth. Freshness only: existence stays top-level. */
+export function isLogicOrTestPath(path: string): boolean {
   const base = path.slice(path.lastIndexOf('/') + 1)
   if (path.startsWith('hooks/')) return isLogicModule(base)
   return path.startsWith('tests/') && isTestFile(base)
@@ -696,11 +713,10 @@ export function viewOf(
   runs: readonly Run[],
   reported: Reported | null,
   isFresh: boolean,
-  sinceMs: number | null = null,
-  fromVersion: string | null = null,
+  edit: Edit | null,
   path: string,
 ): ModView {
-  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion)
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, edit)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
   const validate = results.Validate?.validate
   const focus = focusStageOf(lights)
@@ -1070,6 +1086,8 @@ export type FolderRead = {
   skills?: readonly Entry[]
   /** Files in subfolders of hooks/, tests/, types/, agents/, commands/ and skills/, named by their path from the mod folder (`hooks/lib/parser.ts`). */
   nested?: readonly Entry[]
+  /** Folders whose listing failed, by their path from the mod folder (`hooks/lib`): read as empty, though they may not be. */
+  unlisted?: readonly string[]
   spec: string | null
   readme: string | null
   /** plugin.json's text, when present. */
@@ -1110,6 +1128,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
   // Named by folder, so a file moved between folders without a new mtime still changes the signature.
   const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
     entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  const sigOf = (entries: readonly Entry[]): string => signatureOf(entries.map(entry => `${entry.name}@${entry.mtimeMs}`))
   // The one file at the top that validate reads; the SPEC and README are read by neither validate nor test.
   const mcp = read.top.filter(entry => entry.kind === 'file' && entry.name === '.mcp.json')
   const nested = read.nested ?? []
@@ -1128,12 +1147,9 @@ export function factsOf(read: FolderRead): FileFacts | null {
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}
   const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
-  const logic = [
-    ...read.hooks.filter(entry => isLogicModule(entry.name)),
-    ...read.tests.filter(entry => isTestFile(entry.name)),
-    ...nested.filter(entry => isNestedLogicOrTest(entry.name)),
-  ]
-  const codeSig = signatureOf(code.map(entry => `${entry.name}@${entry.mtimeMs}`))
+  // The code files that are logic modules or tests, top-level or nested: one rule for logicMtimeMs and logicSig.
+  const logic = code.filter(entry => isLogicOrTestPath(entry.name))
+  const codeSig = sigOf(code)
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
   return {
     ...manifestOf(read.manifest),
@@ -1153,6 +1169,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
+    logicSig: (read.unlisted ?? []).some(path => /^(hooks|tests)(\/|$)/.test(path)) ? null : sigOf(logic),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
@@ -1190,6 +1207,7 @@ export function placeholderFacts(name: string): FileFacts {
     isReadmeStale: false,
     specMtimeMs: 0,
     logicMtimeMs: 0,
+    logicSig: signatureOf([]),
     readmeMtimeMs: 0,
     listedVersion: null,
   }
