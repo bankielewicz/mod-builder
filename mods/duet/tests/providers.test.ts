@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
+import { keyId } from '../hooks/duet-providers-logic'
 
 const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 160 } as const
@@ -30,6 +31,12 @@ type World = {
   cwd?: string
   /** chmod exits 1 with this text. */
   chmodFail?: string
+  /** chmod fails on these calls only (1-based), as a host whose second chmod fails. */
+  chmodFailOn?: number[]
+  /** fs.exists rejects, as for a network location. */
+  existsDeny?: boolean
+  /** ui.open answers isPlaced: false (a narrow window, or a headless run). */
+  unplaced?: boolean
 }
 type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; events: string[]; clock: ReturnType<typeof mock.clock> }
 
@@ -47,9 +54,15 @@ function engine(on: any, o: World = {}): Seen {
   on('tool.call', { tool: 'Glob' }, () => ({ result: { filenames: ['/w/a'], durationMs: 1, numFiles: 1, truncated: false } }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'ran', stderr: '' } }))
   on('tool.call', { tool: 'Read' }, () => ({ result: { type: 'text', file: { filePath: '/w/x', content: 'read', numLines: 1, startLine: 1, totalLines: 1 } } }))
-  on('fs.exists', ($: any, e: any) => ({ value: e.path in seen.files }))
+  on('fs.exists', ($: any, e: any) => (o.existsDeny ? { deny: 'EIO: network location' } : { value: e.path in seen.files }))
   on('fs.list', () => ({ deny: 'ENOENT' }))
-  on('process.run', ($: any, e: any) => (seen.argv.push(e.argv), seen.events.push(e.argv[0]), { value: { exitCode: o.chmodFail && e.argv[0] === 'chmod' ? 1 : 0, stdout: '', stderr: o.chmodFail && e.argv[0] === 'chmod' ? o.chmodFail : '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  let chmods = 0
+  on('process.run', ($: any, e: any) => {
+    seen.argv.push(e.argv)
+    seen.events.push(e.argv[0])
+    const fails = e.argv[0] === 'chmod' && (Boolean(o.chmodFail) || (o.chmodFailOn ?? []).includes(++chmods))
+    return { value: { exitCode: fails ? 1 : 0, stdout: '', stderr: fails ? (o.chmodFail ?? 'chmod: Operation not permitted') : '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   const answerOf = (r: Reply) => {
     if (typeof r === 'string') return { value: { status: 200, ok: true, headers: {}, text: r } }
     if ('deny' in r) return { deny: r.deny }
@@ -62,7 +75,7 @@ function engine(on: any, o: World = {}): Seen {
   })
   on('store.get', ($: any, e: any) => ({ value: seen.store.get(e.key) }))
   on('store.set', ($: any, e: any) => (seen.store.set(e.key, e.value), { value: undefined }))
-  on('ui.open', ($: any, e: any) => (seen.opened.push({ ...e }), { value: { isPlaced: true } }))
+  on('ui.open', ($: any, e: any) => (seen.opened.push({ ...e }), { value: { isPlaced: !o.unplaced } }))
   on('ui.close', ($: any, e: any) => (seen.closed.push(e.id), { value: undefined }))
   on('ui.panes', () => ({ value: [] }))
   on('ui.toast', ($: any, e: any) => (seen.toasts.push(e.text), { value: undefined }))
@@ -82,6 +95,11 @@ async function run($: any, args: string): Promise<string> {
 const start = ($: any, cwd = '/w') => $.session.start({ surface: 'terminal', isInteractive: true, cwd })
 const mount = ($: any, surface: 'terminal' | 'desktop' = 'terminal', props: object = PANE) =>
   $.ui.mount({ plugin: 'duet', surface, component: 'Pane', requestId: 'duet-providers', props, viewport: { columns: 120, rows: 40 } })
+
+/** Every provider's stored test result, one store key each (`duet:providers:tests:<id>`, Codex 4298476151 and CLAUDE.md's store rule). */
+const testsIn = (seen: Seen): Record<string, any> => Object.fromEntries([...seen.store].filter(([k]) => k.startsWith('duet:providers:tests:')).map(([k, v]) => [k.slice('duet:providers:tests:'.length), v]))
+/** Store entries for results, one key per provider. */
+const seed = (tests: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(tests).map(([id, v]) => [`duet:providers:tests:${id}`, v]))
 
 /** Every text the test can see: command answers, toasts, files duet wrote, the store. Never holds a key. */
 const everything = (seen: Seen, ...texts: string[]) => [...texts, ...seen.toasts, JSON.stringify([...seen.store]), ...Object.entries(seen.files).filter(([p]) => p !== KEY_FILE).map(([, t]) => t)].join('\n')
@@ -182,7 +200,7 @@ describe('/duet provider', () => {
     expect(seen.fetches[0]!.init.headers.Authorization).toBe(`Bearer ${KEY}`)
     expect(await ui.find({ type: 'Text', text: /google\s+Google Gemini\s+key …a1b2\s+ok \d+ms · 2 models/ })).toBeDefined()
     await ui.unmount()
-    const tests = seen.store.get('duet:providers:tests') as Record<string, { ok: boolean; status: number }>
+    const tests = testsIn(seen) as Record<string, { ok: boolean; status: number }>
     expect(tests.google!.ok).toBe(true)
     expect(tests.google!.status).toBe(200)
     expect(everything(seen)).not.toContain(KEY)
@@ -329,7 +347,7 @@ describe('/duet provider', () => {
   })
 
   test('Codex 4297835973: saving or removing a key drops that provider\'s old test result, in the pane and the store', async ($, on) => {
-    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, store: { 'duet:providers:tests': { google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1 }, xai: { ok: false, status: 401, ms: 1, model: '', note: '✕ 401 unauthorized', at: 1 } } } })
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, store: seed({ google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: keyId(KEY) }, xai: { ok: false, status: 401, ms: 1, model: '', note: '✕ 401 unauthorized', at: 1 } }) })
     await start($)
     expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key …a1b2\s+ok 1ms · 2 models/)
     await run($, 'provider key google')
@@ -338,13 +356,13 @@ describe('/duet provider', () => {
     await seen.clock.settle()
     expect(await ui.find({ type: 'Text', text: /google\s+Google Gemini\s+key …cdef\s+untested/ })).toBeDefined()
     await ui.unmount()
-    const stored = seen.store.get('duet:providers:tests') as Record<string, unknown>
+    const stored = testsIn(seen) as Record<string, unknown>
     expect(stored.google).toBeUndefined()
     expect(stored.xai).toBeDefined()
     await run($, 'provider test google')
-    expect((seen.store.get('duet:providers:tests') as Record<string, unknown>).google).toBeDefined()
+    expect((testsIn(seen) as Record<string, unknown>).google).toBeDefined()
     await run($, 'provider remove google')
-    expect((seen.store.get('duet:providers:tests') as Record<string, unknown>).google).toBeUndefined()
+    expect((testsIn(seen) as Record<string, unknown>).google).toBeUndefined()
   })
 
   test('Codex 4298476151: a test result is merged into the shared store, never replacing another session\'s', async ($, on) => {
@@ -352,9 +370,9 @@ describe('/duet provider', () => {
     await start($)
     await run($, 'provider list')
     // Another session stored a result after this one read the store.
-    seen.store.set('duet:providers:tests', { xai: { ok: true, status: 200, ms: 5, model: '', note: 'ok 5ms · 3 models', at: 2 } })
+    seen.store.set('duet:providers:tests:xai', { ok: true, status: 200, ms: 5, model: '', note: 'ok 5ms · 3 models', at: 2 })
     await run($, 'provider test google')
-    const stored = seen.store.get('duet:providers:tests') as Record<string, { ok: boolean }>
+    const stored = testsIn(seen) as Record<string, { ok: boolean }>
     expect(stored.xai!.ok).toBe(true)
     expect(stored.google!.ok).toBe(true)
   })
@@ -443,7 +461,7 @@ describe('/duet provider', () => {
     await start($)
     expect(await run($, 'provider test google')).toBe('google: ✕ 200 the reply is not JSON')
     expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key …a1b2\s+✕ 200 the reply is not JSON/)
-    expect((seen.store.get('duet:providers:tests') as Record<string, { ok: boolean }>).google!.ok).toBe(false)
+    expect((testsIn(seen) as Record<string, { ok: boolean }>).google!.ok).toBe(false)
   })
 
   test('Codex 4298989626: a test result is bound to the key it tested: a reply that lands after the key changed is dropped, a stored result for another key shows as untested, and t while running sends nothing', async ($, on) => {
@@ -462,15 +480,15 @@ describe('/duet provider', () => {
     release(MODELS)
     await seen.clock.settle()
     expect(await ui.find({ type: 'Text', text: /google\s+Google Gemini\s+key …cdef\s+untested/ })).toBeDefined()
-    expect((seen.store.get('duet:providers:tests') as Record<string, unknown>).google).toBeUndefined()
+    expect((testsIn(seen) as Record<string, unknown>).google).toBeUndefined()
     await ui.unmount()
     // A result stored for another key (another session, or the file changed by hand) does not vouch for this one.
-    seen.store.set('duet:providers:tests', { google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' } })
+    seen.store.set('duet:providers:tests:google', { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' })
     expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key …cdef\s+untested/)
   })
 
   test('t on a provider that cannot be tested shows the reason even when an old result is stored', async ($, on) => {
-    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, unreadable: 'EACCES: permission denied', store: { 'duet:providers:tests': { google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' } } } })
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, unreadable: 'EACCES: permission denied', store: seed({ google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' } }) })
     await start($)
     await run($, 'provider key google')
     const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })
@@ -500,7 +518,7 @@ describe('/duet provider', () => {
   })
 
   test('Codex 4299362999: a custom result stored for another base URL shows as untested', { options: { apiCustomUrl: 'https://gw.example.com/v1' } }, async ($, on) => {
-    engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, store: { 'duet:providers:tests': { custom: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…cdef', host: 'https://old.example/v1' } } } })
+    engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, store: seed({ custom: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…cdef', host: 'https://old.example/v1' } }) })
     await start($)
     expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+key …cdef from env · gw.example.com\s+untested/)
   })
@@ -523,6 +541,91 @@ describe('/duet provider', () => {
     await start($)
     expect(await run($, 'provider models google')).toBe('google: 500: [2Jboom [redacted]')
     expect(seen.fetches.length).toBe(1)
+  })
+
+  test('Windows: the key file under USERPROFILE is saved without chmod, which Windows has not, and the note says the user folder\'s permissions apply', async ($, on) => {
+    const WIN = 'C:/Users/x/.claude/duet-data/.env'
+    const seen = engine(on, { noHome: true, env: { USERPROFILE: 'C:\\Users\\x' }, chmodFail: "'chmod' is not recognized as a command" })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(seen.files[WIN]).toBe(`GEMINI_API_KEY=${KEY}\n`)
+    expect(seen.argv.filter(a => a[0] === 'chmod')).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /saved to ~\/.claude\/duet-data\/.env \(Windows: no chmod; your user folder's permissions apply\) · t tests it/ })).toBeDefined()
+    await ui.unmount()
+    expect(await run($, 'provider remove google')).toBe('google: key removed from ~/.claude/duet-data/.env.')
+  })
+
+  test('Codex 4298476151 and CLAUDE.md: each provider\'s result has its own store key, so sessions never overwrite each other\'s', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\nXAI_API_KEY=${XAI}\n` } })
+    await start($)
+    await run($, 'provider test google')
+    await run($, 'provider test xai')
+    expect([...seen.store.keys()].filter(k => k.startsWith('duet:providers:tests')).sort()).toEqual(['duet:providers:tests:google', 'duet:providers:tests:xai'])
+  })
+
+  test('Codex 4299537610 and 4299537623: a stored result for another key of the same length is untested and not counted; one made with no key goes when a key arrives', async ($, on) => {
+    const ok = (key: string) => ({ ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key, host: '' })
+    const seen = engine(on, { env: { GEMINI_API_KEY: 'short-two', OPENROUTER_API_KEY: 'or-key-0123456789abcdef' }, store: seed({ google: ok(keyId('short-one')), openrouter: ok(keyId('')) }) })
+    await start($)
+    const text = await run($, 'provider list')
+    expect(text).toMatch(/google\s+Google Gemini\s+key … from env\s+untested/)
+    expect(text).toMatch(/openrouter\s+OpenRouter \(gateway\)\s+key …cdef from env\s+untested/)
+    expect(text).toContain('2 keys · 0 tested')
+    seen.store.set('duet:providers:tests:google', ok(keyId('short-two')))
+    expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key … from env\s+ok 1ms · 2 models/)
+  })
+
+  test('Codex 4299537637: /duet provider models prints at most 200 ids and says how many more there are', async ($, on) => {
+    engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => JSON.stringify({ data: Array.from({ length: 466 }, (_, i) => ({ id: `m${i}` })) }) })
+    await start($)
+    const text = await run($, 'provider models google')
+    expect(text.split('\n').length).toBe(202)
+    expect(text).toContain('… 266 more not shown')
+  })
+
+  test('a save whose final chmod failed is a warning, not a green "saved"', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: '' }, chmodFailOn: [2] })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    const line: any = await ui.find({ type: 'Text', text: /saved to .*chmod 600 failed/ })
+    expect(line).toBeDefined()
+    expect(line.props.color).toBe('#E0B15A')
+    await ui.unmount()
+  })
+
+  test('an fs.exists that rejects never truncates the key file: the other keys stay', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `XAI_API_KEY=${XAI}\n` }, existsDeny: true })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(seen.files[KEY_FILE]).toBe(`XAI_API_KEY=${XAI}\nGEMINI_API_KEY=${KEY}\n`)
+    expect(seen.events.includes('write empty')).toBe(false)
+    await ui.unmount()
+  })
+
+  test('with no pane (headless, or too narrow) key <id> says where the key goes instead', async ($, on) => {
+    engine(on, { unplaced: true })
+    await start($)
+    const text = await run($, 'provider key google')
+    expect(text).toContain('No pane could be shown here: set GEMINI_API_KEY in your environment, or add a line GEMINI_API_KEY=<key> to ~/.claude/duet-data/.env (mode 600).')
+    expect(text).not.toContain('too narrow')
+    expect(await run($, 'provider')).toContain('(The pane could not be shown here: a narrow window or a headless run.')
+  })
+
+  test('the config pane marks the option rows its window hides', async ($, on) => {
+    engine(on)
+    await start($)
+    const ui = await $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet-config', props: { ...PANE, scroll: { offset: 0, bodyRows: 14 } }, viewport: { columns: 120, rows: 40 } })
+    expect(await ui.find({ type: 'Text', text: /↓ \d+ more \(j\)/ })).toBeDefined()
+    await ui.unmount()
   })
 
   test('a Grep of the key file or its folder is refused; a grep for the path in the repo\'s own files passes', async ($, on) => {
@@ -568,7 +671,7 @@ describe('/duet provider', () => {
     const [g, x] = await Promise.all([run($, 'provider test google'), run($, 'provider test xai')])
     expect(g).toMatch(/google: ok/)
     expect(x).toMatch(/xai: ok/)
-    const stored = seen.store.get('duet:providers:tests') as Record<string, unknown>
+    const stored = testsIn(seen) as Record<string, unknown>
     expect(Object.keys(stored).sort()).toEqual(['google', 'xai'])
   })
 

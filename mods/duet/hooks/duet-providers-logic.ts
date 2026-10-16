@@ -206,6 +206,16 @@ export function maskKey(key: string): string {
   return key.length >= 12 ? `…${key.slice(-4)}` : '…'
 }
 
+/** Red skeleton: today's order (clean, which cuts, then redact). */
+export function safeText(text: string, keys: readonly string[], max: number): string {
+  return redact(clean(text, max), keys)
+}
+
+/** Red skeleton: today's binding, the mask. */
+export function keyId(key: string): string {
+  return maskKey(key)
+}
+
 /** Every stored key's value replaced with `[redacted]`, wherever it appears. Blank keys are ignored. */
 export function redact(text: string, keys: readonly string[]): string {
   let out = text

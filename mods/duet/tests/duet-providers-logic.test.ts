@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, detailLinesThatFit, isAllowedBaseUrl, isLocalBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
-  keyFileExposed, parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
+  keyFileExposed, keyId, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -262,6 +262,67 @@ describe('requests and replies', () => {
     expect(refusalReason('duet: $.http.fetch(http://localhost:11434/v1/models) failed: ECONNREFUSED: Unable to connect. Is the computer able to access the url?')).toBe('ECONNREFUSED: Unable to connect. Is the computer able to access the url?')
     expect(refusalReason('duet: $.http.fetch: nonessential traffic is disabled')).toBe('nonessential traffic is disabled')
     expect(refusalReason('something else\nmore')).toBe('something else')
+  })
+})
+
+describe('provider text: cleaned, redacted, then cut', () => {
+  // A key of 63 characters, as some gateways issue; a provider that echoes it past the cut must not leak its prefix.
+  const LONG = 'sk-A1b2C3d4E5A1b2C3d4E5A1b2C3d4E5A1b2C3d4E5A1b2C3d4E5A1b2C3d4E5x'
+  const leaks = (text: string) => [8, 12, 20].some(n => text.includes(LONG.slice(0, n)))
+
+  test('safeText strips controls, then redacts, then cuts, so a key that straddles the cut is never partly shown', () => {
+    expect(LONG.length).toBe(63)
+    expect(safeText('x'.repeat(48) + LONG, [LONG], 60)).toBe('x'.repeat(48) + '[redacted]')
+    expect(safeText('sec\u001bret', ['secret'], 60)).toBe('[redacted]')
+    expect(safeText('a\nb', [], 10)).toBe('ab')
+  })
+
+  test('every provider-text path goes through it: error messages, plain bodies, model ids, Retry-After, refusals', () => {
+    expect(leaks(testOutcome('probe', { status: 401, ok: false, text: JSON.stringify({ error: { message: 'Incorrect API key provided. Key: ' + 'y'.repeat(15) + LONG } }) }, 1, 1, [LONG]).note)).toBe(false)
+    expect(leaks(testOutcome('probe', { status: 500, ok: false, text: 'z'.repeat(50) + LONG }, 1, 1, [LONG]).note)).toBe(false)
+    expect(leaks(testOutcome('probe', { status: 200, ok: true, text: JSON.stringify({ error: { message: 'q'.repeat(60) + LONG } }) }, 1, 1, [LONG]).note)).toBe(false)
+    expect(leaks(JSON.stringify(parseModelsReply(JSON.stringify({ data: [{ id: 'm'.repeat(115) + LONG }] }), [LONG])))).toBe(false)
+    expect(leaks(testOutcome('probe', { status: 200, ok: true, text: JSON.stringify({ model: 'n'.repeat(55) + LONG, choices: [{ message: { content: 'ok' } }] }) }, 1, 1, [LONG]).note)).toBe(false)
+    expect(leaks(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': 'r'.repeat(30) + LONG } }, 1, 1, [LONG]).note)).toBe(false)
+    const refused = testOutcome('models', { refused: 'duet: $.http.fetch: \u001b[2J' + 'w'.repeat(300) + LONG }, 1, 1, [LONG]).note
+    expect(refused.includes('\u001b')).toBe(false)
+    expect(refused.length).toBeLessThanOrEqual(140)
+    expect(leaks(refused)).toBe(false)
+  })
+
+  test('Retry-After takes the unit only when it is a number of seconds; an HTTP date is shown as given', () => {
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' } }, 20, 1).note).toBe('✕ 429 rate limited (retry-after Wed, 21 Oct 2026 07:28:00 GMT); not retried')
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '30' } }, 20, 1).note).toBe('✕ 429 rate limited (retry-after 30 s); not retried')
+  })
+
+  test('Codex 4299537637: a model list keeps at most 200 ids and counts the rest; the test counts them all', () => {
+    const many = parseModelsReply(JSON.stringify({ data: Array.from({ length: 466 }, (_, i) => ({ id: `m${i}` })) }))
+    expect('ids' in many && many.ids.length).toBe(200)
+    expect('ids' in many && many.cut).toBe(266)
+    expect(testOutcome('models', { status: 200, ok: true, text: JSON.stringify({ data: Array.from({ length: 466 }, (_, i) => ({ id: `m${i}` })) }) }, 20, 1).note).toBe('ok 20ms · 466 models')
+  })
+
+  test('Codex 4299537610: a result is bound to a fingerprint of the whole key, not its last four characters; no key is a value of its own', () => {
+    expect(keyId('')).toBe('none')
+    expect(keyId('lm-studio')).not.toBe(keyId('other-key'))
+    expect(keyId('lm-studio')).toBe(keyId('lm-studio'))
+    expect(keyId(KEY)).toMatch(/^f:[0-9a-f]{8}$/)
+    expect(keyId(KEY).includes(KEY)).toBe(false)
+    expect(maskKey('lm-studio')).toBe(maskKey('other-key'))   // why the mask could not tell them apart
+  })
+
+  test('the guard: interpreter heredocs, quoted #, globs, case, dd and brace forms count; other duet-data folders, messages and grep patterns do not', () => {
+    for (const text of [
+      'echo "x #"; cat ~/.claude/duet-data/.env', "python3 - <<'EOF'\nprint(open('/home/u/.claude/duet-data/.env').read())\nEOF", 'bash <<EOF\ncat ~/.claude/duet-data/.env\nEOF',
+      'cat ~/.claude/duet-data/.e*', 'cat $HOME/.claude/DUET-DATA/.env', 'cat ~/.claude/duet-data/{.env,x}', 'dd if=/home/u/.claude/duet-data/.env', 'cat ~/.claude/x/../duet-data/.env',
+      'grep -rn API_KEY ~/.claude/duet-data',
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    for (const text of [
+      'ls /work/duet-data', 'git -C /work/duet-data status', 'cat /work/duet-data/.env', 'git commit -m "docs: keys live in ~/.claude/duet-data/.env"',
+      'gh pr comment 110 --body "keys live in ~/.claude/duet-data/.env (600)"', 'rg "\\.claude/duet-data" mods', "grep -n '~/.claude/duet-data/.env' README.md",
+      'cat ~/.claude/duet-data/sessions/s1/d1.out.md', 'cat ~/.claude/duet-data/*.md', 'cat <<EOF\n~/.claude/duet-data/.env\nEOF',
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
+    expect(namesKeyFolder('/work/duet-data')).toBe(false)
   })
 })
 
