@@ -14,13 +14,6 @@ import {
   advance,
   afterBlock,
   agentName,
-  manifestOf,
-  newModGuidance,
-  newModReply,
-  newPluginGate,
-  newPluginOf,
-  newPluginRecord,
-  newPluginRefusal,
   agentsKey,
   agentPrompt,
   badgeOf,
@@ -75,8 +68,15 @@ import {
   legacyAgentsKey,
   lineOf,
   lockPathOf,
+  manifestOf,
   mergeLine,
   migrationPlan,
+  newModGuidance,
+  newModReply,
+  newPluginGate,
+  newPluginOf,
+  newPluginRecord,
+  newPluginRefusal,
   newRun,
   nextDemoState,
   normalizePath,
@@ -1454,10 +1454,6 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
 }
 
 /**
- * `/issue-forge <N>` (Change 0.3.0, 3): the same issue answers its status; another active run, or a drive in this
- * session, gets one question; otherwise the run starts.
- */
-/**
  * The start's own read of the issue (Change 0.6.0): when its body asks for the plugin to be built with mod-builder,
  * the answer is the next steps, and nothing is stored. A failed read starts as before; preflight reports the cause.
  */
@@ -1476,6 +1472,10 @@ async function newModStart($: EngineInterface, root: string, issue: number, ghRe
   return guidance ? newModReply({ issue, title: read.title ?? '', url: read.url ?? '', ...(ghRepo ? { ghRepo } : {}) }, guidance) : null
 }
 
+/**
+ * `/issue-forge <N>` (Change 0.3.0, 3): the same issue answers its status; another active run, or a drive in this
+ * session, gets one question; otherwise the run starts.
+ */
 async function startRun($: EngineInterface, at: Repo | null, issue: number, named?: string): Promise<string> {
   if (!at) return 'not in a git repository. Start Claude Code inside the repository the issue belongs to.'
   // An issue URL must name the repository gh resolves here (#25), before this checkout's runs answer for its number (PR #68

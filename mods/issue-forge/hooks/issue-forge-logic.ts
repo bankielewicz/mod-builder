@@ -1779,12 +1779,12 @@ export function badgeOf(run: Run, now: number): string {
   return `#${run.issue} ${stepLabel(run)}${t ? ` · ${elapsed(now - t.startedAt)}` : ''}`
 }
 
-/** `/issue-forge status` as text; `others` are the repository's other active runs (Change 0.3.0). */
 /** What follows a block's next step: resume, or for a block resume can't clear, stop (Change 0.6.0). */
 export function afterBlock(run: Run): string {
   return run.blocked?.isFinal ? `/issue-forge stop ${run.issue}` : '/issue-forge resume'
 }
 
+/** `/issue-forge status` as text; `others` are the repository's other active runs (Change 0.3.0). */
 export function statusText(run: Run | null, isDriving: boolean, now: number, me = '', others: readonly OtherRun[] = []): string {
   if (!run) return `No run in this repository. ${USAGE}`
   const view = viewOf(run, isDriving, me)
