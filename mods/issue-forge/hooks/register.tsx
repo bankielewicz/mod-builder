@@ -119,9 +119,9 @@ import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, 
 const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
 const GIT_TIMEOUT = 60_000
-/** The attempts a git call that writes the index makes against a held lock, a second apart (#28). */
-const INDEX_ATTEMPTS = 5
-const INDEX_WAIT_MS = 1000
+/** The attempts a git call that writes the index or a ref makes against a held lock, a second apart (#28). */
+const LOCK_ATTEMPTS = 5
+const LOCK_WAIT_MS = 1000
 /** Why a phase agent's report is kept from the main model: shown for prompt.submit's drop, only logged for session.receive's consumed (d.ts). */
 const HANDBACK_DROP = 'issue-forge: a phase agent finished; the pane has the result.'
 const COLORS: Record<Tone, string | undefined> = { success: '#7FB685', accent: '#D97757', warn: '#E0B15A', error: '#E06C6C', dim: undefined }
@@ -227,7 +227,7 @@ async function gitOut($: EngineInterface, root: string, args: string[]): Promise
 class Locked extends Error {
   readonly next: string
   constructor(lockPath: string) {
-    super(`another git process is using ${lockPath} (${INDEX_ATTEMPTS} attempts over ${((INDEX_ATTEMPTS - 1) * INDEX_WAIT_MS) / 1000} s)`)
+    super(`another git process is using ${lockPath} (${LOCK_ATTEMPTS} attempts over ${((LOCK_ATTEMPTS - 1) * LOCK_WAIT_MS) / 1000} s)`)
     this.next = `wait for the other git process to finish, or delete ${lockPath} if none is running`
   }
 }
@@ -248,8 +248,8 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
     const text = `${r.stderr}\n${r.stdout}`
     const held = lockPathOf(text) ?? (await heldOf($, files))
     if (!held && !isLockError(text)) return r
-    if (attempt === INDEX_ATTEMPTS) throw new Locked(held ?? files[0]!)
-    await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
+    if (attempt === LOCK_ATTEMPTS) throw new Locked(held ?? files[0]!)
+    await new Promise<void>(resolve => void $.clock.after(LOCK_WAIT_MS, () => resolve()))
     // The 5 s watch is too slow for a takeover during the waits: the stored run is read before each attempt.
     await stillOwned($, run)
   }
