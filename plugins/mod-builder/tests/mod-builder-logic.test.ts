@@ -179,6 +179,7 @@ const EMPTY: FileFacts = {
   logicMtimeMs: 0,
   logicSig: 'logic-a',
   readmeMtimeMs: 0,
+  quickSig: '0:0',
   listedVersion: null,
 }
 
@@ -1603,7 +1604,8 @@ describe('a rescan after a tool batch (#100)', () => {
     expect(touch([call('Write', { file_path: '/m/mods/alpha/x.ts' })], pinned)).toEqual({ mods: [], isShell: false })
   })
 
-  const quick = { top: [file('SPEC.md', 100), file('README.md', 100), dir('hooks', 100), dir('tests', 100)], manifestDir: [file('plugin.json', 100)], hooks: [file('x-logic.ts', 100), dir('lib', 100)], tests: [file('x.test.ts', 100)] }
+  type Listed = { name: string; kind: 'file' | 'dir'; mtimeMs: number }
+  const quick: { top: Listed[]; manifestDir: Listed[]; hooks: Listed[]; tests: Listed[] } = { top: [file('SPEC.md', 100), file('README.md', 100), dir('hooks', 100), dir('tests', 100)], manifestDir: [file('plugin.json', 100)], hooks: [file('x-logic.ts', 100), dir('lib', 100)], tests: [file('x.test.ts', 100)] }
 
   test('quickSigOf: moves with SPEC, README, the manifest and what sits directly in hooks/ and tests/, added or removed', () => {
     const sig = helper<[typeof quick], string>('quickSigOf')
