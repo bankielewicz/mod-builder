@@ -2120,6 +2120,16 @@ describe('new plugins are mod-builder\'s (Change 0.5.0)', () => {
     expect((await run($, 'status')).text).toContain("1. Nothing past red's commit was committed, and nothing was pushed.")
   })
 
+  test('a final block\'s hint line offers stop and status, not resume', async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', MANIFEST], sinceRed: [MANIFEST], redPaths: ['tests/a.test.ts'], added: [MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /r resume/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^s stop · t status · ctrl\+x tab focuses the pane$/ })).toBeDefined()
+  })
+
   test('a pull request\'s number blocks final: resume refuses it', async ($, on) => {
     const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
     await start($)
