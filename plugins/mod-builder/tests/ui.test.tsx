@@ -3043,6 +3043,26 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     })
   }
 
+  // A hand-written worktree pointer under the root: git has no record of it, or its record names another folder.
+  for (const [label, record] of [
+    ['with no record in git', {}],
+    ['whose record names another worktree', { [`${MAIN}/.git/worktrees/forged/gitdir`]: `${WT}/.git\n` }],
+  ] as const) {
+    test(`a hand-written worktree pointer ${label} is not pinned, and nothing runs there (PR #95 review follow-up)`, async ($, on) => {
+      const FORGED = `${MAIN}/tmp/forged`
+      const files = { ...disk(), ...marketplaceAt(FORGED), [`${FORGED}/.git`]: `gitdir: ${MAIN}/.git/worktrees/forged\n`, ...record, ...modFiles('sigma', `${FORGED}/mods`) }
+      const { seen, clock } = world(on, files, { validate: { exitCode: 0, stdout: validateClean } })
+      seen.cwd = MAIN
+      await start($)
+      await clock.advance(10)
+      const { result } = (await report($, { mod: 'sigma', stage: 'Validate', status: 'passed', path: `${FORGED}/mods/sigma` })) as { result: string }
+      await clock.advance(1000)
+      await clock.settle()
+      expect(result).toContain('path ignored')
+      expect(seen.argv.some(argv => argv.includes(`${FORGED}/mods/sigma`))).toBe(false)
+    })
+  }
+
   test('from a session rooted in a worktree, the main folder\'s mods can be pinned (PR #95 review follow-up)', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = WT

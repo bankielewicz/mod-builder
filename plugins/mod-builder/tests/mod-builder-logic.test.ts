@@ -133,6 +133,12 @@ const gitCommonDirOf = (folder: string, dotGit: DotGit): string | null | undefin
 const isSameRepo = (a: string | null, b: string | null): boolean | undefined =>
   (Logic as unknown as { isSameRepo?: (a: string | null, b: string | null) => boolean }).isSameRepo?.(a, b)
 
+/** Git's own record of a worktree (PR #95 review follow-up), read the same way. */
+const worktreeLinkOf = (folder: string, dotGit: DotGit): { record: string } | null | undefined =>
+  (Logic as unknown as { worktreeLinkOf?: (folder: string, dotGit: DotGit) => { record: string } | null }).worktreeLinkOf?.(folder, dotGit)
+const isBackLinkTo = (folder: string, record: string, text: string): boolean | undefined =>
+  (Logic as unknown as { isBackLinkTo?: (folder: string, record: string, text: string) => boolean }).isBackLinkTo?.(folder, record, text)
+
 /** A row's report (PR #95 review), read the same way. */
 const reportIn = (report: Parameters<typeof liveReports>[0][string] | undefined, dir: string) =>
   (Logic as unknown as { reportIn?: (report: unknown, dir: string) => unknown }).reportIn?.(report, dir)
@@ -1307,6 +1313,23 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(isSameRepo('/w/main/tmp/clone/.git', '/w/main/.git')).toBe(false)
     expect(isSameRepo(null, '/w/main/.git')).toBe(false)
     expect(isSameRepo(null, null)).toBe(false)
+  })
+
+  test('worktreeLinkOf: a worktree pointer names git\'s record of it; a repository top or a submodule has none (PR #95 review follow-up)', () => {
+    expect(worktreeLinkOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/wt\n' })).toEqual({ record: '/w/main/.git/worktrees/wt/gitdir' })
+    expect(worktreeLinkOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: ../../.git/worktrees/wt' })).toEqual({ record: '/w/main/.git/worktrees/wt/gitdir' })
+    expect(worktreeLinkOf('/w/main', { kind: 'dir' })).toBeNull()
+    expect(worktreeLinkOf('/w/main/sub', { kind: 'file', text: 'gitdir: ../.git/modules/sub\n' })).toBeNull()
+    expect(worktreeLinkOf('/w/main/tmp/copy', null)).toBeNull()
+  })
+
+  test('isBackLinkTo: git\'s record must name this folder\'s .git, absolute or relative to the record (PR #95 review follow-up)', () => {
+    const record = '/w/main/.git/worktrees/wt/gitdir'
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '/w/main/scratch/wt/.git\n')).toBe(true)
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '../../../scratch/wt/.git\r\n')).toBe(true)
+    expect(isBackLinkTo('C:/r/wt', 'C:/r/.git/worktrees/wt/gitdir', 'C:/R/WT/.git')).toBe(true)
+    expect(isBackLinkTo('/w/main/tmp/forged', record, '/w/main/scratch/wt/.git\n')).toBe(false)
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '')).toBe(false)
   })
 
   test('pinOf: a stored pin needs a folder and a root (PR #95 review)', () => {
