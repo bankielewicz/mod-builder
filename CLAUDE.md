@@ -22,6 +22,7 @@ claude plugin validate plugins/mod-builder       # one plugin: manifest, hooks, 
 claude plugin test plugins/mod-builder           # one plugin's *.test.ts(x) (no per-test filter; a few seconds)
 claude plugin test mods/duet                     # likewise for each mod under mods/
 bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # scaffold all 5 archetypes, validate + test each
+node plugins/mod-builder/skills/build/scripts/check-sandbox.mjs     # the loader still refuses import()/node:fs tests; canary list = gotchas.md's
 claude -p --plugin-dir mods/<name> "/<name> demo"                    # headless live smoke test of a command
 claude --plugin-dir plugins/mod-builder                              # interactive session; the folder is watched and hot-reloads
 ```
@@ -44,9 +45,10 @@ replace `__TYPES__` and `__MOD__`, then `npx -y -p typescript@5.6 tsc -p <copy>`
 interactive session loads the mod (gitignored).
 
 CI (`.github/workflows/ci.yml`) runs validate + test for every `:(glob)plugins/*` and `:(glob)mods/*`
-plugin, the archetype check, and the sandbox check (`node plugins/mod-builder/skills/build/scripts/check-sandbox.mjs`:
-the loader still refuses `import()` and `node:fs` test files, and the canary's list matches `gotchas.md`'s). It is a byte-for-byte copy of the build skill's template
-`plugins/mod-builder/skills/build/ci/ci.yml`, so change both together, the version pin included.
+plugin, the archetype check and the sandbox check (`check-sandbox.mjs`: the loader still refuses `import()`
+and `node:fs` test files, and the canary's list matches `gotchas.md`'s). It is a byte-for-byte copy of the
+build skill's template `plugins/mod-builder/skills/build/ci/ci.yml`, so change both together, the version
+pin included.
 
 ## Changing files: a worktree, then a PR
 
