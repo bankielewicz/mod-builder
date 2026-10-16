@@ -78,6 +78,7 @@ import {
   pruneKeys,
   publishAsk,
   paneAction,
+  pressQuestion,
   publishQuestion,
   readdWorktreeCommand,
   releasesOnEnd,
@@ -162,6 +163,8 @@ let drives = 0
 let driving: Drive | null = null
 /** The driven run as last written: the status line's badge. */
 let drivenLast: Run | null = null
+/** The run whose drive has its publish question open; a Publish press then asks no second one (PR #96 review). */
+let publishAsking: string | null = null
 /** Ends the long command running now (a stop, or its timeout). */
 let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
@@ -1038,7 +1041,11 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
           const checked = await updateRun($, key, stored => (stored?.id === runId && stored.step === 'ready' && isMine() ? advance(stored, { type: 'merged', merge }, at) : null))
           // One pressed while the result was written takes the run over: only a run still driven is asked about.
           if (!checked || !isMine()) return
-          if (!(await confirmPublish($, checked))) return
+          publishAsking = runId
+          const isYes = await confirmPublish($, checked).finally(() => {
+            if (publishAsking === runId) publishAsking = null
+          })
+          if (!isYes) return
         }
         // The question may have stayed open while /issue-forge publish (or stop) moved the run on.
         const now = await loadRun($, key)
@@ -1334,7 +1341,7 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   return `resuming #${back.issue} at ${back.step}${isBehindNow ? `; ${BEHIND_TEXT}` : ''}.`
 }
 
-async function publishRun($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
+async function publishRun($: EngineInterface, at: Repo | null, issue: number | null, byPress = false): Promise<string> {
   if (!at) return 'no run to publish here.'
   const { pick } = await pickFor($, at, issue, false)
   if (pick.kind === 'several') return severalText(pick.runs, 'publish', await lineCtx($))
@@ -1344,7 +1351,11 @@ async function publishRun($: EngineInterface, at: Repo | null, issue: number | n
   if (run.step !== 'ready') return `#${run.issue} isn't ready to publish (${run.step}).`
   const d = drivingNow()
   if (d && d.runId !== run.id) return `this session is driving #${d.issue}; /issue-forge handoff first, or publish #${run.issue} from another session.`
-  if (isDrivenElsewhere(run, sessionId) && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
+  if (byPress) {
+    // The drive's own publish question, while it is open, is this press's question: a second one would stack on it.
+    const refused = publishAsking === run.id ? null : await refusedPress($, 'publish', run, isDrivenElsewhere(run, sessionId))
+    if (refused) return refused
+  } else if (isDrivenElsewhere(run, sessionId) && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
   // A drive waiting on the publish question is taken over: when that question is answered, it finds the run moved on.
   if (driving?.runId === run.id) driving = null
   const now = await $.clock.now()
@@ -1354,7 +1365,7 @@ async function publishRun($: EngineInterface, at: Repo | null, issue: number | n
   return `publishing #${run.issue}: pushing ${run.branch} and opening a pull request against ${run.base}.`
 }
 
-async function stopRun($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
+async function stopRun($: EngineInterface, at: Repo | null, issue: number | null, byPress = false): Promise<string> {
   if (!at) return 'no active run here.'
   const { pick } = await pickFor($, at, issue, true)
   if (pick.kind === 'several') return severalText(pick.runs, 'stop', await lineCtx($))
@@ -1362,9 +1373,13 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   const run = pick.run
   await setFocus($, run)
   if (!isActive(run)) return 'no active run here.'
-  const isHere = drivingNow()?.runId === run.id
   // Another session's drive notices the stop within 5 s and ends itself (watch).
-  if (!isHere && isDrivenElsewhere(run, sessionId) && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
+  const isElsewhere = drivingNow()?.runId !== run.id && isDrivenElsewhere(run, sessionId)
+  if (byPress) {
+    const refused = await refusedPress($, 'stop', run, isElsewhere)
+    if (refused) return refused
+  } else if (isElsewhere && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
+  const isHere = drivingNow()?.runId === run.id
   if (isHere) endLocalDrive()
   const now = await $.clock.now()
   const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
@@ -1432,7 +1447,7 @@ async function endDemo($: EngineInterface): Promise<void> {
 type RunCommand = Extract<Command, { kind: 'start' | 'status' | 'resume' | 'publish' | 'stop' | 'handoff' }>
 
 /** A command about a run, by the issue it names (Change 0.3.0). */
-async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand): Promise<string> {
+async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand, byPress = false): Promise<string> {
   if (cmd.kind === 'start') return startRun($, at, cmd.issue, cmd.repo)
   const issue = cmd.issue ?? null
   switch (cmd.kind) {
@@ -1441,38 +1456,33 @@ async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand):
     case 'resume':
       return resumeRun($, at, issue)
     case 'publish':
-      return publishRun($, at, issue)
+      return publishRun($, at, issue, byPress)
     case 'stop':
-      return stopRun($, at, issue)
+      return stopRun($, at, issue, byPress)
     default:
       return handOffRun($, issue)
   }
 }
 
 /**
- * A pane press that stops or publishes a run asks first, whatever `confirmPublish` says: a stray key must not do either (#31).
- * A typed command stays immediate. The answer that acts is the only yes; a dismissal or no one to answer counts as no.
- * A press with no run to act on goes on, so the command says why there is nothing to do.
+ * A pane press of Stop or Publish asks first, whatever `confirmPublish` says: a stray key must not do either (#31). The
+ * command asks after its own refusals, about the run it picked, and the one question also covers a run another session
+ * drives (PR #96 review). A typed command stays immediate. Null goes on; otherwise what a no, a dismissal or no one to
+ * answer leaves, as the press's toast.
  */
-async function confirmPress($: EngineInterface, at: Repo, kind: 'stop' | 'publish', issue: number | undefined): Promise<boolean> {
-  const { pick } = await pickFor($, at, issue ?? null, kind === 'stop')
-  if (pick.kind !== 'run' || (kind === 'publish' && pick.run.step !== 'ready')) return true
-  const ask =
-    kind === 'stop'
-      ? { question: `Stop run #${pick.run.issue}? Its branch and commits are kept.`, yes: 'Stop the run', no: 'Keep it running' }
-      : { question: publishQuestion(pick.run), yes: 'Publish', no: 'Not now' }
+async function refusedPress($: EngineInterface, kind: 'stop' | 'publish', run: Run, isElsewhere: boolean): Promise<string | null> {
+  const ask = pressQuestion(kind, run, await $.clock.now(), isElsewhere)
   // The choice that changes nothing is listed first.
-  return (await askOr($, ask.question, [ask.no, ask.yes])) === ask.yes
+  return (await askOr($, ask.question, [ask.no, ask.yes])) === ask.yes ? null : ask.kept
 }
 
-/** A button acts on the run the pane shows (a demo only ends or ignores it), then the also line is read again. */
+/** A button acts on the run the pane shows (a demo only ends or ignores it; Stop and Publish ask first), then the also line is read again. */
 async function press($: EngineInterface, kind: 'stop' | 'resume' | 'publish' | 'handoff'): Promise<void> {
   if (await read($, demoAtom)) return kind === 'stop' ? endDemo($) : undefined
   const at = await repoOf($)
   // Hand off acts on this session's drive, whichever run the pane shows.
   const issue = kind === 'handoff' ? undefined : ((await read($, focusAtom)) ?? undefined)
-  if (at && (kind === 'stop' || kind === 'publish') && !(await confirmPress($, at, kind, issue))) return
-  $.ui.toast(truncate(await runCommand($, at, { kind, ...(issue === undefined ? {} : { issue }) }), 80))
+  $.ui.toast(truncate(await runCommand($, at, { kind, ...(issue === undefined ? {} : { issue }) }, true), 80))
   if (at) await refreshOthers($, at.repo)
 }
 
