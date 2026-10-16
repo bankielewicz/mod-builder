@@ -6,9 +6,9 @@
  * the engine, so every rule is unit-tested in tests/mod-builder-logic.test.ts.
  */
 
-import type { Gate, Light, ModView, Reach, Reported, Run, RunKind, Stage, Tone } from '../types'
+import type { Gate, Light, ModView, Pin, Reach, Reported, Run, RunKind, Stage, Tone } from '../types'
 
-export type { Gate, Light, ModView, Reach, Reported, Run, RunKind, Stage, Tone }
+export type { Gate, Light, ModView, Pin, Reach, Reported, Run, RunKind, Stage, Tone }
 
 export const STAGES = [
   'Spec',
@@ -64,6 +64,11 @@ export type FileFacts = {
   specMtimeMs: number
   logicMtimeMs: number
   readmeMtimeMs: number
+  /**
+   * The logic modules and test files (subfolders included) by path and mtime: a delete or a rename changes it,
+   * which no mtime shows. Null when a folder under hooks/ or tests/ couldn't be listed: what it holds is unknown.
+   */
+  logicSig: string | null
   /** The version the marketplace lists this mod at, when it does. */
   listedVersion: string | null
 }
@@ -111,6 +116,12 @@ export type Results = Partial<Record<RunKind, RunResult>>
 // ── Stages ────────────────────────────────────────────────────────────────
 
 /**
+ * An edit under way (a build generation): when it began, and the version and the logic and test files
+ * (`logicSig`) it began from. A `logicSig` that is absent or null leaves Logic to the mtime rule.
+ */
+export type Edit = { since: number; fromVersion: string | null; logicSig?: string | null }
+
+/**
  * The eight lights of one mod, from the disk, the stored runs and what runs
  * now. The disk and exit codes decide passed or failed; a report from the
  * model only ever adds `running` (SPEC non-negotiable 2).
@@ -120,11 +131,13 @@ export function lightsOf(
   results: Results,
   running: readonly RunKind[],
   reported: Reported | null,
-  sinceMs: number | null = null,
-  fromVersion: string | null = null,
+  edit: Edit | null = null,
 ): Light[] {
-  // During an edit (sinceMs set), evidence older than the edit's start is stale:
+  // During an edit, evidence older than the edit's start is stale:
   // it passed before, and has to be redone for this change.
+  const sinceMs = edit?.since ?? null
+  const fromVersion = edit?.fromVersion ?? null
+  const fromLogicSig = edit?.logicSig ?? null
   const isOld = (atMs: number): boolean => sinceMs !== null && atMs < sinceMs
   const runLight = (kind: 'Validate' | 'Test'): Light => {
     if (running.includes(kind)) return 'running'
@@ -136,6 +149,10 @@ export function lightsOf(
   }
   const fileLight = (isDone: boolean, savedMs?: number): Light =>
     !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
+  // A delete or a rename saves no file, so a logic or test file changed since the edit began counts too:
+  // Logic is then judged with no mtime, which is never old.
+  // A signature that couldn't be read, then or now, shows nothing either way.
+  const isLogicChanged = fromLogicSig !== null && facts.logicSig !== null && fromLogicSig !== facts.logicSig
   // During an edit, Share needs a new version (not the one the edit started from) that the marketplace lists.
   const isReShared =
     sinceMs === null ||
@@ -144,7 +161,7 @@ export function lightsOf(
   const lights: Light[] = [
     fileLight(facts.hasSpec && !facts.specHasPlaceholder, facts.specMtimeMs),
     fileLight(facts.hasManifest && facts.hasHooksJson),
-    fileLight(facts.hasLogic && facts.hasTests, facts.logicMtimeMs),
+    fileLight(facts.hasLogic && facts.hasTests, isLogicChanged ? undefined : facts.logicMtimeMs),
     fileLight(facts.hasRegister),
     runLight('Validate'),
     runLight('Test'),
@@ -338,8 +355,8 @@ export function isTestFile(file: string): boolean {
   return /\.test\.tsx?$/.test(file)
 }
 
-/** Whether a nested file (named by its path from the mod folder) is logic under hooks/ or a test under tests/. Freshness only: existence stays top-level. */
-export function isNestedLogicOrTest(path: string): boolean {
+/** Whether a file, named by its path from the mod folder, is logic under hooks/ or a test under tests/, at any depth. Freshness only: existence stays top-level. */
+export function isLogicOrTestPath(path: string): boolean {
   const base = path.slice(path.lastIndexOf('/') + 1)
   if (path.startsWith('hooks/')) return isLogicModule(base)
   return path.startsWith('tests/') && isTestFile(base)
@@ -696,11 +713,10 @@ export function viewOf(
   runs: readonly Run[],
   reported: Reported | null,
   isFresh: boolean,
-  sinceMs: number | null = null,
-  fromVersion: string | null = null,
+  edit: Edit | null,
   path: string,
 ): ModView {
-  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion)
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, edit)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
   const validate = results.Validate?.validate
   const focus = focusStageOf(lights)
@@ -888,18 +904,20 @@ const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
  * A relative `cwd` names no folder to walk, so it has none.
  */
 export function marketplaceCandidatesOf(cwd: string): string[] {
-  const path = normalizePath(cwd)
-  const root = rootOf(path)
+  return foldersUpFrom(cwd).map(folder => (folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE))
+}
+
+/** `path` and every folder above it, nearest first, down to its root; none for a relative path. */
+export function foldersUpFrom(path: string): string[] {
+  const normal = normalizePath(path)
+  const root = rootOf(normal)
   if (!root) return []
-  const parts = path.slice(root.length).split('/').filter(Boolean)
+  const parts = normal.slice(root.length).split('/').filter(Boolean)
   // A UNC path's server and share are its root folder; nothing sits above them.
   const top = root === '//' ? Math.min(UNC_ROOT_PARTS, parts.length) : 0
-  const candidates: string[] = []
-  for (let depth = parts.length; depth >= top; depth--) {
-    const folder = root + parts.slice(0, depth).join('/')
-    candidates.push(folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE)
-  }
-  return candidates
+  const folders: string[] = []
+  for (let depth = parts.length; depth >= top; depth--) folders.push(root + parts.slice(0, depth).join('/'))
+  return folders
 }
 
 /**
@@ -911,6 +929,133 @@ export function modsDirFor(configured: string, cwd: string | null, existing: rea
   if (configured) return normalizePath(configured)
   const found = cwd === null ? undefined : marketplaceCandidatesOf(cwd).find(candidate => existing.includes(candidate))
   return found === undefined ? normalizePath(fallback) : `${found.slice(0, -MARKETPLACE_FILE.length)}/mods`
+}
+
+/** Where the marketplace walk starts (#92): the session's project root when known, which a Bash `cd` doesn't move, else `cwd`. */
+export function walkStartOf(root: string | null, cwd: string | null): string | null {
+  return root ?? cwd
+}
+
+/** A path to compare by: normalized, and lower-cased on a drive or UNC share, which Windows reads without case (PR #95 review). */
+function pathKey(path: string): string {
+  const normal = normalizePath(path)
+  const root = rootOf(normal)
+  return root === '/' || root === '' ? normal : normal.toLowerCase()
+}
+
+/** A build's pinned folder, while the project root is the one it was pinned under or can't be read now; else null (#92). */
+export function keptPinOf(pin: Pin | null, root: string | null): Pin | null {
+  if (!pin) return null
+  return root === null || pathKey(pin.root) === pathKey(root) ? pin : null
+}
+
+/**
+ * The report a row in `dir` shows: one made in that folder, or one with no folder (stored before 0.2.16).
+ * `reported` keeps one report per mod name, so a same-named mod in another folder must not light this row (PR #95 review).
+ */
+export function reportIn(report: Reported | undefined, dir: string): Reported | null {
+  if (!report) return null
+  return report.dir === undefined || report.dir === dir ? report : null
+}
+
+/** The marketplace file a mods folder belongs to: `<marketplace>/mods` → `<marketplace>/.claude-plugin/marketplace.json`. */
+export function marketplaceFileOf(modsDir: string): string {
+  const parent = parentOf(modsDir)
+  return parent.endsWith('/') ? parent + MARKETPLACE_FILE.slice(1) : parent + MARKETPLACE_FILE
+}
+
+/** The folder above `path`, normalized; a root is its own parent. */
+export function parentOf(path: string): string {
+  const dir = normalizePath(path)
+  const cut = dir.lastIndexOf('/')
+  return cut < rootOf(dir).length ? rootOf(dir) : dir.slice(0, cut)
+}
+
+/** A folder's `.git` as the disk has it: a directory (a repository's top), a file (a worktree's or submodule's pointer), or none. */
+export type DotGit = { kind: 'dir' } | { kind: 'file'; text: string } | null
+
+/**
+ * The common git folder of the repository `folder` is the top of (PR #95 review follow-up): `<folder>/.git`
+ * for a repository top; for a `.git` file, its `gitdir:` (resolved against `folder`) without a trailing
+ * `/worktrees/<name>`. A submodule's `gitdir` names its own repository's folder. Null with no `.git`.
+ */
+export function gitCommonDirOf(folder: string, dotGit: DotGit): string | null {
+  if (!dotGit) return null
+  if (dotGit.kind === 'dir') return `${normalizePath(folder).replace(/\/$/, '')}/.git`
+  const gitDir = gitDirNamedIn(folder, dotGit.text)
+  if (gitDir === null) return null
+  return /^(.*)\/worktrees\/[^/]+$/.exec(gitDir)?.[1] ?? gitDir
+}
+
+/** The git folder a `.git` file's `gitdir:` line names, resolved against `folder`; null without one. */
+function gitDirNamedIn(folder: string, text: string): string | null {
+  const line = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text.replace(/\r/g, ''))
+  if (!line) return null
+  const named = line[1]!.replace(/\\/g, '/')
+  return normalizePath(rootOf(named) ? named : `${normalizePath(folder).replace(/\/$/, '')}/${named}`)
+}
+
+/**
+ * Git's own record of the worktree whose `.git` file this is: `<gitdir>/gitdir`, when the gitdir is
+ * `…/worktrees/<name>` (PR #95 review follow-up). Null for a repository top, a submodule or no `.git`.
+ */
+export function worktreeLinkOf(folder: string, dotGit: DotGit): { record: string } | null {
+  if (dotGit?.kind !== 'file') return null
+  const gitDir = gitDirNamedIn(folder, dotGit.text)
+  return gitDir !== null && /\/worktrees\/[^/]+$/.test(gitDir) ? { record: `${gitDir}/gitdir` } : null
+}
+
+/** Whether git's record (`record`, holding `text`) names `folder`'s `.git` back: absolute, or relative to the record's folder. */
+export function isBackLinkTo(folder: string, record: string, text: string): boolean {
+  const named = text.replace(/\r/g, '').trim().replace(/\\/g, '/')
+  if (!named) return false
+  const resolved = normalizePath(rootOf(named) ? named : `${parentOf(record)}/${named}`)
+  return pathKey(resolved) === pathKey(`${normalizePath(folder).replace(/\/$/, '')}/.git`)
+}
+
+/** Whether two common git folders are one repository's (Windows roots without case); an unknown one never is. */
+export function isSameRepo(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && pathKey(a) === pathKey(b)
+}
+
+/**
+ * Whether a reported folder may be pinned, as far as its name and the root tell (PR #95 review): a
+ * readable root, and a folder named `mods`. The caller checks that its marketplace file exists and that
+ * the folder above it is the project's own repository or one of its worktrees (`isSameRepo`), since
+ * Validate and Test then run there. Gives the marketplace file and the normalized root, or why not.
+ */
+export function pinCheckOf(dir: string, root: string | null): { marketplace: string; root: string } | { reason: string } {
+  if (root === null) return { reason: "the project root can't be read" }
+  const folder = normalizePath(dir)
+  if (folder.slice(folder.lastIndexOf('/') + 1) !== 'mods') return { reason: `${folder} isn't a marketplace's mods folder` }
+  return { marketplace: marketplaceFileOf(folder), root: normalizePath(root) }
+}
+
+/** A pin as state kept it, or null when it isn't one (no root, or not a pin at all). */
+export function pinOf(value: unknown): Pin | null {
+  const held = value as { modsDir?: unknown; root?: unknown } | null
+  return held && typeof held.modsDir === 'string' && typeof held.root === 'string' ? { modsDir: held.modsDir, root: held.root } : null
+}
+
+/**
+ * The folder Mod Lab watches (#92): a set `modsDir`, else the pin `keptPinOf` keeps, else `modsDirFor`
+ * walking from the root, or from `cwd` when no marketplace in `existing` is above the root (PR #95 review).
+ * `pin` is the pin to keep: null when there was none or a changed root dropped it.
+ */
+export function watchedDirOf(
+  pin: Pin | null,
+  root: string | null,
+  configured: string,
+  cwd: string | null,
+  existing: readonly string[],
+  fallback: string,
+): { dir: string; pin: Pin | null } {
+  const kept = keptPinOf(pin, root)
+  if (configured) return { dir: normalizePath(configured), pin: kept }
+  if (kept) return { dir: kept.modsDir, pin: kept }
+  const hasMarketplace = (start: string | null): boolean => start !== null && marketplaceCandidatesOf(start).some(path => existing.includes(path))
+  const start = [root, cwd].find(hasMarketplace) ?? walkStartOf(root, cwd)
+  return { dir: modsDirFor('', start, existing, fallback), pin: null }
 }
 
 /**
@@ -941,6 +1086,8 @@ export type FolderRead = {
   skills?: readonly Entry[]
   /** Files in subfolders of hooks/, tests/, types/, agents/, commands/ and skills/, named by their path from the mod folder (`hooks/lib/parser.ts`). */
   nested?: readonly Entry[]
+  /** Folders whose listing failed, by their path from the mod folder (`hooks/lib`): read as empty, though they may not be. */
+  unlisted?: readonly string[]
   spec: string | null
   readme: string | null
   /** plugin.json's text, when present. */
@@ -981,6 +1128,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
   // Named by folder, so a file moved between folders without a new mtime still changes the signature.
   const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
     entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  const sigOf = (entries: readonly Entry[]): string => signatureOf(entries.map(entry => `${entry.name}@${entry.mtimeMs}`))
   // The one file at the top that validate reads; the SPEC and README are read by neither validate nor test.
   const mcp = read.top.filter(entry => entry.kind === 'file' && entry.name === '.mcp.json')
   const nested = read.nested ?? []
@@ -999,12 +1147,9 @@ export function factsOf(read: FolderRead): FileFacts | null {
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}
   const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
-  const logic = [
-    ...read.hooks.filter(entry => isLogicModule(entry.name)),
-    ...read.tests.filter(entry => isTestFile(entry.name)),
-    ...nested.filter(entry => isNestedLogicOrTest(entry.name)),
-  ]
-  const codeSig = signatureOf(code.map(entry => `${entry.name}@${entry.mtimeMs}`))
+  // The code files that are logic modules or tests, top-level or nested: one rule for logicMtimeMs and logicSig.
+  const logic = code.filter(entry => isLogicOrTestPath(entry.name))
+  const codeSig = sigOf(code)
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
   return {
     ...manifestOf(read.manifest),
@@ -1024,6 +1169,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
+    logicSig: (read.unlisted ?? []).some(path => /^(hooks|tests)(\/|$)/.test(path)) ? null : sigOf(logic),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
@@ -1061,6 +1207,7 @@ export function placeholderFacts(name: string): FileFacts {
     isReadmeStale: false,
     specMtimeMs: 0,
     logicMtimeMs: 0,
+    logicSig: signatureOf([]),
     readmeMtimeMs: 0,
     listedVersion: null,
   }
@@ -1262,16 +1409,23 @@ export const REPORT_SCHEMA = {
     stage: { type: 'string', enum: [...STAGES] },
     status: { type: 'string', enum: ['running', 'passed', 'failed'] },
     note: { type: 'string', description: 'A few words on what is happening, e.g. "writing tests".' },
+    path: {
+      type: 'string',
+      description: 'The absolute path of the mod folder, e.g. "/home/me/repo/mods/git-branch". Pass it on every report, so Mod Lab watches the folder you are working in.',
+    },
   },
   required: ['mod', 'stage', 'status'],
   additionalProperties: false,
 } as const
 
-/** A `lab_report` call's arguments → a checked report, or the reason it was refused. */
+/**
+ * A `lab_report` call's arguments → a checked report, with the mods folder its `path` names (#92), or
+ * the reason it was refused. A malformed `path` keeps the report and says why it was ignored (PR #95 review).
+ */
 export function reportOf(
   input: Record<string, unknown>,
   now: number,
-): { mod: string; report: Reported } | { error: string } {
+): { mod: string; report: Reported; dir?: string; pathIgnored?: string } | { error: string } {
   const mod = typeof input.mod === 'string' ? input.mod.trim() : ''
   const stage = STAGES.find(one => one === input.stage)
   const status = (['running', 'passed', 'failed'] as const).find(one => one === input.status)
@@ -1279,7 +1433,14 @@ export function reportOf(
   if (!stage) return { error: `stage must be one of ${STAGES.join(', ')}.` }
   if (!status) return { error: 'status must be running, passed or failed.' }
   const note = typeof input.note === 'string' && input.note.trim() ? input.note.trim().slice(0, 60) : undefined
-  return { mod, report: note ? { stage, status, note, since: now } : { stage, status, since: now } }
+  const report: Reported = note ? { stage, status, note, since: now } : { stage, status, since: now }
+  if (input.path === undefined) return { mod, report }
+  const path = typeof input.path === 'string' ? normalizePath(input.path.trim()) : ''
+  const root = rootOf(path)
+  if (!root) return { mod, report, pathIgnored: "path must be the absolute path of the mod's folder" }
+  const cut = path.lastIndexOf('/')
+  if (path.slice(cut + 1) !== mod) return { mod, report, pathIgnored: `path must end with the mod's folder name, ${mod}` }
+  return { mod, report, dir: cut < root.length ? root : path.slice(0, cut) }
 }
 
 // ── Band ──────────────────────────────────────────────────────────────────
@@ -1572,7 +1733,16 @@ export function valuesAfterSet(name: OptionName, value: string | boolean | numbe
 }
 
 /** Current values as `/mod-builder config` lists them. */
-export type OptionValues = { logging: LogLevel; autoRerun: boolean; autoOpen: boolean; modsDir: string; modsDirShown: string; testTimeoutMinutes: number }
+export type OptionValues = {
+  logging: LogLevel
+  autoRerun: boolean
+  autoOpen: boolean
+  modsDir: string
+  modsDirShown: string
+  testTimeoutMinutes: number
+  /** A build's kept folder (#92), shown in place of the default while `modsDir` is empty. */
+  pinnedShown?: string
+}
 
 /** The `/mod-builder config` listing: each option, its value and what it takes, then the log file. */
 export function configListText(values: OptionValues, logFile: string): string {
@@ -1580,7 +1750,7 @@ export function configListText(values: OptionValues, logFile: string): string {
     logging: values.logging,
     autoRerun: values.autoRerun ? 'on' : 'off',
     autoOpen: values.autoOpen ? 'on' : 'off',
-    modsDir: values.modsDir ? values.modsDirShown : `default (${values.modsDirShown})`,
+    modsDir: values.modsDir ? values.modsDirShown : values.pinnedShown ? `a build's folder (${values.pinnedShown})` : `default (${values.modsDirShown})`,
     testTimeoutMinutes: plural(values.testTimeoutMinutes, 'minute'),
   }
   const rows = OPTION_FIELDS.map(f => `  ${f.name.padEnd(OPTION_COLUMN)} ${shown[f.name].padEnd(28)} ${f.values}`)

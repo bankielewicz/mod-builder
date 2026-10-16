@@ -1967,6 +1967,15 @@ export function isLockError(text: string): boolean {
 }
 
 /**
+ * The lock file another process holds, as git names it (`Unable to create '<path>.lock': File exists`), the index's or a
+ * ref's; else null. Another reason (`Permission denied`, a full disk) is no other process's lock. The path runs up to
+ * `.lock': File exists`, so it may hold an apostrophe (PR #88).
+ */
+export function lockPathOf(text: string): string | null {
+  return text.match(/unable to create '(.*?\.lock)': file exists/i)?.[1] ?? null
+}
+
+/**
  * An absolute LCOV path is one file for every run, wherever it points (inside one run's folder it is still the other's
  * file too): refused while another run of the repository is driven. A relative one is per folder (Codex 4278707573).
  */

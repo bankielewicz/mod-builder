@@ -42,6 +42,7 @@ import {
   parseTsc,
   parseValidate,
   reachesOf,
+  REPORT_SCHEMA,
   REPORT_TTL_MS,
   reportOf,
   signatureOf,
@@ -61,6 +62,7 @@ import {
   toastOfRun,
   trackOf,
   viewOf,
+  type Entry,
   type FileFacts,
   type ModView,
   type Results,
@@ -106,6 +108,42 @@ const modsDirFor = (configured: string, cwd: string | null, existing: readonly s
     fallback,
   )
 
+/** The pinned folder rule (#92), read the same way: a missing rule fails its assertion, not the import. */
+type Pin = { modsDir: string; root: string | null }
+type Watched = { dir: string; pin: Pin | null }
+const watchedDirOf = (pin: Pin | null, root: string | null, configured: string, cwd: string | null, existing: readonly string[], fallback: string): Watched | undefined =>
+  (Logic as unknown as { watchedDirOf?: (pin: Pin | null, root: string | null, configured: string, cwd: string | null, existing: readonly string[], fallback: string) => Watched }).watchedDirOf?.(
+    pin,
+    root,
+    configured,
+    cwd,
+    existing,
+    fallback,
+  )
+
+/** The pin's confinement (PR #95 review), read the same way. */
+type PinCheck = { marketplace: string; root: string } | { reason: string }
+const pinCheckOf = (dir: string, root: string | null): PinCheck | undefined =>
+  (Logic as unknown as { pinCheckOf?: (dir: string, root: string | null) => PinCheck }).pinCheckOf?.(dir, root)
+const pinOf = (value: unknown): Pin | null | undefined => (Logic as unknown as { pinOf?: (value: unknown) => Pin | null }).pinOf?.(value)
+
+/** The repository rule (PR #95 review follow-up), read the same way. */
+type DotGit = { kind: 'dir' } | { kind: 'file'; text: string } | null
+const gitCommonDirOf = (folder: string, dotGit: DotGit): string | null | undefined =>
+  (Logic as unknown as { gitCommonDirOf?: (folder: string, dotGit: DotGit) => string | null }).gitCommonDirOf?.(folder, dotGit)
+const isSameRepo = (a: string | null, b: string | null): boolean | undefined =>
+  (Logic as unknown as { isSameRepo?: (a: string | null, b: string | null) => boolean }).isSameRepo?.(a, b)
+
+/** Git's own record of a worktree (PR #95 review follow-up), read the same way. */
+const worktreeLinkOf = (folder: string, dotGit: DotGit): { record: string } | null | undefined =>
+  (Logic as unknown as { worktreeLinkOf?: (folder: string, dotGit: DotGit) => { record: string } | null }).worktreeLinkOf?.(folder, dotGit)
+const isBackLinkTo = (folder: string, record: string, text: string): boolean | undefined =>
+  (Logic as unknown as { isBackLinkTo?: (folder: string, record: string, text: string) => boolean }).isBackLinkTo?.(folder, record, text)
+
+/** A row's report (PR #95 review), read the same way. */
+const reportIn = (report: Parameters<typeof liveReports>[0][string] | undefined, dir: string) =>
+  (Logic as unknown as { reportIn?: (report: unknown, dir: string) => unknown }).reportIn?.(report, dir)
+
 /** The placeholder rules (#19), read the same way: a missing rule fails its assertion, not the import. */
 type ReportedByMod = Parameters<typeof liveReports>[0]
 const placeholderFacts = (name: string): FileFacts | undefined =>
@@ -139,6 +177,7 @@ const EMPTY: FileFacts = {
   isReadmeStale: false,
   specMtimeMs: 0,
   logicMtimeMs: 0,
+  logicSig: 'logic-a',
   readmeMtimeMs: 0,
   listedVersion: null,
 }
@@ -350,7 +389,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('summary, masthead, badge', () => {
-    const view = (lights: ModView['lights']): ModView => ({ ...viewOf(EMPTY, {}, [], null, false, null, null, 'mods/git-branch'), lights })
+    const view = (lights: ModView['lights']): ModView => ({ ...viewOf(EMPTY, {}, [], null, false, null, 'mods/git-branch'), lights })
     const green = view(STAGES.map(() => 'passed'))
     const building = view(['passed', 'running', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending'])
     const failing = view(['passed', 'passed', 'failed', 'pending', 'pending', 'pending', 'pending', 'pending'])
@@ -438,8 +477,8 @@ describe('mod-builder-logic', () => {
   })
 
   test('view: the detail header shows the display path it is given, with a trailing slash', () => {
-    expect(viewOf(FULL, GREEN, [], null, true, null, null, '/work/mods/git-branch').path).toBe('/work/mods/git-branch/')
-    expect(viewOf(FULL, {}, [], null, false, null, null, 'other/git-branch').path).toBe('other/git-branch/')
+    expect(viewOf(FULL, GREEN, [], null, true, null, '/work/mods/git-branch').path).toBe('/work/mods/git-branch/')
+    expect(viewOf(FULL, {}, [], null, false, null, 'other/git-branch').path).toBe('other/git-branch/')
   })
 
   test('displayPathOf: inside the cwd it is relative, the cwd itself is ".", anything else stays absolute', () => {
@@ -559,10 +598,10 @@ describe('mod-builder-logic', () => {
   })
 
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {
-    const freshView = viewOf(FULL, GREEN, [], null, true, null, null, 'mods/git-branch')
+    const freshView = viewOf(FULL, GREEN, [], null, true, null, 'mods/git-branch')
     expect(freshView).toMatchObject({ status: 'ready to share', isFresh: true, doneLine: '8/8 stages · 12 tests · validate clean', version: '0.1.0', path: 'mods/git-branch/', time: '0:03' })
-    expect(viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')).toMatchObject({ status: '12 tests · clean', isFresh: false, doneLine: null })
-    expect(viewOf(FULL, {}, [], null, true, null, null, 'mods/git-branch').isFresh).toBe(false)
+    expect(viewOf(FULL, GREEN, [], null, false, null, 'mods/git-branch')).toMatchObject({ status: '12 tests · clean', isFresh: false, doneLine: null })
+    expect(viewOf(FULL, {}, [], null, true, null, 'mods/git-branch').isFresh).toBe(false)
   })
 
   test('paths and facts from a folder read', () => {
@@ -615,7 +654,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('band: real progress only; runs, then reports, then the demo; three at most', () => {
-    const view = viewOf(FULL, {}, [], null, false, null, null, 'mods/git-branch')
+    const view = viewOf(FULL, {}, [], null, false, null, 'mods/git-branch')
     const entries = bandEntriesOf(
       [{ mod: 'git-branch', kind: 'Test', startedAt: 1, passed: 7, failed: 0, total: 12 }],
       { b: { stage: 'Spec', status: 'running', since: 3, note: 'writing SPEC.md' }, c: { stage: 'Spec', status: 'passed', since: 4 } },
@@ -672,14 +711,14 @@ describe('mod-builder-logic', () => {
       Test: { kind: 'Test', ok: true, stampMs: 500, atMs: 650, summary: 'ok', errors: [], tests: { passed: 3, failed: 0 } },
     }
     expect(lightsOf(built, ran, [], null)).toEqual(STAGES.map(() => 'passed'))
-    expect(lightsOf(built, ran, [], null, 1000)).toEqual(['stale', 'passed', 'stale', 'passed', 'stale', 'stale', 'stale', 'stale'])
+    expect(lightsOf(built, ran, [], null, { since: 1000, fromVersion: null })).toEqual(['stale', 'passed', 'stale', 'passed', 'stale', 'stale', 'stale', 'stale'])
     const redone: FileFacts = { ...built, specMtimeMs: 1100, logicMtimeMs: 1200, readmeMtimeMs: 1300, codeMtimeMs: 1200, listedVersion: '0.2.0' }
     const rerun: Results = {
       Validate: { ...ran.Validate!, stampMs: 1200, atMs: 1400 },
       Test: { ...ran.Test!, stampMs: 1200, atMs: 1450 },
     }
-    expect(isGreen(lightsOf(redone, rerun, [], null, 1000))).toBe(true)
-    expect(statusOf(lightsOf(built, ran, [], null, 1000), ran, null, [], false)).toEqual({ text: 'edit · update Spec for this change', tone: 'warn' })
+    expect(isGreen(lightsOf(redone, rerun, [], null, { since: 1000, fromVersion: null }))).toBe(true)
+    expect(statusOf(lightsOf(built, ran, [], null, { since: 1000, fromVersion: null }), ran, null, [], false)).toEqual({ text: 'edit · update Spec for this change', tone: 'warn' })
   })
 
   test('a running report shows even on a stage that passed; Spec running on a built mod starts an edit', () => {
@@ -783,9 +822,9 @@ describe('mod-builder-logic', () => {
 
   test('during an edit, Share needs a version different from the one the edit started from', () => {
     const listed: FileFacts = { ...FULL, version: '0.1.0', listedVersion: '0.1.0' }
-    expect(lightsOf(listed, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
-    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.2.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('passed')
-    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.1.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
+    expect(lightsOf(listed, {}, [], null, { since: 1000, fromVersion: '0.1.0' })[7]).toBe('stale')
+    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.2.0' }, {}, [], null, { since: 1000, fromVersion: '0.1.0' })[7]).toBe('passed')
+    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.1.0' }, {}, [], null, { since: 1000, fromVersion: '0.1.0' })[7]).toBe('stale')
   })
 })
 
@@ -848,6 +887,156 @@ describe('logicMtimeMs sees nested logic and test files (#15)', () => {
     const facts = factsOf({ ...read, nested: [counted, ...ignored] })!
     expect(facts.logicMtimeMs).toBe(500)
     expect(facts.codeMtimeMs).toBe(900)
+  })
+})
+
+describe('factsOf: logicSig names the logic and test files, so a delete or rename shows (#75)', () => {
+  // Typed as Entry, so a listing can mix files and folders (the typecheck read `read`'s lists as files only).
+  const file = (name: string, mtimeMs: number): Entry => ({ name, kind: 'file', mtimeMs })
+  const dir = (name: string, mtimeMs: number): Entry => ({ name, kind: 'dir', mtimeMs })
+  const read = {
+    name: 'x',
+    top: [file('SPEC.md', 100)],
+    manifestDir: [file('plugin.json', 100)],
+    hooks: [file('hooks.json', 100), file('register.tsx', 100), file('x-logic.ts', 200), dir('lib', 100)],
+    tests: [file('x-logic.test.ts', 300), file('y.test.ts', 300)],
+    types: [file('index.d.ts', 100)],
+    nested: [file('hooks/lib/parser.ts', 100), file('tests/unit/parser.test.ts', 100)],
+    spec: '# x',
+    readme: null,
+    manifest: null,
+    marketplace: '',
+  }
+  const sigOf = (change: Partial<typeof read> = {}) => factsOf({ ...read, ...change })!.logicSig
+
+  test('the signature is a string, the same for the same files', () => {
+    expect(typeof sigOf()).toBe('string')
+    expect(sigOf({ ...read })).toBe(sigOf())
+  })
+
+  test('a removed, renamed or added top-level logic module or test file changes it', () => {
+    const before = sigOf()
+    expect(typeof before).toBe('string')
+    const hooks = read.hooks.filter(entry => entry.name !== 'x-logic.ts')
+    const removedLogic = sigOf({ hooks })
+    const removedTest = sigOf({ tests: [file('x-logic.test.ts', 300)] })
+    // A rename keeps the file's mtime.
+    const renamedLogic = sigOf({ hooks: [...hooks, file('z-logic.ts', 200)] })
+    const renamedTest = sigOf({ tests: [file('x-logic.test.ts', 300), file('z.test.ts', 300)] })
+    const addedLogic = sigOf({ hooks: [...read.hooks, file('w-logic.ts', 50)] })
+    const addedTest = sigOf({ tests: [...read.tests, file('w.test.ts', 50)] })
+    const all = [before, removedLogic, removedTest, renamedLogic, renamedTest, addedLogic, addedTest]
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  test('a removed, renamed, moved or added nested logic or test file changes it', () => {
+    const before = sigOf()
+    expect(typeof before).toBe('string')
+    const unit = file('tests/unit/parser.test.ts', 100)
+    const parser = file('hooks/lib/parser.ts', 100)
+    const removedLogic = sigOf({ nested: [unit] })
+    const removedTest = sigOf({ nested: [parser] })
+    const renamedLogic = sigOf({ nested: [file('hooks/lib/lexer.ts', 100), unit] })
+    const movedLogic = sigOf({ nested: [file('hooks/util/parser.ts', 100), unit] })
+    const addedLogic = sigOf({ nested: [...read.nested, file('hooks/lib/deep/more.ts', 100)] })
+    const addedTest = sigOf({ nested: [...read.nested, file('tests/unit/lexer.test.tsx', 100)] })
+    const all = [before, removedLogic, removedTest, renamedLogic, movedLogic, addedLogic, addedTest]
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  test('register.*, .d.ts, data files, types/, helpers under tests/ and folders leave it alone', () => {
+    const before = sigOf()
+    expect(typeof before).toBe('string')
+    const ignored = [
+      file('hooks/lib/register.ts', 900),
+      file('hooks/lib/register.tsx', 900),
+      file('hooks/lib/types.d.ts', 900),
+      file('hooks/lib/data.json', 900),
+      file('hooks/lib/README.md', 900),
+      file('types/lib/api.ts', 900),
+      file('types/lib/api.d.ts', 900),
+      file('tests/fixtures/helper.ts', 900),
+      file('tests/fixtures/data.json', 900),
+      file('tests/fixtures/x-logic.ts', 900),
+      dir('hooks/lib/deeper', 900),
+    ]
+    expect(sigOf({ nested: [...read.nested, ...ignored] })).toBe(before)
+    expect(sigOf({ hooks: read.hooks.filter(entry => entry.name !== 'register.tsx') })).toBe(before)
+    expect(sigOf({ hooks: [...read.hooks, file('register.ts', 900), file('types.d.ts', 900), file('data.json', 900), dir('more', 900)] })).toBe(before)
+    expect(sigOf({ types: [] })).toBe(before)
+    expect(sigOf({ types: [file('index.d.ts', 100), file('extra.d.ts', 100)] })).toBe(before)
+    expect(sigOf({ top: [file('SPEC.md', 900), file('README.md', 900), file('.mcp.json', 900)] })).toBe(before)
+    expect(sigOf({ tests: [...read.tests, dir('fixtures', 900), file('helper.ts', 900)] })).toBe(before)
+  })
+
+  test('a folder under hooks/ or tests/ that could not be listed makes it unknown (null), not a delete (PR #97 review)', () => {
+    const unlisted = (folders: string[]) => factsOf({ ...read, unlisted: folders })!.logicSig
+    expect(unlisted(['hooks/lib'])).toBeNull()
+    expect(unlisted(['hooks'])).toBeNull()
+    expect(unlisted(['tests'])).toBeNull()
+    expect(unlisted(['tests/unit/deeper'])).toBeNull()
+    // Folders it doesn't read leave it as it was.
+    expect(unlisted(['types/lib', 'skills', 'agents/x', 'hooksx', '.claude-plugin'])).toBe(sigOf())
+    expect(unlisted([])).toBe(sigOf())
+  })
+})
+
+describe('lightsOf: a changed set of logic and test files redoes the Logic stage during an edit (#75)', () => {
+  // The edit began at 1000. Every logic and test file is older (300), as after a delete or a rename, and the rest is redone.
+  const after: FileFacts = {
+    ...FULL,
+    version: '0.2.0',
+    listedVersion: '0.2.0',
+    specMtimeMs: 1100,
+    logicMtimeMs: 300,
+    readmeMtimeMs: 1300,
+    codeMtimeMs: 1200,
+    codeSig: 'sig-b',
+    logicSig: 'after',
+  }
+  const rerun: Results = {
+    Validate: { kind: 'Validate', ok: true, stampMs: 1200, atMs: 1400, codeSig: 'sig-b', summary: 'clean', errors: [] },
+    Test: { kind: 'Test', ok: true, stampMs: 1200, atMs: 1450, codeSig: 'sig-b', summary: 'ok', errors: [], tests: { passed: 3, failed: 0 } },
+  }
+  const PASSED = STAGES.map(() => 'passed')
+  const STALE_LOGIC = STAGES.map(stage => (stage === 'Logic' ? 'stale' : 'passed'))
+
+  test('a generation logicSig that differs from the current one gives Logic passed', () => {
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(PASSED)
+    expect(isGreen(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' }))).toBe(true)
+  })
+
+  test('the same logicSig, none stored, or none passed keeps today\'s rule: Logic stale', () => {
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'after' })).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: null })).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0' })).toEqual(STALE_LOGIC)
+  })
+
+  test('a logic file saved after the edit began is redone with the same logicSig, as before', () => {
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'after' })).toEqual(PASSED)
+    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(PASSED)
+  })
+
+  test('a differing logicSig only matters during an edit, and never makes a missing stage pass', () => {
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    // Outside an edit nothing is stale for being old.
+    expect(lightsOf({ ...after, logicSig: 'after' }, rerun, [], null, null)).toEqual(PASSED)
+    // If the edit removed the last test file or the last logic module, Logic is still not done.
+    expect(lightsOf({ ...after, hasTests: false }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('pending')
+    expect(lightsOf({ ...after, hasLogic: false }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('pending')
+  })
+
+  test('an unknown current logicSig (a folder that could not be listed) keeps today\'s rule: Logic stale (PR #97 review)', () => {
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    expect(lightsOf({ ...after, logicSig: null }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(STALE_LOGIC)
+    expect(lightsOf({ ...after, logicSig: null, logicMtimeMs: 1200 }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(PASSED)
+  })
+
+  test('a differing logicSig leaves the other stages as they were', () => {
+    const stale: FileFacts = { ...after, specMtimeMs: 100, readmeMtimeMs: 100 }
+    expect(lightsOf(stale, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(STAGES.map(stage => (stage === 'Spec' || stage === 'README' ? 'stale' : 'passed')))
   })
 })
 
@@ -922,18 +1111,18 @@ describe('a mod is listed as soon as a build reports it, before its folder exist
   test('a placeholder view lights the reported stage running and leaves the rest pending', () => {
     const facts = placeholderFacts('new-mod')
     expect(facts?.name).toBe('new-mod')
-    const spec = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
+    const spec = viewOf(facts!, {}, [], running('Spec'), false, null, 'mods/new-mod')
     expect(spec.name).toBe('new-mod')
     expect(spec.lights).toEqual(STAGES.map(stage => (stage === 'Spec' ? 'running' : 'pending')))
-    const logic = viewOf(facts!, {}, [], running('Logic'), false, null, null, 'mods/new-mod')
+    const logic = viewOf(facts!, {}, [], running('Logic'), false, null, 'mods/new-mod')
     expect(logic.lights).toEqual(STAGES.map(stage => (stage === 'Logic' ? 'running' : 'pending')))
   })
 
   test('countsOf counts a placeholder as building', () => {
     const facts = placeholderFacts('new-mod')
     expect(facts?.name).toBe('new-mod')
-    const placeholder = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
-    const green = viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')
+    const placeholder = viewOf(facts!, {}, [], running('Spec'), false, null, 'mods/new-mod')
+    const green = viewOf(FULL, GREEN, [], null, false, null, 'mods/git-branch')
     expect(countsOf([green, placeholder])).toEqual({ mods: 2, green: 1, building: 1, failing: 0, stale: 0 })
     expect(summaryOf(countsOf([green, placeholder]))).toBe('2 mods · 1 green · 1 building')
   })
@@ -1192,5 +1381,142 @@ describe('a streamed test run keeps bounded output (#9, Codex P2 on PR #65)', ()
     expect(s.failed).toBe(40)
     expect(parseTest(streamOutput(s), 1)).toEqual(parseTest(whole, 1))
     expect(parseTest(streamOutput(s), 1).failures[1]).toBe('  AssertionError: case 0')
+  })
+})
+
+describe('a build names its folder, and the session keeps it (#92)', () => {
+  const running = { stage: 'Logic', status: 'running' } as const
+
+  test('reportOf: a path gives the folder above it, normalized', () => {
+    expect(reportOf({ mod: 'foo', ...running, path: 'C:\\x\\mods\\foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: 'C:/x/mods' })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/foo/' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/wt/../mods/./foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
+  })
+
+  test('reportOf: a relative, non-string or misnamed path is ignored, and the report kept; no path is unchanged', () => {
+    const kept = { mod: 'foo', report: { ...running, since: 5 } }
+    const notAbsolute = { ...kept, pathIgnored: "path must be the absolute path of the mod's folder" }
+    expect(reportOf({ mod: 'foo', ...running, path: 'mods/foo' }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: '' }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: 42 }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/bar' }, 5)).toEqual({ ...kept, pathIgnored: "path must end with the mod's folder name, foo" })
+    expect(reportOf({ mod: 'foo', ...running }, 5)).toEqual(kept)
+  })
+
+  test('the config listing names a build\'s kept folder while modsDir is empty (PR #95 review)', () => {
+    const values = { logging: 'normal' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/main/mods', testTimeoutMinutes: 3 }
+    expect(configListText({ ...values, pinnedShown: '…/wt/mods' }, '')).toContain("modsDir            a build's folder (…/wt/mods)")
+    expect(configListText({ ...values, modsDir: '/my/mods', modsDirShown: '…/my/mods', pinnedShown: '…/wt/mods' }, '')).toContain('modsDir            …/my/mods')
+    expect(configListText(values, '')).toContain('modsDir            default (…/main/mods)')
+  })
+
+  test('watchedDirOf: with no marketplace above the root, the walk starts from the working directory (PR #95 review)', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    // A session started in a parent folder, and Claude cd'd into a worktree.
+    expect(watchedDirOf(null, '/home/u', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
+    expect(watchedDirOf(null, '/home/u', '', '/elsewhere', both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+
+  test('reportIn: a row takes a report made in its own folder, or one with no folder (PR #95 review)', () => {
+    const report = { stage: 'Logic' as const, status: 'running' as const, since: 1 }
+    expect(reportIn({ ...report, dir: '/w/main/mods' }, '/w/main/mods')).toEqual({ ...report, dir: '/w/main/mods' })
+    expect(reportIn({ ...report, dir: '/w/main/scratch/wt/mods' }, '/w/main/mods')).toBeNull()
+    expect(reportIn(report, '/w/main/mods')).toEqual(report)
+    expect(reportIn(undefined, '/w/main/mods')).toBeNull()
+  })
+
+  test('roots on a drive or UNC share compare without case; POSIX roots with it (PR #95 review, Codex P2)', () => {
+    const drive = { modsDir: 'C:/Users/Me/repo/scratch/wt/mods', root: 'C:/Users/Me/repo' }
+    expect(watchedDirOf(drive, 'C:/users/me/repo', '', null, [], '/p/mods')).toEqual({ dir: drive.modsDir, pin: drive })
+    const share = { modsDir: '//Server/Share/repo/wt/mods', root: '//Server/Share/repo' }
+    expect(watchedDirOf(share, '//server/share/REPO', '', null, [], '/p/mods')).toEqual({ dir: share.modsDir, pin: share })
+    const posix = { modsDir: '/w/Main/scratch/wt/mods', root: '/w/Main' }
+    expect(watchedDirOf(posix, '/w/main', '', null, [], '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+
+  test('pinCheckOf: a marketplace\'s mods folder, inside or outside the project root, passes this check (PR #95 review)', () => {
+    expect(pinCheckOf('/w/main/scratch/wt/mods', '/w/main')).toEqual({ marketplace: '/w/main/scratch/wt/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('/w/main/mods', '/w/main/')).toEqual({ marketplace: '/w/main/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('C:/r/wt/mods', 'C:\\r')).toEqual({ marketplace: 'C:/r/wt/.claude-plugin/marketplace.json', root: 'C:/r' })
+    expect(pinCheckOf('/w/mods', '/')).toEqual({ marketplace: '/w/.claude-plugin/marketplace.json', root: '/' })
+  })
+
+  test('pinCheckOf: no root, or a folder not named mods, is refused (PR #95 review)', () => {
+    expect(pinCheckOf('/w/main/scratch/wt/mods', null)).toEqual({ reason: "the project root can't be read" })
+    expect(pinCheckOf('/w/sib/mods', '/w/main')).toEqual({ marketplace: '/w/sib/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('/w/main/scratch/wt/plugins', '/w/main')).toEqual({ reason: "/w/main/scratch/wt/plugins isn't a marketplace's mods folder" })
+  })
+
+  test('gitCommonDirOf: a repository top, a worktree (absolute or relative gitdir), a submodule; nothing else (PR #95 review follow-up)', () => {
+    expect(gitCommonDirOf('/w/main', { kind: 'dir' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/wt\n' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/sib', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/sib\r\n' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: ../../.git/worktrees/wt' })).toBe('/w/main/.git')
+    // A submodule's git folder is its own repository's.
+    expect(gitCommonDirOf('/w/main/sub', { kind: 'file', text: 'gitdir: ../.git/modules/sub\n' })).toBe('/w/main/.git/modules/sub')
+    expect(gitCommonDirOf('/w/main/tmp/copy', null)).toBeNull()
+    expect(gitCommonDirOf('/w/x', { kind: 'file', text: 'not a gitdir line' })).toBeNull()
+  })
+
+  test('isSameRepo: one common git folder, without case on a drive or UNC share; unknown is never the same (PR #95 review follow-up)', () => {
+    expect(isSameRepo('/w/main/.git', '/w/main/.git/')).toBe(true)
+    expect(isSameRepo('C:/Users/Me/repo/.git', 'C:/users/me/repo/.git')).toBe(true)
+    expect(isSameRepo('/w/Main/.git', '/w/main/.git')).toBe(false)
+    expect(isSameRepo('/w/main/tmp/clone/.git', '/w/main/.git')).toBe(false)
+    expect(isSameRepo(null, '/w/main/.git')).toBe(false)
+    expect(isSameRepo(null, null)).toBe(false)
+  })
+
+  test('worktreeLinkOf: a worktree pointer names git\'s record of it; a repository top or a submodule has none (PR #95 review follow-up)', () => {
+    expect(worktreeLinkOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/wt\n' })).toEqual({ record: '/w/main/.git/worktrees/wt/gitdir' })
+    expect(worktreeLinkOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: ../../.git/worktrees/wt' })).toEqual({ record: '/w/main/.git/worktrees/wt/gitdir' })
+    expect(worktreeLinkOf('/w/main', { kind: 'dir' })).toBeNull()
+    expect(worktreeLinkOf('/w/main/sub', { kind: 'file', text: 'gitdir: ../.git/modules/sub\n' })).toBeNull()
+    expect(worktreeLinkOf('/w/main/tmp/copy', null)).toBeNull()
+  })
+
+  test('isBackLinkTo: git\'s record must name this folder\'s .git, absolute or relative to the record (PR #95 review follow-up)', () => {
+    const record = '/w/main/.git/worktrees/wt/gitdir'
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '/w/main/scratch/wt/.git\n')).toBe(true)
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '../../../scratch/wt/.git\r\n')).toBe(true)
+    expect(isBackLinkTo('C:/r/wt', 'C:/r/.git/worktrees/wt/gitdir', 'C:/R/WT/.git')).toBe(true)
+    expect(isBackLinkTo('/w/main/tmp/forged', record, '/w/main/scratch/wt/.git\n')).toBe(false)
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '')).toBe(false)
+  })
+
+  test('pinOf: a stored pin needs a folder and a root (PR #95 review)', () => {
+    expect(pinOf({ modsDir: '/w/wt/mods', root: '/w' })).toEqual({ modsDir: '/w/wt/mods', root: '/w' })
+    expect(pinOf({ modsDir: '/w/wt/mods', root: null })).toBeNull()
+    expect(pinOf({ modsDir: 3, root: '/w' })).toBeNull()
+    expect(pinOf(null)).toBeNull()
+  })
+
+  test('REPORT_SCHEMA lists path, and is still closed to other keys', () => {
+    expect((REPORT_SCHEMA.properties as Record<string, { type?: string }>).path?.type).toBe('string')
+    expect(REPORT_SCHEMA.additionalProperties).toBe(false)
+    expect([...REPORT_SCHEMA.required]).toEqual(['mod', 'stage', 'status'])
+  })
+
+  test('watchedDirOf: a pin wins over the walk while the root is its own or unknown; a set modsDir wins over the pin', () => {
+    const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
+    const main = ['/w/main/.claude-plugin/marketplace.json']
+    expect(watchedDirOf(pin, '/w/main', '/chosen/mods', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/chosen/mods', pin })
+    expect(watchedDirOf(pin, '/w/main/', '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+    expect(watchedDirOf(pin, null, '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+  })
+
+  test('watchedDirOf: a changed root drops the pin, and modsDir or the walk decides', () => {
+    const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
+    expect(watchedDirOf(pin, '/w/two', '', '/w/two', ['/w/two/.claude-plugin/marketplace.json'], '/p/mods')).toEqual({ dir: '/w/two/mods', pin: null })
+    expect(watchedDirOf(pin, '/w/two', '/chosen/mods', '/w/two', [], '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
+  })
+
+  test('watchedDirOf: with no pin the walk starts from the root, else from the working directory', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    // A Bash cd moved the working directory into the worktree; the root stayed.
+    expect(watchedDirOf(null, '/w/main', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/mods', pin: null })
+    expect(watchedDirOf(null, null, '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
+    expect(watchedDirOf(null, '/w/main', '/chosen/mods', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
+    expect(watchedDirOf(null, null, '', null, both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
   })
 })

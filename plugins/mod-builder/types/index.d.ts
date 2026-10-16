@@ -26,6 +26,9 @@ export type Reported = {
   dir?: string
 }
 
+/** A build's mods folder, pinned for the session by a `lab_report` with `path`, and the project root it was pinned under (#92). */
+export type Pin = { modsDir: string; root: string }
+
 /** One mod as the pane, band and status line draw it. */
 export type ModView = {
   name: string
@@ -92,6 +95,8 @@ declare module 'claude-code' {
       fresh: string[]
       /** The "too narrow" toast fired for the current narrow spell; reset once wide again. */
       hasWarnedNarrow: boolean
+      /** The folder a build reported with `path`: watched until the project root changes (#92). */
+      pinned: Pin | null
     }
   }
 }
