@@ -61,6 +61,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     /** How many times `session.root` was read. */
     rootReads: 0,
     failReads: [] as string[],
+    /** Folders whose `$.fs.list` fails, as a listing on /mnt/c can during an atomic save. */
+    failLists: [] as string[],
     /** Every path `$.fs.exists` was asked about. */
     probed: [] as string[],
     denySet: '',
@@ -129,6 +131,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('fs.list', async ($, e) => {
     if (listHold && lists++ === 0) await listHold
     const path = (e as { path: string }).path
+    if (seen.failLists.includes(path)) return { deny: 'EBUSY: resource busy or locked' }
     if (seen.holdList?.path === path && !seen.holdList.isReached) {
       seen.holdList.isReached = true
       await seen.holdList.until
@@ -1558,6 +1561,58 @@ describe('an edit that only deletes or renames a logic or test file (#75)', () =
 
     const ui = await mountPane($)
     expect((await ui.find({ key: 'row-git-branch' }))?.text).toMatch(/ edit · update Logic for this change$/)
+  })
+
+  /**
+   * A green git-branch with hooks/lib/parser.ts is edited: SPEC, README and the manifest are saved (0.1.1,
+   * listed), and no logic or test file. `hooks/lib` can't be listed while `failAt` says so: at the report that
+   * begins the edit only, or from just after it to the end. Returns the mod's row after the turn that redoes Validate and Test.
+   */
+  async function unlistedScenario($: Engine, on: On, failAt: 'start' | 'edit') {
+    const mtime: Mtimes = { ms: 1000, byPath: {} }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      [at('hooks/lib/parser.ts')]: '',
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { seen, clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+
+    if (failAt === 'start') seen.failLists = [at('hooks/lib')]
+    await report($, 'running')
+    await adv(10)
+    seen.failLists = failAt === 'edit' ? [at('hooks/lib')] : []
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+    for (const path of ['SPEC.md', 'README.md', '.claude-plugin/plugin.json']) mtime.byPath![at(path)] = t
+    await adv(10)
+    await report($, 'passed')
+    await adv(10)
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const row = (await ui.find({ key: 'row-git-branch' }))?.text
+    await ui.unmount()
+    return row
+  }
+
+  test('a folder under hooks/ that cannot be listed as the edit begins leaves no baseline, rather than one missing its files (PR #97 review)', OPTIONS, async ($, on) => {
+    expect(await unlistedScenario($, on, 'start')).toMatch(/ edit · update Logic for this change$/)
+  })
+
+  test('a folder under hooks/ that cannot be listed during the edit is no delete: Logic is not redone for it (PR #97 review)', OPTIONS, async ($, on) => {
+    expect(await unlistedScenario($, on, 'edit')).toMatch(/ edit · update Logic for this change$/)
   })
 
   test('a repeat a session before 0.2.20 wrote (no repeatedFrom) begins the next edit from the scan\'s facts (PR #97 review)', OPTIONS, async ($, on) => {

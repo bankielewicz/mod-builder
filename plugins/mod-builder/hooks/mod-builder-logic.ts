@@ -64,8 +64,11 @@ export type FileFacts = {
   specMtimeMs: number
   logicMtimeMs: number
   readmeMtimeMs: number
-  /** The logic modules and test files (subfolders included) by path and mtime: a delete or a rename changes it, which no mtime shows. */
-  logicSig: string
+  /**
+   * The logic modules and test files (subfolders included) by path and mtime: a delete or a rename changes it,
+   * which no mtime shows. Null when a folder under hooks/ or tests/ couldn't be listed: what it holds is unknown.
+   */
+  logicSig: string | null
   /** The version the marketplace lists this mod at, when it does. */
   listedVersion: string | null
 }
@@ -141,7 +144,8 @@ export function lightsOf(
     !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
   // A delete or a rename saves no file, so a logic or test file changed since the edit began counts too:
   // Logic is then judged with no mtime, which is never old.
-  const isLogicChanged = fromLogicSig !== null && fromLogicSig !== facts.logicSig
+  // A signature that couldn't be read, then or now, shows nothing either way.
+  const isLogicChanged = fromLogicSig !== null && facts.logicSig !== null && fromLogicSig !== facts.logicSig
   // During an edit, Share needs a new version (not the one the edit started from) that the marketplace lists.
   const isReShared =
     sinceMs === null ||
@@ -1077,6 +1081,8 @@ export type FolderRead = {
   skills?: readonly Entry[]
   /** Files in subfolders of hooks/, tests/, types/, agents/, commands/ and skills/, named by their path from the mod folder (`hooks/lib/parser.ts`). */
   nested?: readonly Entry[]
+  /** Folders whose listing failed, by their path from the mod folder (`hooks/lib`): read as empty, though they may not be. */
+  unlisted?: readonly string[]
   spec: string | null
   readme: string | null
   /** plugin.json's text, when present. */
@@ -1162,7 +1168,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
-    logicSig: sigOf(logic),
+    logicSig: (read.unlisted ?? []).some(path => /^(hooks|tests)(\/|$)/.test(path)) ? null : sigOf(logic),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,

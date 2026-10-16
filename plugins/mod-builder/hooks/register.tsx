@@ -183,12 +183,14 @@ async function writeLog($: Engine): Promise<void> {
 const cwdOf = ($: Engine): Promise<string | null> =>
   $.session.cwd().catch((error: unknown) => (logCaught($, 'session.cwd', error), null))
 
-const list = ($: Engine, path: string): Promise<Lab.Entry[]> =>
+/** A folder's entries; none when it can't be listed, and then its path goes in `unlisted`, if given. */
+const list = ($: Engine, path: string, unlisted?: string[]): Promise<Lab.Entry[]> =>
   $.fs
     .list(path)
     .then(entries => entries.map(({ name, kind, mtimeMs }) => ({ name, kind, mtimeMs })))
     .catch((error: unknown) => {
       logCaught($, 'fs.list', error, 'debug', { path })
+      unlisted?.push(path)
       return []
     })
 
@@ -336,7 +338,9 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   const at = `${modsDir}/${name}`
   const top = await list($, at)
   const has = (entry: string): boolean => top.some(one => one.name === entry)
-  const listIf = (folder: string): Promise<Lab.Entry[]> => (has(folder) ? list($, `${at}/${folder}`) : Promise.resolve([]))
+  // A folder that can't be listed reads as empty, so the facts say which ones (a delete would look the same).
+  const unlisted: string[] = []
+  const listIf = (folder: string): Promise<Lab.Entry[]> => (has(folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([]))
   const [manifestDir, hooks, tests, types, agents, commands, skills] = await Promise.all([
     listIf('.claude-plugin'),
     listIf('hooks'),
@@ -348,13 +352,14 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   ])
   // Their subfolders are walked too; the manifest folder's are not.
   const codeFolders = { hooks, tests, types, agents, commands, skills }
-  const nested = await Promise.all(Object.entries(codeFolders).map(([folder, entries]) => nestedFiles($, at, folder, entries)))
+  const nested = await Promise.all(Object.entries(codeFolders).map(([folder, entries]) => nestedFiles($, at, folder, entries, unlisted)))
   return Lab.factsOf({
     name,
     top,
     manifestDir,
     ...codeFolders,
     nested: nested.flat(),
+    unlisted: unlisted.map(path => path.slice(at.length + 1)),
     spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
     readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
     manifest: manifestDir.some(entry => entry.name === 'plugin.json') ? await readText($, `${at}/.claude-plugin/plugin.json`) : null,
@@ -368,17 +373,17 @@ const marketplaceOf = async ($: Engine, modsDir: string): Promise<string> => (aw
 /**
  * The files in `folder`'s subfolders (from its `entries`), up to `depth` levels down, named by
  * their path from the mod folder `at`. Sibling folders are listed at once, since /mnt/c is slow;
- * dot-folders and node_modules are skipped.
+ * dot-folders and node_modules are skipped. A subfolder that can't be listed goes in `unlisted`.
  */
-async function nestedFiles($: Engine, at: string, folder: string, entries: readonly Lab.Entry[], depth = 3): Promise<Lab.Entry[]> {
+async function nestedFiles($: Engine, at: string, folder: string, entries: readonly Lab.Entry[], unlisted: string[], depth = 3): Promise<Lab.Entry[]> {
   if (depth === 0) return []
   const subfolders = entries.filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.') && entry.name !== 'node_modules')
   const found = await Promise.all(
     subfolders.map(async sub => {
       const path = `${folder}/${sub.name}`
-      const inner = await list($, `${at}/${path}`)
+      const inner = await list($, `${at}/${path}`, unlisted)
       const files = inner.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${path}/${entry.name}` }))
-      return [...files, ...(await nestedFiles($, at, path, inner, depth - 1))]
+      return [...files, ...(await nestedFiles($, at, path, inner, unlisted, depth - 1))]
     }),
   )
   return found.flat()
@@ -405,8 +410,11 @@ async function storedOf($: Engine, base: string, modsDir: string): Promise<unkno
 const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
   ((await storedOf($, RESULTS_KEY, modsDir)) ?? {}) as StoredResults
 
-/** The version and the logic and test files (`logicSig`; records from before 0.2.20 have none) an edit starts from. */
-type Baseline = { fromVersion: string | null; logicSig?: string }
+/**
+ * The version and the logic and test files an edit starts from. `logicSig` is absent in records from before 0.2.21,
+ * and null when a folder under hooks/ or tests/ couldn't be listed then; either way the edit keeps the mtime rule.
+ */
+type Baseline = { fromVersion: string | null; logicSig?: string | null }
 /**
  * When each mod's current edit started (a build generation), for mods being edited, and its baseline.
  * `repeatedAt` is when a Spec running last repeated during the edit, and `repeatedFrom` the mod on disk

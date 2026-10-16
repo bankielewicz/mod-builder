@@ -968,6 +968,17 @@ describe('factsOf: logicSig names the logic and test files, so a delete or renam
     expect(sigOf({ top: [file('SPEC.md', 900), file('README.md', 900), file('.mcp.json', 900)] })).toBe(before)
     expect(sigOf({ tests: [...read.tests, dir('fixtures', 900), file('helper.ts', 900)] })).toBe(before)
   })
+
+  test('a folder under hooks/ or tests/ that could not be listed makes it unknown (null), not a delete (PR #97 review)', () => {
+    const unlisted = (folders: string[]) => factsOf({ ...read, unlisted: folders })!.logicSig
+    expect(unlisted(['hooks/lib'])).toBeNull()
+    expect(unlisted(['hooks'])).toBeNull()
+    expect(unlisted(['tests'])).toBeNull()
+    expect(unlisted(['tests/unit/deeper'])).toBeNull()
+    // Folders it doesn't read leave it as it was.
+    expect(unlisted(['types/lib', 'skills', 'agents/x', 'hooksx', '.claude-plugin'])).toBe(sigOf())
+    expect(unlisted([])).toBe(sigOf())
+  })
 })
 
 describe('lightsOf: a changed set of logic and test files redoes the Logic stage during an edit (#75)', () => {
@@ -1015,6 +1026,12 @@ describe('lightsOf: a changed set of logic and test files redoes the Logic stage
     // If the edit removed the last test file or the last logic module, Logic is still not done.
     expect(lightsOf({ ...after, hasTests: false }, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('pending')
     expect(lightsOf({ ...after, hasLogic: false }, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('pending')
+  })
+
+  test('an unknown current logicSig (a folder that could not be listed) keeps today\'s rule: Logic stale (PR #97 review)', () => {
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
+    expect(lightsOf({ ...after, logicSig: null }, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(STALE_LOGIC)
+    expect(lightsOf({ ...after, logicSig: null, logicMtimeMs: 1200 }, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(PASSED)
   })
 
   test('a differing logicSig leaves the other stages as they were', () => {
