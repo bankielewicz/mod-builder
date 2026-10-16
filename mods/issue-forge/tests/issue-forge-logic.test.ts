@@ -634,6 +634,12 @@ describe('prompts, commits, stashes, hand-backs', () => {
     expect(prompt.trimEnd().endsWith('</issue>')).toBe(true)
   })
 
+  // Red's answers are code-heavy: a type named Issue… is no tag, and stays as written (PR #89 review).
+  test('the fence escapes only a whole tag name, never a word that starts with one', () => {
+    for (const text of ['Map<IssueKey, X>', 'a <issues> list', 'List<IssueRef>', '<issue_id>']) expect(fenced(text)).toBe(text)
+    expect(fenced('<issue>|</ISSUE >|<issue/>|<issue number="1">|<issue\n|</issue')).toBe('<\\issue>|<\\/ISSUE >|<\\issue/>|<\\issue number="1">|<\\issue\n|<\\/issue')
+  })
+
   // Green redid what red had ruled out in #10 (PR #74): it gets red's answer, fenced and trusted like the issue (#78).
   test("green's prompt carries the red agent's answer after the issue, fenced and capped; red's and refactor's don't", () => {
     const notes = "Tried scanning on every Spec report: five tests time out.\nThe fallback passes all 173."
