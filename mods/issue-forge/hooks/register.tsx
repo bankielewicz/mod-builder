@@ -620,8 +620,22 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   return problems.length > 0 ? { profile: null, errors: problems } : { profile: p, errors: [] }
 }
 
-/** `git fetch <remote> <base>`, or the block naming why it failed. */
-async function fetchBase($: EngineInterface, cwd: string, remote: string, base: string): Promise<Blocked | null> {
+/**
+ * A fork run's base remote still fetches from `repo`, as the folder that fetches reads it: the run stores only its name, and a
+ * resume, a kept worktree's own config or the publish merge check would fetch whatever it points at now (Codex on PR #87).
+ * Origin is checked by `originCheck` and `pushCheck`.
+ */
+async function baseRemoteCheck($: EngineInterface, cwd: string, remote: string, repo: string | undefined): Promise<Blocked | null> {
+  if (remote === 'origin' || !repo) return null
+  const url = await git($, cwd, ['remote', 'get-url', remote])
+  if (url.exitCode === 0 && (await remoteRepo($, cwd, url.stdout.trim(), repo)) === 'match') return null
+  return block(`${remote} no longer fetches from ${repoLabel(repo)}`, `point ${remote} back at ${repoLabel(repo)}, or start a new run`)
+}
+
+/** `git fetch <remote> <base>` once the remote is still `repo`'s, or the block naming why it can't be or failed. */
+async function fetchBase($: EngineInterface, cwd: string, remote: string, base: string, repo?: string): Promise<Blocked | null> {
+  const moved = await baseRemoteCheck($, cwd, remote, repo)
+  if (moved) return moved
   await setActivity($, `git fetch ${remote} ${base}`)
   const fetched = await gitRetry($, cwd, ['fetch', remote, base])
   return fetched.exitCode === 0 ? null : block(`git fetch ${remote} ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
@@ -783,7 +797,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     // A kept worktree's own config can give origin other URLs (extensions.worktreeConfig): it is checked where it fetches.
     const strayThere = made.workRoot === run.root ? null : await pushCheck($, made.workRoot, repo, fork?.headRepo)
     if (strayThere) return { ...strayThere, keep: made }
-    const unfetched = await fetchBase($, made.workRoot, remote, made.base)
+    const unfetched = await fetchBase($, made.workRoot, remote, made.base, repo)
     if (unfetched) return { ...unfetched, keep: made }
     // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
     const behind = await catchUp($, run, made.workRoot, remote, made.base)
@@ -824,7 +838,7 @@ async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEv
   if (shared) return shared
   const root = workOf(run)
   const remote = baseRemoteOfRun(run)
-  const unfetched = await fetchBase($, root, remote, run.base)
+  const unfetched = await fetchBase($, root, remote, run.base, run.ghRepo)
   if (unfetched) return unfetched
   const behind = await catchUp($, run, root, remote, run.base)
   if (behind) return behind
@@ -1050,6 +1064,8 @@ async function mergeCheck($: EngineInterface, run: Run): Promise<MergeCheck> {
   const remote = baseRemoteOfRun(run)
   await setActivity($, `checking the merge with ${baseRefOf(run)}`)
   try {
+    const moved = await baseRemoteCheck($, work, remote, run.ghRepo)
+    if (moved) return { isClean: false, files: [], error: moved.reason }
     const fetched = await gitRetry($, work, ['fetch', remote, run.base])
     if (fetched.exitCode !== 0) return { isClean: false, files: [], error: `git fetch ${remote} ${run.base} failed: ${firstLine(fetched.stderr)}` }
     return parseMergeTree(await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', run.gatedHead ?? `refs/heads/${run.branch}`, baseRefOf(run)]))
