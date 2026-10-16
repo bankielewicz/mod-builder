@@ -1436,6 +1436,45 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(w.asked).toEqual([])
   })
 
+  test('a Stop press on a run another session drives asks one question that says so: Keep it running leaves it, Stop the run stops it (PR #96 review)', async ($, on) => {
+    const store: Record<string, unknown> = { [key(40)]: elsewhere40() }
+    const w = engine(on, { head: 'issue-40-x', answer: 'Keep it running', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'status 40')
+    const ask = '#40 is driven by another session (for 2m05s). Stop run #40? Its branch and commits are kept.'
+    let ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('left #40')))
+    await ui.unmount()
+    expect(w.asked).toEqual([ask])
+    expect((store[key(40)] as any).step).toBe('green')
+    w.answer = 'Stop the run'
+    ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('stopped #40')))
+    await ui.unmount()
+    expect(w.asked).toEqual([ask, ask])
+    expect((store[key(40)] as any).step).toBe('stopped')
+  })
+
+  test('a Publish press on a ready run while this session drives another refuses before asking (PR #96 review)', async ($, on) => {
+    const ready44 = storedRun('ready', { id: '44-1', issue: 44, branch: 'issue-44-duet', repo: `${ROOT}/.git`, greenCommit: 'c2', gatedHead: 'c0' })
+    const w = engine(on, { answer: START16, baseProfile: WORKTREE, spawnHold: held() }, { [key(44)]: ready44 })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    await run($, 'status 44')
+    const asked = w.asked.length
+    w.answer = 'Publish'
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('this session is driving #16')))
+    await ui.unmount()
+    expect(w.asked.length).toBe(asked)
+    expect(w.toasts.some(t => t.startsWith('this session is driving #16'))).toBe(true)
+    expect(w.argv.some(a => a[1] === 'push')).toBe(false)
+  })
+
   test('a run another session drives: Cancel or no answer refuses and writes nothing; Take over resumes it here', async ($, on) => {
     const store: Record<string, unknown> = { [key(40)]: elsewhere40() }
     const w = engine(on, { head: 'issue-40-x', answer: 'Cancel', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
@@ -2304,6 +2343,58 @@ describe('a pane press that changes a live run asks first (#31)', () => {
     await ui.unmount()
     expect(w.asked).toEqual([PUBLISH_ASK, PUBLISH_ASK])
     expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
+  })
+
+  test('a Stop press answered no, or with nobody to answer, says the run was left and how to stop it (PR #96 review)', async ($, on) => {
+    const kept = 'left #16 as it is; /issue-forge stop 16 stops it.'
+    const w = engine(on, { head: BRANCH, answer: 'Keep it running' }, { [`issue-forge:run:${ROOT}`]: blockedRun() })
+    await start($)
+    await run($, 'status')
+    let ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.includes(kept))
+    await ui.unmount()
+    expect(w.toasts).toContain(kept)
+    w.answer = null
+    ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.filter(t => t === kept).length === 2)
+    await ui.unmount()
+    expect(w.toasts.filter(t => t === kept).length).toBe(2)
+    expect((await run($, 'status')).text).not.toContain('stopped')
+  })
+
+  test('a Publish press answered Not now says the run was left unpublished and how to publish it (PR #96 review)', { options: { confirmPublish: false } }, async ($, on) => {
+    const kept = 'left #16 unpublished; /issue-forge publish 16 publishes it.'
+    const w = engine(on, { head: BRANCH, answer: 'Not now' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.includes(kept))
+    await ui.unmount()
+    expect(w.toasts).toContain(kept)
+    expect(w.argv.some(a => a[1] === 'push' || a[1] === 'pr')).toBe(false)
+  })
+
+  test("a Publish press while the drive's own publish question is open asks nothing more: one question, one push, one PR (PR #96 review)", async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('PR opened')))
+    await ui.unmount()
+    expect(w.asked.length).toBe(1)
+    expect(w.toasts.some(t => t.startsWith('PR opened'))).toBe(true)
+    release('Publish')
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'pr').length).toBe(1)
+    expect(w.argv.filter(a => a[0] === 'git' && a[1] === 'push').length).toBe(1)
   })
 
   test('Publish with nobody to answer pushes nothing', { options: { confirmPublish: false } }, async ($, on) => {

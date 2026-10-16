@@ -1714,3 +1714,35 @@ describe('paneAction: one rule for a bare pane command (#31)', () => {
     expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet')).toBe('close')
   })
 })
+
+describe('pressQuestion: what a Stop or Publish press asks, and says when nothing is done (#31, PR #96 review)', () => {
+  // Read off the namespace, so a rule that is not there yet fails its assertion, not the import.
+  type Ask = { question: string; yes: string; no: string; kept: string }
+  const pressQuestion = (kind: 'stop' | 'publish', run: Run, now: number, isElsewhere: boolean): Ask | undefined =>
+    (logic as unknown as { pressQuestion?: (kind: 'stop' | 'publish', run: Run, now: number, isElsewhere: boolean) => Ask }).pressQuestion?.(kind, run, now, isElsewhere)
+  const ready = (extra: Partial<Run> = {}): Run => ({ ...newRun('16-0', ROOT, 16, 0), step: 'ready', branch: 'issue-16-fix-it', base: 'main', ...extra })
+
+  test('Stop asks to stop the run, the choice that acts named Stop the run; the answer to a no says how to stop it without the question', () => {
+    expect(pressQuestion('stop', ready(), 0, false)).toEqual({
+      question: 'Stop run #16? Its branch and commits are kept.',
+      yes: 'Stop the run',
+      no: 'Keep it running',
+      kept: 'left #16 as it is; /issue-forge stop 16 stops it.',
+    })
+  })
+
+  test('Publish asks the publish question; the answer to a no says how to publish without it', () => {
+    expect(pressQuestion('publish', ready(), 0, false)).toEqual({
+      question: 'Push issue-16-fix-it and open a pull request against main?',
+      yes: 'Publish',
+      no: 'Not now',
+      kept: 'left #16 unpublished; /issue-forge publish 16 publishes it.',
+    })
+  })
+
+  test('a run another session drives is named in the one question, ahead of what the press does', () => {
+    const elsewhere = ready({ step: 'green', driver: { session: 's-other', since: 0 } })
+    expect(pressQuestion('stop', elsewhere, 125_000, true)?.question).toBe('#16 is driven by another session (for 2m05s). Stop run #16? Its branch and commits are kept.')
+    expect(pressQuestion('publish', ready({ driver: { session: 's-other', since: 0 } }), 125_000, true)?.question).toBe('#16 is driven by another session (for 2m05s). Push issue-16-fix-it and open a pull request against main?')
+  })
+})
