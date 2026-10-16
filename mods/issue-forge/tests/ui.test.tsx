@@ -111,6 +111,8 @@ type World = {
   canonical?: Record<string, string>
   /** Remotes other than origin, name to fetch URL: `git remote` lists origin and these, sorted; absent, origin alone (#26). */
   remotes?: Record<string, string>
+  /** Per folder, remotes whose fetch URL differs there (a worktree's own config); absent, `remotes` everywhere. */
+  remotesIn?: Record<string, Record<string, string>>
   /** `gh repo view <host/owner/repo> --json isFork,parent`: the parent as `owner/name`, or null for a repository that isn't a fork; absent, a fork of o/r (#26). */
   parentOf?: Record<string, string | null>
   /** Owners `gh api users/<owner> --jq .type` calls an Organization; any other is a User (#26). */
@@ -271,7 +273,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       return typeof url === 'string' ? ok(`${url}\n`) : Array.isArray(url) ? ok(url.map(u => `${u}\n`).join('')) : fail(url.stderr, url.exitCode)
     }
     if (s === 'remote') return ok(`${['origin', ...Object.keys(world.remotes ?? {})].sort().join('\n')}\n`)
-    if (a[0] === 'remote' && a[1] === 'get-url' && a.length === 3 && world.remotes && (a[2] ?? '') in world.remotes) return ok(`${world.remotes[a[2] ?? '']}\n`)
+    if (a[0] === 'remote' && a[1] === 'get-url' && a.length === 3) {
+      const url = world.remotesIn?.[e.init?.cwd ?? '']?.[a[2] ?? ''] ?? world.remotes?.[a[2] ?? '']
+      if (url !== undefined) return ok(`${url}\n`)
+    }
     if (a[0] === 'ls-remote') return ok((world.remoteHeads?.[a[2] ?? ''] ?? []).map(name => `0123abc\trefs/heads/${name}\n`).join(''))
     if (s === 'rev-parse --git-common-dir') return ok('.git\n')
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
@@ -2266,5 +2271,42 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
     expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
     expect(isPublished(w)).toBe(false)
+  })
+
+  // PR #87 review (Codex): the stored base remote is a name; what it fetches from is read again where it is fetched.
+  const MOVED = { upstream: 'https://github.com/evil/r.git' }
+  const ZERO = { redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } }
+
+  test('resume at the baseline blocks when the project remote now fetches from another repository: nothing is fetched or spawned', async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, ...ZERO })
+    const w = engine(on, { ...FORK, head: BRANCH, remotes: MOVED }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at baseline: upstream no longer fetches from o/r')
+    expect(status).toContain('next: point upstream back at o/r, or start a new run')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
+
+  test("resume of a fork run's kept worktree at preflight reads the project remote there before it fetches: its own config can point it elsewhere", async ($, on) => {
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, ...ZERO })
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' }, worktrees: [WT], wtHead: BRANCH, remotesIn: { [WT]: MOVED } }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain('blocked at preflight: upstream no longer fetches from o/r')
+    expect(w.calls.some(c => c.cwd === WT && c.argv[1] === 'fetch')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
+
+  test("publish doesn't fetch a project remote that now points elsewhere: the pull request says why the merge check is unavailable", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, remotes: MOVED }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the PR or a block')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+    expect(w.files['/home/u/.claude/issue-forge-data/16-1/pr.md']).toContain("the merge check couldn't run: upstream no longer fetches from o/r")
   })
 })
