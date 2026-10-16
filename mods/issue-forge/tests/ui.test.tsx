@@ -115,7 +115,7 @@ type World = {
   remotesIn?: Record<string, Record<string, string>>
   /** `gh repo view <host/owner/repo> --json isFork,parent`: the parent as `owner/name`, or null for a repository that isn't a fork; absent, a fork of o/r (#26). */
   parentOf?: Record<string, string | null>
-  /** Owners `gh api users/<owner> --jq .type` calls an Organization; any other is a User (#26). */
+  /** Owners `gh api users/<owner> --jq .type` calls an Organization, as `owner` on any host or `host/owner` on that host only; any other is a User (#26). */
   orgOwners?: string[]
   /** `git ls-remote --heads <remote>`: the branch names already on a remote; absent, none (#26). */
   remoteHeads?: Record<string, string[]>
@@ -252,7 +252,13 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
         const [owner = '', name = ''] = (parent ?? '').split('/')
         return ok(JSON.stringify(parent === null ? { isFork: false, parent: null } : { isFork: true, parent: { id: 'R_1', name, owner: { id: 'U_1', login: owner } } }))
       }
-      if (a[0] === 'api' && (a[1] ?? '').startsWith('users/')) return ok(`${world.orgOwners?.includes((a[1] ?? '').slice('users/'.length)) ? 'Organization' : 'User'}\n`)
+      // As gh does: without --hostname, gh api asks github.com.
+      const user = a[0] === 'api' ? a.find(x => x.startsWith('users/')) : undefined
+      if (user !== undefined) {
+        const host = a[1] === '--hostname' ? (a[2] ?? '') : 'github.com'
+        const owner = user.slice('users/'.length)
+        return ok(`${world.orgOwners?.includes(owner) || world.orgOwners?.includes(`${host}/${owner}`) ? 'Organization' : 'User'}\n`)
+      }
       if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'nameWithOwner,url') {
         const [host = '', owner = '', name = ''] = (a[2] ?? '').split('/')
         const nameWithOwner = world.canonical?.[a[2] ?? ''] ?? `${owner}/${name}`
@@ -2149,7 +2155,7 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     await start($)
     const status = await started($, w)
     expect(w.argv).toContainEqual(FORK_VIEW)
-    expect(w.argv).toContainEqual(['gh', 'api', 'users/me', '--jq', '.type'])
+    expect(w.argv).toContainEqual(['gh', 'api', '--hostname', 'github.com', 'users/me', '--jq', '.type'])
     const forkAt = w.argv.findIndex(a => a.join(' ') === FORK_VIEW.join(' '))
     const ownerAt = w.argv.findIndex(a => a[0] === 'gh' && a[1] === 'api')
     const fetchAt = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'fetch')
@@ -2172,7 +2178,7 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     await start($)
     const status = await started($, w)
     expect(status).toContain("blocked at preflight: gh pr create can't name an organization's fork as the head (cli/cli#10093)")
-    expect(w.argv).toContainEqual(['gh', 'api', 'users/me', '--jq', '.type'])
+    expect(w.argv).toContainEqual(['gh', 'api', '--hostname', 'github.com', 'users/me', '--jq', '.type'])
     expect(w.spawned).toEqual([])
     expect(w.argv.some(isGitWrite)).toBe(false)
   })
