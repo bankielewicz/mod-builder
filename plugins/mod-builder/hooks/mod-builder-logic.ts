@@ -1225,46 +1225,60 @@ const EDIT_PATHS: Readonly<Record<string, string>> = { Edit: 'file_path', Write:
 /** One tool call of a `classic.PostToolBatch`, as far as a rescan reads it. */
 export type BatchCall = { tool_name: string; tool_input: unknown }
 
-/** What a batch touched in the watched mods folder: the mods its file tools changed, and whether it ran shell. */
-export type BatchTouch = { mods: string[]; isShell: boolean }
+/** The tools that change nothing on disk (the owner's list, PR #109 review): a batch of only these is skipped. */
+export const READ_ONLY_TOOLS: readonly string[] = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'TodoWrite', 'AskUserQuestion', 'mcp__mod-builder__lab_report']
+
+/** Every call in the batch is on the read-only list: nothing to look at, not even the watched folder. */
+export function isReadOnlyBatch(calls: readonly BatchCall[]): boolean {
+  return calls.every(call => READ_ONLY_TOOLS.includes(call.tool_name))
+}
+
+/** What a batch touched in the watched mods folder: the mods its file tools changed, and whether to run the quick check. */
+export type BatchTouch = { mods: string[]; isQuick: boolean }
 
 /**
  * The mods a tool batch's Edit, Write and NotebookEdit changed under `modsDir` (each path's first segment there, not a
- * file directly in it nor a dot-folder), and whether it ran Bash, whose paths can't be read. Other tools count for nothing.
+ * file directly in it nor a dot-folder), and whether the quick check runs: for any tool not on the read-only list whose
+ * paths can't be read (Bash, PowerShell, Agent, MCP and unknown tools; the owner's decision on PR #109), and for an
+ * edit to the marketplace beside the folder. A drive or UNC path matches without case (`pathKey`), a POSIX one with it.
  */
 export function batchTouch(calls: readonly BatchCall[], modsDir: string): BatchTouch {
-  const dir = normalizePath(modsDir).replace(/\/$/, '')
+  const dir = pathKey(modsDir).replace(/\/$/, '')
+  const marketplace = pathKey(marketplaceFileOf(modsDir))
   const mods = new Set<string>()
-  let isShell = false
+  let isQuick = false
   for (const call of calls) {
-    if (call.tool_name === 'Bash') {
-      isShell = true
+    if (READ_ONLY_TOOLS.includes(call.tool_name)) continue
+    const key = EDIT_PATHS[call.tool_name]
+    if (!key) {
+      isQuick = true
       continue
     }
-    const key = EDIT_PATHS[call.tool_name]
     const input = call.tool_input
-    const path = key && input && typeof input === 'object' ? (input as Record<string, unknown>)[key] : undefined
+    const path = input && typeof input === 'object' ? (input as Record<string, unknown>)[key] : undefined
     if (typeof path !== 'string') continue
-    const at = normalizePath(path)
+    const at = pathKey(path)
+    if (at === marketplace) isQuick = true
     if (!at.startsWith(`${dir}/`)) continue
-    const [mod, ...rest] = at.slice(dir.length + 1).split('/')
+    // The name as written, not as compared: lower-casing keeps a drive path's length.
+    const [mod, ...rest] = normalizePath(path).slice(dir.length + 1).split('/')
     if (mod && !mod.startsWith('.') && rest.length > 0) mods.add(mod)
   }
-  return { mods: [...mods], isShell }
+  return { mods: [...mods], isQuick }
 }
 
 /** The four listings the stats-only check reads: the mod's folder, `.claude-plugin/`, `hooks/` and `tests/`. */
 export type QuickRead = Pick<FolderRead, 'top' | 'manifestDir' | 'hooks' | 'tests'>
 
 /**
- * A signature of the files Mod Lab judges that four listings show: SPEC.md, README.md, the manifest, and every entry
+ * A signature of the files Mod Lab judges that four listings show: SPEC.md, README.md, .mcp.json, the manifest, and every entry
  * directly in hooks/ and tests/ (a subfolder by its own mtime), each by name and mtime. No file is read, and no
  * subfolder walked: what sits deeper, and types/, agents/, commands/ and skills/, it doesn't see.
  */
 export function quickSigOf(read: QuickRead): string {
   const named = (folder: string, entries: readonly Entry[]): string[] => entries.map(entry => `${folder}/${entry.name}@${entry.mtimeMs}`)
   return signatureOf([
-    ...named('', read.top.filter(entry => entry.kind === 'file' && (entry.name === 'SPEC.md' || entry.name === 'README.md'))),
+    ...named('', read.top.filter(entry => entry.kind === 'file' && (entry.name === 'SPEC.md' || entry.name === 'README.md' || entry.name === '.mcp.json'))),
     ...named('.claude-plugin', read.manifestDir.filter(entry => entry.name === 'plugin.json')),
     ...named('hooks', read.hooks),
     ...named('tests', read.tests),

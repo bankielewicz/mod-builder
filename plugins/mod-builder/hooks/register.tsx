@@ -643,9 +643,9 @@ async function shownViews($: Engine): Promise<ModView[]> {
 /** After a tool batch: read again the mods it changed in the watched folder, or after shell the ones whose stats moved (Change 0.2.24). */
 async function rescanAfter($: Engine, calls: readonly Lab.BatchCall[]): Promise<void> {
   const touch = Lab.batchTouch(calls, await currentModsDir($))
-  if (touch.mods.length === 0 && !touch.isShell) return
+  if (touch.mods.length === 0 && !touch.isQuick) return
   // Announced, as a report's and the tick's scans are: announceGreen stamps a mod done before it checks the flag.
-  await scan($, true, { isFull: false, isQuick: touch.isShell, mods: touch.mods })
+  await scan($, true, { isFull: false, isQuick: touch.isQuick, mods: touch.mods })
 }
 
 async function refreshStatus($: Engine): Promise<void> {
