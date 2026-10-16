@@ -1353,7 +1353,10 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
   over stderr and stdout, so commit's branch ref lock and the shared `refs/stash` lock wait and retry as the index's
   does. `isIndexLockError` is gone; its test pinned a ref's lock as "not a lock". `lockPathOf` (logic module) reads
   the lock file git names (`Unable to create '<path>.lock'`) for the block. A lock git doesn't name falls back to the
-  lock file found, then to the index lock. `IndexLocked` is now `Locked`.
+  lock file found. When none is found, the last failure comes back as git said it (Codex 4290283822: git 2.53.0
+  refuses a commit on a broken ref with `fatal: cannot lock ref 'HEAD': unable to resolve reference '…': reference
+  broken`, which `isLockError` takes, and the block named an index.lock that wasn't there) [probe]. `IndexLocked` is
+  now `Locked`.
 - **git's own texts** [probe, git 2.53.0]:
   - `commit` with `refs/heads/main.lock` held: `fatal: cannot lock ref 'HEAD': Unable to create
     '…/refs/heads/main.lock': File exists.` and git's hint, exit 128;
@@ -1383,7 +1386,7 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
 - **Env** (review 9). `rev-parse --show-toplevel` and `runLong`'s git (`worktree add`, through spawn and its
   `process.run` fallback) carry `GIT_OPTIONAL_LOCKS=0` too. The profile's commands keep the session's env.
 - **Tests** (review 10), in `ui.test.tsx` unless named:
-  - a ref lock on commit, met once and five times;
+  - a ref lock on commit, met once and five times, and a broken ref, which no lock explains;
   - the `refs/stash` lock on stash push, met once and five times;
   - a takeover during the wait, and a Stop during the wait;
   - git before 2.31, and a lock let go during the lookup;
