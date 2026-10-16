@@ -17,7 +17,7 @@ describe('providers as data', () => {
     for (const p of PROVIDERS) {
       expect(p.name.length).toBeGreaterThan(0)
       if (p.id !== 'custom' && p.id !== 'codex') expect(isAllowedBaseUrl(p.baseUrl)).toBe(true)
-      if (p.id !== 'custom' && p.id !== 'ollama') expect(p.defaultModel.length).toBeGreaterThan(0)
+      if (p.id !== 'custom' && p.id !== 'ollama' && p.id !== 'codex') expect(p.defaultModel.length).toBeGreaterThan(0)
     }
     expect(providerOf('anthropic')!.auth).toBe('session')
     expect(providerOf('anthropic')!.keyName).toBe('ANTHROPIC_API_KEY')
@@ -135,11 +135,11 @@ describe('requests and replies', () => {
 
   test('test outcome: /models 200 → ok; 404/405 → fall to the probe; 401 → unauthorized, no fallback; the probe records the model', () => {
     const at = 1_000
-    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"},{"id":"b"}]}' }, 412, at)).toEqual({ ok: true, status: 200, ms: 412, model: '', note: 'ok 412 ms · 2 models', at })
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"},{"id":"b"}]}' }, 412, at)).toEqual({ ok: true, status: 200, ms: 412, model: '', note: 'ok 412ms · 2 models', at })
     expect(testOutcome('models', { status: 404, ok: false, text: '' }, 50, at)).toEqual({ fallback: true })
     expect(testOutcome('models', { status: 405, ok: false, text: '' }, 50, at)).toEqual({ fallback: true })
     expect(testOutcome('models', { status: 401, ok: false, text: '{"error":{"message":"invalid x-api-key"}}' }, 80, at)).toEqual({ ok: false, status: 401, ms: 80, model: '', note: '✕ 401 unauthorized (invalid x-api-key)', at })
-    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"sonar-pro","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}' }, 900, at)).toEqual({ ok: true, status: 200, ms: 900, model: 'sonar-pro', note: 'ok 900 ms sonar-pro · 1 token', at })
+    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"sonar-pro","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}' }, 900, at)).toEqual({ ok: true, status: 200, ms: 900, model: 'sonar-pro', note: 'ok 900ms sonar-pro · 1 token', at })
     expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '30' } }, 20, at)).toEqual({ ok: false, status: 429, ms: 20, model: '', note: '✕ 429 rate limited (retry-after 30 s); not retried', at })
     expect(testOutcome('probe', { status: 500, ok: false, text: 'oops' }, 20, at).note).toBe('✕ 500 server error (oops)')
     // A refusal before any reply (the host refused the request).
@@ -158,17 +158,18 @@ describe('pane text', () => {
     expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, '')).toBe('no URL set')
     expect(authTextOf(providerOf('custom')!, { key: KEY, source: 'file' }, 'https://gw.example.com/v1')).toBe('key …a1b2 · gw.example.com')
     expect(testText(undefined)).toBe('untested')
-    expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412 ms gemini-2.5-pro', at: 1 })).toBe('ok 412 ms gemini-2.5-pro')
+    expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1 })).toBe('ok 412ms gemini-2.5-pro')
     expect(testText('running')).toBe('testing… GET /models')
   })
 
   test('a row fits the width and marks the providers a route uses; the list prints every provider', () => {
-    const row = providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok 412 ms gemini-2.5-pro', used: true }, 76)
-    expect(row).toBe('● google      Google Gemini           key …a1b2              ok 412 ms gemini-2.5-pro')
-    expect(providerRowText({ p: providerOf('xai')!, auth: 'no key', test: '—', used: false }, 76)).toBe('  xai         xAI Grok                no key                 —')
-    expect(providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok 412 ms gemini-2.5-pro', used: true }, 40).length).toBeLessThanOrEqual(40)
+    const row = providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok 412ms gemini-2.5-pro', used: true }, 76)
+    expect(row).toBe('● google     Google Gemini        key …a1b2          ok 412ms gemini-2.5-pro')
+    expect(row.length).toBeLessThanOrEqual(76)
+    expect(providerRowText({ p: providerOf('xai')!, auth: 'no key', test: '—', used: false }, 76)).toBe('  xai        xAI Grok             no key             —')
+    expect(providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok 412ms gemini-2.5-pro', used: true }, 40).length).toBeLessThanOrEqual(40)
     // Narrow: id, auth and test only.
-    expect(providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok', used: false }, 50)).toBe('  google      key …a1b2              ok')
+    expect(providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok', used: false }, 50)).toBe('  google     key …a1b2          ok')
     const text = providersText([{ p: providerOf('google')!, auth: 'key …a1b2', test: 'untested', used: false }], 2, 1)
     expect(text).toContain('duet providers · 2 keys · 1 tested')
     expect(text).toContain('google')
