@@ -249,7 +249,7 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
     const held = lockPathOf(text) ?? (await heldOf($, files))
     if (!held && !isLockError(text)) return r
     if (attempt === LOCK_ATTEMPTS) throw new Locked(held ?? files[0]!)
-    await new Promise<void>(resolve => void $.clock.after(LOCK_WAIT_MS, () => resolve()))
+    await lockWait($)
     // The 5 s watch is too slow for a takeover during the waits: the stored run is read before each attempt.
     await stillOwned($, run)
   }
@@ -274,6 +274,24 @@ async function lockFileOf($: EngineInterface, root: string, name: 'index.lock' |
 async function heldOf($: EngineInterface, files: string[]): Promise<string | null> {
   for (const file of files) if (await $.fs.exists(file)) return file
   return null
+}
+
+/**
+ * The second between lock attempts, as a timer: `$.clock.sleep` would count against a hook's budget. The timer may never
+ * fire (a hook refuses it, a reload cancels it), so a Stop, hand-off or takeover ends the wait itself, as it ends a command.
+ */
+async function lockWait($: EngineInterface): Promise<void> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = $.clock.after(LOCK_WAIT_MS, () => resolve())
+      stopCommand = () => {
+        timer.cancel()
+        reject(new Stopped())
+      }
+    })
+  } finally {
+    stopCommand = null
+  }
 }
 
 /** gitWrite for a call that must succeed: a failure throws, as gitOut's does. */
