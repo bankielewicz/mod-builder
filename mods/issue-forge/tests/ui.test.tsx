@@ -2151,7 +2151,7 @@ describe('a held git index lock (#28)', () => {
     expect(gaps(commits).every(g => g >= 1000)).toBe(true)
     expect(commits[4]!.at - commits[0]!.at).toBeGreaterThanOrEqual(4000)
     // The lock's path is asked of git once and reused by the later attempts.
-    expect(w.argv.filter(a => a.join(' ') === 'git rev-parse --path-format=absolute --git-path index.lock').length).toBe(1)
+    expect(w.argv.filter(a => a.join(' ') === 'git rev-parse --git-path index.lock').length).toBe(1)
     expect(w.commits.length).toBe(0)
     expect(w.spawned.length).toBe(0)
   })
