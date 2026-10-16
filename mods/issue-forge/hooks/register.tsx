@@ -36,6 +36,7 @@ import {
   failuresOf,
   findStash,
   foreignChange,
+  forkOfOrigin,
   gateG,
   gateR,
   guardAction,
@@ -115,7 +116,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
+import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -496,14 +497,28 @@ async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { r
  * Whether a remote URL names `repo`. The URL itself is parsed here and never passed on: it can hold a token. A renamed or
  * transferred repository differs from the URL, so gh is asked for the name it gives `host/owner/repo`.
  */
-async function remoteRepo($: EngineInterface, root: string, url: string, repo: string): Promise<'match' | { other: string | null }> {
+async function remoteRepo($: EngineInterface, root: string, url: string, repo: string, views: Views = new Map()): Promise<RemoteFound> {
   const verdict = remoteVerdict(url, repo)
   if (verdict.kind === 'match') return 'match'
   if (verdict.kind === 'unrecognised') return { other: null }
   if (verdict.kind === 'other') return { other: verdict.repo }
-  const view = await $.process.run(['gh', 'repo', 'view', verdict.repo, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
-  const canonical = view?.exitCode === 0 ? repoOfView(view.stdout) : null
+  const canonical = await canonicalOf($, root, verdict.repo, views)
   return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? verdict.repo }
+}
+
+/** gh's names for `host/owner/repo`s, asked once each within one check (PR #87 review). */
+type Views = Map<string, Promise<string | null>>
+
+/** The name gh gives `host/owner/repo` (a renamed or transferred repository's new one), or null when gh can't say. */
+function canonicalOf($: EngineInterface, root: string, repo: string, views: Views): Promise<string | null> {
+  const known = views.get(repo)
+  if (known) return known
+  const asked = $.process
+    .run(['gh', 'repo', 'view', repo, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT })
+    .then(view => (view.exitCode === 0 ? repoOfView(view.stdout) : null))
+    .catch(() => null)
+  views.set(repo, asked)
+  return asked
 }
 
 /** The distinct, non-empty lines of a command's output, in order. */
@@ -517,18 +532,26 @@ async function pushUrlsOf($: EngineInterface, root: string): Promise<{ exitCode:
   return { exitCode: pushed.exitCode, urls: linesOf(pushed.stdout) }
 }
 
-/**
- * Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. git pushes to every push
- * URL, so each is checked (PR #68 review), and one that is the fetch URL only once.
- */
-async function originCheck($: EngineInterface, root: string, repo: string): Promise<Blocked | null> {
+/** Origin's fetch URL and every URL git pushes it to, or null without an origin. Kept in memory only: a URL can hold a token. */
+type OriginUrls = { fetch: string; pushes: string[] }
+
+async function originUrls($: EngineInterface, root: string): Promise<OriginUrls | null> {
   const fetched = await git($, root, ['remote', 'get-url', 'origin'])
   const pushed = await pushUrlsOf($, root)
-  if (fetched.exitCode !== 0 || pushed.exitCode !== 0) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
-  const fetchUrl = fetched.stdout.trim()
-  const pushUrls = pushed.urls.filter(u => u !== fetchUrl)
+  return fetched.exitCode !== 0 || pushed.exitCode !== 0 ? null : { fetch: fetched.stdout.trim(), pushes: pushed.urls }
+}
+
+/**
+ * Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. git pushes to every push
+ * URL, so each is checked (PR #68 review), and one that is the fetch URL only once. Preflight passes the URLs it read.
+ */
+async function originCheck($: EngineInterface, root: string, repo: string, read?: OriginUrls | null, views: Views = new Map()): Promise<Blocked | null> {
+  const urls = read === undefined ? await originUrls($, root) : read
+  if (!urls) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
+  const fetchUrl = urls.fetch
+  const pushUrls = urls.pushes.filter(u => u !== fetchUrl)
   for (const [url, isPush] of [[fetchUrl, false] as const, ...pushUrls.map(u => [u, true] as const)]) {
-    const found = await remoteRepo($, root, url, repo)
+    const found = await remoteRepo($, root, url, repo, views)
     if (found === 'match') continue
     const label = found.other === null ? 'an unrecognised URL' : repoLabel(found.other)
     const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`
@@ -540,27 +563,26 @@ async function originCheck($: EngineInterface, root: string, repo: string): Prom
 /** A fork clone's remotes (#26): the one the base is fetched from, and the fork origin pushes to (`host/owner/repo`). */
 type Fork = { baseRemote: string; headRepo: string }
 
-/** The one repository every push URL of origin names, when it isn't `repo` but is on its host: the fork a run pushes to. */
-async function forkOf($: EngineInterface, root: string, repo: string): Promise<string | null> {
-  let fork: string | null = null
-  for (const url of (await pushUrlsOf($, root)).urls) {
-    const found = await remoteRepo($, root, url, repo)
-    // The project itself, an unrecognised URL or another host is no fork; nor are two different repositories.
-    if (found === 'match' || found.other === null || hostOf(found.other) !== hostOf(repo)) return null
-    if (fork !== null && !isSameRepo(fork, found.other)) return null
-    fork = found.other
-  }
-  return fork
+/** The fork origin pushes to, from the URLs preflight read: each is resolved once, all at once (PR #87 review). */
+async function forkOf($: EngineInterface, root: string, repo: string, urls: OriginUrls | null, views: Views): Promise<string | null> {
+  if (!urls) return null
+  const unique = [...new Set([urls.fetch, ...urls.pushes])]
+  const found = new Map((await Promise.all(unique.map(url => remoteRepo($, root, url, repo, views)))).map((f, i) => [unique[i], f]))
+  const of = (url: string) => found.get(url) ?? { other: null }
+  return forkOfOrigin(of(urls.fetch), urls.pushes.map(of), repo)
 }
 
-/** The remotes besides origin whose fetch URL names `repo`: a fork clone fetches the base from the one there is. */
-async function baseRemoteFor($: EngineInterface, root: string, repo: string): Promise<BaseRemote> {
-  const matching: string[] = []
-  for (const name of linesOf((await git($, root, ['remote'])).stdout).filter(n => n !== 'origin')) {
-    const url = await git($, root, ['remote', 'get-url', name])
-    if (url.exitCode === 0 && (await remoteRepo($, root, url.stdout.trim(), repo)) === 'match') matching.push(name)
-  }
-  return baseRemoteOf(matching)
+/** Whether remote `name`'s fetch URL names `repo`. */
+async function remoteNames($: EngineInterface, root: string, name: string, repo: string, views: Views): Promise<boolean> {
+  const url = await git($, root, ['remote', 'get-url', name])
+  return url.exitCode === 0 && (await remoteRepo($, root, url.stdout.trim(), repo, views)) === 'match'
+}
+
+/** The remotes besides origin whose fetch URL names `repo`, looked up together: a fork clone fetches the base from the one there is. */
+async function baseRemoteFor($: EngineInterface, root: string, repo: string, views: Views): Promise<BaseRemote> {
+  const names = linesOf((await git($, root, ['remote'])).stdout).filter(n => n !== 'origin')
+  const named = await Promise.all(names.map(name => remoteNames($, root, name, repo, views)))
+  return baseRemoteOf(names.filter((_, i) => named[i]))
 }
 
 /**
@@ -568,10 +590,10 @@ async function baseRemoteFor($: EngineInterface, root: string, repo: string): Pr
  * fork must be a user's, not an organization's, which `gh pr create --head` can't name. This runs before anything is fetched. Any
  * other clone gets `stray`, the origin block.
  */
-async function forkCheck($: EngineInterface, root: string, repo: string, stray: Blocked): Promise<Blocked | Fork> {
-  const headRepo = await forkOf($, root, repo)
+async function forkCheck($: EngineInterface, root: string, repo: string, stray: Blocked, urls: OriginUrls | null, views: Views): Promise<Blocked | Fork> {
+  const headRepo = await forkOf($, root, repo, urls, views)
   if (!headRepo) return stray
-  const base = await baseRemoteFor($, root, repo)
+  const base = await baseRemoteFor($, root, repo, views)
   if (base.kind === 'none') return stray
   if (base.kind === 'several') return block(`remotes ${base.remotes.slice(0, -1).join(', ')} and ${base.remotes.slice(-1).join('')} both point at ${repoLabel(repo)}`, 'remove one of them')
   const view = await $.process.run(['gh', 'repo', 'view', headRepo, '--json', 'isFork,parent'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
@@ -770,8 +792,11 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   if ('type' in resolved) return resolved
   const { repo } = resolved
   // Origin is the project, or (#26) the contributor's fork with the project as another remote.
-  const stray = await originCheck($, run.root, repo)
-  const fork = stray ? await forkCheck($, run.root, repo, stray) : null
+  // Origin's URLs are read once and each repository named is asked about once (PR #87 review).
+  const urls = await originUrls($, run.root)
+  const views: Views = new Map()
+  const stray = await originCheck($, run.root, repo, urls, views)
+  const fork = stray ? await forkCheck($, run.root, repo, stray, urls, views) : null
   if (fork && 'type' in fork) return fork
   const remote = fork?.baseRemote ?? 'origin'
   // Pinned once origin agrees (or is a fork of it), so a later block keeps it; an origin block leaves it open to a fix of the remotes.

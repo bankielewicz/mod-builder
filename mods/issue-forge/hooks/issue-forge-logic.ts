@@ -745,6 +745,24 @@ export function issueLabel(run: Run): string {
 
 // ── Fork clones (#26) ─────────────────────────────────────────────────────
 
+/** What a remote URL names once resolved: the run's repository, another (gh's name for it), or nothing readable (null). */
+export type RemoteFound = 'match' | { other: string | null }
+
+/**
+ * The fork a fork clone's origin pushes to: every push URL names one repository on `repo`'s host that isn't `repo`, and the
+ * fetch URL is that fork or `repo` itself, so `git ls-remote origin` lists a repository that was checked (PR #87 review).
+ */
+export function forkOfOrigin(fetch: RemoteFound, pushes: readonly RemoteFound[], repo: string): string | null {
+  let fork: string | null = null
+  for (const found of pushes) {
+    if (found === 'match' || found.other === null || hostOf(found.other) !== hostOf(repo)) return null
+    if (fork !== null && !isSameRepo(fork, found.other)) return null
+    fork ??= found.other
+  }
+  if (fork === null) return null
+  return fetch === 'match' || isSameRepo(fetch.other, fork) ? fork : null
+}
+
 /** The remotes whose fetch URL names the project: none, one (the base remote), or several (a block). */
 export type BaseRemote = { kind: 'none' } | { kind: 'one'; remote: string } | { kind: 'several'; remotes: string[] }
 
