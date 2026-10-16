@@ -251,7 +251,8 @@ Re-check [field] items against the d.ts after a Claude Code update.
   the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
   installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
   (Probed with Mod Lab before 0.2.9, whose default `modsDir` came from the plugin's own folder. From
-  0.2.9 it follows the working directory, so check the version in the session-start log line instead.)
+  0.2.9 it follows the working directory, and from 0.2.20 the project root, so check the version in the
+  session-start log line instead.)
 
 ## Testing and checking
 

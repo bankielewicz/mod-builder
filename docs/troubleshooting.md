@@ -4,7 +4,7 @@
 
 | Symptom | Cause and fix |
 |---|---|
-| Mod Lab says "No mods yet" in your project | It watches the `mods/` of the marketplace nearest the working directory. Start Claude inside your project (or `/cd` there); if your marketplace keeps its mods somewhere other than `mods/`, set `modsDir` to that folder ([step 5](use-in-your-project.md#5-mod-lab-finds-your-mods)). |
+| Mod Lab says "No mods yet" in your project | Before a build reports its folder, it watches the `mods/` of the marketplace nearest the session's project root (where Claude started, or where `/cd` took it), else nearest the working directory. Start Claude inside your project (or `/cd` there); if your marketplace keeps its mods somewhere other than `mods/`, set `modsDir` to that folder ([step 5](use-in-your-project.md#5-mod-lab-finds-your-mods)). |
 | <kbd>V</kbd> or <kbd>T</kbd> types into the prompt | The pane doesn't have the keyboard. Press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> first. Focus returns to the prompt after a reload. |
 | The pane doesn't appear | The window is too narrow. A pane you open places at any width; one that opens by itself waits for 144 columns. Under 34 columns Mod Lab draws nothing and says so. |
 | <kbd>K</kbd> says type-check needs the engine's types | Claude Code writes `.claude-plugin/types/` only when an interactive session loads the mod. Load it once with `claude --plugin-dir mods/<name>`. |
