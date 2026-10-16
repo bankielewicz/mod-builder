@@ -236,15 +236,24 @@ async function nearestMarketplace($: Engine, start: string | null): Promise<stri
 }
 
 /**
- * What `modsDir` means when it isn't set: the `mods/` of the marketplace nearest the project root
- * (the one /mod-builder:build writes to, a worktree's own in a worktree), else the plugin's own.
- * The root is read now, so a `/cd` is followed and a Bash `cd` isn't (#92); when it can't be read,
- * the walk starts from the working directory.
+ * The walk with no pin: the marketplace nearest the project root, read now so a `/cd` is followed and a
+ * Bash `cd` isn't (#92), else the one nearest the working directory (no root, or none above it: PR #95 review).
+ */
+async function walkOf($: Engine, root: string | null): Promise<{ cwd: string | null; existing: string[] }> {
+  const fromRoot = await nearestMarketplace($, root)
+  if (fromRoot.length) return { cwd: null, existing: fromRoot }
+  const cwd = await cwdOf($)
+  return { cwd, existing: await nearestMarketplace($, cwd) }
+}
+
+/**
+ * What `modsDir` means when it isn't set and no build's folder is pinned: the `mods/` of the marketplace
+ * `walkOf` finds (a worktree's own in a worktree), else the plugin's own.
  */
 async function defaultModsDir($: Engine): Promise<string> {
   const root = await rootOf($)
-  const start = Lab.walkStartOf(root, root === null ? await cwdOf($) : null)
-  return Lab.modsDirFor('', start, await nearestMarketplace($, start), pluginModsDirOf($))
+  const { cwd, existing } = await walkOf($, root)
+  return Lab.watchedDirOf(null, root, '', cwd, existing, pluginModsDirOf($)).dir
 }
 
 /**
@@ -260,8 +269,7 @@ async function currentModsDir($: Engine, isDrawing = false): Promise<string> {
   const kept = Lab.keptPinOf(held, root)
   const live = kept && (await exists($, Lab.marketplaceFileOf(kept.modsDir))) ? kept : null
   const isWalked = !configuredDir && !live
-  const cwd = isWalked && root === null ? await cwdOf($) : null
-  const existing = isWalked ? await nearestMarketplace($, Lab.walkStartOf(root, cwd)) : []
+  const { cwd, existing } = isWalked ? await walkOf($, root) : { cwd: null, existing: [] }
   const watched = Lab.watchedDirOf(live, root, configuredDir, cwd, existing, pluginModsDirOf($))
   // A changed root dropped the pin, unless a report has pinned another folder meanwhile.
   if (held && !watched.pin && pin === held && !isDrawing) await setPin($, null)

@@ -955,7 +955,8 @@ export function pinOf(value: unknown): Pin | null {
 
 /**
  * The folder Mod Lab watches (#92): a set `modsDir`, else the pin `keptPinOf` keeps, else `modsDirFor`
- * walking from `walkStartOf`. `pin` is the pin to keep: null when there was none or a changed root dropped it.
+ * walking from the root, or from `cwd` when no marketplace in `existing` is above the root (PR #95 review).
+ * `pin` is the pin to keep: null when there was none or a changed root dropped it.
  */
 export function watchedDirOf(
   pin: Pin | null,
@@ -968,7 +969,9 @@ export function watchedDirOf(
   const kept = keptPinOf(pin, root)
   if (configured) return { dir: normalizePath(configured), pin: kept }
   if (kept) return { dir: kept.modsDir, pin: kept }
-  return { dir: modsDirFor('', walkStartOf(root, cwd), existing, fallback), pin: null }
+  const hasMarketplace = (start: string | null): boolean => start !== null && marketplaceCandidatesOf(start).some(path => existing.includes(path))
+  const start = [root, cwd].find(hasMarketplace) ?? walkStartOf(root, cwd)
+  return { dir: modsDirFor('', start, existing, fallback), pin: null }
 }
 
 /**
