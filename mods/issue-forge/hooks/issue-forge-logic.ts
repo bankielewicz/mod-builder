@@ -747,6 +747,14 @@ export function newPluginRecord(stored: Run | null, runId: string, me: string, p
   return stored && !foreignChange(stored, runId, me) && isActive(stored) ? advance(stored, { type: 'newPlugin', path }, now) : null
 }
 
+/**
+ * A drive's write, keeping a refusal the guard stored after the drive read the run: nothing clears `newPlugin`, and a
+ * write computed from the earlier read would drop it, so the gate would see neither the file nor the refusal (Codex 4290653342).
+ */
+export function withRefusal(stored: Run | null, next: Run): Run {
+  return stored?.newPlugin && !next.newPlugin ? { ...next, newPlugin: stored.newPlugin } : next
+}
+
 /** What the guard tells a phase agent that would create a manifest. */
 export function newPluginRefusal(path: string): string {
   return `issue-forge: creating a new Claude Code plugin (${path}) is mod-builder's job, not this run's. End your turn now; the run stops with next steps for the person.`

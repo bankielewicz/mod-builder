@@ -124,6 +124,7 @@ import {
   truncate,
   unstagedOf,
   viewOf,
+  withRefusal,
   workOf,
   workspacePlan,
   worktreeAddFailure,
@@ -400,11 +401,12 @@ function isTakenOver(stored: Run): boolean {
 /**
  * A drive's write, by generation `gen`. Resolves to the run written, or null when it was dropped: the drive then has
  * nothing left to drive. A stop wins every race, a write lands only on the same run, never on one another session
- * took over (Change 0.3.0), and never from a drive that was stopped, handed off or replaced (PR #51 review).
+ * took over (Change 0.3.0), and never from a drive that was stopped, handed off or replaced (PR #51 review). A refusal
+ * the guard stored meanwhile is kept (Codex 4290653342).
  */
 async function saveRun($: EngineInterface, run: Run, gen: number): Promise<Run | null> {
   return updateRun($, keyOf(run), stored =>
-    !stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) || driving?.gen !== gen || driving.isStopped ? null : run,
+    !stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) || driving?.gen !== gen || driving.isStopped ? null : withRefusal(stored, run),
   )
 }
 
