@@ -2224,6 +2224,20 @@ describe('a held git index lock (#28)', () => {
     expect(w.commits).toEqual([])
   })
 
+  // PR #88 (Codex 4290341993): a lock git couldn't create for another reason is no other process's. git 2.53.0's
+  // refusal of add with a read-only .git, captured in a scratch repository.
+  test("gate R: git add -A that can't create the index lock (Permission denied) blocks with git's own failure, not a held lock", async ($, on) => {
+    const denied = `fatal: Unable to create '${LOCK_PATH}': Permission denied\n`
+    const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(5, denied).map(f => ({ ...f, isLocked: false })) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: unexpected: git add failed: fatal: Unable to create '${LOCK_PATH}': Permission denied`)
+    expect(status).not.toContain('another git process')
+  })
+
   // git 2.53.0 names no lock here: stderr is only this line, exit 1, and the tree is left as it was.
   const STASH_LOCKED: GitFail = { stderr: 'Cannot save the current status\n', code: 1, isLocked: false, isStashLocked: true }
 
