@@ -2258,6 +2258,24 @@ describe('a held git index lock (#28)', () => {
     expect(callsOf(w, 'stash push').length).toBe(5)
   })
 
+  // PR #88 review: the wait's timer may never fire (a hook refuses clock.after, a reload cancels it); a Stop ends the
+  // wait itself, so the drive ends and clears this session as the driver at once.
+  test('a Stop during the lock wait ends the drive at once, without waiting for the timer (PR #88 review)', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5) } })
+    const store: Record<string, unknown> = { ...stored }
+    const w = engine(on, { ...world, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => callsOf(w, 'commit').length === 1)
+    expect((store[key(16)] as any).driver?.session).toBe(SESSION)
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    // The clock stays where it is: the wait's timer doesn't fire.
+    await w.clock.settle()
+    expect((store[key(16)] as any).step).toBe('stopped')
+    expect((store[key(16)] as any).driver).toBeUndefined()
+    expect(callsOf(w, 'commit').length).toBe(1)
+  })
+
   test('gate R: git add -A that meets the lock is retried after a second, and gate R goes on', async ($, on) => {
     const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(1) } })
     const w = engine(on, world, stored)
