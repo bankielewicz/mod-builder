@@ -2908,6 +2908,55 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(text).toContain("a build's folder (…/wt/mods)")
   })
 
+  test('a path outside the project root is ignored, and nothing runs there (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk(), { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    const { result } = (await report($, { mod: 'gamma', stage: 'Validate', status: 'passed', path: `${OTHER}/mods/gamma` })) as { result: string }
+    await clock.advance(1000)
+    await clock.settle()
+    expect(result).toContain('path ignored')
+    expect(seen.argv.some(argv => argv.includes(`${OTHER}/mods/gamma`))).toBe(false)
+    expect((await listed($)).names).toContain('alpha')
+  })
+
+  test('a path whose folder holds no marketplace is ignored (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${MAIN}/scratch/plain/mods/beta` })) as { result: string }
+    await clock.advance(10)
+    expect(result).toContain('path ignored')
+    expect((await listed($)).names).toContain('alpha')
+  })
+
+  test('a malformed path leaves the report recorded (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Logic', status: 'running', note: 'writing alpha', path: 'mods/alpha' })) as { result: string }
+    await clock.advance(10)
+    expect(result).toContain('path ignored')
+    const { ui } = await listed($)
+    expect(await ui.find({ type: 'Text', text: /writing alpha/ })).toBeDefined()
+  })
+
+  test('a pin whose marketplace is gone drops, and the next scan follows the walk (PR #95 review)', async ($, on) => {
+    const files = disk()
+    const { seen, clock } = world(on, files)
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+    // The worktree was removed after its PR merged.
+    for (const path of Object.keys(files)) if (path.startsWith(`${WT}/`)) delete files[path]
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN

@@ -120,6 +120,12 @@ const watchedDirOf = (pin: Pin | null, root: string | null, configured: string, 
     fallback,
   )
 
+/** The pin's confinement (PR #95 review), read the same way. */
+type PinCheck = { marketplace: string; root: string } | { reason: string }
+const pinCheckOf = (dir: string, root: string | null): PinCheck | undefined =>
+  (Logic as unknown as { pinCheckOf?: (dir: string, root: string | null) => PinCheck }).pinCheckOf?.(dir, root)
+const pinOf = (value: unknown): Pin | null | undefined => (Logic as unknown as { pinOf?: (value: unknown) => Pin | null }).pinOf?.(value)
+
 /** The placeholder rules (#19), read the same way: a missing rule fails its assertion, not the import. */
 type ReportedByMod = Parameters<typeof liveReports>[0]
 const placeholderFacts = (name: string): FileFacts | undefined =>
@@ -1233,6 +1239,27 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(configListText({ ...values, pinnedShown: '…/wt/mods' }, '')).toContain("modsDir            a build's folder (…/wt/mods)")
     expect(configListText({ ...values, modsDir: '/my/mods', modsDirShown: '…/my/mods', pinnedShown: '…/wt/mods' }, '')).toContain('modsDir            …/my/mods')
     expect(configListText(values, '')).toContain('modsDir            default (…/main/mods)')
+  })
+
+  test('pinCheckOf: a marketplace\'s mods folder under the project root can be pinned (PR #95 review)', () => {
+    expect(pinCheckOf('/w/main/scratch/wt/mods', '/w/main')).toEqual({ marketplace: '/w/main/scratch/wt/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('/w/main/mods', '/w/main/')).toEqual({ marketplace: '/w/main/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('C:/r/wt/mods', 'C:\\r')).toEqual({ marketplace: 'C:/r/wt/.claude-plugin/marketplace.json', root: 'C:/r' })
+    expect(pinCheckOf('/w/mods', '/')).toEqual({ marketplace: '/w/.claude-plugin/marketplace.json', root: '/' })
+  })
+
+  test('pinCheckOf: no root, a folder outside it, or one not named mods is refused (PR #95 review)', () => {
+    expect(pinCheckOf('/w/main/scratch/wt/mods', null)).toEqual({ reason: "the project root can't be read" })
+    expect(pinCheckOf('/w/other/mods', '/w/main')).toEqual({ reason: '/w/other/mods is outside the project root' })
+    expect(pinCheckOf('/w/main2/mods', '/w/main')).toEqual({ reason: '/w/main2/mods is outside the project root' })
+    expect(pinCheckOf('/w/main/scratch/wt/plugins', '/w/main')).toEqual({ reason: "/w/main/scratch/wt/plugins isn't a marketplace's mods folder" })
+  })
+
+  test('pinOf: a stored pin needs a folder and a root (PR #95 review)', () => {
+    expect(pinOf({ modsDir: '/w/wt/mods', root: '/w' })).toEqual({ modsDir: '/w/wt/mods', root: '/w' })
+    expect(pinOf({ modsDir: '/w/wt/mods', root: null })).toBeNull()
+    expect(pinOf({ modsDir: 3, root: '/w' })).toBeNull()
+    expect(pinOf(null)).toBeNull()
   })
 
   test('REPORT_SCHEMA lists path, and is still closed to other keys', () => {
