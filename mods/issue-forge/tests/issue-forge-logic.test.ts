@@ -2131,3 +2131,16 @@ describe('PR #103 review', () => {
     expect(detour).toContain("Red's tests can serve the build's logic-first step as reference: git show abcdef1")
   })
 })
+
+describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574826)', () => {
+  const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs: readonly string[], baseManifests: readonly string[]) =>
+    (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown, t: readonly string[], b: readonly string[]) => { absolute: string; relative: string } | null }).manifestOf(e, ctx, testGlobs, baseManifests)
+  const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
+  const BASE = ['mods/x/.claude-plugin/plugin.json', '.claude-plugin/plugin.json']
+
+  test('a phase that removed a tracked manifest may write it back: it is at the merge base, so not a new plugin', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/y/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toEqual({ absolute: '/w/wt/mods/y/.claude-plugin/plugin.json', relative: 'mods/y/.claude-plugin/plugin.json' })
+  })
+})
