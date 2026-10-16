@@ -1460,6 +1460,16 @@ UI (`ui.test.tsx`):
 
 **Decision at build (2026-10-16, owner).** Item 6 said the closed-issue block becomes final because resume "could never clear" it. That is wrong. Resume reads the issue again: preflight's `issueCheck` at the preflight step, and `register.tsx`'s `issueCheck` on resume for later steps. So reopening the issue and resuming works. The owner chose to keep the closed-issue block resumable (`next: reopen it or pick another issue, then /issue-forge resume`). Only the pull-request block becomes final, since a pull request's number never becomes an issue's. Test 5's "the closed-issue block carries `isFinal`" becomes "it doesn't".
 
+**Build notes (2026-10-16).**
+- **Rebased.** The logic half was rebased onto `main` after #86. Both prompt rules stand: every phase's rules end with the new-plugin line, and #86's `REPORT` follows them.
+- **Test 10 is a logic test.** The guard's decision moved into `manifestOf` (logic). The test kit can't make a live phase agent: a spawn's `agentId` is set only by core (d.ts `AgentSpawnResult`), so a stub's answer starts none. `register.tsx` keeps only the `$.fs.stat`, the record and the deny. Test 12 seeds a run whose guard already recorded `newPlugin`.
+- **Test 7's "no git command"** means none but the `rev-parse` reads that find the repository before `startRun`.
+- **Older tests.** Five tests changed in their own commit (`23e482f`):
+  - Four allow the start's one read-only `gh issue view`. It comes before the menu by design, since otherwise "stop the other run, then start" could stop a run and then refuse the new start.
+  - The #25 resume test blocks on a missing issue in place of a pull request's URL, because that block is now final.
+- **Hint line.** A final block's hint line offers no `r resume` (`0bae248`), as its buttons don't.
+- **Test harness.** It gained a `--diff-filter=A` answer and `fs.stat` for the files a test places.
+
 **Done means.** `/issue-forge 18` here answers with the next steps and leaves no run, worktree or branch; the person
 can follow them to `/mod-builder:build`. No issue-forge run can commit or push a new plugin. The live check:
 `claude -p --plugin-dir mods/issue-forge --settings '{"enabledPlugins":{"issue-forge@claudemod":false}}' "/issue-forge 18"`
