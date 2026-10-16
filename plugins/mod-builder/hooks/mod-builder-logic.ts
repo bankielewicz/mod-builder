@@ -116,6 +116,12 @@ export type Results = Partial<Record<RunKind, RunResult>>
 // ── Stages ────────────────────────────────────────────────────────────────
 
 /**
+ * An edit under way (a build generation): when it began, and the version and the logic and test files
+ * (`logicSig`) it began from. A `logicSig` that is absent or null leaves Logic to the mtime rule.
+ */
+export type Edit = { since: number; fromVersion: string | null; logicSig?: string | null }
+
+/**
  * The eight lights of one mod, from the disk, the stored runs and what runs
  * now. The disk and exit codes decide passed or failed; a report from the
  * model only ever adds `running` (SPEC non-negotiable 2).
@@ -125,12 +131,13 @@ export function lightsOf(
   results: Results,
   running: readonly RunKind[],
   reported: Reported | null,
-  sinceMs: number | null = null,
-  fromVersion: string | null = null,
-  fromLogicSig: string | null = null,
+  edit: Edit | null = null,
 ): Light[] {
-  // During an edit (sinceMs set), evidence older than the edit's start is stale:
+  // During an edit, evidence older than the edit's start is stale:
   // it passed before, and has to be redone for this change.
+  const sinceMs = edit?.since ?? null
+  const fromVersion = edit?.fromVersion ?? null
+  const fromLogicSig = edit?.logicSig ?? null
   const isOld = (atMs: number): boolean => sinceMs !== null && atMs < sinceMs
   const runLight = (kind: 'Validate' | 'Test'): Light => {
     if (running.includes(kind)) return 'running'
@@ -706,12 +713,10 @@ export function viewOf(
   runs: readonly Run[],
   reported: Reported | null,
   isFresh: boolean,
-  sinceMs: number | null = null,
-  fromVersion: string | null = null,
+  edit: Edit | null,
   path: string,
-  fromLogicSig: string | null = null,
 ): ModView {
-  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion, fromLogicSig)
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, edit)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
   const validate = results.Validate?.validate
   const focus = focusStageOf(lights)

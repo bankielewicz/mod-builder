@@ -414,13 +414,13 @@ const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
  * The version and the logic and test files an edit starts from. `logicSig` is absent in records from before 0.2.21,
  * and null when a folder under hooks/ or tests/ couldn't be listed then; either way the edit keeps the mtime rule.
  */
-type Baseline = { fromVersion: string | null; logicSig?: string | null }
+type Baseline = Omit<Lab.Edit, 'since'>
 /**
  * When each mod's current edit started (a build generation), for mods being edited, and its baseline.
  * `repeatedAt` is when a Spec running last repeated during the edit, and `repeatedFrom` the mod on disk
  * then: the baseline of the next edit, should a scan that read the edit before the repeat end it.
  */
-type Generation = Baseline & { since: number; repeatedAt?: number; repeatedFrom?: Baseline }
+type Generation = Lab.Edit & { repeatedAt?: number; repeatedFrom?: Baseline }
 /** As stored: an older version wrote the bare start time. */
 type StoredGenerations = Record<string, number | Generation>
 const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
@@ -511,10 +511,8 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         inFlight.filter(one => one.mod === facts.name),
         Lab.reportIn(reports[facts.name], dir),
         freshIds.includes(freshIdOf(facts.name)),
-        generations[facts.name]?.since ?? null,
-        generations[facts.name]?.fromVersion ?? null,
+        generations[facts.name] ?? null,
         Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
-        generations[facts.name]?.logicSig ?? null,
       ),
     ),
     ...placeholders.map(name =>
@@ -524,7 +522,6 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         inFlight.filter(one => one.mod === name),
         builds[name] ?? null,
         false,
-        null,
         null,
         Lab.displayPathOf(`${dir}/${name}`, cwd),
       ),

@@ -389,7 +389,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('summary, masthead, badge', () => {
-    const view = (lights: ModView['lights']): ModView => ({ ...viewOf(EMPTY, {}, [], null, false, null, null, 'mods/git-branch'), lights })
+    const view = (lights: ModView['lights']): ModView => ({ ...viewOf(EMPTY, {}, [], null, false, null, 'mods/git-branch'), lights })
     const green = view(STAGES.map(() => 'passed'))
     const building = view(['passed', 'running', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending'])
     const failing = view(['passed', 'passed', 'failed', 'pending', 'pending', 'pending', 'pending', 'pending'])
@@ -477,8 +477,8 @@ describe('mod-builder-logic', () => {
   })
 
   test('view: the detail header shows the display path it is given, with a trailing slash', () => {
-    expect(viewOf(FULL, GREEN, [], null, true, null, null, '/work/mods/git-branch').path).toBe('/work/mods/git-branch/')
-    expect(viewOf(FULL, {}, [], null, false, null, null, 'other/git-branch').path).toBe('other/git-branch/')
+    expect(viewOf(FULL, GREEN, [], null, true, null, '/work/mods/git-branch').path).toBe('/work/mods/git-branch/')
+    expect(viewOf(FULL, {}, [], null, false, null, 'other/git-branch').path).toBe('other/git-branch/')
   })
 
   test('displayPathOf: inside the cwd it is relative, the cwd itself is ".", anything else stays absolute', () => {
@@ -598,10 +598,10 @@ describe('mod-builder-logic', () => {
   })
 
   test('view: fresh green mods are ready to share with a done line; others are quiet', () => {
-    const freshView = viewOf(FULL, GREEN, [], null, true, null, null, 'mods/git-branch')
+    const freshView = viewOf(FULL, GREEN, [], null, true, null, 'mods/git-branch')
     expect(freshView).toMatchObject({ status: 'ready to share', isFresh: true, doneLine: '8/8 stages · 12 tests · validate clean', version: '0.1.0', path: 'mods/git-branch/', time: '0:03' })
-    expect(viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')).toMatchObject({ status: '12 tests · clean', isFresh: false, doneLine: null })
-    expect(viewOf(FULL, {}, [], null, true, null, null, 'mods/git-branch').isFresh).toBe(false)
+    expect(viewOf(FULL, GREEN, [], null, false, null, 'mods/git-branch')).toMatchObject({ status: '12 tests · clean', isFresh: false, doneLine: null })
+    expect(viewOf(FULL, {}, [], null, true, null, 'mods/git-branch').isFresh).toBe(false)
   })
 
   test('paths and facts from a folder read', () => {
@@ -654,7 +654,7 @@ describe('mod-builder-logic', () => {
   })
 
   test('band: real progress only; runs, then reports, then the demo; three at most', () => {
-    const view = viewOf(FULL, {}, [], null, false, null, null, 'mods/git-branch')
+    const view = viewOf(FULL, {}, [], null, false, null, 'mods/git-branch')
     const entries = bandEntriesOf(
       [{ mod: 'git-branch', kind: 'Test', startedAt: 1, passed: 7, failed: 0, total: 12 }],
       { b: { stage: 'Spec', status: 'running', since: 3, note: 'writing SPEC.md' }, c: { stage: 'Spec', status: 'passed', since: 4 } },
@@ -711,14 +711,14 @@ describe('mod-builder-logic', () => {
       Test: { kind: 'Test', ok: true, stampMs: 500, atMs: 650, summary: 'ok', errors: [], tests: { passed: 3, failed: 0 } },
     }
     expect(lightsOf(built, ran, [], null)).toEqual(STAGES.map(() => 'passed'))
-    expect(lightsOf(built, ran, [], null, 1000)).toEqual(['stale', 'passed', 'stale', 'passed', 'stale', 'stale', 'stale', 'stale'])
+    expect(lightsOf(built, ran, [], null, { since: 1000, fromVersion: null })).toEqual(['stale', 'passed', 'stale', 'passed', 'stale', 'stale', 'stale', 'stale'])
     const redone: FileFacts = { ...built, specMtimeMs: 1100, logicMtimeMs: 1200, readmeMtimeMs: 1300, codeMtimeMs: 1200, listedVersion: '0.2.0' }
     const rerun: Results = {
       Validate: { ...ran.Validate!, stampMs: 1200, atMs: 1400 },
       Test: { ...ran.Test!, stampMs: 1200, atMs: 1450 },
     }
-    expect(isGreen(lightsOf(redone, rerun, [], null, 1000))).toBe(true)
-    expect(statusOf(lightsOf(built, ran, [], null, 1000), ran, null, [], false)).toEqual({ text: 'edit · update Spec for this change', tone: 'warn' })
+    expect(isGreen(lightsOf(redone, rerun, [], null, { since: 1000, fromVersion: null }))).toBe(true)
+    expect(statusOf(lightsOf(built, ran, [], null, { since: 1000, fromVersion: null }), ran, null, [], false)).toEqual({ text: 'edit · update Spec for this change', tone: 'warn' })
   })
 
   test('a running report shows even on a stage that passed; Spec running on a built mod starts an edit', () => {
@@ -822,9 +822,9 @@ describe('mod-builder-logic', () => {
 
   test('during an edit, Share needs a version different from the one the edit started from', () => {
     const listed: FileFacts = { ...FULL, version: '0.1.0', listedVersion: '0.1.0' }
-    expect(lightsOf(listed, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
-    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.2.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('passed')
-    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.1.0' }, {}, [], null, 1000, '0.1.0')[7]).toBe('stale')
+    expect(lightsOf(listed, {}, [], null, { since: 1000, fromVersion: '0.1.0' })[7]).toBe('stale')
+    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.2.0' }, {}, [], null, { since: 1000, fromVersion: '0.1.0' })[7]).toBe('passed')
+    expect(lightsOf({ ...listed, version: '0.2.0', listedVersion: '0.1.0' }, {}, [], null, { since: 1000, fromVersion: '0.1.0' })[7]).toBe('stale')
   })
 })
 
@@ -1002,41 +1002,41 @@ describe('lightsOf: a changed set of logic and test files redoes the Logic stage
   const STALE_LOGIC = STAGES.map(stage => (stage === 'Logic' ? 'stale' : 'passed'))
 
   test('a generation logicSig that differs from the current one gives Logic passed', () => {
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(PASSED)
-    expect(isGreen(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before'))).toBe(true)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(PASSED)
+    expect(isGreen(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' }))).toBe(true)
   })
 
   test('the same logicSig, none stored, or none passed keeps today\'s rule: Logic stale', () => {
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'after')).toEqual(STALE_LOGIC)
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', null)).toEqual(STALE_LOGIC)
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0')).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'after' })).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: null })).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0' })).toEqual(STALE_LOGIC)
   })
 
   test('a logic file saved after the edit began is redone with the same logicSig, as before', () => {
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
-    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, 1000, '0.1.0', 'after')).toEqual(PASSED)
-    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(PASSED)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'after' })).toEqual(PASSED)
+    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(PASSED)
   })
 
   test('a differing logicSig only matters during an edit, and never makes a missing stage pass', () => {
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
     // Outside an edit nothing is stale for being old.
-    expect(lightsOf({ ...after, logicSig: 'after' }, rerun, [], null, null, null, 'before')).toEqual(PASSED)
+    expect(lightsOf({ ...after, logicSig: 'after' }, rerun, [], null, null)).toEqual(PASSED)
     // If the edit removed the last test file or the last logic module, Logic is still not done.
-    expect(lightsOf({ ...after, hasTests: false }, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('pending')
-    expect(lightsOf({ ...after, hasLogic: false }, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('pending')
+    expect(lightsOf({ ...after, hasTests: false }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('pending')
+    expect(lightsOf({ ...after, hasLogic: false }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('pending')
   })
 
   test('an unknown current logicSig (a folder that could not be listed) keeps today\'s rule: Logic stale (PR #97 review)', () => {
-    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
-    expect(lightsOf({ ...after, logicSig: null }, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(STALE_LOGIC)
-    expect(lightsOf({ ...after, logicSig: null, logicMtimeMs: 1200 }, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(PASSED)
+    expect(lightsOf(after, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })[2]).toBe('passed')
+    expect(lightsOf({ ...after, logicSig: null }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(STALE_LOGIC)
+    expect(lightsOf({ ...after, logicSig: null, logicMtimeMs: 1200 }, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(PASSED)
   })
 
   test('a differing logicSig leaves the other stages as they were', () => {
     const stale: FileFacts = { ...after, specMtimeMs: 100, readmeMtimeMs: 100 }
-    expect(lightsOf(stale, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(STAGES.map(stage => (stage === 'Spec' || stage === 'README' ? 'stale' : 'passed')))
+    expect(lightsOf(stale, rerun, [], null, { since: 1000, fromVersion: '0.1.0', logicSig: 'before' })).toEqual(STAGES.map(stage => (stage === 'Spec' || stage === 'README' ? 'stale' : 'passed')))
   })
 })
 
@@ -1111,18 +1111,18 @@ describe('a mod is listed as soon as a build reports it, before its folder exist
   test('a placeholder view lights the reported stage running and leaves the rest pending', () => {
     const facts = placeholderFacts('new-mod')
     expect(facts?.name).toBe('new-mod')
-    const spec = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
+    const spec = viewOf(facts!, {}, [], running('Spec'), false, null, 'mods/new-mod')
     expect(spec.name).toBe('new-mod')
     expect(spec.lights).toEqual(STAGES.map(stage => (stage === 'Spec' ? 'running' : 'pending')))
-    const logic = viewOf(facts!, {}, [], running('Logic'), false, null, null, 'mods/new-mod')
+    const logic = viewOf(facts!, {}, [], running('Logic'), false, null, 'mods/new-mod')
     expect(logic.lights).toEqual(STAGES.map(stage => (stage === 'Logic' ? 'running' : 'pending')))
   })
 
   test('countsOf counts a placeholder as building', () => {
     const facts = placeholderFacts('new-mod')
     expect(facts?.name).toBe('new-mod')
-    const placeholder = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
-    const green = viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')
+    const placeholder = viewOf(facts!, {}, [], running('Spec'), false, null, 'mods/new-mod')
+    const green = viewOf(FULL, GREEN, [], null, false, null, 'mods/git-branch')
     expect(countsOf([green, placeholder])).toEqual({ mods: 2, green: 1, building: 1, failing: 0, stale: 0 })
     expect(summaryOf(countsOf([green, placeholder]))).toBe('2 mods · 1 green · 1 building')
   })
