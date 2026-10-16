@@ -58,6 +58,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     root: undefined as string | null | undefined,
     /** Arm before start: each `session.root` read waits for `until`, unless made after `answerNow` is set. */
     holdRoot: null as { until: Promise<void>; answerNow: boolean } | null,
+    /** How many times `session.root` was read. */
+    rootReads: 0,
     failReads: [] as string[],
     /** Every path `$.fs.exists` was asked about. */
     probed: [] as string[],
@@ -148,6 +150,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
   on('session.cwd', () => (seen.cwd === null ? { deny: 'cwd unavailable' } : ({ value: seen.cwd } as never)))
   on('session.root', async () => {
+    seen.rootReads++
     if (seen.holdRoot && !seen.holdRoot.answerNow) await seen.holdRoot.until
     const root = seen.root === undefined ? seen.cwd : seen.root
     return root === null ? { deny: 'root unavailable' } : ({ value: root } as never)
@@ -2982,6 +2985,33 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     const { ui, names } = await listed($)
     expect(names).toEqual(['alpha'])
     expect(await ui.find({ type: 'Text', text: /worktree alpha/ })).toBeUndefined()
+  })
+
+  test('two reports with the same path write the pin once (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    let pinWrites = 0
+    on('state.set', (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key === 'pinned') pinWrites++
+      return next(e)
+    })
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await report($, { mod: 'beta', stage: 'Logic', status: 'passed', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    expect(pinWrites).toBe(1)
+  })
+
+  test('with modsDir set, no project root is read (PR #95 review)', { options: { modsDir: '/w/main/mods' } }, async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'alpha', stage: 'Logic', status: 'running' })
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['alpha'])
+    expect(seen.rootReads).toBe(0)
   })
 
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
