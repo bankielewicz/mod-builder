@@ -25,8 +25,8 @@ const ISSUE = { number: 16, title: 'Fix the thing', body: 'Make it work.', state
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+x\n+y\n'
 const LCOV = 'SF:/w/src/a.ts\nDA:1,1\nDA:2,3\nLF:2\nLH:2\nBRF:0\nBRH:0\nend_of_record\n'
 
-/** One answer of `gitFails` (#28). */
-type GitFail = { stderr: string; code: number; isLocked: boolean }
+/** One answer of `gitFails` (#28): `isLocked` leaves .git/index.lock in place, `isStashLocked` .git/refs/stash.lock (PR #88 review). */
+type GitFail = { stderr: string; code: number; isLocked: boolean; isStashLocked?: boolean }
 
 /** The first store.set of a value `when` picks lands only once `until` settles; `isHeld` says it is waiting. */
 type StoreHold = { when: (value: any) => boolean; until: Promise<void>; isHeld?: boolean }
@@ -119,6 +119,8 @@ type World = {
   gitFails?: { on: string; seq: GitFail[] }
   /** Whether .git/index.lock exists now: set by a failure that held it, cleared by the next call `gitFails` matches. */
   lockFile?: boolean
+  /** Whether .git/refs/stash.lock exists now, as `lockFile` (PR #88 review). */
+  stashLockFile?: boolean
   /** git before 2.31: rev-parse doesn't know `--path-format` and prints it back, exit 0, before the path (PR #88 review). */
   isGitBefore231?: boolean
   /** The other process lets go of .git/index.lock while the mod asks git where that file is (PR #88 review). */
@@ -150,6 +152,8 @@ type World = {
 
 /** Where git keeps /w's index lock (#28). */
 const LOCK_PATH = `${ROOT}/.git/index.lock`
+/** The lock of refs/stash, which every worktree shares (PR #88 review). */
+const STASH_LOCK_PATH = `${ROOT}/.git/refs/stash.lock`
 
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 const fail = (stderr: string, code = 1) => ({ value: { exitCode: code, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
@@ -234,7 +238,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
   const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
   on('fs.exists', ($: any, e: any) => ({
-    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path) || (e.path === LOCK_PATH && world.lockFile === true)),
+    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path) || (e.path === LOCK_PATH && world.lockFile === true) || (e.path === STASH_LOCK_PATH && world.stashLockFile === true)),
   }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
@@ -278,6 +282,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (failing && (s === failing.on || s.startsWith(`${failing.on} `))) {
       const next = failing.seq.shift()
       world.lockFile = next?.isLocked ?? false
+      world.stashLockFile = next?.isStashLocked ?? false
       if (next) return fail(next.stderr, next.code)
     }
     // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
@@ -286,6 +291,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       if (a[1] === '--git-path') return ok(inWorktree ? `${ROOT}/.git/worktrees/${(e.init?.cwd ?? '').split('/').pop()}/index.lock\n` : '.git/index.lock\n')
       return ok(world.isGitBefore231 ? '--path-format=absolute\n.git/index.lock\n' : `${LOCK_PATH}\n`)
     }
+    // git 2.53 prints refs' lock paths absolute, in the main checkout too.
+    if (s === 'rev-parse --git-path refs/stash.lock') return ok(`${STASH_LOCK_PATH}\n`)
     if (a[0] === 'stash' && a[1] === 'list' && world.stashList !== undefined) return ok(world.stashList)
     // git's common folder: the main checkout answers relative, as git does there.
     // As git 2.53 prints them: `--all` lists every push URL, one per line.
@@ -2173,7 +2180,7 @@ describe('a held git index lock (#28)', () => {
   })
 
   // PR #88 review (Codex P2): 0.3.0 retried commit and stash on any git lock; a ref's lock is retried as the index's is.
-  // The refusals are in the wording of git's ref backend (`cannot lock ref '<ref>': ` and the same `Unable to create`).
+  // The refusals are git 2.53.0's, captured in a scratch repository with the lock file made by hand.
   const REF_LOCK_PATH = `${ROOT}/.git/refs/heads/${BRANCH}.lock`
   const refLocked = (n: number): GitFail[] => locked(n, `fatal: cannot lock ref 'HEAD': Unable to create '${REF_LOCK_PATH}': File exists.\n`).map(f => ({ ...f, isLocked: false }))
 
@@ -2202,12 +2209,14 @@ describe('a held git index lock (#28)', () => {
     expect(callsOf(w, 'commit').length).toBe(5)
   })
 
+  // git 2.53.0 names no lock here: stderr is only this line, exit 1, and the tree is left as it was.
+  const STASH_LOCKED: GitFail = { stderr: 'Cannot save the current status\n', code: 1, isLocked: false, isStashLocked: true }
+
   test("gate F: a stash push that meets the shared refs/stash lock waits a second and tries again; the rejected refactor is stashed (PR #88 review)", async ($, on) => {
-    const stashLock = `error: cannot lock ref 'refs/stash': Unable to create '${ROOT}/.git/refs/stash.lock': File exists.\n`
     // Resume gives the phase its attempts again, so a profile with no refactor retry is what sends a failed gate F to the stash.
     const noRetry = storedRun('gateF', { greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } })
     const stored = { [`issue-forge:run:${ROOT}`]: { ...noRetry, profile: { ...noRetry.profile, attempts: { red: 2, green: 3, refactor: 0 } } } }
-    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], gitFails: { on: 'stash push', seq: [{ stderr: stashLock, code: 1, isLocked: false }] } }, stored)
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], gitFails: { on: 'stash push', seq: [STASH_LOCKED] } }, stored)
     await start($)
     await run($, 'resume')
     await pump(w, () => callsOf(w, 'stash list').length > 0 || isBlocked(w))
