@@ -2183,6 +2183,16 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     expect(w.argv.some(isGitWrite)).toBe(false)
   })
 
+  test("start on GitHub Enterprise: the owner is looked up on the project's host, so an organization there blocks though github.com has a user of that name", async ($, on) => {
+    const GHE = { repoView: { exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', url: 'https://ghe.example.com/o/r' }) }, originUrl: 'https://ghe.example.com/me/r.git', remotes: { upstream: 'https://ghe.example.com/o/r.git' } }
+    const w = engine(on, { ...GHE, orgOwners: ['ghe.example.com/me'] })
+    await start($)
+    const status = await started($, w)
+    expect(w.argv).toContainEqual(['gh', 'api', '--hostname', 'ghe.example.com', 'users/me', '--jq', '.type'])
+    expect(status).toContain("blocked at preflight: gh pr create can't name an organization's fork as the head (cli/cli#10093)")
+    expect(w.spawned).toEqual([])
+  })
+
   test('start: two remotes that point at the project block, naming both and saying to remove one', async ($, on) => {
     const w = engine(on, { originUrl: 'https://github.com/me/r.git', remotes: { project: 'https://github.com/o/r.git', upstream: 'git@github.com:o/r.git' } })
     await start($)
