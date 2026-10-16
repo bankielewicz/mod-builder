@@ -3044,6 +3044,15 @@ describe('new plugins are mod-builder\'s (Change 0.6.0)', () => {
     expect((await run($, 'status')).text).toContain("1. Nothing past red's commit was committed, and nothing was pushed.")
   })
 
+  test('the gates read added paths with rename detection off, so a moved manifest counts as added (PR #103 /code-review)', async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', MANIFEST], sinceRed: [MANIFEST], redPaths: ['tests/a.test.ts'], added: [MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    const reads = w.calls.filter(c => c.argv.includes('--diff-filter=A')).map(c => c.argv.join(' '))
+    expect(reads).toEqual(['git diff --cached --no-renames --name-only --diff-filter=A -z base0'])
+  })
+
   test('red adding a plugin manifest blocks final at gate R, with nothing committed', async ($, on) => {
     const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', MANIFEST], redPaths: ['tests/a.test.ts'], added: ['tests/a.test.ts', MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
     await start($)
