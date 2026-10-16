@@ -179,6 +179,7 @@ const EMPTY: FileFacts = {
   logicMtimeMs: 0,
   logicSig: 'logic-a',
   readmeMtimeMs: 0,
+  quickSig: '0:0',
   listedVersion: null,
 }
 
@@ -1557,5 +1558,132 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(watchedDirOf(null, null, '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
     expect(watchedDirOf(null, '/w/main', '/chosen/mods', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
     expect(watchedDirOf(null, null, '', null, both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+})
+
+// Change 0.2.24 (#100): the pane rescans after Claude's tool batches.
+describe('a rescan after a tool batch (#100)', () => {
+  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (Logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  type Call = { tool_name: string; tool_input: unknown }
+  type Touch = { mods: string[]; isQuick: boolean }
+  const call = (tool_name: string, tool_input: unknown): Call => ({ tool_name, tool_input })
+  const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, mtimeMs })
+  const dir = (name: string, mtimeMs: number) => ({ name, kind: 'dir' as const, mtimeMs })
+
+  test('batchTouch: an Edit, Write or NotebookEdit under the watched folder names its mod; Bash runs the quick check', () => {
+    const touch = helper<[readonly Call[], string], Touch>('batchTouch')
+    expect(touch([call('Write', { file_path: '/m/mods/alpha/hooks/alpha-logic.ts', content: 'x' })], '/m/mods')).toEqual({ mods: ['alpha'], isQuick: false })
+    expect(touch([call('Edit', { file_path: '/m/mods/alpha/SPEC.md' }), call('NotebookEdit', { notebook_path: '/m/mods/beta/n.ipynb' })], '/m/mods')).toEqual({ mods: ['alpha', 'beta'], isQuick: false })
+    expect(touch([call('Write', { file_path: '/m/mods/alpha/a.ts' }), call('Write', { file_path: '/m/mods/alpha/b.ts' })], '/m/mods')).toEqual({ mods: ['alpha'], isQuick: false })
+    expect(touch([call('Bash', { command: 'git rebase origin/main' })], '/m/mods')).toEqual({ mods: [], isQuick: true })
+  })
+
+  test('batchTouch: outside the folder, a file directly in it, a dot-folder, read-only tools and odd inputs name nothing', () => {
+    const touch = helper<[readonly Call[], string], Touch>('batchTouch')
+    const none = { mods: [], isQuick: false }
+    expect(touch([call('Write', { file_path: '/m/other/alpha/x.ts' })], '/m/mods')).toEqual(none)
+    expect(touch([call('Write', { file_path: '/m/mods-old/alpha/x.ts' })], '/m/mods')).toEqual(none)
+    expect(touch([call('Write', { file_path: '/m/mods/README.md' })], '/m/mods')).toEqual(none)
+    expect(touch([call('Write', { file_path: '/m/mods/.cache/x' })], '/m/mods')).toEqual(none)
+    expect(touch([call('Read', { file_path: '/m/mods/alpha/SPEC.md' }), call('Grep', { path: '/m/mods/alpha' })], '/m/mods')).toEqual(none)
+    expect(touch([call('Write', null), call('Edit', { file_path: 7 }), call('NotebookEdit', { file_path: '/m/mods/alpha/n.ipynb' })], '/m/mods')).toEqual(none)
+    expect(touch([], '/m/mods')).toEqual(none)
+  })
+
+  test('batchTouch: every tool not on the read-only list runs the quick check, once for the batch (owner, PR #109 review)', () => {
+    const touch = helper<[readonly Call[], string], Touch>('batchTouch')
+    for (const tool of ['Agent', 'Task', 'PowerShell', 'mcp__files__write_file', 'SomeNewTool']) expect(touch([call(tool, { anything: 1 })], '/m/mods')).toEqual({ mods: [], isQuick: true })
+    expect(touch([call('Read', { file_path: '/m/mods/alpha/SPEC.md' }), call('Agent', { prompt: 'fix it' }), call('Bash', { command: 'ls' })], '/m/mods')).toEqual({ mods: [], isQuick: true })
+    expect(touch([call('Write', { file_path: '/m/mods/alpha/x.ts' }), call('Agent', {})], '/m/mods')).toEqual({ mods: ['alpha'], isQuick: true })
+  })
+
+  test('the read-only list is the owner\'s, and a batch is read-only only when every call is on it', () => {
+    const list = (Logic as Record<string, unknown>).READ_ONLY_TOOLS as readonly string[] | undefined
+    expect([...(list ?? [])].sort()).toEqual(['AskUserQuestion', 'Glob', 'Grep', 'Read', 'TodoWrite', 'WebFetch', 'WebSearch', 'mcp__mod-builder__lab_report'])
+    const readOnly = helper<[readonly Call[]], boolean>('isReadOnlyBatch')
+    expect(readOnly([call('Read', {}), call('Grep', {}), call('mcp__mod-builder__lab_report', {}), call('AskUserQuestion', {})])).toBe(true)
+    expect(readOnly([])).toBe(true)
+    expect(readOnly([call('Read', {}), call('Write', { file_path: '/elsewhere/x' })])).toBe(false)
+    expect(readOnly([call('Glob', {}), call('Agent', {})])).toBe(false)
+  })
+
+  test('batchTouch: an edit to the marketplace beside the folder runs the quick check (Codex 4296025346)', () => {
+    const touch = helper<[readonly Call[], string], Touch>('batchTouch')
+    expect(touch([call('Edit', { file_path: '/m/.claude-plugin/marketplace.json' })], '/m/mods')).toEqual({ mods: [], isQuick: true })
+    expect(touch([call('Edit', { file_path: '/m/.claude-plugin/plugin.json' })], '/m/mods')).toEqual({ mods: [], isQuick: false })
+  })
+
+  test('batchTouch: a drive or UNC path matches without case, a POSIX path with it (Codex 4296025366)', () => {
+    const touch = helper<[readonly Call[], string], Touch>('batchTouch')
+    expect(touch([call('Write', { file_path: 'c:\\work\\mods\\alpha\\SPEC.md' })], 'C:/Work/mods')).toEqual({ mods: ['alpha'], isQuick: false })
+    expect(touch([call('Write', { file_path: '//Server/Share/mods/alpha/SPEC.md' })], '//server/share/mods')).toEqual({ mods: ['alpha'], isQuick: false })
+    expect(touch([call('Write', { file_path: '/m/Mods/alpha/SPEC.md' })], '/m/mods')).toEqual({ mods: [], isQuick: false })
+  })
+
+  test('batchTouch: Windows paths and a trailing slash are normalized; a pinned worktree folder is the one that counts', () => {
+    const touch = helper<[readonly Call[], string], Touch>('batchTouch')
+    expect(touch([call('Write', { file_path: 'C:\\w\\mods\\alpha\\hooks\\x.ts' })], 'C:/w/mods/')).toEqual({ mods: ['alpha'], isQuick: false })
+    expect(touch([call('Write', { file_path: '/m/mods/alpha/../beta/x.ts' })], '/m/mods')).toEqual({ mods: ['beta'], isQuick: false })
+    const pinned = '/m/scratch/wt/mods'
+    expect(touch([call('Write', { file_path: '/m/scratch/wt/mods/alpha/x.ts' })], pinned)).toEqual({ mods: ['alpha'], isQuick: false })
+    expect(touch([call('Write', { file_path: '/m/mods/alpha/x.ts' })], pinned)).toEqual({ mods: [], isQuick: false })
+  })
+
+  type Listed = { name: string; kind: 'file' | 'dir'; mtimeMs: number }
+  const quick: { top: Listed[]; manifestDir: Listed[]; hooks: Listed[]; tests: Listed[] } = { top: [file('SPEC.md', 100), file('README.md', 100), dir('hooks', 100), dir('tests', 100)], manifestDir: [file('plugin.json', 100)], hooks: [file('x-logic.ts', 100), dir('lib', 100)], tests: [file('x.test.ts', 100)] }
+
+  test('quickSigOf: moves with SPEC, README, the manifest and what sits directly in hooks/ and tests/, added or removed', () => {
+    const sig = helper<[typeof quick], string>('quickSigOf')
+    const before = sig(quick)
+    expect(sig({ ...quick })).toBe(before)
+    expect(sig({ ...quick, top: [file('SPEC.md', 200), ...quick.top.slice(1)] })).not.toBe(before)
+    expect(sig({ ...quick, top: [quick.top[0]!, file('README.md', 200), ...quick.top.slice(2)] })).not.toBe(before)
+    expect(sig({ ...quick, manifestDir: [file('plugin.json', 200)] })).not.toBe(before)
+    expect(sig({ ...quick, hooks: [file('x-logic.ts', 200), dir('lib', 100)] })).not.toBe(before)
+    expect(sig({ ...quick, tests: [file('x.test.ts', 200)] })).not.toBe(before)
+    expect(sig({ ...quick, hooks: [...quick.hooks, file('y-logic.ts', 100)] })).not.toBe(before)
+    expect(sig({ ...quick, tests: [] })).not.toBe(before)
+    expect(sig({ ...quick, hooks: [file('x-logic.ts', 100), dir('lib', 300)] })).not.toBe(before)
+  })
+
+  test('quickSigOf: moves with .mcp.json at the top, which validate reads (PR #109 review)', () => {
+    const sig = helper<[typeof quick], string>('quickSigOf')
+    const withMcp = { ...quick, top: [...quick.top, file('.mcp.json', 100)] }
+    expect(sig(withMcp)).not.toBe(sig(quick))
+    expect(sig({ ...withMcp, top: [...quick.top, file('.mcp.json', 200)] })).not.toBe(sig(withMcp))
+  })
+
+  test("quickSigOf: blind to what it doesn't list: other top files, the manifest folder's other files", () => {
+    const sig = helper<[typeof quick], string>('quickSigOf')
+    const before = sig(quick)
+    expect(sig({ ...quick, top: [...quick.top, file('NOTES.md', 900), dir('types', 900)] })).toBe(before)
+    expect(sig({ ...quick, manifestDir: [...quick.manifestDir, dir('types', 900)] })).toBe(before)
+  })
+
+  test("factsOf's quickSig is quickSigOf of the same listings, and a placeholder has one", () => {
+    const sig = helper<[typeof quick], string>('quickSigOf')
+    const read = { name: 'x', ...quick, types: [file('index.d.ts', 100)], nested: [file('hooks/lib/p.ts', 100)], spec: '# x', readme: null, manifest: null, marketplace: '' }
+    const facts = factsOf(read) as ReturnType<typeof factsOf> & { quickSig?: string }
+    expect(facts?.quickSig).toBe(sig(quick))
+    expect((factsOf({ ...read, nested: [file('hooks/lib/p.ts', 900)] }) as typeof facts)?.quickSig).toBe(sig(quick))
+    expect(typeof (Logic.placeholderFacts('y') as ReturnType<typeof Logic.placeholderFacts> & { quickSig?: string }).quickSig).toBe('string')
+  })
+
+  test('mergeScanRequests: a full request wins, quick ORs, named mods union', () => {
+    type Req = { isFull: boolean; isQuick: boolean; mods: readonly string[] }
+    const merge = helper<[Req | null, Req], Req>('mergeScanRequests')
+    const full = { isFull: true, isQuick: false, mods: [] }
+    const shell = { isFull: false, isQuick: true, mods: [] }
+    const alpha = { isFull: false, isQuick: false, mods: ['alpha'] }
+    expect(merge(null, alpha)).toEqual(alpha)
+    expect(merge(alpha, { isFull: false, isQuick: false, mods: ['beta', 'alpha'] })).toEqual({ isFull: false, isQuick: false, mods: ['alpha', 'beta'] })
+    expect(merge(alpha, shell)).toEqual({ isFull: false, isQuick: true, mods: ['alpha'] })
+    expect(merge(alpha, full).isFull).toBe(true)
+    expect(merge(full, shell).isFull).toBe(true)
   })
 })

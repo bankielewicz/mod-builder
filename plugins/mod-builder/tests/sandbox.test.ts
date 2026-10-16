@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-// The sandbox canary (#98, Change 0.2.23). Mod Lab runs `claude plugin test` with no prompt, which is safe only while
+// The sandbox canary (#98, Change 0.2.25). Mod Lab runs `claude plugin test` with no prompt, which is safe only while
 // its sandbox holds: this file fails the suite on a build where it doesn't. Its globals are the list gotchas.md
 // "Testing and checking" names, and `check-sandbox.mjs` (CI) fails when the two differ. It never imports `node:fs` or
 // calls import(): a file that does is refused at load ("(fail) the file did not load"), which a test can't assert of
