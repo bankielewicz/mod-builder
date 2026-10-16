@@ -783,7 +783,8 @@ export type RemoteFound = 'match' | { other: string | null }
 
 /**
  * The fork a fork clone's origin pushes to: every push URL names one repository on `repo`'s host that isn't `repo`, and the
- * fetch URL is that fork or `repo` itself, so `git ls-remote origin` lists a repository that was checked (PR #87 review).
+ * fetch URL is that fork too, so `git ls-remote origin`, which reads the fetch URL, lists the fork's branches (PR #87 review;
+ * Codex P1 4290274553: fetching from `repo` itself hid them).
  */
 export function forkOfOrigin(fetch: RemoteFound, pushes: readonly RemoteFound[], repo: string): string | null {
   let fork: string | null = null
@@ -793,7 +794,7 @@ export function forkOfOrigin(fetch: RemoteFound, pushes: readonly RemoteFound[],
     fork ??= found.other
   }
   if (fork === null) return null
-  return fetch === 'match' || isSameRepo(fetch.other, fork) ? fork : null
+  return fetch !== 'match' && isSameRepo(fetch.other, fork) ? fork : null
 }
 
 /** The remotes whose fetch URL names the project: none, one (the base remote), or several (a block). */
