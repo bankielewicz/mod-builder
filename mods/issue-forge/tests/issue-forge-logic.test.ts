@@ -5,6 +5,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   DEMO_STATES,
   KEEP_FINISHED,
+  RULES,
   USAGE,
   advance,
   agentsKey,
@@ -1304,6 +1305,16 @@ describe('parallel runs (Change 0.3.0)', () => {
     for (const m of [menu, both, onBlocked, ready, interrupted]) expect((m?.options.length ?? 0) <= 4).toBe(true)
   })
 
+  test('startChoices: a run with a final block is offered stop, not resume, which it would refuse (PR #103 /code-review)', () => {
+    const final = at(52, 'blocked', { blocked: { ...BLOCKED, isFinal: true } as Run['blocked'], startedAt: 1 })
+    const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving: null, others: [final], me: ME, now: 0 })
+    expect(menu?.options).toEqual([
+      { label: 'Start #40 in a new worktree from origin/main (Recommended)', action: { kind: 'start' } },
+      { label: 'Stop #52, then start #40', action: { kind: 'stopThenStart', issue: 52 } },
+      { label: 'Cancel', action: { kind: 'cancel' } },
+    ])
+  })
+
   test('startChoices: the session driving a run offers keep (the default) or hand-off, never a second drive', () => {
     const driving = at(44, 'green', { driver: { session: ME, since: 0 } })
     const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving, others: [at(52, 'blocked', { blocked: BLOCKED })], me: ME, now: 0 })
@@ -1946,5 +1957,340 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
     // A branch made without a fork was named on the project, and one made for a fork on that fork.
     expect(keptForkBlock(undefined, 'github.com/you/r', PIN)).toEqual({ reason: "origin now pushes to you/r, not o/r, where the run's branch was named", next: 'point origin back at o/r, or start a new run' })
     expect(keptForkBlock('github.com/me/r', undefined, PIN)).toEqual({ reason: "origin now pushes to o/r, not me/r, where the run's branch was named", next: 'point origin back at me/r, or start a new run' })
+  })
+})
+
+// Change 0.7.0: a new Claude Code plugin is mod-builder's job. A start refuses an issue that asks to build it with
+// /mod-builder:build; gates R, G and F block a new manifest as a final block with next steps.
+describe('new plugins are built with mod-builder, not issue-forge (Change 0.7.0)', () => {
+  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  // Each from its issue's body (gh issue view, 2026-10-15): #18 is the one new mod; #19, #20 and #23 are Mod Lab fixes.
+  const ISSUE_18 = '- **Build it with `/mod-builder:build`** (SPEC first, one approval), from the `guard` archetype (`plugins/mod-builder/skills/build/templates/archetypes/guard/`), into `mods/tdd-guard/`. Version 0.1.0 in `mods/tdd-guard/.claude-plugin/plugin.json`, plus a `tdd-guard` entry in `.claude-plugin/marketplace.json`. Generate the README\'s "What it reaches" table from `claude plugin validate`.'
+  const BODY_18 = ['Intro.', '', '## Before you start', '', ISSUE_18, '- **Base branch:** `main` if PR #1 has merged.', '- **Rules:**', '  - one hook per event + matcher;', '', '## Design'].join('\n')
+  const FIXES = [
+    '**Merit: small UX fix.** While `/mod-builder:build` is on its Spec stage, the band shows the new mod (for example "◆ issue-forge  Spec ░░░  1:02 · filling SPEC from docs/specs/issue-forge.md") but Mod Lab\'s list doesn\'t. The list only knows mods that have a folder with `SPEC.md` or `.claude-plugin/plugin.json`, and the build skill reports "Spec running" before it writes the SPEC.',
+    'Origin: observed on 2026-10-13 with `mods/issue-forge/SPEC.md` while `/mod-builder:build` wrote it. Mod Lab showed issue-forge at `next: Spec` after "Spec passed" was reported.',
+    "**Merit: fix.** In a git worktree, Mod Lab watches the main checkout's `mods/`, while `/mod-builder:build` writes to the worktree's. A build in a worktree never shows up in Mod Lab's list.",
+    "- `/mod-builder:build` finds its mods folder by walking up from the session's working directory to the nearest `.claude-plugin/marketplace.json` (`plugins/mod-builder/skills/build/SKILL.md`, step 0.2), which is the worktree's.",
+  ]
+
+  // The owner's decision after PR #103's review: the reply shows only the line that matched, as the reason.
+  test('newModLine: the one line asking to build it with /mod-builder:build, and nothing after it', () => {
+    const line = helper<[string], string | null>('newModLine')
+    expect(line(BODY_18)).toBe(ISSUE_18)
+    expect(line('Please build the new plugin with /mod-builder:build:\n- a guard\n- 0.1.0\n\nThen open a PR.')).toBe('Please build the new plugin with /mod-builder:build:')
+    expect(line('- Build it with `/mod-builder:build`, and\n  keep it small.')).toBe('- Build it with `/mod-builder:build`, and')
+    expect(line('BUILD IT WITH /MOD-BUILDER:BUILD  \r\nsecond line')).toBe('BUILD IT WITH /MOD-BUILDER:BUILD')
+  })
+
+  test('newModLine: the fixes that name the skill in passing, a built mod, and no mention at all are not new plugins', () => {
+    const guidance = helper<[string], string | null>('newModLine')
+    for (const line of FIXES) expect(guidance(`Intro.\n\n${line}\n\nMore.`)).toBeNull()
+    expect(guidance('I built it with `/mod-builder:build` and the README was wrong.')).toBeNull()
+    expect(guidance('Fix the build step; it fails with exit 1.')).toBeNull()
+    expect(guidance('')).toBeNull()
+    // The rule's known misread, pinned so a sharper rule shows up here: a fix that says this would be refused.
+    expect(guidance('the build skill works with `/mod-builder:build` and /mod-builder:edit')).toBe('the build skill works with `/mod-builder:build` and /mod-builder:edit')
+  })
+
+  test('newModLine: a line past 1,200 characters is cut there, marked with …', () => {
+    const line = helper<[string], string | null>('newModLine')
+    const wide = line(`Build it with /mod-builder:build ${'x'.repeat(1300)}`) ?? ''
+    expect(wide).toHaveLength(1201)
+    expect(wide.endsWith('…')).toBe(true)
+  })
+
+  test('newModReply: names the issue, says nothing started, shows the matched line as the author\'s words, and lists the steps', () => {
+    const reply = helper<[{ issue: number; title: string; url: string; ghRepo?: string }, string], string>('newModReply')
+    const text = reply({ issue: 18, title: 'New mod tdd-guard', url: 'https://github.com/o/r/issues/18' }, ISSUE_18)
+    expect(text).toBe(
+      [
+        "#18 asks for a new Claude Code plugin. issue-forge doesn't build new plugins: it takes an issue to a fix, test-first. New plugins are built with mod-builder, whose SPEC is the one approval. Nothing was started.",
+        '',
+        "It matched this line of the issue (the author's words; issue-forge hasn't checked them). If it doesn't ask for a new plugin, reword it and start again:",
+        `  > ${ISSUE_18}`,
+        '',
+        'Next steps:',
+        '1. Run /mod-builder:build and ask for the plugin #18 describes: "New mod tdd-guard" (https://github.com/o/r/issues/18). Read it first with gh issue view 18.',
+        '2. Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
+        '3. Open a pull request that closes #18.',
+      ].join('\n'),
+    )
+    expect(text).not.toContain("Follow the issue's own guidance")
+    expect(reply({ issue: 18, title: 't', url: 'u', ghRepo: 'github.com/o/r' }, 'x')).toContain('Read it first with gh issue view 18 --repo github.com/o/r.')
+    expect(text).not.toContain('mods/tdd-guard/tests')
+  })
+
+  test('isPluginManifest: a plugin.json in a .claude-plugin folder, at any depth and with either slash', () => {
+    const isManifest = helper<[string], boolean>('isPluginManifest')
+    for (const path of ['.claude-plugin/plugin.json', 'mods/x/.claude-plugin/plugin.json', 'C:\\w\\mods\\x\\.claude-plugin\\plugin.json', '/w/x/.claude-plugin/plugin.json']) expect(isManifest(path)).toBe(true)
+    for (const path of ['plugin.json', '.claude-plugin/marketplace.json', 'x.claude-plugin/plugin.json', 'mods/x/.claude-plugin/plugin.json.bak', 'mods/x/claude-plugin/plugin.json']) expect(isManifest(path)).toBe(false)
+  })
+
+  test('newPluginOf: an added manifest was created; failing that, one the guard refused was tried; else none', () => {
+    const of = helper<[string[], string?], { path: string; isCreated: boolean } | null>('newPluginOf')
+    expect(of(['mods/x/tests/a.test.ts', 'mods/x/.claude-plugin/plugin.json'])).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+    expect(of(['mods/x/.claude-plugin/plugin.json'], 'mods/y/.claude-plugin/plugin.json')).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+    expect(of(['mods/x/hooks/a.ts'], 'mods/y/.claude-plugin/plugin.json')).toEqual({ path: 'mods/y/.claude-plugin/plugin.json', isCreated: false })
+    expect(of(['mods/x/hooks/a.ts', 'mods/x/README.md'])).toBeNull()
+  })
+
+  test('newPluginGate: R4 at gate R and G8 at gates G and F, failed, carrying the plugin', () => {
+    const gateOf = helper<['R' | 'G' | 'F', { path: string; isCreated: boolean }], Run['gates']['G']>('newPluginGate')
+    const np = { path: 'mods/x/.claude-plugin/plugin.json', isCreated: true }
+    expect(gateOf('R', np)).toEqual({ gate: 'R', passed: false, checks: [{ id: 'R4', passed: false, detail: 'a new Claude Code plugin: mods/x/.claude-plugin/plugin.json' }], newPlugin: np })
+    expect(gateOf('F', { ...np, isCreated: false })).toEqual({ gate: 'F', passed: false, checks: [{ id: 'G8', passed: false, detail: 'a refused Claude Code plugin: mods/x/.claude-plugin/plugin.json' }], newPlugin: { ...np, isCreated: false } })
+  })
+
+  const WT16 = '/repo/.claude/issue-forge-worktrees/issue-16-fix-it'
+  const NP = { path: 'mods/x/.claude-plugin/plugin.json', isCreated: true }
+  const npGate = (gate: 'R' | 'G' | 'F') => ({ gate, passed: false, checks: [{ id: gate === 'R' ? 'R4' : 'G8', passed: false, detail: 'd' }], newPlugin: NP })
+
+  test('a new plugin at gate G blocks final at once, with no retry, and the steps say what is left and what to do', () => {
+    const r = run({ step: 'gateG', branch: 'issue-16-fix-it', base: 'main', workRoot: WT16, redCommit: 'abcdef1234', used: { red: 1, green: 1, refactor: 0 } })
+    const b = advance(r, { type: 'gated', gate: npGate('G') }, 5) as Run & { blocked: { steps?: string[]; isFinal?: boolean } }
+    expect(b.step).toBe('blocked')
+    expect(b.blocked).toEqual({
+      at: 'gateG',
+      reason: "a phase agent created a new Claude Code plugin (mods/x/.claude-plugin/plugin.json); issue-forge doesn't build new plugins",
+      next: 'build it with /mod-builder:build',
+      isFinal: true,
+      steps: [
+        `Nothing past red's commit was committed, and nothing was pushed. This run's worktree ${WT16} holds red's tests at abcdef1 and the phase's uncommitted files.`,
+        'Stop this run: /issue-forge stop 16',
+        "Build the plugin with /mod-builder:build in a clean checkout of main or a new worktree from it, not in this run's worktree, whose files would be in the way (mod-builder's scaffold refuses a plugin folder that already holds files).",
+        "Red's tests can serve the build's logic-first step as reference: git show abcdef1",
+        `When you no longer need this run's worktree, remove it from a plain shell: git worktree remove ${WT16}`,
+        'Open a pull request that closes #16.',
+      ],
+    })
+  })
+
+  test('the final block at gate R, at gate F, for a refusal, and in the checkout; the issue\'s text is never in the steps', () => {
+    const atR = advance(run({ step: 'gateR', branch: 'issue-16-fix-it', base: 'main', workRoot: WT16, used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: { ...npGate('R'), newPlugin: { ...NP, isCreated: false } } }, 5) as Run & { blocked: { steps: string[]; isFinal?: boolean; reason: string } }
+    expect(atR.step).toBe('blocked')
+    expect(atR.blocked.reason).toBe("a phase agent tried to create a new Claude Code plugin (mods/x/.claude-plugin/plugin.json); issue-forge doesn't build new plugins")
+    expect(atR.blocked.steps[0]).toBe(`Nothing was committed, and nothing was pushed. This run's worktree ${WT16} holds red's uncommitted files.`)
+    expect(atR.blocked.steps.some(s => s.startsWith("Red's tests can serve"))).toBe(false)
+    const atF = advance(run({ step: 'gateF', branch: 'b', base: 'main', redCommit: 'abcdef1234', used: { red: 1, green: 1, refactor: 1 } }), { type: 'gated', gate: npGate('F') }, 5) as Run & { blocked: { at: string; steps: string[]; isFinal?: boolean } }
+    expect(atF.step).toBe('blocked')
+    expect(atF.blocked.at).toBe('gateF')
+    expect(atF.blocked.isFinal).toBe(true)
+    expect(atF.blocked.steps[0]).toBe("Nothing past red's commit was committed, and nothing was pushed. This run's branch b holds red's tests at abcdef1, and the checkout's uncommitted files (git status lists them) are the phase's.")
+    expect(atF.blocked.steps.some(s => s.includes('git worktree remove'))).toBe(false)
+    expect(atF.blocked.steps[2]).toContain("not in this run's branch, whose files")
+    const quoted = advance(run({ step: 'gateG', body: `Build it with /mod-builder:build\nas a guard.`, branch: 'b', base: 'main', redCommit: 'abcdef1234' }), { type: 'gated', gate: npGate('G') }, 5) as Run & { blocked: { steps: string[] } }
+    expect(quoted.blocked.steps.some(step => step.includes('Build it with /mod-builder:build') || step.includes("Follow the issue's own guidance"))).toBe(false)
+  })
+
+  test('the final block at gate R in the checkout points at the checkout\'s uncommitted files', () => {
+    const r = advance(run({ step: 'gateR', branch: 'b', base: 'main', used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: npGate('R') }, 5) as Run & { blocked: { steps: string[] } }
+    expect(r.blocked.steps[0]).toBe("Nothing was committed, and nothing was pushed. The checkout's uncommitted files (git status lists them) are red's.")
+    expect(r.blocked.steps[2]).toContain("not in this run's branch, whose files")
+  })
+
+  test('a final block is not resumed; its status says to stop it and lists the steps; a plain block still says resume', () => {
+    const r = run({ step: 'gateG', branch: 'b', base: 'main', redCommit: 'abcdef1234' })
+    const b = advance(r, { type: 'gated', gate: npGate('G') }, 5)
+    expect(advance(b, { type: 'resume' }, 6)).toEqual(b)
+    const status = statusText(b, false, 6)
+    expect(status).toContain("blocked at gateG: a phase agent created a new Claude Code plugin")
+    expect(status).toContain('next: build it with /mod-builder:build, then /issue-forge stop 16')
+    expect(status).toContain('\n1. Nothing past red')
+    expect(status).toContain('\n2. Stop this run: /issue-forge stop 16')
+    const plain = advance(run({ step: 'gateG' }), { type: 'block', reason: 'r', next: 'n' }, 5)
+    expect(statusText(plain, false, 6)).toContain('next: n, then /issue-forge resume')
+    const final = advance(run({ step: 'preflight' }), { type: 'block', reason: '#16 is a pull request, not an issue', next: 'pick another issue', isFinal: true } as never, 5)
+    expect((final as Run & { blocked: { isFinal?: boolean } }).blocked.isFinal).toBe(true)
+    expect(statusText(final, false, 6)).toContain('next: pick another issue, then /issue-forge stop 16')
+    expect(advance(final, { type: 'resume' }, 6)).toEqual(final)
+  })
+
+  test('the guard\'s refusal is recorded on an active run, and says to end the turn', () => {
+    const r = advance(run({ step: 'green' }), { type: 'newPlugin', path: 'mods/x/.claude-plugin/plugin.json' } as never, 5) as Run & { newPlugin?: string }
+    expect(r.newPlugin).toBe('mods/x/.claude-plugin/plugin.json')
+    expect((advance(run({ step: 'stopped' }), { type: 'newPlugin', path: 'p' } as never, 5) as Run & { newPlugin?: string }).newPlugin).toBeUndefined()
+    const refusal = helper<[string], string>('newPluginRefusal')
+    expect(refusal('mods/x/.claude-plugin/plugin.json')).toBe("issue-forge: creating a new Claude Code plugin (mods/x/.claude-plugin/plugin.json) is mod-builder's job, not this run's. End your turn now; the run stops with next steps for the person.")
+  })
+
+  test('every phase is told not to create a new plugin', () => {
+    for (const phase of ['red', 'green', 'refactor'] as const) {
+      expect(RULES[phase]).toContain('Never create a new Claude Code plugin (a new .claude-plugin/plugin.json): if the issue needs one, stop and say so.')
+      expect(agentPrompt(phase)).toContain('Never create a new Claude Code plugin')
+    }
+  })
+})
+
+describe('the guard and new plugins (Change 0.7.0)', () => {
+  const manifestOf = (e: Record<string, unknown>, ctx: { liveAgent: string | null; known: Set<string>; workRoot: string | null; root: string | null }) =>
+    (logic as unknown as { manifestOf?: (e: Record<string, unknown>, ctx: unknown) => { absolute: string; relative: string } | null }).manifestOf?.(e, ctx)
+  const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
+
+  test('manifestOf: the live agent writing a plugin manifest, absolute or relative to its folder', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
+    expect(manifestOf({ tool: 'Edit', file_path: 'mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
+    expect(manifestOf({ tool: 'NotebookEdit', notebook_path: '/w/wt/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toEqual({ absolute: '/w/wt/.claude-plugin/plugin.json', relative: '.claude-plugin/plugin.json' })
+  })
+
+  test('manifestOf: anything else is not the guard\'s new-plugin case', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/plugin.json', agentId: 'a1' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/.claude-plugin/marketplace.json', agentId: 'a1' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Read', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'someone-else' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, { ...ctx, workRoot: null })).toBeNull()
+  })
+})
+
+describe('a plugin fixture under the test globs is test data (Change 0.7.0, owner\'s decision after the PR opened)', () => {
+  const FIXTURE = 'tests/fixtures/sample/.claude-plugin/plugin.json'
+  const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs?: readonly string[]) =>
+    (logic as unknown as { manifestOf?: (e: Record<string, unknown>, ctx: unknown, testGlobs?: readonly string[]) => unknown }).manifestOf?.(e, ctx, testGlobs)
+  const newPluginOf = (added: readonly string[], refused?: string, testGlobs?: readonly string[]) =>
+    (logic as unknown as { newPluginOf: (added: readonly string[], refused?: string, testGlobs?: readonly string[]) => unknown }).newPluginOf(added, refused, testGlobs)
+  const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
+
+  test('newPluginOf: a manifest under the test globs is not a new plugin; one elsewhere still is', () => {
+    expect(newPluginOf([FIXTURE], undefined, ['tests/**'])).toBeNull()
+    expect(newPluginOf([FIXTURE, 'mods/x/.claude-plugin/plugin.json'], undefined, ['tests/**'])).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+    expect(newPluginOf([FIXTURE])).toEqual({ path: FIXTURE, isCreated: true })
+  })
+
+  test('manifestOf: the live agent writing a fixture manifest under the test globs is not the guard\'s case', () => {
+    expect(manifestOf({ tool: 'Write', file_path: `/w/wt/${FIXTURE}`, agentId: 'a1' }, ctx, ['tests/**'])).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: FIXTURE, agentId: 'a1' }, ctx, ['tests/**'])).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, ['tests/**'])).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
+  })
+})
+
+describe('PR #103 review', () => {
+  /** A helper this review adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  const P = 'mods/x/.claude-plugin/plugin.json'
+
+  test("the guard's refusal lands only on the run this session still drives: never on one another session took over (Codex 4290574833)", () => {
+    const record = helper<[Run | null, string, string, string, number], (Run & { newPlugin?: string }) | null>('newPluginRecord')
+    const mine = run({ step: 'green', driver: { session: 'me', since: 1 } })
+    expect(record(mine, mine.id, 'me', P, 5)?.newPlugin).toBe(P)
+    expect(record(run({ step: 'green' }), mine.id, 'me', P, 5)?.newPlugin).toBe(P)
+    // Nothing is written at all, so the other session's run isn't rewritten from this session's read.
+    expect(record(run({ step: 'green', driver: { session: 'other', since: 2 } }), mine.id, 'me', P, 5)).toBeNull()
+    expect(record(run({ step: 'stopped', driver: { session: 'me', since: 1 } }), mine.id, 'me', P, 5)).toBeNull()
+    expect(record(mine, 'another-run', 'me', P, 5)).toBeNull()
+    expect(record(null, mine.id, 'me', P, 5)).toBeNull()
+  })
+
+  const WT = '/repo/scratch/issue-forge/issue-16-fix-it'
+  const gate = (g: 'R' | 'G' | 'F') => ({ gate: g, passed: false, checks: [{ id: g === 'R' ? 'R4' : 'G8', passed: false, detail: 'd' }], newPlugin: { path: P, isCreated: true } })
+  const stepsOf = (over: Partial<Run>) => (advance(run({ branch: 'b', base: 'main', ...over }), { type: 'gated', gate: gate(over.step === 'gateR' ? 'R' : over.step === 'gateF' ? 'F' : 'G') }, 5) as Run & { blocked: { steps: string[] } }).blocked.steps
+
+  test("a final block's steps name what was committed from the run's commits, not its gate: green's commit at gate F (Codex 4290574818)", () => {
+    const atF = stepsOf({ step: 'gateF', workRoot: WT, redCommit: 'abcdef1234', greenCommit: 'bcdef12345', used: { red: 1, green: 1, refactor: 1 } })
+    expect(atF[0]).toBe(`Nothing past green's commit was committed, and nothing was pushed. This run's worktree ${WT} holds red's tests at abcdef1, green's change at bcdef12, and the phase's uncommitted files.`)
+    expect(atF).toContain("Red's tests can serve the build's logic-first step as reference: git show abcdef1")
+    const here = stepsOf({ step: 'gateF', redCommit: 'abcdef1234', greenCommit: 'bcdef12345', used: { red: 1, green: 1, refactor: 1 } })
+    expect(here[0]).toBe("Nothing past green's commit was committed, and nothing was pushed. This run's branch b holds red's tests at abcdef1 and green's change at bcdef12, and the checkout's uncommitted files (git status lists them) are the phase's.")
+  })
+
+  test("a final block's steps at gate R after G6's detour name red's commit and the stash that holds green's work (Codex 4290574818)", () => {
+    const stash = { sha: '5678abcdef', message: 'issue-forge #16 green before the behaviour test' }
+    const detour = stepsOf({ step: 'gateR', workRoot: WT, redCommit: 'abcdef1234', behaviourFor: ['hooks/register.tsx'], greenStash: stash, used: { red: 1, green: 1, refactor: 0 } })
+    expect(detour[0]).toBe(`Nothing past red's commit was committed, and nothing was pushed. This run's worktree ${WT} holds red's tests at abcdef1 and the phase's uncommitted files. Green's work is in stash 5678abc "issue-forge #16 green before the behaviour test" (git stash apply 5678abc).`)
+    expect(detour).toContain("Red's tests can serve the build's logic-first step as reference: git show abcdef1")
+  })
+})
+
+describe('PR #103 review: the new-plugin rule reads an issue in linear time (/code-review)', () => {
+  test('a hostile body is judged at once: a 22 KB line of "build with " no longer backtracks for seconds', () => {
+    const newModLine = (logic as Record<string, unknown>).newModLine as (body: string) => string | null
+    expect(typeof newModLine).toBe('function')
+    const line = 'build with '.repeat(2000)
+    const t = performance.now()
+    expect(newModLine(line)).toBeNull()
+    expect(newModLine(`${line}/mod-builder:build`)).toBe(`${line}/mod-builder:build`.slice(0, 1200) + '…')
+    expect(Math.round(performance.now() - t)).toBeLessThanOrEqual(200)
+  })
+})
+
+describe('PR #103 review: red may write a sample plugin as a test fixture (/code-review)', () => {
+  test("red's rules allow a fixture plugin under the test globs, as the guard and R4 do; green and refactor, who never edit tests, aren't told", () => {
+    const FIXTURE_OK = 'A sample plugin under the test globs, as a test fixture, is fine.'
+    expect(RULES.red).toContain(`if the issue needs one, stop and say so. ${FIXTURE_OK}`)
+    expect(RULES.green).not.toContain(FIXTURE_OK)
+    expect(RULES.refactor).not.toContain(FIXTURE_OK)
+  })
+})
+
+describe("a manifest on the base branch's tip is not new (owner, after PR #103's review)", () => {
+  test("newPluginOf: a manifest the base branch has now, added or refused, is someone else's plugin, not the run's", () => {
+    const of = logic.newPluginOf as (added: readonly string[], refused?: string, testGlobs?: readonly string[], onBase?: readonly string[]) => { path: string; isCreated: boolean } | null
+    const FOO = 'mods/foo/.claude-plugin/plugin.json'
+    expect(of([FOO, 'src/a.ts'], undefined, [], [FOO])).toBeNull()
+    expect(of(['src/a.ts'], FOO, [], [FOO])).toBeNull()
+    expect(of([FOO, 'mods/x/.claude-plugin/plugin.json'], undefined, [], [FOO])).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+  })
+})
+
+describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574826)', () => {
+  const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs: readonly string[], baseManifests: readonly string[]) =>
+    (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown, t: readonly string[], b: readonly string[]) => { absolute: string; relative: string } | null }).manifestOf(e, ctx, testGlobs, baseManifests)
+  const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
+  const BASE = ['mods/x/.claude-plugin/plugin.json', '.claude-plugin/plugin.json']
+
+  test('a phase that removed a tracked manifest may write it back: it is at the merge base, so not a new plugin', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/y/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toEqual({ absolute: '/w/wt/mods/y/.claude-plugin/plugin.json', relative: 'mods/y/.claude-plugin/plugin.json' })
+  })
+})
+
+describe('PR #103 review: manifest paths at their edges (/code-review)', () => {
+  const manifestOf = (e: Record<string, unknown>) =>
+    (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown) => { absolute: string; relative: string } | null }).manifestOf(e, { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' })
+  const X = { absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' }
+
+  test('the guard judges the path a write lands on: ./ and // forms are the manifest too', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/./plugin.json', agentId: 'a1' })).toEqual(X)
+    expect(manifestOf({ tool: 'Write', file_path: 'mods/x/.claude-plugin//plugin.json', agentId: 'a1' })).toEqual(X)
+    // Outside the run's folder there is no relative path: the absolute one stands in.
+    expect(manifestOf({ tool: 'Write', file_path: '/elsewhere/.claude-plugin/plugin.json', agentId: 'a1' })).toEqual({ absolute: '/elsewhere/.claude-plugin/plugin.json', relative: '/elsewhere/.claude-plugin/plugin.json' })
+  })
+
+  test("a manifest is found in any case, as a case-insensitive drive opens it", () => {
+    expect(logic.isPluginManifest('mods/x/.Claude-Plugin/Plugin.json')).toBe(true)
+    expect(logic.isPluginManifest('mods/x/.Claude-Plugin/marketplace.json')).toBe(false)
+  })
+})
+
+describe('PR #103 review: the guard refusal outlives a drive write computed before it (Codex 4290653342)', () => {
+  /** A helper this review adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  const P = 'mods/x/.claude-plugin/plugin.json'
+
+  test("a drive's write keeps a refusal the guard stored after the drive read the run, so the gate still blocks on it", () => {
+    const withRefusal = helper<[Run | null, Run], Run & { newPlugin?: string }>('withRefusal')
+    const read = run({ step: 'green' })
+    const stored = { ...read, newPlugin: P } as Run
+    const spawned = advance(read, { type: 'spawned', agent: { id: 'g1', phase: 'green' } }, 5)
+    expect(withRefusal(stored, spawned).newPlugin).toBe(P)
+    expect(withRefusal(stored, spawned).agents.map(a => a.id)).toEqual(['g1'])
+    expect(withRefusal(read, spawned)).toEqual(spawned)
+    expect(withRefusal(null, spawned)).toEqual(spawned)
+    const other = { ...spawned, newPlugin: 'mods/y/.claude-plugin/plugin.json' } as Run
+    expect(withRefusal(stored, other).newPlugin).toBe('mods/y/.claude-plugin/plugin.json')
   })
 })

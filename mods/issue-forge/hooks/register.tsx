@@ -12,6 +12,7 @@ import {
   TAKE_OVER,
   USAGE,
   advance,
+  afterBlock,
   agentName,
   agentsKey,
   agentPrompt,
@@ -52,6 +53,7 @@ import {
   isLockError,
   isOwnHandback,
   isOwnMailboxHandback,
+  isPluginManifest,
   isPrunable,
   isPullUrl,
   isSameRepo,
@@ -66,8 +68,15 @@ import {
   legacyAgentsKey,
   lineOf,
   lockPathOf,
+  manifestOf,
   mergeLine,
   migrationPlan,
+  newModLine,
+  newModReply,
+  newPluginGate,
+  newPluginOf,
+  newPluginRecord,
+  newPluginRefusal,
   newRun,
   nextDemoState,
   normalizePath,
@@ -117,6 +126,7 @@ import {
   truncate,
   unstagedOf,
   viewOf,
+  withRefusal,
   workOf,
   workspacePlan,
   worktreeAddFailure,
@@ -186,7 +196,7 @@ let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
 let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
-let liveWork: { root: string; workRoot: string } | null = null
+let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; baseManifests: readonly string[] } | null = null
 /**
  * Every agent id and name a run of this repository has started, in memory for the tool.call guard
  * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
@@ -403,11 +413,12 @@ function isTakenOver(stored: Run): boolean {
 /**
  * A drive's write, by generation `gen`. Resolves to the run written, or null when it was dropped: the drive then has
  * nothing left to drive. A stop wins every race, a write lands only on the same run, never on one another session
- * took over (Change 0.3.0), and never from a drive that was stopped, handed off or replaced (PR #51 review).
+ * took over (Change 0.3.0), and never from a drive that was stopped, handed off or replaced (PR #51 review). A refusal
+ * the guard stored meanwhile is kept (Codex 4290653342).
  */
 async function saveRun($: EngineInterface, run: Run, gen: number): Promise<Run | null> {
   return updateRun($, keyOf(run), stored =>
-    !stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) || driving?.gen !== gen || driving.isStopped ? null : run,
+    !stored || stored.id !== run.id || (run.step !== 'stopped' && stored.step === 'stopped') || isTakenOver(stored) || driving?.gen !== gen || driving.isStopped ? null : withRefusal(stored, run),
   )
 }
 
@@ -581,13 +592,17 @@ async function authCheck($: EngineInterface, run: Run): Promise<Blocked | null> 
   return !auth || auth.exitCode !== 0 ? block('gh is not signed in', 'run gh auth login') : null
 }
 
+/** `gh issue view` of an issue, in `repo` when one is named, else in the repository gh resolves. */
+const issueViewArgv = (issue: number, repo: string | null | undefined): string[] => ['gh', 'issue', 'view', String(issue), ...(repo ? ['--repo', repo] : []), '--json', 'number,title,body,state,url']
+
 /** The issue as gh reads it from `repo` (the run's pinned repository, or gh's own choice for a run stored before #25). */
 async function issueCheck($: EngineInterface, run: Run, repo: string | null): Promise<Blocked | { title: string; body: string; url: string }> {
-  const view = await $.process.run(['gh', 'issue', 'view', String(run.issue), ...(repo ? ['--repo', repo] : []), '--json', 'number,title,body,state,url'], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
+  const view = await $.process.run(issueViewArgv(run.issue, repo), { cwd: run.root, timeoutMs: GIT_TIMEOUT })
   if (view.exitCode !== 0) return block(`issue #${run.issue} not found: ${firstLine(view.stderr)}`, 'check the issue number or URL')
   const issue = JSON.parse(view.stdout) as { title: string; body: string; state: string; url: string }
   // gh issue view answers for a pull request's number too.
-  if (isPullUrl(issue.url)) return block(`#${run.issue} is a pull request, not an issue`, 'pick another issue')
+  // Final: a pull request's number never becomes an issue's, so resume can't clear it (Change 0.7.0).
+  if (isPullUrl(issue.url)) return { ...block(`#${run.issue} is a pull request, not an issue`, 'pick another issue'), isFinal: true }
   if (issue.state !== 'OPEN') return block(`issue #${run.issue} is ${issue.state.toLowerCase()}`, 'reopen it or pick another issue')
   return { title: issue.title, body: issue.body ?? '', url: issue.url }
 }
@@ -1042,6 +1057,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   if (name) knownRefs.add(name)
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
+  const baseManifests = [...(await manifestsAt($, workOf(run), run.mergeBase)), ...(await manifestsAt($, workOf(run), baseRefOf(run)))]
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
   const agentId = spawned.agentId
   // An agent another plugin answered in-line (duet's Codex) has no loop and no turn.complete (C0).
@@ -1052,7 +1068,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   // Steer the agent from its first tool call: set before any other await, like the waiter.
   if (agentId) {
     liveAgent = agentId
-    liveWork = { root: run.root, workRoot: workOf(run) }
+    liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [], baseManifests }
   }
   // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
   const latest = await loadRun($, keyOf(run))
@@ -1089,6 +1105,29 @@ async function stagedSince($: EngineInterface, root: string, ref: string): Promi
   return splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '-z', ref]))
 }
 
+/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.7.0); never a run another session took over. */
+async function recordNewPlugin($: EngineInterface, path: string): Promise<void> {
+  const d = drivingNow()
+  if (!d) return
+  const now = await $.clock.now()
+  await updateRun($, d.key, stored => newPluginRecord(stored, d.runId, sessionId, path, now))
+}
+
+/** The plugin manifests at a commit (the merge base, or the base branch's tip): none is new (Codex 4290574826; owner). None when git can't list them. */
+async function manifestsAt($: EngineInterface, root: string, ref: string): Promise<string[]> {
+  const listed = await git($, root, ['ls-tree', '-r', '--name-only', '-z', ref]).catch(() => null)
+  return listed?.exitCode === 0 ? splitZ(listed.stdout).filter(isPluginManifest) : []
+}
+
+/**
+ * R4 and G8 (Change 0.7.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard
+ * refused, unless the base branch's tip has it. Checked before any test runs.
+ */
+async function newPluginAt($: EngineInterface, run: Run, root: string) {
+  const added = splitZ(await gitOut($, root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase]))
+  return newPluginOf(added, run.newPlugin, run.profile?.testGlobs ?? [], await manifestsAt($, root, baseRefOf(run)))
+}
+
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
 async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
   const root = workOf(run)
@@ -1097,6 +1136,8 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
+  const madeR = await newPluginAt($, run, root)
+  if (madeR) return { type: 'gated', gate: newPluginGate('R', madeR) }
   // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
   const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase)
   await setActivity($, 'running tests')
@@ -1135,6 +1176,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
+  const madeG = await newPluginAt($, run, root)
+  if (madeG) return { type: 'gated', gate: newPluginGate(which, madeG) }
   const staged = await stagedSince($, root, run.mergeBase)
   const changedSinceRed = await stagedSince($, root, redCommit)
   const redPaths = splitZ(await gitOut($, root, ['diff', '--name-only', '-z', run.mergeBase, redCommit]))
@@ -1457,6 +1500,25 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
 }
 
 /**
+ * The start's own read of the issue (Change 0.7.0): when its body asks for the plugin to be built with mod-builder,
+ * the answer is the next steps, and nothing is stored. A failed read starts as before; preflight reports the cause.
+ */
+async function newModStart($: EngineInterface, root: string, issue: number, ghRepo?: string): Promise<string | null> {
+  const view = await $.process.run(issueViewArgv(issue, ghRepo), { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  if (!view || view.exitCode !== 0) return null
+  let read: { title?: string; body?: string; url?: string }
+  try {
+    read = JSON.parse(view.stdout) as typeof read
+  } catch {
+    return null
+  }
+  // A pull request's number is preflight's to refuse, as a pull request (PR #103 /code-review).
+  if (isPullUrl(read.url ?? '')) return null
+  const line = newModLine(read.body ?? '')
+  return line === null ? null : newModReply({ issue, title: read.title ?? '', url: read.url ?? '', ...(ghRepo ? { ghRepo } : {}) }, line)
+}
+
+/**
  * `/issue-forge <N>` (Change 0.3.0, 3): the same issue answers its status; another active run, or a drive in this
  * session, gets one question; otherwise the run starts.
  */
@@ -1477,6 +1539,8 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number, name
     await setFocus($, same)
     return `#${issue} has a run already.\n${await statusFor($, same, runs)}`
   }
+  const refused = await newModStart($, at.root, issue, ghRepo)
+  if (refused) return refused
   const d = drivingNow()
   const drivingRun = d ? (runs.find(r => r.id === d.runId) ?? null) : null
   const local = await readLocalProfile($, at.root)
@@ -1556,6 +1620,8 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const run = pick.run
   await setFocus($, run)
   if (!isActive(run)) return 'no run to resume here.'
+  // A final block is one resume can't clear (Change 0.7.0).
+  if (run.step === 'blocked' && run.blocked?.isFinal) return `#${run.issue} can't be resumed: ${run.blocked.reason}. /issue-forge stop ${run.issue} ends it.`
   const d = drivingNow()
   if (d?.runId === run.id) return `#${run.issue} is running already.`
   if (d) return `this session is driving #${d.issue}; /issue-forge handoff first, or resume #${run.issue} from another session.`
@@ -1865,10 +1931,17 @@ export const register: Register = (on, raw) => {
   // A run's agent that isn't live (stopped, or orphaned by a reload) is refused; the live one is kept in the run's folder (guardAction).
   on('tool.call', async ($, e, next) => {
     if (!e.agentId) return next(e)
-    const action = guardAction(e, { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null })
+    const ctx = { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null }
+    const action = guardAction(e, ctx)
     if (action.kind === 'deny') return { deny: action.reason }
-    if (action.kind === 'rewrite') return next({ ...e, ...action.patch } as typeof e)
-    return next(e)
+    const call = action.kind === 'rewrite' ? ({ ...e, ...action.patch } as typeof e) : e
+    // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.7.0).
+    const manifest = manifestOf(call, ctx, liveWork?.testGlobs ?? [], liveWork?.baseManifests ?? [])
+    if (manifest && !(await $.fs.stat(manifest.absolute).then(() => true, () => false))) {
+      await recordNewPlugin($, manifest.relative)
+      return { deny: newPluginRefusal(manifest.relative) }
+    }
+    return next(call)
   }).catch(($, e, next) => next(e))
 
   // An unnamed phase agent's report (or a named one's, with agent teams off) reaches the main loop as a peer prompt; the pane already has it (C0).
@@ -1930,6 +2003,8 @@ export const register: Register = (on, raw) => {
     const live = demo ? demoRun(demo, now) : await liveView($)
     const run = live.run
     const view = viewOf(run, live.isDriving, live.me)
+    // A final block is one resume can't clear (Change 0.7.0): no Resume button and no r in the hint.
+    const canResume = (view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere'
     const others = live.others
     const canHandOff = live.isDriving && (view === 'running' || view === 'ready')
     const cols = Math.max(20, e.props.bodyColumns - 2)
@@ -1955,7 +2030,8 @@ export const register: Register = (on, raw) => {
         {view === 'blocked' && run?.blocked && (
           <Text color="#E06C6C">{truncate(`✕ blocked at ${run.blocked.at}: ${run.blocked.reason}`, cols)}</Text>
         )}
-        {view === 'blocked' && run?.blocked && <Text dimColor>{truncate(`next: ${run.blocked.next}, then /issue-forge resume`, cols)}</Text>}
+        {view === 'blocked' && run?.blocked && <Text dimColor>{truncate(`next: ${run.blocked.next}, then ${afterBlock(run)}`, cols)}</Text>}
+        {view === 'blocked' && run?.blocked?.steps && run.blocked.steps.length > 0 && <Text dimColor>steps: /issue-forge status</Text>}
         {rows.map(row => (
           <Box key={`row-${row.label}`} flexDirection="column">
             <Box justifyContent="space-between">
@@ -1990,7 +2066,7 @@ export const register: Register = (on, raw) => {
         {others.length > 0 && layout !== 'compact' && <Text dimColor>{truncate(layout === 'full' ? `also       ${othersLine(others)}` : `also: ${othersLine(others)}`, cols)}</Text>}
         <Box gap={2} marginTop={1}>
           {view === 'ready' && <Button key="publish" label="Publish" hotkey="p" variant="primary" onPress={() => void press($, 'publish').catch(() => undefined)} />}
-          {(view === 'blocked' || view === 'interrupted' || view === 'elsewhere') && <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={() => void press($, 'resume').catch(() => undefined)} />}
+          {canResume && <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={() => void press($, 'resume').catch(() => undefined)} />}
           {canHandOff && <Button key="handoff" label="Hand off" hotkey="h" plain onPress={() => void press($, 'handoff').catch(() => undefined)} />}
           {(view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready') && <Button key="stop" label="Stop" hotkey="s" plain onPress={() => void press($, 'stop').catch(() => undefined)} />}
           {view !== 'empty' && <Button key="status" label="Status" hotkey="t" plain onPress={() => void showStatus($).catch(() => undefined)} />}
@@ -2000,7 +2076,7 @@ export const register: Register = (on, raw) => {
         {layout !== 'compact' && (
           <Text dimColor>
             {truncate(
-              [view === 'ready' ? 'p publish' : '', view === 'blocked' || view === 'interrupted' || view === 'elsewhere' ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab: keys, again: next tab']
+              [view === 'ready' ? 'p publish' : '', canResume ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab: keys, again: next tab']
                 .filter(Boolean)
                 .join(' · '),
               cols,

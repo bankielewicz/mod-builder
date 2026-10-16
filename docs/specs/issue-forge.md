@@ -71,6 +71,8 @@ state named, with the reason shown, unless the step says to retry. `<…>` value
 profile (§4). Every command is an argument vector run in the run's folder (the repository root, or
 the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own command uses one.
 
+**Step 0: a new plugin isn't a run's (SPEC change 0.7.0).** Before anything is stored, the start reads the issue once (`gh issue view <N> [--repo <host/owner/repo>] --json number,title,body,state,url`). It does this after its same-issue check and before the start menu. When a line of the body asks for the work to be built with `/mod-builder:build` (the word `build`, then `with`, then `/mod-builder:build`), the start answers with next steps that lead to mod-builder. Above them it shows the line that matched, labelled as the issue author's words that issue-forge hasn't checked, and says to reword it if it doesn't ask for a new plugin. It shows no other issue text, since issue text is anyone's to write. It then stores nothing: no run, branch, worktree, agent or pane. A failed read starts as before, and step 1 reports the cause. So does a pull request's number: step 1 refuses it as a pull request, whatever its body says. The rule finds each word after the one before it, in linear time, since issue text is anyone's to write.
+
 **Step 1: preconditions.** All must hold; otherwise the run stops in `blocked` with the first failure:
 1. `gh auth status` exits 0. The repository is known: a run started from an issue URL is pinned to the
    repository the URL names, which must be the one `gh repo view --json nameWithOwner,url` shows in the
@@ -118,6 +120,7 @@ branch coverage as the baseline. If the LCOV file is missing or has no `SF:` rec
 it finishes, stage everything (`git add -A`) and check **gate R**:
 - R1: every staged path (`git diff --cached --name-only <merge base>`) matches `testGlobs`;
 - R2: at least one staged path;
+- R4 (SPEC change 0.7.0, checked first, before any test runs): no path added since the merge base is a Claude Code plugin manifest (`.claude-plugin/plugin.json`, in any case), and the guard refused none during the phase. Rename detection is off (`--no-renames`), so a moved manifest counts as added. A manifest the base branch's tip has (`git ls-tree <remote>/<base>`) doesn't count: it is someone else's plugin, merged in. A manifest that matches `testGlobs` is a test fixture and doesn't count.
 - R3: `testCommand` exits non-zero. The baseline passed and only test files changed, so the new
   tests cause the failure. Which tests fail isn't checked (that depends on the language); the red
   agent's list of failing tests goes into the pull request for review.
@@ -137,6 +140,9 @@ and the last 200 lines of R3's test output. When it finishes, `git add -A` and c
   lists a path matching `behaviourTestGlobs`. When this check alone fails, the run goes back to
   step 4 once, telling the red agent "add a behaviour test for <files>", then continues from step 5;
 - G7: every command in `checks` exits 0 (project-specific checks: linters, type checks, validators).
+- G8 (SPEC change 0.7.0, checked first, before any test runs): as R4, for gates G and F.
+
+A failed R4 or G8 blocks the run at once, with no retry, as a **final** block. Its hint is `next: build it with /mod-builder:build, then /issue-forge stop <N>`, and `/issue-forge status` lists the next steps. `/issue-forge resume` answers `can't be resumed`. A pull request's number is also a final block, and the start menu offers a final-blocked run Stop, not Resume. Nothing past the phase's last commit is committed (red's at gates R and G, green's at gate F), and nothing is pushed; the steps name those commits, and after G6's detour, the stash that holds green's work.
 
 On pass, commit `fix(#<N>): green: <title>`; record it as the **green commit**. On fail, give the
 agent the failed checks and try again, up to `attempts.green` (default 3), then stop in `blocked`.
@@ -157,7 +163,7 @@ a rejected refactor doesn't block the pull request.
 - On no, or no answer possible (`claude -p`): state `ready`, with nothing pushed. `/issue-forge publish` resumes from here.
 
 **Files outside both globs** (README, specs, manifests, changelogs) are unconstrained in the green
-and refactor phases. No gate checks them, so release steps such as version bumps go there (the
+and refactor phases, except that no phase may create a new plugin manifest (R4, G8; editing one that exists, such as a version bump, is fine). No gate checks them, so release steps such as version bumps go there (the
 profile's `notes`). The red phase may change only test files (R1).
 
 **Never**: force-push; push to `<base>`; commit outside the run's branch; delete a branch or a
@@ -342,7 +348,7 @@ it doesn't, try `$.tool.call({ tool: 'Agent', … })` next, then run red on Clau
 ```
 
 `blocked` replaces the phase rows with the reason and the next command, for example
-"blocked: tests fail before any change — fix main, then /issue-forge resume". `ready` shows the
+"blocked: tests fail before any change — fix main, then /issue-forge resume". A final block (SPEC change 0.7.0) says `then /issue-forge stop <N>`, adds `steps: /issue-forge status` when it has next steps, and offers Stop and Status, not Resume. `ready` shows the
 summary and `[ Publish ]`. `done` shows the PR URL.
 
 ### 7.4 State machine (pure; in the logic module)
@@ -376,6 +382,7 @@ kit) and `tests/ui.test.tsx`.
   refactor is stashed under a named message.
 - **Test integrity is checked, not assumed:** G1 catches tests changed by any means, `Bash`
   included, because it compares files, not tool calls.
+- **No new plugins (SPEC change 0.7.0):** issue-forge never commits or pushes a new Claude Code plugin manifest. An issue that asks for one to be built with mod-builder never starts a run. The live agent's Edit, Write and NotebookEdit may not create one, except under `testGlobs`, where a sample plugin is a test fixture (red's rules say so). One at the merge base or on the base branch's tip is not new: a phase that removed it may write it back. A manifest a phase agent's shell made anyway, where the next commit would carry it, is caught by R4 or G8 at the phase's gate, before that commit. Known gap: an agent's `Bash` can still write plugin files while its phase runs. They are only seen at the gate, and they stay uncommitted in the run's folder, because issue-forge deletes nothing. A manifest under a path git ignores isn't seen at all: `git add -A` never stages it, so no commit or push can carry it, and listing ignored files would also find every plugin under `node_modules`, caches and other worktrees.
 - **Cost:** each run spawns at least three subagents. Retries add up to `attempts.red + attempts.green + attempts.refactor` more.
 - **Trust:** the agents read the issue body, which anyone who can file an issue writes. Run it
   only on repositories and issues you trust. The prompts tell the agents to treat the issue text as
@@ -577,4 +584,4 @@ needs the person: a paid or networked probe, or an interactive session. The issu
 | 14 | #2 | duet | local probe; doc sources fetched |
 | 15 | #4 | duet | local probe |
 | 16 | #3 part B | duet | Owner: signed-in `codex exec` probe |
-| 17 | #18 | new mod | built with `/mod-builder:build`, not issue-forge (a new plugin, not a fix) |
+| 17 | #18 | new mod | built with `/mod-builder:build`, not issue-forge (a new plugin, not a fix); from SPEC change 0.7.0, `/issue-forge 18` refuses it with next steps |
