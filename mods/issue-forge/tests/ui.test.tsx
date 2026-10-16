@@ -2217,6 +2217,25 @@ describe('a held git index lock (#28)', () => {
     expect((await run($, 'status')).text).not.toContain('git stash failed')
   })
 
+  // PR #88 review (Codex P1): the 5 s watch can't see a takeover in time, so each attempt after a wait reads the stored
+  // run first, as commitAll and stashAll do before their first one.
+  test('gate R: a run another session takes over during the lock wait gets no further commit attempt (PR #88 review)', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5) } })
+    const store: Record<string, unknown> = { ...stored }
+    const w = engine(on, { ...world, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => callsOf(w, 'commit').length === 1)
+    // Another session writes the run (the store is shared live between sessions).
+    store[key(16)] = { ...(store[key(16)] as any), driver: { session: OTHER, since: 1 } }
+    // Three waits' worth, still short of the 5 s watch.
+    for (let t = 0; t < 3000; t += 50) await w.clock.advance(50)
+    await w.clock.settle()
+    expect(callsOf(w, 'commit').length).toBe(1)
+    expect((store[key(16)] as any).driver).toEqual({ session: OTHER, since: 1 })
+    expect(w.commits).toEqual([])
+  })
+
   test('gate R: git add -A that meets the lock is retried after a second, and gate R goes on', async ($, on) => {
     const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(1) } })
     const w = engine(on, world, stored)
