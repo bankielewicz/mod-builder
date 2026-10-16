@@ -2332,6 +2332,22 @@ describe('a held git index lock (#28)', () => {
       expect(applies(w).length).toBe(2)
     })
 
+    // PR #88 review: the behaviour commit is made before the apply, so a lock that outlasts the apply blocks after it,
+    // with the stash named, as any other failed restore does. git 2.53.0's refusal, captured in a scratch repository.
+    test("gate R: a stash apply that meets the lock five times keeps the behaviour commit and blocks naming green's stash", async ($, on) => {
+      const applyLocked = `error: Unable to create '${LOCK_PATH}': File exists.\n\nAnother git process seems to be running in this repository.\nerror: could not write index\n`
+      const { world, stored } = behaviour({ on: 'stash apply', seq: locked(5, applyLocked, 1) })
+      const w = engine(on, world, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => isBlocked(w))
+      const status = (await run($, 'status')).text
+      expect(status).toContain(`blocked at gateG: another git process is using ${LOCK_PATH} (5 attempts over 4 s); green's work is in stash abc1234 "${STASH.message}"`)
+      expect(status).toContain("next: restore green's work by hand (git stash apply abc1234)")
+      expect(w.commits[0]).toStartWith('test(#16): red: behaviour test for src/register.tsx')
+      expect(applies(w).length).toBe(5)
+    })
+
     test('gate R: a stash apply that fails with no lock file is not tried again, and the block says where green\'s work is', async ($, on) => {
       const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }, { stderr: '', code: 1, isLocked: false }] })
       const w = engine(on, world, stored)
