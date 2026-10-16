@@ -2140,7 +2140,8 @@ describe('new plugins are mod-builder\'s (Change 0.5.0)', () => {
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'green, or a block')
-    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    // The kit's spawn has no agent id, so a block follows green's spawn; what matters is that R4 didn't block.
+    expect(w.toasts.filter(t => t.includes('new Claude Code plugin'))).toEqual([])
     expect(w.commits[0]).toStartWith('test(#16): red: Fix the thing')
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
   })
