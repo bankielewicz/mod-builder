@@ -1458,6 +1458,8 @@ UI (`ui.test.tsx`):
     block answers resume the same way.
 12. A guard refusal with nothing added still blocks final at the gate.
 
+**Decision at build (2026-10-16, owner).** Item 6 said the closed-issue block becomes final because resume "could never clear" it. That is wrong. Resume reads the issue again: preflight's `issueCheck` at the preflight step, and `register.tsx`'s `issueCheck` on resume for later steps. So reopening the issue and resuming works. The owner chose to keep the closed-issue block resumable (`next: reopen it or pick another issue, then /issue-forge resume`). Only the pull-request block becomes final, since a pull request's number never becomes an issue's. Test 5's "the closed-issue block carries `isFinal`" becomes "it doesn't".
+
 **Done means.** `/issue-forge 18` here answers with the next steps and leaves no run, worktree or branch; the person
 can follow them to `/mod-builder:build`. No issue-forge run can commit or push a new plugin. The live check:
 `claude -p --plugin-dir mods/issue-forge --settings '{"enabledPlugins":{"issue-forge@claudemod":false}}' "/issue-forge 18"`
