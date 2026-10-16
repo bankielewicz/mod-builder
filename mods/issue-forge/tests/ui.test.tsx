@@ -265,7 +265,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
         const [host = '', owner = '', name = ''] = (a[2] ?? '').split('/')
         const nameWithOwner = world.canonical?.[a[2] ?? ''] ?? `${owner}/${name}`
         const answer = ok(JSON.stringify({ nameWithOwner, url: `https://${host}/${nameWithOwner}` }))
-        return world.viewHold?.repo === a[2] ? world.viewHold.until.then(() => answer) : answer
+        const held = world.viewHold
+        return held && held.repo === a[2] ? held.until.then(() => answer) : answer
       }
       if (a[0] === 'issue') {
         world.beforeIssueView?.()
