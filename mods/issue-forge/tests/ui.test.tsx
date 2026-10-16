@@ -113,6 +113,10 @@ type World = {
   remotes?: Record<string, string>
   /** `ssh -G <host>`: the HostName ~/.ssh/config gives a nickname; absent, the host itself, as ssh prints it. */
   sshHosts?: Record<string, string>
+  /** `gh repo view <fork> --json isFork,parent` exits 1 with this on stderr. */
+  forkViewFails?: string
+  /** `gh api users/<owner>` exits 1 with this on stderr. */
+  ownerTypeFails?: string
   /** `ssh -G` can't run (no ssh). */
   sshFails?: boolean
   /** `gh repo view <repo> --json nameWithOwner,url` for this one repository answers only once `until` settles. */
@@ -254,6 +258,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       if (s === 'auth status') return ok()
       if (s === 'repo view --json nameWithOwner,url') return world.repoView ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.repoView } } : ok(JSON.stringify({ nameWithOwner: 'o/r', url: 'https://github.com/o/r' }))
       if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'isFork,parent') {
+        if (world.forkViewFails) return fail(world.forkViewFails)
         const parent = world.parentOf && (a[2] ?? '') in world.parentOf ? world.parentOf[a[2] ?? ''] : 'o/r'
         const [owner = '', name = ''] = (parent ?? '').split('/')
         return ok(JSON.stringify(parent === null ? { isFork: false, parent: null } : { isFork: true, parent: { id: 'R_1', name, owner: { id: 'U_1', login: owner } } }))
@@ -261,6 +266,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       // As gh does: without --hostname, gh api asks github.com.
       const user = a[0] === 'api' ? a.find(x => x.startsWith('users/')) : undefined
       if (user !== undefined) {
+        if (world.ownerTypeFails) return fail(world.ownerTypeFails)
         const host = a[1] === '--hostname' ? (a[2] ?? '') : 'github.com'
         const owner = user.slice('users/'.length)
         return ok(`${world.orgOwners?.includes(owner) || world.orgOwners?.includes(`${host}/${owner}`) ? 'Organization' : 'User'}\n`)
@@ -2103,7 +2109,7 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
   const forkRun = (extra: Record<string, unknown> = {}) => storedRun('ready', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', greenCommit: 'c2', gatedHead: 'c0', ...extra })
   const isGitWrite = (a: string[]) => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch' || a[1] === 'worktree')
   const isPublished = (w: World) => w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))
-  /** Starts #16 and waits for the first block: the origin block today, the kit's after the red spawn once forks are supported. */
+  /** Starts #16 and waits for the first block: preflight's, or the red phase's once a run gets that far. */
   async function started($: any, w: World): Promise<string> {
     await run($, '16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
@@ -2403,6 +2409,62 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
     expect((await run($, 'status')).text).toContain('blocked at baseline: upstream no longer fetches from o/r')
     expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+  })
+
+  // PR #87 review: the paths through the fork check and the push check that had no test.
+  test("start: gh failing to read the fork blocks with gh's reason, not as \"isn't a fork\"", async ($, on) => {
+    const w = engine(on, { ...FORK, forkViewFails: 'HTTP 502: Bad Gateway' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: could not read me/r from gh: HTTP 502: Bad Gateway')
+    expect(status).toContain('next: check gh and your access to the fork')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: gh failing to say whether the fork's owner is an organization blocks with gh's reason", async ($, on) => {
+    const w = engine(on, { ...FORK, ownerTypeFails: 'HTTP 404: Not Found (https://api.github.com/users/me)' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: could not tell whether me is a user or an organization: HTTP 404: Not Found')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: origin a fork but no remote for the project is the origin block, and the fork isn't looked up", async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/me/r.git' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv).not.toContainEqual(FORK_VIEW)
+  })
+
+  test('publish blocks when origin has no push URL to read, or none at all', async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: { exitCode: 2, stderr: "error: No such remote 'origin'" } }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test('publish blocks when origin lists no push URL', async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: [] }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test("resume of a fork run's kept worktree at preflight checks origin's push URLs there against the fork, then fetches the base there", async ($, on) => {
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' }, worktrees: [WT], wtHead: BRANCH }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const pushedThere = w.calls.findIndex(c => c.cwd === WT && c.argv.join(' ') === 'git remote get-url --push --all origin')
+    const fetchedThere = w.calls.findIndex(c => c.cwd === WT && c.argv.join(' ') === 'git fetch upstream main')
+    expect(pushedThere >= 0 && pushedThere < fetchedThere).toBe(true)
+    expect(w.spawned).toHaveLength(1)
   })
 
   // PR #87 review (Codex): the stored base remote is a name; what it fetches from is read again where it is fetched.

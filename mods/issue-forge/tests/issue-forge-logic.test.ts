@@ -1830,4 +1830,14 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
     expect(publishAsk({ ...fork, headRepo: 'ghe.example.com/me/r' })).toBe('Push issue-16-fix-it to ghe.example.com/me/r and open a pull request on o/r against main?')
     expect(publishAsk(run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r' }))).toBe('Push issue-16-fix-it and open a pull request on o/r against main?')
   })
+  test("mergeLine, publishQuestion and prBody: a fork run's merge check is against the project remote's base", () => {
+    const fork = run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r' })
+    const clean = { ...fork, merge: { isClean: true, files: [] } }
+    const conflict = { ...fork, merge: { isClean: false, files: ['a.ts'] } }
+    expect(mergeLine(clean)).toBe('merges cleanly with upstream/main')
+    expect(mergeLine(conflict)).toBe('conflicts with upstream/main: a.ts')
+    expect(publishQuestion(conflict)).toBe('Push issue-16-fix-it to me/r and open a pull request on o/r against main? It conflicts with upstream/main in: a.ts.')
+    expect(prBody(clean)).toContain('At publish time this merged cleanly with upstream/main.')
+    expect(prBody(conflict)).toContain('At publish time this conflicted with upstream/main in: a.ts.')
+  })
 })
