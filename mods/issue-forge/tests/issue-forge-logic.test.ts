@@ -522,6 +522,19 @@ describe('state (§7.4)', () => {
     expect(r.agents).toHaveLength(3)
   })
 
+  // Green reads red's answer as its notes: a turn that ended in an error, a refusal or an interrupt left none (PR #89 review).
+  test("red's answer is kept only from a turn that ended by answering", () => {
+    const red = run({ step: 'red' })
+    for (const reason of ['error', 'refusal', 'aborted'] as const) {
+      const r = advance(red, { type: 'agentDone', answer: "I can't help with that", reason }, 1)
+      expect(r.step).toBe('gateR')
+      expect(r.redAnswer ?? '').toBe('')
+    }
+    expect(advance(red, { type: 'agentDone', answer: '- test x fails', reason: 'answer' }, 1).redAnswer).toBe('- test x fails')
+    // An answer another plugin gave in-line (duet's Codex) has no turn, so no reason.
+    expect(advance(red, { type: 'agentDone', answer: '- test y fails' }, 1).redAnswer).toBe('- test y fails')
+  })
+
   test('every working step blocks keeping where it was; resume returns there with attempts reset', () => {
     for (const step of ['preflight', 'baseline', 'red', 'gateR', 'green', 'gateG', 'refactor', 'gateF', 'ready', 'publishing'] as const) {
       const r = advance(run({ step, used: { red: 2, green: 3, refactor: 1 } }), { type: 'block', reason: 'why', next: 'do this' }, 5)
