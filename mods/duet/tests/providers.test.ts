@@ -28,6 +28,8 @@ type World = {
   writeDeny?: string
   /** The session folder `$.session.cwd()` answers. */
   cwd?: string
+  /** chmod exits 1 with this text. */
+  chmodFail?: string
 }
 type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; events: string[]; clock: ReturnType<typeof mock.clock> }
 
@@ -47,7 +49,7 @@ function engine(on: any, o: World = {}): Seen {
   on('tool.call', { tool: 'Read' }, () => ({ result: { type: 'text', file: { filePath: '/w/x', content: 'read', numLines: 1, startLine: 1, totalLines: 1 } } }))
   on('fs.exists', ($: any, e: any) => ({ value: e.path in seen.files }))
   on('fs.list', () => ({ deny: 'ENOENT' }))
-  on('process.run', ($: any, e: any) => (seen.argv.push(e.argv), seen.events.push(e.argv[0]), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', ($: any, e: any) => (seen.argv.push(e.argv), seen.events.push(e.argv[0]), { value: { exitCode: o.chmodFail && e.argv[0] === 'chmod' ? 1 : 0, stdout: '', stderr: o.chmodFail && e.argv[0] === 'chmod' ? o.chmodFail : '', isStdoutTruncated: false, isStderrTruncated: false } }))
   const answerOf = (r: Reply) => {
     if (typeof r === 'string') return { value: { status: 200, ok: true, headers: {}, text: r } }
     if ('deny' in r) return { deny: r.deny }
@@ -477,6 +479,50 @@ describe('/duet provider', () => {
     expect(await ui.find({ type: 'Text', text: /could not be read \(EACCES: permission denied\); fix the file, or set GEMINI_API_KEY/ })).toBeDefined()
     expect(seen.fetches).toEqual([])
     await ui.unmount()
+  })
+
+  test('Codex 4299362989: a new key file whose mode cannot be set gets no key, the field stays open, and the retry does not write before chmod either', async ($, on) => {
+    const seen = engine(on, { chmodFail: 'chmod: Operation not permitted' })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /not saved: chmod 600 failed: chmod: Operation not permitted/ })).toBeDefined()
+    expect(await ui.find({ type: 'Input', key: 'prov-key' })).toBeDefined()
+    expect(seen.files[KEY_FILE] ?? '').toBe('')
+    // The retry finds the empty file: the mode is set before anything is written, and a second failure still writes nothing.
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(seen.files[KEY_FILE] ?? '').toBe('')
+    expect(everything(seen)).not.toContain(KEY)
+    await ui.unmount()
+  })
+
+  test('Codex 4299362999: a custom result stored for another base URL shows as untested', { options: { apiCustomUrl: 'https://gw.example.com/v1' } }, async ($, on) => {
+    engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, store: { 'duet:providers:tests': { custom: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…cdef', host: 'https://old.example/v1' } } } })
+    await start($)
+    expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+key …cdef from env · gw.example.com\s+untested/)
+  })
+
+  test('Codex 4299426945: two tests of one provider started together send one request', async ($, on) => {
+    let release: (r: Reply) => void = () => undefined
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => new Promise<Reply>(res => { release = res }) })
+    await start($)
+    const both = Promise.all([run($, 'provider test google'), run($, 'provider test google')])
+    await seen.clock.advance(1)
+    expect(seen.fetches.length).toBe(1)
+    release(MODELS)
+    const [a, b] = await both
+    expect([a, b].filter(t => /google: ok/.test(t)).length).toBe(1)
+    expect([a, b].filter(t => t === 'google: a test is already running.').length).toBe(1)
+  })
+
+  test('Codex 4299426954: a failed model list\'s text is cleaned before it reaches the answer or the pane', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => ({ status: 500, text: '\u001b[2Jboom ' + KEY }) })
+    await start($)
+    expect(await run($, 'provider models google')).toBe('google: 500: [2Jboom [redacted]')
+    expect(seen.fetches.length).toBe(1)
   })
 
   test('a Grep of the key file or its folder is refused; a grep for the path in the repo\'s own files passes', async ($, on) => {

@@ -202,29 +202,40 @@ describe('requests and replies', () => {
     expect(parseChatReply('42')).toEqual({ error: 'the reply is not JSON' })
     expect(parseModelsReply('null')).toEqual({ error: 'the reply is not JSON' })
     expect(parseModelsReply('"x"')).toEqual({ error: 'no model list in the reply' })
+    // Codex 4299363023: a credential split by a control character is still a credential: cleaned first, then redacted.
+    expect(parseModelsReply('{"data":[{"id":"sec\\u001bret-ok"}]}', ['secret'])).toEqual({ ids: ['[redacted]-ok'], hasMore: false })
+    expect(parseChatReply('{"model":"sec\\u001bret","choices":[{"message":{"content":"ok"}}]}', ['secret'])).toEqual({ text: 'ok', tokens: 0, model: '[redacted]' })
     // Codex 4298989646: a model id is cleaned of control characters and line breaks, and bounded.
     expect(parseModelsReply('{"data":[{"id":"ok\\u001b[31mINJECTED\\nline"},{"id":"' + 'x'.repeat(300) + '"}]}')).toEqual({ ids: ['ok[31mINJECTEDline', 'x'.repeat(120)], hasMore: false })
   })
 
   test('test outcome: /models 200 → ok; 404/405 → a likely wrong base URL, no billed fallback; 401 → unauthorized; the probe records the model', () => {
     const at = 1_000
-    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"},{"id":"b"}]}' }, 412, at)).toEqual({ ok: true, status: 200, ms: 412, model: '', note: 'ok 412ms · 2 models', at, key: '' })
-    expect(testOutcome('models', { status: 404, ok: false, text: '' }, 50, at)).toEqual({ ok: false, status: 404, ms: 50, model: '', note: '✕ 404 not found on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)', at, key: '' })
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"},{"id":"b"}]}' }, 412, at)).toEqual({ ok: true, status: 200, ms: 412, model: '', note: 'ok 412ms · 2 models', at, key: '', host: '' })
+    expect(testOutcome('models', { status: 404, ok: false, text: '' }, 50, at)).toEqual({ ok: false, status: 404, ms: 50, model: '', note: '✕ 404 not found on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)', at, key: '', host: '' })
     expect(testOutcome('models', { status: 405, ok: false, text: '' }, 50, at).note).toContain('✕ 405 not allowed on /models: is the base URL right?')
-    expect(testOutcome('models', { status: 401, ok: false, text: '{"error":{"message":"invalid x-api-key"}}' }, 80, at)).toEqual({ ok: false, status: 401, ms: 80, model: '', note: '✕ 401 unauthorized (invalid x-api-key)', at, key: '' })
-    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"sonar-pro","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}' }, 900, at)).toEqual({ ok: true, status: 200, ms: 900, model: 'sonar-pro', note: 'ok 900ms sonar-pro · 1 token', at, key: '' })
-    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '30' } }, 20, at)).toEqual({ ok: false, status: 429, ms: 20, model: '', note: '✕ 429 rate limited (retry-after 30 s); not retried', at, key: '' })
+    expect(testOutcome('models', { status: 401, ok: false, text: '{"error":{"message":"invalid x-api-key"}}' }, 80, at)).toEqual({ ok: false, status: 401, ms: 80, model: '', note: '✕ 401 unauthorized (invalid x-api-key)', at, key: '', host: '' })
+    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"sonar-pro","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}' }, 900, at)).toEqual({ ok: true, status: 200, ms: 900, model: 'sonar-pro', note: 'ok 900ms sonar-pro · 1 token', at, key: '', host: '' })
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '30' } }, 20, at)).toEqual({ ok: false, status: 429, ms: 20, model: '', note: '✕ 429 rate limited (retry-after 30 s); not retried', at, key: '', host: '' })
     expect(testOutcome('probe', { status: 500, ok: false, text: 'oops' }, 20, at).note).toBe('✕ 500 server error (oops)')
     expect(testOutcome('probe', { status: 403, ok: false, text: '' }, 20, at).note).toBe('✕ 403 forbidden')
     expect(testOutcome('probe', { status: 418, ok: false, text: '{"error":"teapot"}' }, 20, at).note).toBe('✕ 418 failed (teapot)')
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[]}' }, 20, at).note).toBe('✕ 200 no reply text')
+    // Codex 4299363010: an error object on a 2xx is cleaned and bounded like any other provider text.
+    const long = testOutcome('probe', { status: 200, ok: true, text: `{"error":{"message":"bad\\u001b[2Jmsg${'x'.repeat(300)}"}}` }, 20, at).note
+    expect(long.startsWith('✕ 200 bad[2Jmsgxxx')).toBe(true)
+    expect(long.length).toBeLessThanOrEqual(90)
+    // Codex 4299426954 (the list's failure text) and the 429 header both go through clean before redact.
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': 'sec\u001bret' } }, 20, at, ['secret']).note).toBe('✕ 429 rate limited (retry-after [redacted] s); not retried')
+    // Codex 4299362999: a result remembers the base URL it tested, so a custom endpoint that moved shows as untested.
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}]}' }, 20, at, [], true, '', 'https://gw.example.com/v1').host).toBe('https://gw.example.com/v1')
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"gpt-5","choices":[{"message":{"content":""}}]}' }, 20, at).note).toBe('ok 20ms gpt-5 · 1 token')
     // Codex 4298736527: the model the reply names is redacted and bounded before it reaches the note.
     expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${KEY}","choices":[{"message":{"content":"ok"}}]}` }, 20, at, [KEY]).note).toBe('ok 20ms [redacted] · 1 token')
     expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${'m'.repeat(5000)}","choices":[{"message":{"content":"ok"}}]}` }, 20, at).note.length).toBeLessThanOrEqual(99)
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms (model not named) · 1 token')
     // Codex 4297835969: a 2xx that is not a model list is a failed test, never a green ok.
-    expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at)).toEqual({ ok: false, status: 200, ms: 20, model: '', note: '✕ 200 no model list in the reply', at, key: '' })
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at)).toEqual({ ok: false, status: 200, ms: 20, model: '', note: '✕ 200 no model list in the reply', at, key: '', host: '' })
     expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}],"has_more":true}' }, 20, at).note).toBe('ok 20ms · 1+ models (first page)')
     // OpenRouter's list answers without a key (probed 2026-10-16): the ok says so.
     expect(providerOf('openrouter')!.modelsNeedKey).toBe(false)
@@ -293,7 +304,7 @@ describe('pane text', () => {
     expect(authTextOf(providerOf('custom')!, { key: KEY, source: 'file' }, 'https://gw.example.com/v1')).toBe('key …a1b2 · gw.example.com')
     expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key · gw.example.com')
     expect(testText(undefined)).toBe('untested')
-    expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1, key: '' })).toBe('ok 412ms gemini-2.5-pro')
+    expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1, key: '', host: '' })).toBe('ok 412ms gemini-2.5-pro')
     expect(testText('running')).toBe('testing…')
   })
 
