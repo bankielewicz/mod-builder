@@ -659,8 +659,22 @@ export function gateG(p: Profile, baseline: Baseline | null, f: GateGFacts, root
 
 // ── New plugins (Change 0.6.0) ──────────────────────────────────────────
 
-/** `build … with /mod-builder:build` on one line; not the `build` of `/mod-builder:build` itself. */
-const BUILD_WITH_MOD_BUILDER = /(?<![\w:/-])build\b.*?\bwith\b.*?\/mod-builder:build\b/i
+const BUILD = /(?<![\w:/-])build\b/i
+const WITH = /\bwith\b/i
+const MOD_BUILDER = /\/mod-builder:build\b/i
+
+/**
+ * `build … with /mod-builder:build` on one line; not the `build` of `/mod-builder:build` itself. Each word is found
+ * after the one before it, in linear time: one regex with two lazy `.*?` backtracks cubically on issue text anyone
+ * can write (PR #103 /code-review). The earliest `build` and `with` leave the most line for the next word.
+ */
+function asksForModBuilder(line: string): boolean {
+  const build = line.search(BUILD)
+  if (build < 0) return false
+  const afterBuild = line.slice(build + 'build'.length)
+  const withAt = afterBuild.search(WITH)
+  return withAt >= 0 && MOD_BUILDER.test(afterBuild.slice(withAt + 'with'.length))
+}
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s/
 const QUOTE_LINES = 12
 const QUOTE_CHARS = 1200
@@ -690,7 +704,7 @@ function capQuote(lines: readonly string[]): string[] {
  */
 export function newModGuidance(body: string): string[] | null {
   const lines = body.replace(/\r\n?/g, '\n').split('\n')
-  const at = lines.findIndex(line => BUILD_WITH_MOD_BUILDER.test(line))
+  const at = lines.findIndex(asksForModBuilder)
   if (at < 0) return null
   const first = lines[at]!
   const indent = LIST_ITEM.exec(first)?.[1]!.length ?? -1
