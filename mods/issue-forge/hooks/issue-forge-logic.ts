@@ -834,6 +834,16 @@ export function headArg(branch: string, headRepo?: string): string {
   return headRepo === undefined ? branch : `${ownerOf(headRepo)}:${branch}`
 }
 
+/**
+ * A kept branch is reused only while origin pushes where its name was checked: the fork it was made for (`kept`), or the
+ * project itself when there was none; `now` is the fork preflight finds (Codex on PR #87).
+ */
+export function keptForkBlock(kept: string | undefined, now: string | undefined, repo: string): { reason: string; next: string } | null {
+  if (kept === undefined ? now === undefined : isSameRepo(kept, now ?? null)) return null
+  const was = repoLabel(kept ?? repo)
+  return { reason: `origin now pushes to ${repoLabel(now ?? repo)}, not ${was}, where the run's branch was named`, next: `point origin back at ${was}, or start a new run` }
+}
+
 /** The remote a run fetches its base from: the project's in a fork clone, origin in every other run. */
 export function baseRemoteOfRun(run: { baseRemote?: string }): string {
   return run.baseRemote ?? 'origin'
@@ -846,8 +856,11 @@ export function baseRefOf(run: { base: string; baseRemote?: string }): string {
 
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
-/** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
-export type Kept = { branch: string; workRoot: string; base: string }
+/**
+ * The run's branch, the folder it is checked out in, and its base, once preflight has made them; in a fork clone also the base
+ * remote and the fork the branch's name was checked on (Codex on PR #87).
+ */
+export type Kept = { branch: string; workRoot: string; base: string; baseRemote?: string; headRepo?: string }
 
 export type RunEvent =
   | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string; baseRemote?: string; headRepo?: string }

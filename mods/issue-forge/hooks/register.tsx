@@ -59,6 +59,7 @@ import {
   isWorktreeRun,
   issueLabel,
   keepText,
+  keptForkBlock,
   keptWorktreePlan,
   layoutOf,
   lcovFileOf,
@@ -739,7 +740,7 @@ async function whereToWork($: EngineInterface, run: Run, root: string, remote: s
  * Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree from `remote`'s base. `repo` is
  * the pinned repository: the base question can wait on the person, so the base remote is read again before the fetch.
  */
-async function makeBranch($: EngineInterface, run: Run, issueBody: string, remote: string, repo: string): Promise<Blocked | Kept> {
+async function makeBranch($: EngineInterface, run: Run, issueBody: string, remote: string, repo: string, headRepo?: string): Promise<Blocked | Kept> {
   const root = run.root
   // This checkout's profile only names the base; the profile that is checked and runs is <remote>/<base>'s.
   await setActivity($, `reading ${PROFILE_FILE}`)
@@ -760,19 +761,22 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string, remot
     remoteHeads.push(...listed.split('\n').map(line => line.split('refs/heads/')[1] ?? '').filter(Boolean))
   }
   const branch = branchName(run.issue, run.title, [...local, ...remoteHeads])
+  // A fork clone's branch is kept with the fork its name was checked on, so a resume can't take it elsewhere (Codex on PR #87).
+  const forked = headRepo ? { baseRemote: remote, headRepo } : {}
   stillDriving(run)
   if (where.kind === 'here') {
     await setActivity($, `git switch -c ${branch}`)
     const switched = await git($, root, ['switch', '--no-track', '-c', branch, `${remote}/${base}`])
     if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
-    await recordMade($, run, { branch, workRoot: root, base })
-    return { branch, workRoot: root, base }
+    const here = { branch, workRoot: root, base, ...forked }
+    await recordMade($, run, here)
+    return here
   }
   const workRoot = worktreePath(root, where.worktreeDir, branch)
   if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
   await setActivity($, `git worktree add ${where.worktreeDir}/${branch}`)
   // A full checkout can outlast git's 60 s on a slow disk: it runs like the profile's commands, on their timeout.
-  const made = { branch, workRoot, base }
+  const made = { branch, workRoot, base, ...forked }
   let added: CommandResult
   try {
     added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `${remote}/${base}`], root, where.minutes)
@@ -831,6 +835,8 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   let made: Kept
   if (run.branch) {
     made = { branch: run.branch, workRoot: workOf(run), base: run.base }
+    const moved = keptForkBlock(run.headRepo, fork?.headRepo, repo)
+    if (moved) return { ...block(moved.reason, moved.next), keep: made }
     // A kept worktree that is gone (removed by hand, or never filled) is made again for the kept branch.
     const kept = isWorktreeRun(run) ? await keptWorktree($, run.root, made.workRoot) : 'reuse'
     if (typeof kept !== 'string') return { ...kept, keep: made }
@@ -854,7 +860,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     const behind = await catchUp($, run, made.workRoot, remote, made.base)
     if (behind) return { ...behind, keep: made }
   } else {
-    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body, remote, repo)
+    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body, remote, repo, fork?.headRepo)
     if ('type' in fresh) return fresh
     made = fresh
   }
