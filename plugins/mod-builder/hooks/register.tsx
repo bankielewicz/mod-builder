@@ -306,9 +306,10 @@ const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
 
 /**
  * When each mod's current edit started (a build generation), for mods being edited, and the
- * version it started from. `repeatedAt` is when a Spec running last repeated during the edit.
+ * version and the logic and test files it started from (`logicSig`; older records have none).
+ * `repeatedAt` is when a Spec running last repeated during the edit.
  */
-type Generation = { since: number; fromVersion: string | null; repeatedAt?: number }
+type Generation = { since: number; fromVersion: string | null; logicSig?: string; repeatedAt?: number }
 /** As stored: an older version wrote the bare start time. */
 type StoredGenerations = Record<string, number | Generation>
 const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
@@ -402,6 +403,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         generations[facts.name]?.since ?? null,
         generations[facts.name]?.fromVersion ?? null,
         Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
+        generations[facts.name]?.logicSig ?? null,
       ),
     ),
     ...placeholders.map(name =>
@@ -434,7 +436,11 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         const [latest, read] = [remaining[view.name], generations[view.name]]
         if (isSameGeneration(latest, read)) delete remaining[view.name]
         else if (latest?.since === read?.since && latest?.repeatedAt !== undefined) {
-          remaining[view.name] = { since: latest.repeatedAt, fromVersion: found.get(view.name)?.version ?? null }
+          remaining[view.name] = {
+            since: latest.repeatedAt,
+            fromVersion: found.get(view.name)?.version ?? null,
+            logicSig: found.get(view.name)?.logicSig,
+          }
         }
       }
       return remaining
@@ -1028,7 +1034,7 @@ export const register: Register = (on, options) => {
       await updateGenerations($, modsDir, all => {
         const current = all[mod]
         isStarted = current === undefined
-        return { ...all, [mod]: current ? { ...current, repeatedAt: Math.max(now, (current.repeatedAt ?? 0) + 1) } : { since: now, fromVersion } }
+        return { ...all, [mod]: current ? { ...current, repeatedAt: Math.max(now, (current.repeatedAt ?? 0) + 1) } : { since: now, fromVersion, logicSig: factsByMod.get(mod)?.logicSig } }
       })
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }

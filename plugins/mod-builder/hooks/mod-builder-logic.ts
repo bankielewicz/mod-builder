@@ -64,6 +64,8 @@ export type FileFacts = {
   specMtimeMs: number
   logicMtimeMs: number
   readmeMtimeMs: number
+  /** The logic modules and test files (subfolders included) by path and mtime: a delete or a rename changes it, which no mtime shows. */
+  logicSig: string
   /** The version the marketplace lists this mod at, when it does. */
   listedVersion: string | null
 }
@@ -122,6 +124,7 @@ export function lightsOf(
   reported: Reported | null,
   sinceMs: number | null = null,
   fromVersion: string | null = null,
+  fromLogicSig: string | null = null,
 ): Light[] {
   // During an edit (sinceMs set), evidence older than the edit's start is stale:
   // it passed before, and has to be redone for this change.
@@ -136,6 +139,8 @@ export function lightsOf(
   }
   const fileLight = (isDone: boolean, savedMs?: number): Light =>
     !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
+  // A delete or a rename saves no file, so a logic or test file changed since the edit began counts too.
+  const isLogicChanged = fromLogicSig !== null && fromLogicSig !== facts.logicSig
   // During an edit, Share needs a new version (not the one the edit started from) that the marketplace lists.
   const isReShared =
     sinceMs === null ||
@@ -144,7 +149,7 @@ export function lightsOf(
   const lights: Light[] = [
     fileLight(facts.hasSpec && !facts.specHasPlaceholder, facts.specMtimeMs),
     fileLight(facts.hasManifest && facts.hasHooksJson),
-    fileLight(facts.hasLogic && facts.hasTests, facts.logicMtimeMs),
+    fileLight(facts.hasLogic && facts.hasTests, isLogicChanged ? undefined : facts.logicMtimeMs),
     fileLight(facts.hasRegister),
     runLight('Validate'),
     runLight('Test'),
@@ -699,8 +704,9 @@ export function viewOf(
   sinceMs: number | null = null,
   fromVersion: string | null = null,
   path: string,
+  fromLogicSig: string | null = null,
 ): ModView {
-  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion)
+  const lights = lightsOf(facts, results, runs.map(run => run.kind), reported, sinceMs, fromVersion, fromLogicSig)
   const { text, tone } = statusOf(lights, results, reported, runs, isFresh && isGreen(lights))
   const validate = results.Validate?.validate
   const focus = focusStageOf(lights)
@@ -999,10 +1005,11 @@ export function factsOf(read: FolderRead): FileFacts | null {
   const times = all.map(entry => entry.mtimeMs)
   const slots = read.spec ? slotsOf(read.spec) : {}
   const codeMtimeMs = Math.max(0, ...code.map(entry => entry.mtimeMs))
+  // Named by path from the mod folder, as in `code`.
   const logic = [
-    ...read.hooks.filter(entry => isLogicModule(entry.name)),
-    ...read.tests.filter(entry => isTestFile(entry.name)),
-    ...nested.filter(entry => isNestedLogicOrTest(entry.name)),
+    ...inFolder('hooks', read.hooks.filter(entry => isLogicModule(entry.name))),
+    ...inFolder('tests', read.tests.filter(entry => isTestFile(entry.name))),
+    ...nested.filter(entry => entry.kind === 'file' && isNestedLogicOrTest(entry.name)),
   ]
   const codeSig = signatureOf(code.map(entry => `${entry.name}@${entry.mtimeMs}`))
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
@@ -1024,6 +1031,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
+    logicSig: signatureOf(logic.map(entry => `${entry.name}@${entry.mtimeMs}`)),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
@@ -1061,6 +1069,7 @@ export function placeholderFacts(name: string): FileFacts {
     isReadmeStale: false,
     specMtimeMs: 0,
     logicMtimeMs: 0,
+    logicSig: signatureOf([]),
     readmeMtimeMs: 0,
     listedVersion: null,
   }
