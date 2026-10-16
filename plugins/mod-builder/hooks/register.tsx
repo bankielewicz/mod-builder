@@ -17,6 +17,8 @@ import * as Lab from './mod-builder-logic'
  */
 
 const PANE = 'modlab'
+/** The pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: 'Mod Lab', columns: 80 }
 const TOOL = 'lab_report'
 const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
@@ -25,6 +27,10 @@ const FRAME_MS = 250
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
 const NARROW_TOAST = '◆ Mod Lab needs a wider window. Widen it, or watch the status line.'
+const SHOW_TEXT = 'Bringing Mod Lab to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
+const STILL_BEHIND_TOAST = 'Mod Lab is still behind another tab: ctrl+x tab, then again until it shows.'
+/** How long after asking for the front the pane is read again (#31). */
+const FRONT_CHECK_MS = 500
 
 /** The design's colour roles; `text` is the surface's own foreground. */
 const COLOR: Record<Lab.Tone, string | undefined> = {
@@ -862,8 +868,32 @@ const isPaneOpen = async ($: Engine): Promise<boolean> => (await $.ui.panes()).s
 const isPaneShown = async ($: Engine): Promise<boolean> => (await $.ui.panes()).some(pane => pane.id === PANE && pane.isPlaced)
 
 async function openPane($: Engine): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: 'Mod Lab', columns: 80 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast(NARROW_TOAST)
+}
+
+/** What a bare /modlab does with the pane; `paneAction` counts a pane waiting undrawn as not listed. */
+async function paneActionOf($: Engine): Promise<ReturnType<typeof Lab.paneAction>> {
+  return Lab.paneAction(await $.ui.panes(), PANE)
+}
+
+/**
+ * Asks for a pane that is a tab behind another to the front, with the keyboard, for a person who asked to see it (#31).
+ * The request goes out before the first await. A pane that is still a tab behind another afterwards is named in a toast.
+ */
+async function bringToFront($: Engine): Promise<void> {
+  await $.ui.open({ ...PANE_ARGS, focus: true })
+  $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch((error: unknown) => logCaught($, 'modlab.front', error)))
+}
+
+async function warnIfBehind($: Engine): Promise<void> {
+  if ((await paneActionOf($)) === 'show') $.ui.toast(STILL_BEHIND_TOAST)
+}
+
+/** An open for a command that names the pane: a tab behind another comes to the front, any other pane is opened as before. */
+async function openOrFront($: Engine): Promise<void> {
+  if ((await paneActionOf($)) === 'show') void bringToFront($).catch((error: unknown) => logCaught($, 'modlab.front', error))
+  else await openPane($)
 }
 
 /**
@@ -1065,7 +1095,7 @@ export const register: Register = (on, options) => {
       // Each branch opens the pane before this hook returns: an open after it is "unasked", left undrawn below 144 columns (#90).
       if (word === 'demo') {
         await startDemo($)
-        await openPane($)
+        await openOrFront($)
         return { text: `Mod Lab: watch ${Lab.DEMO_NAME} build itself in the pane. Nothing is written to disk.` }
       }
       if (word === 'new') {
@@ -1085,12 +1115,17 @@ export const register: Register = (on, options) => {
             $.ui.toast(`No mod named ${name} in ${Lab.shortPath(await shownModsDir($))}`)
           }
         })().catch((error: unknown) => logCaught($, 'modlab.select', error, 'normal', { mod: name }))
-        await openPane($)
+        await openOrFront($)
         return { text: `Mod Lab: ${name}.` }
       }
-      if (await isPaneShown($)) {
+      const action = await paneActionOf($)
+      if (action === 'close') {
         void $.ui.close({ id: PANE }).catch((error: unknown) => logCaught($, 'modlab.toggle', error))
         return { text: 'Mod Lab folded to the status line. /modlab to reopen.' }
+      }
+      if (action === 'show') {
+        void bringToFront($).catch((error: unknown) => logCaught($, 'modlab.front', error))
+        return { text: SHOW_TEXT }
       }
       await showPane($)
       void scan($, false).catch((error: unknown) => logCaught($, 'modlab.scan', error))
@@ -1339,7 +1374,7 @@ export const register: Register = (on, options) => {
     const keysHint = (keys: string) =>
       isMobile || layout === 'compact' ? null : (
         <Text key="keys-hint" color={COLOR.dim} dimColor wrap="truncate">
-          {`ctrl+x tab, then ${keys} · esc to leave`}
+          {`ctrl+x tab (again: next tab), then ${keys} · esc to leave`}
         </Text>
       )
     const frameOf = (body: ReturnType<typeof blank>[], buttons: ReturnType<typeof buttonRows>, keys: string) => (

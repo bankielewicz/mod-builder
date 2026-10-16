@@ -32,7 +32,7 @@ it was verified.
 
   1 Spec ━ 2 Scaffold ━ 3 Logic ━ 4 Register ━ 5 Validate ━ 6 Test ┅ 7 README ┄ 8 Share
 
-  ctrl+x tab, then V validate · T test · K types · O readme · J/P move · N new · D demo · esc to leave
+  ctrl+x tab (again: next tab), then V validate · T test · K types · O readme · J/P move · N new · D demo · esc to leave
   [ Validate ]  [ Test ]  [ Type-check ]  [ README ]
   [ Next ]  [ Prev ]  [ New mod ]  [ Demo ]
 ```
@@ -109,15 +109,25 @@ Then start a real one, and change it later:
 
 | `/modlab` command | What it does |
 |---|---|
-| `/modlab` | Open the pane; again to fold it to the status line |
+| `/modlab` | Open the pane; again to fold it to the status line. If the pane is open as a tab behind another, it comes to the front with the keyboard instead of folding |
 | `/modlab demo` | Play the demo |
-| `/modlab <mod>` | Open the pane on that mod |
+| `/modlab <mod>` | Open the pane on that mod (a pane behind another tab comes to the front) |
 | `/modlab new <idea>` | Put `/mod-builder:build <idea>` in the prompt box |
 
 Typing `/mod-builder:build` or `/mod-builder:edit` opens Mod Lab too. A command you type opens the pane at any
 width. When Mod Lab opens it on its own (`autoOpen`, or when Claude starts a build you asked for in plain words),
 the window must be at least 144 columns wide, or 110 once you've opened Mod Lab yourself. Narrower than that, watch
 the status line.
+
+Reaching the pane when other panes are open: `ctrl+x tab` shows the first tab and gives it the keyboard,
+each press after moves one tab right, and after the last tab the keyboard goes back to the prompt. `Esc` hands
+it back from any tab. A letter that is one of the pane's keys acts at once. To cycle without going through the
+first tab, bind `pane:next` and `pane:previous` (no default key) in `~/.claude/keybindings.json`; it works while a
+pane holds the keyboard:
+
+```json
+{"bindings":[{"context":"Pane","bindings":{"ctrl+x n":"pane:next","ctrl+x p":"pane:previous"}}]}
+```
 
 ## Install
 

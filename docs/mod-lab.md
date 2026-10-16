@@ -72,7 +72,7 @@ share" fires again, when all eight are green.
 
 | Command | What it does |
 |---|---|
-| `/modlab` | Open the pane; again to fold it to the status line |
+| `/modlab` | Open the pane; again to fold it to the status line. If the pane is open as a tab behind another, it comes to the front with the keyboard instead |
 | `/modlab demo` | Play the demo (12 s, nothing written to disk); <kbd>D</kbd> again stops it |
 | `/modlab <mod>` | Open the pane on that mod |
 | `/modlab new <idea>` | Put `/mod-builder:build <idea>` in the prompt box |

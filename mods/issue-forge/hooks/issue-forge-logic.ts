@@ -1904,6 +1904,19 @@ export function takeOverQuestion(run: Run, now: number): string {
   return `#${run.issue} is driven by another session (for ${drivenFor(run, now)}). If that session has ended, take it over?`
 }
 
+/**
+ * What a pane press of Stop or Publish asks (#31): the question, the choice that acts, the one that doesn't, and what a no
+ * answers, with the typed command that acts without asking. A run another session drives is named ahead of the question,
+ * so one question covers both (PR #96 review).
+ */
+export function pressQuestion(kind: 'stop' | 'publish', run: Run, now: number, isElsewhere: boolean): { question: string; yes: string; no: string; kept: string } {
+  const ask =
+    kind === 'stop'
+      ? { question: `Stop run #${run.issue}? Its branch and commits are kept.`, yes: 'Stop the run', no: 'Keep it running', kept: `left #${run.issue} as it is; /issue-forge stop ${run.issue} stops it.` }
+      : { question: publishQuestion(run), yes: 'Publish', no: 'Not now', kept: `left #${run.issue} unpublished; /issue-forge publish ${run.issue} publishes it.` }
+  return isElsewhere ? { ...ask, question: `#${run.issue} is driven by another session (for ${drivenFor(run, now)}). ${ask.question}` } : ask
+}
+
 export function elsewhereText(issue: number): string {
   return `#${issue} runs in another session; use that session, or answer ${TAKE_OVER} in an interactive one.`
 }
@@ -2016,4 +2029,15 @@ export function checkoutWorkspaceOf(text: string | null): Workspace {
 /** A session that ends lets go of its run; after /clear or /resume the process, and its drive, go on. */
 export function releasesOnEnd(reason: string): boolean {
   return reason !== 'clear' && reason !== 'resume'
+}
+
+/**
+ * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers, whole: a pane waiting undrawn
+ * (`isPlaced: false`, an unasked open on a narrow terminal) is no tab behind another, so it counts as not listed and the
+ * command's open seats it.
+ */
+export function paneAction(panes: readonly { id: string; isShown: boolean; isPlaced: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id && p.isPlaced)
+  return !pane ? 'open' : pane.isShown ? 'close' : 'show'
 }
