@@ -20,8 +20,14 @@ export const CLOUD_ENV = {
   azureManagedIdentity: ['IDENTITY_HEADER'],
 }
 
+/** The API provider keys duet stores (0.3.0): blanked for Codex too, so one provider never gets another's credential. OPENAI_API_KEY is Codex's own and stays. */
+export const PROVIDER_KEYS = [
+  'GEMINI_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'GROQ_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY',
+  'OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY', 'CEREBRAS_API_KEY', 'DUET_CUSTOM_API_KEY',
+]
+
 /** Every name Codex's env blanks, exactly. */
-export const BLANKED: readonly string[] = [...ORIGINAL_ENV, ...Object.values(CLOUD_ENV).flat()]
+export const BLANKED: readonly string[] = [...ORIGINAL_ENV, ...Object.values(CLOUD_ENV).flat(), ...PROVIDER_KEYS]
 
 /** Codex itself needs these, so they must reach it. */
 export const CODEX_NEEDS = ['OPENAI_API_KEY', 'CODEX_HOME', 'PATH', 'HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy']

@@ -711,3 +711,154 @@ pane's keys (again: the next tab); `/reload-plugins` picks up edits.
   - **Codex round 2, 4290452262 (fixed):** the demo opened its pane after awaited state writes in a detached block, so the open (with `focus` behind another tab) went out after the command hook returned and was unasked. `/duet demo` now awaits `openOrFront` in its hook, then starts the demo state detached. Red `b2233d8` (with every state write held, the open must already be recorded when the command answers), green `d758747`.
   - **Codex round 3, 4290573678 (owner's decision):** the `show` answer said "it has the keyboard", but `focus: true` is a request the surface grants only while the prompt has the keys over an empty composer. It now says `… to the front; it takes the keyboard if your prompt is empty (Esc gives it back).` (quoted above as changed). No `isFocused` check: its timing after a granted focus is unprobed. Red `3c6049b`, green `f5f2596`.
   - **Left for follow-ups, not fixed here:** the 500 ms `isShown` re-read is still unprobed (probe 1a).
+
+## Change 0.3.0 (2026-10-16)
+
+> "add a selector for api providers to duet claude mod. include a dozen or so providers from top 10 or top 20 rankings including but not limited to anthropic. ensure they share the same "api standard" so what we build for anthropic extends to other providers such as openai/chatgpt, gemini, etc... it will allow users to select anthropic or claude (whatever is industry standard best practices), followed by adding the API key then testing it. the api key is to be stored in the .env file in the project root. what other features/functionality am i not thinking of that are needed for this type of enhancement?"
+>
+> Decisions at clarification (the person's words, condensed): advisor, reviewer and `/duet review` as text-only roles on an API provider; implementer and routed subagent types stay on Codex until a tool loop exists (filed as its own issue). Key store: the user-level file, not the project's `.env`, since both sandbox settings make the project readable to every Codex run. Anthropic signed-in through `$.model.complete` (model, prompt, effort) when the session has a first-party credential; an API key over Chat Completions is the fallback and the path for every other provider. Selection is a route table, not a flag: per role and routed type, provider + model + effort, edited in the config pane and set by text as `reviewer=gemini:gemini-2.5-pro:high`; `codex` is one provider in that table.
+
+**Delivery, two PRs** (the person's choice at approval, to keep Codex's review rounds and the live key tests tractable): **0.3.0, this PR:** A (providers as data), C (key store), D (provider pane and commands, key test), the `Provider` type widened, redaction, the mention guard, the new key names blanked; tests 1, 4, 5, 7 (models/test parts), 8, 13, 22, 23 (provider pane), 24 (the guard). **0.4.0, the next PR:** B (routes), E (API runs, consent by provider, separation of duties, packing, timeout), F's `apiRoutes`/`apiConsent`/`apiMaxTokens`, the rest of the tests and the "Done means" bullets about runs. `apiCustomUrl`/`apiCustomModel` land with the `custom` provider in 0.3.0. The base URLs stay `[probe]` until the person's live key tests between the two PRs.
+
+### Why the design is a second backend, not a Codex setting
+
+- **Codex can't carry other providers.** The installed Codex (0.163.0) says in its binary that `wire_api = "chat"` `is no longer supported`; third-party guides date the removal to February 2026 (`[field]`). Codex therefore speaks only OpenAI's Responses API. Anthropic's OpenAI-compatible layer is Chat Completions at `https://api.anthropic.com/v1/` (`[field]`, platform.claude.com, read 2026-10-16: "primarily intended to test and compare model capabilities"), and Gemini's is Chat Completions at `https://generativelanguage.googleapis.com/v1beta/openai/` (`[field]`, ai.google.dev, "still in beta"). So a `model_providers` entry for Codex reaches OpenAI and Responses-API gateways only, and fails the ask.
+- **The shared standard is OpenAI's Chat Completions shape** (`POST {base}/chat/completions`, `Authorization: Bearer <key>`, `{ model, messages, max_tokens }`, `choices[0].message.content`, `usage.prompt_tokens/completion_tokens`, `GET {base}/models`). Every provider below documents that shape, so one client, built and tested once, serves all of them. It is one model call: no tools, no repository reads, no sandbox. Duet packs the context itself (below).
+- **The engine gives the two calls needed** (`[d.ts]`, 2.1.301): `$.http.fetch(url, { method, headers, body })` → `{ status, ok, headers, text }` (the body whole, no streaming, no timeout or abort option), and `$.model.complete({ model, prompt, system, maxTokens, effort, timeoutMs })` → `{ isAnswered, text, usage }` or `{ reason: 'api-error' | 'empty-reply' | 'aborted', status, error }`, through the session's own client and sign-in, no key. **Build gate:** `$.model.complete` is `[d.ts]` only; a throwaway probe under `claude -p` runs it once (`haiku`, `maxTokens: 8`) before the Anthropic signed-in path is relied on. If it is refused on this build, `anthropic` falls back to the key path and the SPEC records it.
+
+### What changes
+
+**A. Providers as data** (`PROVIDERS` in `duet-logic.ts`, pure, tested). Each entry: `id`, `name`, `baseUrl`, `keyName` (the conventional variable), `defaultModel`, `modelsPath` (`/models`, or `null` where the test falls straight to a completion), `auth` (`bearer`, or `session` for Anthropic signed-in). The base URLs and default models are `[field]` from the providers' docs and third-party lists and are **tagged `[probe]` until `/duet provider test` has hit each one live**; a URL that fails its test is fixed in the table, not worked around.
+
+| id | name | base URL | key variable | default model |
+| --- | --- | --- | --- | --- |
+| `anthropic` | Anthropic (Claude) | signed-in: `$.model.complete`; key: `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` | the session's model (signed-in); `claude-sonnet-5-5` (key) |
+| `openai` | OpenAI (API, no tools) | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `gpt-5` |
+| `codex` | Codex CLI (OpenAI, with tools and sandbox) | the `codex` process, as today | Codex's own sign-in | `codexModel` |
+| `google` | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY` | `gemini-2.5-pro` |
+| `xai` | xAI Grok | `https://api.x.ai/v1` | `XAI_API_KEY` | `grok-4` |
+| `mistral` | Mistral | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` | `mistral-large-latest` |
+| `deepseek` | DeepSeek | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| `groq` | Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| `together` | Together AI | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` |
+| `fireworks` | Fireworks AI | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` | `accounts/fireworks/models/llama-v3p3-70b-instruct` |
+| `openrouter` | OpenRouter (gateway) | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `anthropic/claude-sonnet-5.5` |
+| `perplexity` | Perplexity | `https://api.perplexity.ai` (no `/models`) | `PERPLEXITY_API_KEY` | `sonar-pro` |
+| `cerebras` | Cerebras | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` | `llama-3.3-70b` |
+| `ollama` | Ollama (local, no key) | `http://localhost:11434/v1` | none | the first model `/models` lists |
+| `custom` | any OpenAI-compatible endpoint (Azure OpenAI, LiteLLM, LM Studio, a company gateway) | `apiCustomUrl` option | `DUET_CUSTOM_API_KEY` | `apiCustomModel` option |
+
+"Anthropic or Claude": the provider is the company (`anthropic`), the model is Claude, as every SDK and gateway names them. `OpenAI` is the raw API (one call, no tools); `codex` is the same company's CLI with tools and a sandbox. The pane and `/duet routes` say which is which.
+
+**B. The route table** (`apiRoutes`, a text option; aliases `routes`, `route`). Comma-separated entries `<key>=<provider>[:<model>[:<effort>]][;max=<tokens>][;timeout=<minutes>]`:
+- `key` is a role (`advisor`, `reviewer`, `implementer`, by any of their names as `codexRunMode` reads them), `review` (`/duet review`), or a subagent type listed in `codexAgents`;
+- `provider` is an id from the table; `model` is passed as given (empty: the provider's default); `effort` is one of `low`, `medium`, `high`, `xhigh`, `max`. The provider is read up to the first `:`; the effort is the text after the last `:` **only when it is one of the five levels**, so `ollama:llama3:8b` is model `llama3:8b` with no effort;
+- `max` caps output tokens for that route (default `apiMaxTokens`, 8192); `timeout` is that route's minutes (default `timeoutMinutes`);
+- an entry with no key (`anthropic:claude-opus-5-5:high`) is the default for the text-only keys (advisor, reviewer, review). `implementer` and routed types take only `codex` entries: another provider there is **refused by `/duet config`**, and `/duet routes` says `implementer and routed types run on Codex only (no tool loop yet)`;
+- empty (the default): everything on Codex, exactly today's behaviour. `codexModel` stays and applies to Codex routes with no model; a route's model wins. A part that doesn't parse is refused with its text, as `codexRunMode` does.
+
+Effort maps to `reasoning_effort` in the Chat Completions body, sent as given and only when set; a provider that rejects a level (OpenAI answers `400` for a value it doesn't know) makes the run a refusal that names the value and the level the route set (`duet: google rejected reasoning_effort "xhigh" (400: …); set a level the provider documents`), no clamping, to `-c model_reasoning_effort="<level>"` for Codex (`model_reasoning_effort` is a config key in the 0.163.0 binary, `[probe]`; which levels Codex accepts is checked live), and to `effort` on `$.model.complete`. Registered role descriptions are built from the route at `session.start` (`Runs on Google Gemini (gemini-2.5-pro), not Claude. …`), so Claude reads where a role really goes; a config change reloads and re-registers. Role names stay `duet:codex-advisor` and `duet:codex-reviewer` (renaming them is a breaking change; follow-up issue). Wait or background follow `modeOf` as today.
+
+**C. Key store: `~/.claude/duet-data/.env`** (`HOME`, else `USERPROFILE`), `NAME=value` lines; a pure parser (`export ` prefix, single or double quotes, `#` comments, CRLF) and a pure upsert that rewrites one line and keeps every other byte. Precedence: the process environment first (`$.env.get` on each literal `keyName`, which validate lists), then the file; the pane names the source. After each write on a POSIX host duet runs `chmod 600 <file>` (`$.fs.write` takes no mode, `[d.ts]`); the result names a `chmod` that failed. **Not the project's `.env`**: a key there is readable by every Codex run under both `codexFsScope` settings and by any Bash command in the repository, which breaks the non-negotiable about not handing one provider another's credentials. Under `codexFsScope: anything` Codex can still read the user file, as it can any file; under `project` it can't. The README says both. Every `keyName` in the table joins `BLANKED_ENV` (and the exact list in `tests/env-names.ts`), `OPENAI_API_KEY` excepted, which Codex needs. **Headless:** `claude -p` has no pane, so keys come from the environment or a file edited by hand; `/duet provider test <id>` works as text.
+
+**D. The provider pane and commands** (`/duet provider …`, pane `duet-providers`, `focus: true` on open, same key style as `/duet config`):
+- `/duet provider` opens the pane: one row per provider: name, auth (`signed-in` · `key …a1b2` from the file · `key …a1b2 from env` · `no key`), last test (`ok 412 ms gemini-2.5-pro` · `401 unauthorized` · `untested`), and `●` on the providers the route table uses. Keys: `j`/`k` move; `e` opens one `Input` (`prov-key`) for the key; **the key is visible while typed** (`Input` has no masking, `[d.ts]`) and shown as `…last4` once Enter stores it; `t` tests; `m` lists the provider's models (`GET /models`, the Codex picker's list reused: `1`–`9` pick a default model into the route draft, `r` refreshes); `x` removes a key after `$.ui.ask` (a hotkey that deletes asks first; the typed command is immediate); `c` closes. No `Input` on the surface (mobile): the pane prints the rows as text and says to use the commands.
+- `/duet provider list` prints the rows. `/duet provider key <id>` opens the pane on that row with the `Input` open; **a key typed as a command argument is refused** (`duet: never type a key into the prompt; it would land in the transcript. Use the pane's Input or the key file.`), since a command's text goes to the transcript and the model. `/duet provider test <id> [model]`, `/duet provider models <id>`, `/duet provider remove <id>`.
+- **Test** (`t`, `test`): store first, then test, so a failed test leaves a known state. `GET {base}/models` with the key: `ok` records status, latency and the model count; `404`/`405`, or a provider with `modelsPath: null`, falls to a one-token completion (`max_tokens: 1`, prompt `Reply with ok.`) that records status, latency and the model used (`anthropic` signed-in tests through `$.model.complete`). Some providers bill that fallback; the row says `1 token`. Results (status, time, model; never the key) go in `$.store` key `duet:providers:tests` (shared across sessions, no secret in it).
+- **Redaction:** keys never reach the pane, toasts, `$.ui.log`, `runs.jsonl`, `review-*.md`, `d<n>.out.md`, the handoff or error text; every text duet shows or writes passes `redact(text, keys)`, which replaces each stored key's value with `[redacted]`. Request bodies are never logged. A `prompt.mention` guard (`{ path: /duet-data[\\/]\.env$/ }`, with `.catch`) denies reading the key file into Claude's context.
+
+**E. API runs** (`runApi` in `register.tsx`, one top-level function; the request and response are pure):
+1. **Consent**, once per provider per session (`consents: Record<provider, Consent>` replaces the single `consent` atom; Codex keeps its text): `Send this task to Google Gemini? Duet sends the task, the exact diff and 4 attached files (12 KB) to generativelanguage.googleapis.com under your GEMINI_API_KEY. Allow for the rest of this session?` `apiConsent` (`ask` | `allow`) is the provider-wide equivalent of `codexConsent` for `claude -p`. For `anthropic` signed-in: `… through this session's Claude sign-in, as a separate billed request`.
+2. **Separation of duties** (kept on purpose: independence outranks an Opus-reviews-Sonnet setup, so the signed-in path serves the advisor only). A review (the reviewer role or `/duet review`) is refused, naming the rule, when its route's **model family** implemented. The family comes from `familyOf(provider, model)`: the provider id for a first-party provider (`anthropic`, `openai`, `codex` → `openai`, `google`, …); for a gateway (`openrouter`, `together`, `fireworks`, `custom`) and for any model id, a `claude` model (`anthropic/claude-…`, `claude-…`) is `anthropic` and a `gpt-`, `o1`/`o3`/`o4` or `openai/` model is `openai`; anything else is the provider id. `anthropic` is refused always (Claude implements in Claude Code), `openai` once an editing Codex run has happened in this session. The advisor is free. The refusal: `duet: a review never goes to the model family that implemented (anthropic, via openrouter anthropic/claude-sonnet-5.5); set reviewer to another provider in apiRoutes.`
+3. **Concurrency** counts API runs with Codex runs against `maxConcurrent`.
+4. **Context packing** (pure `packContext`): the model has no tools, so the handoff says `You cannot read the repository; what you need is attached below.` and attaches, for the reviewer and `/duet review`, the exact diff (`git diff` for uncommitted, `git diff <base>` for `--base`, `git diff <sha>^ <sha>` for `--commit`; never an implementer summary) and, for every role, the files the task names by a path that exists under the session folder (`$.fs.exists`, `$.fs.read`), to **12 files, 64 KB each, 256 KB in all, the diff 512 KB**; what was cut or skipped is listed in the handoff and in the footer, never silently. The packed context (diff and attachments) passes `redact(text, keys)` before it leaves, so one of your own provider keys never travels under another provider's key; other secrets aren't filtered, and the consent text says what leaves.
+5. **Request:** `POST {base}/chat/completions`, `Authorization: Bearer <key>`, body `{ model, messages: [{ role: 'system', content: <envelope + role instructions> }, { role: 'user', content: <attachments + task> }], max_tokens, reasoning_effort? }`; no `temperature` or `top_p` (Anthropic's layer rejects values other than its defaults on current models). `anthropic` signed-in: `$.model.complete({ model, system, prompt, maxTokens, effort, timeoutMs })`.
+6. **Timeout:** `$.model.complete` takes `timeoutMs`. `$.http.fetch` can't be cancelled, so the run races a `$.clock.after(timeout, cb)` timer callback (never `$.clock.sleep`, which counts against the hook's 10 s budget while an advisor run waits in the hook): on timeout the row is `error` (`timed out after 5 min; the request itself could not be cancelled`) and a late answer is dropped. **Zero retries**: a `429` or `5xx` is a refusal naming the status and `retry-after` when the header is there.
+7. **Refusals the engine makes are visible:** a fetch the host refuses (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, an organization's web-fetch policy) is reported as `duet: the host refused the request to <host> (<reason>); nothing was sent`; a `$.model.complete` `api-error` names its status and error; `empty-reply` and `aborted` are named as such. Never a silent fallback to Codex or Claude.
+8. **Answer** in the Agent tool's `completed` or `async_launched` shape as today, footer `[duet d3 · google gemini-2.5-pro · no tools · diff 8 KB, 4 files attached (1 skipped: over 64 KB) · base abc1234 · one-shot run: start a new duet task to follow up]`; **no live token count while it runs** (the body arrives whole), the row says `waiting for <provider>`.
+9. **Measure:** `Task.provider` and `RunLine.provider` widen from `'codex' | 'claude'` to any provider id (`types/index.d.ts`, the contract); tokens from `usage.prompt_tokens + completion_tokens` (Chat Completions) or `usage.input_tokens + output_tokens` (`$.model.complete`); `/duet stats` groups by provider as it does now, so API runs sit beside Codex and Claude rows. Prices aren't tracked (they change; a follow-up).
+10. **`/duet review` on an API route** runs 4–9 with the reviewer role's instructions and the diff; the verdict line is parsed by `verdictOf` as today. `review` on `codex` is unchanged.
+
+**F. Options added** (`userConfig`, all in `/duet config`):
+
+| Key | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `apiRoutes` | string | `""` (everything on Codex) | The route table (B). |
+| `apiConsent` | `ask` / `allow` | `ask` | Once per provider per session, or pre-approved (headless). |
+| `apiMaxTokens` | number | `8192` | Output cap for API runs without a route `max`. |
+| `apiCustomUrl` | string | `""` | The `custom` provider's base URL (must be `https://`, or `http://localhost`/`127.0.0.1`). |
+| `apiCustomModel` | string | `""` | The `custom` provider's default model. |
+
+### What gets touched (the delta)
+
+- **Files written (repo, the worktree `scratch/duet-api-providers`):** `mods/duet/hooks/duet-logic.ts` (providers, routes, dotenv, redact, request/response, packing, separation rule), `hooks/register.tsx` (`runApi`, the provider pane, `/duet provider`, the mention guard, consent by provider), `types/index.d.ts` (`Provider` widened; `consents`, `providerAt`, `providerEditing`, `providerModels`, `providerTests`, `providerNote` atoms), `plugin.json` (options, 0.3.0), `tests/*` (+ `tests/providers.test.ts`), `tests/env-names.ts` (the new key names), `SPEC.md`, `README.md`; `.claude-plugin/marketplace.json` (0.3.0). `plugins/mod-builder/skills/build/references/gotchas.md` gains the `$.model.complete` probe result and the Codex `wire_api` finding.
+- **Files outside the repo, at run time:** reads and writes `~/.claude/duet-data/.env` (keys; `chmod 600` after each write on POSIX); reads nothing else new. `$.store` gains `duet:providers:tests` (status, time, model per provider; no key).
+- **Network, directly by the mod (new):** `https://` requests to the chosen providers' hosts in the table, and to `apiCustomUrl`; `http://localhost:11434` for Ollama. Each carries the task, the diff and attached files under your key. Before: none directly.
+- **Model calls by the mod (new):** `$.model.complete` for `anthropic` signed-in: a separate billed request on the session's sign-in, outside the conversation.
+- **Environment:** reads each table `keyName` (literal names, listed by validate), `HOME`, `USERPROFILE`; blanks the new key names in Codex's child env.
+- **Processes:** `chmod`; `git diff` for the diff text (new); `codex` as today, plus `-c model_reasoning_effort` when a Codex route sets effort.
+- **Asks:** one consent question per API provider per session; one before a hotkey removes a key.
+- **Costs:** each API run bills the provider; a key test is free on `/models` and one token on the fallback; a `$.model.complete` call bills the session's account.
+- **Build-time probes:** `$.model.complete` under `claude -p` (one `haiku` call, ~10 tokens); one live `provider test` per provider the person has a key for (I have none here, so the table stays `[probe]` for the rest; the README says which were hit).
+- **Bypasses, unchanged:** a routed Agent call is answered above Claude's permission check; API runs have no tools, so there is nothing to sandbox, but what is attached leaves the machine.
+
+### What I should see
+
+```
+ D U E T · providers                                     3 keys · 2 tested
+ ──────────────────────────────────────────────────────────────────────────
+ ▸ ● anthropic   Anthropic (Claude)      signed-in              untested
+   ● google      Google Gemini           key …a1b2              ok 412 ms gemini-2.5-pro
+     openai      OpenAI (API, no tools)  key …9f3e from env     401 unauthorized
+     codex       Codex CLI (with tools)  codex login            —
+     xai         xAI Grok                no key                 —
+     mistral     Mistral                 no key                 —
+     …
+ ──────────────────────────────────────────────────────────────────────────
+ routes  advisor → anthropic (signed-in, high) · reviewer → google gemini-2.5-pro
+         review → google · implementer, routed types → codex (no tool loop yet)
+ ● used by a route   keys: e enter key  t test  m models  x remove  j/k  c close
+ [ Enter key ]  [ Test ]  [ Models ]  [ Remove ]  [ Close ]
+```
+
+Key entry (after `e`): the row shows `GEMINI_API_KEY: [typing is visible until Enter] ▏`; after Enter: `google  key …a1b2 (saved to ~/.claude/duet-data/.env, chmod 600) · t tests it`. Test running: `testing… GET /models`. Test failed: `✕ 401 unauthorized (invalid x-api-key)`, the key never printed. Too narrow (< 60 columns): name, auth and test only. Empty: `no provider keys yet · e on a row enters one · codex signs in with codex login`. A run row in the main pane: `d3  google  gemini-2.5-pro  duet:codex-reviewer  running  0m41s  waiting for google`.
+
+### Tests (one per requirement that won't bend)
+
+Logic (`tests/duet-logic.test.ts`, `tests/providers.test.ts`):
+1. `PROVIDERS`: ids unique, none is `claude`; every entry has a name, base URL (`https://` or localhost), key variable (or none for `ollama`), default model; `anthropic` is `auth: session`.
+2. `parseRoutes`: `reviewer=gemini:gemini-2.5-pro:high` → provider, model, effort; `ollama:llama3:8b` → model `llama3:8b`, no effort; `;max=16000;timeout=5` honoured; a keyless entry is the default for advisor, reviewer and review only; `implementer=google` and `code-explorer=anthropic` are refused naming "Codex only"; an unknown provider, a sixth effort level and a bad `max` are refused with their text; `""` routes everything to `codex`.
+3. `routeFor(key, routes, codexModel)` precedence: entry → keyless default → codex with `codexModel`.
+4. dotenv: parse (`export`, quotes, comments, CRLF, `=` in a value) and upsert (one line changed, every other byte kept, a missing file created) round-trip; `keyFor(provider, env, file)` prefers the process variable and names the source.
+5. `redact`: every stored key is replaced in text, error JSON and headers; a 4-character suffix is what `maskKey` shows.
+6. `chatRequest`: URL `{base}/chat/completions`, `Authorization: Bearer <key>`, messages system then user, `max_tokens` from the route, `reasoning_effort` only when effort is set, never `temperature`/`top_p`; `completeRequest` for signed-in Anthropic maps model, system, prompt, maxTokens, effort, timeoutMs.
+7. `parseChatReply`: text, tokens from `usage`; an error body → `{ status, message }` with the key redacted; a `400` naming `reasoning_effort` → a refusal that names the level the route set; `parseModelsReply` lists ids.
+8. `testPlan`: `/models` 200 → ok with latency; 404/405 or `modelsPath: null` → the one-token completion; 401 → `unauthorized`, no fallback.
+9. `packContext`: attaches named files that exist, caps 12 / 64 KB / 256 KB / diff 512 KB, lists what was cut or skipped, never includes a file outside the session folder, and a stored key inside the diff or a file comes out `[redacted]`.
+10. `reviewAllowed`: reviewer → `anthropic` refused always, and so is `openrouter:anthropic/claude-sonnet-5.5` and `custom` with a `claude-…` model (`familyOf`); → `openai`/`codex`/`openrouter:openai/gpt-5` refused after an editing Codex run this session; `google` allowed; advisor never refused.
+11. `consentTextFor(provider, what)` names the provider, the host, the key variable (or the session sign-in) and the sizes attached.
+12. `codexArgv` with effort → `-c model_reasoning_effort="high"`; without → unchanged argv (every existing argv test still passes).
+13. `BLANKED_ENV` equals the exact list with the new key names, `OPENAI_API_KEY` passed through (`env-names.ts` updated in the same commit).
+14. `roleDescription` with a route → `Runs on Google Gemini (gemini-2.5-pro), not Claude.`; `runLineOf`/`summarize` group a `google` row beside `codex` and `claude`.
+
+Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.test.tsx`):
+15. `apiRoutes: 'advisor=google:gemini-2.5-pro'`: a `duet:codex-advisor` call → one `http.fetch` stub call to `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` with the Bearer header from the stubbed key file, no `process.run` of `codex`, the `completed` record holds the reply and the `google gemini-2.5-pro · no tools` footer, and neither the record nor `runs.jsonl` holds the key.
+16. `apiRoutes: 'advisor=anthropic'`: the same call → one `model.complete` stub call with `effort` and `maxTokens`, no `http.fetch`; a `reason: 'api-error'` answer → `{ deny }` naming the status.
+17. `apiRoutes: 'reviewer=anthropic'`: a `duet:codex-reviewer` call → `{ deny }` naming separation of duties, no fetch; `reviewer=google` → routed.
+18. `apiConsent: ask`, answer No → `{ deny }` naming the provider, no fetch; the next call to the same provider is refused without asking; a different provider asks.
+19. A `429` reply → `{ deny }` naming `429` and `retry-after`, exactly one fetch; a fetch stub that denies with `nonessential traffic` → the refusal names the host and reason.
+20. `/duet review` with `review=google`: the fetch body holds the `git diff` stub's text under the reviewer's instructions, no implementer summary, and the row's detail is the verdict line; `review` on `codex` → the `codex exec review` argv as today.
+21. The timeout race: a fetch held past the route's `timeout` → the row is `error` naming the timeout and that the request couldn't be cancelled; the late answer changes nothing.
+22. `/duet provider key google sk-abc` → refused, no write; `/duet provider key google` opens the pane with the `Input` open; the Input's `onSubmit` writes the key file (one upserted line, `chmod 600` run) and the row shows `…last4`; `x` asks before removing; `t` runs the test plan and the row shows its result; `/duet provider test perplexity` goes straight to the one-token completion.
+23. UI: the providers pane on `terminal` and `desktop` finds the copy above in each state (empty, keys, testing, failed, too-narrow, no-Input surface); the main pane shows `waiting for google` on a running API row; `/duet demo` adds one API row.
+24. `session.start` registers `codex-advisor` with the route's provider in its description; a `prompt.mention` of `~/.claude/duet-data/.env` is denied.
+
+### Done means
+
+- In `/duet provider` I move to `google`, press `e`, paste a Gemini key, press Enter: the row shows `key …a1b2`, the file `~/.claude/duet-data/.env` holds `GEMINI_API_KEY=…` with mode 600 and nothing else of mine changed; `t` shows `ok <ms> gemini-2.5-pro`; a wrong key shows `401` and never the key.
+- `/duet config routes "advisor=anthropic::high, reviewer=google:gemini-2.5-pro"` is accepted; `/duet routes` prints both routes and that implementer and routed types stay on Codex; `implementer=google` is refused.
+- Asking Claude for "a second opinion" spawns `duet:codex-advisor`, whose description now says it runs on Anthropic; I'm asked once to allow sending to Anthropic through the session sign-in; the answer comes back with the `anthropic` footer and a row with time and tokens; no `codex` process ran.
+- Asking for "an independent review" runs the reviewer on Gemini in the background; the message arrives as today; `/duet review` with `review=google` shows a verdict in the pane; `/duet stats` groups `google` beside `codex` and `claude`.
+- With `apiRoutes` empty, every existing test passes unchanged and the live behaviour is 0.2.13's.
+- `/duet provider key google <key>` typed into the prompt is refused and nothing is written.
+- All tests pass; validate clean (both guards have `.catch`; the Network and Environment rows of "What it reaches" are regenerated from its output); tsc clean; `/duet demo` shows every state; the `$.model.complete` probe result is in `gotchas.md`; follow-up issues filed: a tool loop for API providers (implementer and routed types), renaming `duet:codex-*` roles, per-provider prices.
