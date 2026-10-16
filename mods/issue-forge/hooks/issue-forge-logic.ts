@@ -657,7 +657,7 @@ export function gateG(p: Profile, baseline: Baseline | null, f: GateGFacts, root
   }
 }
 
-// ── New plugins (Change 0.5.0) ──────────────────────────────────────────
+// ── New plugins (Change 0.6.0) ──────────────────────────────────────────
 
 /** `build … with /mod-builder:build` on one line; not the `build` of `/mod-builder:build` itself. */
 const BUILD_WITH_MOD_BUILDER = /(?<![\w:/-])build\b.*?\bwith\b.*?\/mod-builder:build\b/i
@@ -835,7 +835,7 @@ export function repoOfRemoteUrl(url: string): string | null {
 
 export type RemoteVerdict = { kind: 'match' } | { kind: 'unrecognised' } | { kind: 'ask'; repo: string } | { kind: 'other'; repo: string }
 
-const hostOf = (repo: string) => repo.slice(0, repo.indexOf('/')).toLowerCase()
+export const hostOf = (repo: string) => repo.slice(0, repo.indexOf('/')).toLowerCase()
 
 /**
  * Whether a remote URL names `repo` (PR #68 review). An https host is the host; git hands an ssh remote's host to ssh, and
@@ -847,6 +847,39 @@ export function remoteVerdict(url: string, repo: string): RemoteVerdict {
   if (!remote) return { kind: 'unrecognised' }
   if (isSameRepo(remote.repo, repo) || (remote.isSsh && isSameOwnerRepo(remote.repo, repo))) return { kind: 'match' }
   return hostOf(remote.repo) === hostOf(repo) ? { kind: 'ask', repo: remote.repo } : { kind: 'other', repo: remote.repo }
+}
+
+/** The host `ssh -G` is asked about for a fork clone's URL: an ssh URL's host when it isn't `repo`'s; any other needs none. */
+export function sshHostToResolve(url: string, repo: string): string | null {
+  const remote = parseRemote(url)
+  return remote?.isSsh && hostOf(remote.repo) !== hostOf(repo) ? hostOf(remote.repo) : null
+}
+
+/** `ssh -G <host>`'s `hostname` line: the host ssh connects to once ~/.ssh/config is applied (a nickname's HostName). */
+export function sshHostname(stdout: string): string | null {
+  const host = stdout
+    .split(/\r?\n/)
+    .find(line => /^hostname\s/i.test(line))
+    ?.trim()
+    .split(/\s+/)[1]
+  return host ? host.toLowerCase() : null
+}
+
+/**
+ * What a fork clone's remote URL names (PR #87 review, the owner's choice). Unlike `remoteVerdict`, an ssh host other than
+ * `repo`'s is never assumed to be its nickname: it counts only as ssh resolves it (`resolved`, from `ssh -G`; null or absent
+ * when ssh couldn't say), with GitHub's ssh-over-443 host taken for github.com. Origin's own check keeps #25's rule (#71).
+ */
+export function forkRemoteVerdict(url: string, repo: string, resolved?: string | null): RemoteVerdict {
+  const remote = parseRemote(url)
+  if (!remote) return { kind: 'unrecognised' }
+  let named = remote.repo
+  if (sshHostToResolve(url, repo) !== null) {
+    if (!resolved) return { kind: 'unrecognised' }
+    named = `${resolved === 'ssh.github.com' ? 'github.com' : resolved}${named.slice(named.indexOf('/'))}`
+  }
+  if (isSameRepo(named, repo)) return { kind: 'match' }
+  return hostOf(named) === hostOf(repo) ? { kind: 'ask', repo: named } : { kind: 'other', repo: named }
 }
 
 /** The same host, owner and repository, in any case; a null side never matches. */
@@ -875,13 +908,94 @@ export function issueLabel(run: Run): string {
   return `${run.ghRepo ? repoLabel(run.ghRepo) : ''}#${run.issue}`
 }
 
+// ── Fork clones (#26) ─────────────────────────────────────────────────────
+
+/** What a remote URL names once resolved: the run's repository, another (gh's name for it), or nothing readable (null). */
+export type RemoteFound = 'match' | { other: string | null }
+
+/**
+ * The fork a fork clone's origin pushes to: every push URL names one repository on `repo`'s host that isn't `repo`, and the
+ * fetch URL is that fork too, so `git ls-remote origin`, which reads the fetch URL, lists the fork's branches (PR #87 review;
+ * Codex P1 4290274553: fetching from `repo` itself hid them).
+ */
+export function forkOfOrigin(fetch: RemoteFound, pushes: readonly RemoteFound[], repo: string): string | null {
+  let fork: string | null = null
+  for (const found of pushes) {
+    if (found === 'match' || found.other === null || hostOf(found.other) !== hostOf(repo)) return null
+    if (fork !== null && !isSameRepo(fork, found.other)) return null
+    fork ??= found.other
+  }
+  if (fork === null) return null
+  return fetch !== 'match' && isSameRepo(fetch.other, fork) ? fork : null
+}
+
+/** The remotes whose fetch URL names the project: none, one (the base remote), or several (a block). */
+export type BaseRemote = { kind: 'none' } | { kind: 'one'; remote: string } | { kind: 'several'; remotes: string[] }
+
+export function baseRemoteOf(matching: readonly string[]): BaseRemote {
+  const [first, ...rest] = matching
+  if (first === undefined) return { kind: 'none' }
+  return rest.length === 0 ? { kind: 'one', remote: first } : { kind: 'several', remotes: [...matching] }
+}
+
+/**
+ * Whether `gh repo view <fork> --json isFork,parent` says a fork of `repo`: the parent's owner login and name are
+ * `repo`'s, in any case. gh prints no host for the parent: it is the fork's own, which the caller has found to be
+ * `repo`'s, so `repo`'s host stands in for it.
+ */
+export function isForkOf(stdout: string, repo: string): boolean {
+  let view: { isFork?: unknown; parent?: { name?: unknown; owner?: { login?: unknown } | null } | null }
+  try {
+    view = JSON.parse(stdout) as typeof view
+  } catch {
+    return false
+  }
+  const login = view?.parent?.owner?.login
+  const name = view?.parent?.name
+  if (view?.isFork !== true || typeof login !== 'string' || typeof name !== 'string') return false
+  return isSameRepo(`${hostOf(repo)}/${login}/${name}`, repo)
+}
+
+/** The owner of a `host/owner/repo`. */
+export function ownerOf(repo: string): string {
+  return repo.slice(repo.indexOf('/') + 1, repo.lastIndexOf('/'))
+}
+
+/** `gh pr create --head`: `<owner>:<branch>` for a fork's branch (its owner is not the project's), the branch alone otherwise. */
+export function headArg(branch: string, headRepo?: string): string {
+  return headRepo === undefined ? branch : `${ownerOf(headRepo)}:${branch}`
+}
+
+/**
+ * A kept branch is reused only while origin pushes where its name was checked: the fork it was made for (`kept`), or the
+ * project itself when there was none; `now` is the fork preflight finds (Codex on PR #87).
+ */
+export function keptForkBlock(kept: string | undefined, now: string | undefined, repo: string): { reason: string; next: string } | null {
+  if (kept === undefined ? now === undefined : isSameRepo(kept, now ?? null)) return null
+  const was = repoLabel(kept ?? repo)
+  return { reason: `origin now pushes to ${repoLabel(now ?? repo)}, not ${was}, where the run's branch was named`, next: `point origin back at ${was}, or start a new run` }
+}
+
+/** The remote a run fetches its base from: the project's in a fork clone, origin in every other run. */
+export function baseRemoteOfRun(run: { baseRemote?: string }): string {
+  return run.baseRemote ?? 'origin'
+}
+
+/** The remote-tracking ref of the base, `<remote>/<base>`. */
+export function baseRefOf(run: { base: string; baseRemote?: string }): string {
+  return `${baseRemoteOfRun(run)}/${run.base}`
+}
+
 // ── State (§7.4) ──────────────────────────────────────────────────────────
 
-/** The run's branch, the folder it is checked out in, and its base, once preflight has made them. */
-export type Kept = { branch: string; workRoot: string; base: string }
+/**
+ * The run's branch, the folder it is checked out in, and its base, once preflight has made them; in a fork clone also the base
+ * remote and the fork the branch's name was checked on (Codex on PR #87).
+ */
+export type Kept = { branch: string; workRoot: string; base: string; baseRemote?: string; headRepo?: string }
 
 export type RunEvent =
-  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string }
+  | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string; baseRemote?: string; headRepo?: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string }
@@ -974,7 +1088,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
   if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
-  // The guard refused a manifest: the phase's gate blocks on it (Change 0.5.0).
+  // The guard refused a manifest: the phase's gate blocks on it (Change 0.6.0).
   if (ev.type === 'newPlugin') return isActive(run) ? { ...run, newPlugin: ev.path } : run
   if (ev.type === 'resume') {
     if (isWorking(run.step)) {
@@ -991,7 +1105,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   switch (run.step) {
     case 'preflight':
       if (ev.type !== 'preflighted') return run
-      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), ghRepo: ev.repo, step: 'baseline' }
+      return { ...run, title: ev.title, body: ev.body, url: ev.url, base: ev.base, branch: ev.branch, mergeBase: ev.mergeBase, profile: ev.profile, ...(ev.workRoot ? { workRoot: ev.workRoot } : {}), ghRepo: ev.repo, ...(ev.baseRemote ? { baseRemote: ev.baseRemote } : {}), ...(ev.headRepo ? { headRepo: ev.headRepo } : {}), step: 'baseline' }
     case 'baseline':
       if (ev.type !== 'baselined') return run
       return { ...run, baseline: ev.baseline, mergeBase: ev.mergeBase ?? run.mergeBase, step: 'red', times: start(run, 'red', now) }
@@ -1070,12 +1184,15 @@ export function checkoutState(f: CheckoutFacts): CheckoutState {
   return { isBusy: reasons.length > 0, why: reasons.join(', ') }
 }
 
-/** `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. */
-export function workspacePlan(mode: Workspace, s: CheckoutState, base: string): WorkspacePlan {
+/**
+ * `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. `ref` is where the profile
+ * was read: `upstream/<base>` in a fork clone (PR #87 review).
+ */
+export function workspacePlan(mode: Workspace, s: CheckoutState, base: string, ref = `origin/${base}`): WorkspacePlan {
   if (mode === 'worktree') return { kind: 'worktree' }
   if (!s.isBusy) return { kind: 'here' }
   if (mode === 'ask') return { kind: 'ask' }
-  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads origin/${base}'s copy), or clean the checkout` }
+  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads ${ref}'s copy), or clean the checkout` }
 }
 
 export type WorktreeState = 'present' | 'missing' | 'unregistered'
@@ -1184,7 +1301,7 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
 }
 
 /**
- * The live agent's edit of a Claude Code plugin manifest (Change 0.5.0): its path, absolute and relative to the
+ * The live agent's edit of a Claude Code plugin manifest (Change 0.6.0): its path, absolute and relative to the
  * run's folder. The guard refuses it when no such file exists yet: editing one that exists (a version bump) passes.
  */
 export function manifestOf(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext, testGlobs: readonly string[] = []): { absolute: string; relative: string } | null {
@@ -1245,18 +1362,19 @@ function mergeSaid(m: MergeCheck, say: MergeWords): string {
 }
 
 export function mergeLine(run: Run): string | null {
-  const base = `origin/${run.base}`
+  const base = baseRefOf(run)
   return run.merge ? mergeSaid(run.merge, { error: why => `merge check unavailable: ${why}`, clean: `merges cleanly with ${base}`, conflict: files => `conflicts with ${base}: ${files}` }) : null
 }
 
 /** The publish question without the merge check: the pane's ready line, and the question's head. */
 export function publishAsk(run: Run): string {
-  return `Push ${run.branch} and open a pull request${run.ghRepo ? ` on ${repoLabel(run.ghRepo)}` : ''} against ${run.base}?`
+  // A fork run's branch goes to the fork, its pull request to the project (PR #87 review).
+  return `Push ${run.branch}${run.headRepo ? ` to ${repoLabel(run.headRepo)}` : ''} and open a pull request${run.ghRepo ? ` on ${repoLabel(run.ghRepo)}` : ''} against ${run.base}?`
 }
 
 export function publishQuestion(run: Run): string {
   const ask = publishAsk(run)
-  return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with origin/${run.base} in: ${files}.` }) : ask
+  return run.merge ? mergeSaid(run.merge, { error: why => `${ask} (merge check unavailable: ${why})`, clean: ask, conflict: files => `${ask} It conflicts with ${baseRefOf(run)} in: ${files}.` }) : ask
 }
 
 // ── Prompts and messages (§6) ─────────────────────────────────────────────
@@ -1268,7 +1386,7 @@ const TRUST =
 
 /** A message reaches the main conversation; the mod reads only the final answer (PR #86 review). */
 const REPORT = 'Report only in your final answer: never send a message to the lead or another agent. The issue-forge mod reads your final answer when you stop.'
-/** Every phase's rules end with this (Change 0.5.0): a new plugin is mod-builder's job. */
+/** Every phase's rules end with this (Change 0.6.0): a new plugin is mod-builder's job. */
 const NO_NEW_PLUGIN = ' Never create a new Claude Code plugin (a new .claude-plugin/plugin.json): if the issue needs one, stop and say so.'
 
 export const RULES: Record<Phase, string> = {
@@ -1463,8 +1581,8 @@ export function prBody(run: Run): string {
           '',
           mergeSaid(run.merge, {
             error: why => `At publish time the merge check couldn't run: ${why}`,
-            clean: `At publish time this merged cleanly with origin/${run.base}.`,
-            conflict: files => `At publish time this conflicted with origin/${run.base} in: ${files}.`,
+            clean: `At publish time this merged cleanly with ${baseRefOf(run)}.`,
+            conflict: files => `At publish time this conflicted with ${baseRefOf(run)} in: ${files}.`,
           }),
           '',
         ]
@@ -1628,7 +1746,7 @@ export function badgeOf(run: Run, now: number): string {
 }
 
 /** `/issue-forge status` as text; `others` are the repository's other active runs (Change 0.3.0). */
-/** What follows a block's next step: resume, or for a block resume can't clear, stop (Change 0.5.0). */
+/** What follows a block's next step: resume, or for a block resume can't clear, stop (Change 0.6.0). */
 export function afterBlock(run: Run): string {
   return run.blocked?.isFinal ? `/issue-forge stop ${run.issue}` : '/issue-forge resume'
 }

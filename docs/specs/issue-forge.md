@@ -47,7 +47,7 @@ without a coverage tool (the gate can't be measured, so the run refuses to start
 - **Run**: one attempt to take issue *N* from open to a pull request, with its state saved (§7.4).
 - **Base**: the branch the pull request targets: the profile's `baseBranch`, unless a line of the
   issue body matches `^Base branch: (\S+)$`. Then the first such line's branch is used.
-- **Merge base**: `git merge-base HEAD origin/<base>`, computed once when the run's branch is created.
+- **Merge base**: `git merge-base HEAD <remote>/<base>` (`<remote>` is `origin`, or the project's remote in a fork clone), computed once when the run's branch is created.
 - **Test files**: paths matching the profile's `testGlobs`.
 - **Source files**: paths matching `sourceGlobs` and not matching `testGlobs` or `excludeGlobs`.
 - **Measured source**: source files that the coverage tool instruments. **Unmeasured source**: source
@@ -71,7 +71,7 @@ state named, with the reason shown, unless the step says to retry. `<…>` value
 profile (§4). Every command is an argument vector run in the run's folder (the repository root, or
 the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own command uses one.
 
-**Step 0: a new plugin isn't a run's (SPEC change 0.5.0).** Before anything is stored, the start reads the issue once (`gh issue view <N> [--repo <host/owner/repo>] --json number,title,body,state,url`). It does this after its same-issue check and before the start menu. When a line of the body asks for the work to be built with `/mod-builder:build` (the word `build`, then `with`, then `/mod-builder:build`), the start answers with next steps that lead to mod-builder. It then stores nothing: no run, branch, worktree, agent or pane. A failed read starts as before, and step 1 reports the cause.
+**Step 0: a new plugin isn't a run's (SPEC change 0.6.0).** Before anything is stored, the start reads the issue once (`gh issue view <N> [--repo <host/owner/repo>] --json number,title,body,state,url`). It does this after its same-issue check and before the start menu. When a line of the body asks for the work to be built with `/mod-builder:build` (the word `build`, then `with`, then `/mod-builder:build`), the start answers with next steps that lead to mod-builder. It then stores nothing: no run, branch, worktree, agent or pane. A failed read starts as before, and step 1 reports the cause.
 
 **Step 1: preconditions.** All must hold; otherwise the run stops in `blocked` with the first failure:
 1. `gh auth status` exits 0. The repository is known: a run started from an issue URL is pinned to the
@@ -83,22 +83,32 @@ the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own c
    `gh repo view` (a rename); `gh` is never asked about another host. A kept worktree is checked there too,
    before its fetch, and publish checks origin in the run's folder before it pushes (a worktree's own config can
    differ). A number start is pinned to the repository as soon as origin agrees with it.
+   A fork clone (SPEC change 0.5.0) is the exception to "`origin` is that repository": when every push URL of
+   `origin` names one other repository on the same host, its fetch URL is that fork too, and
+   exactly one other remote's fetch URL names the pinned one (`git remote`, `git remote get-url <name>`), that
+   remote is the run's base remote. Two block (`remotes a and b both point at o/r`). For these remotes an ssh
+   host other than the pinned one counts as `ssh -G <host>` resolves it (never assumed to be a nickname).
+   `gh repo view <fork> --json isFork,parent` must show a fork of the pinned repository (owner login and name,
+   any case), or the run blocks (`origin me/r isn't a fork of o/r`). `gh api --hostname <host> users/<owner>
+   --jq .type` must not print `Organization` (`gh pr create --head` can't name one: cli/cli#10093). The run
+   stores `baseRemote` and `headRepo`; below, `<remote>` is `baseRemote`, else `origin`, and before each fetch
+   from a `baseRemote` its URL is read again in that folder and must still name the pinned repository.
    `gh issue view <N> --repo <host/owner/repo> --json number,title,body,state,url` shows `state: OPEN`
    and a url that isn't a pull request's.
 2. The profile exists and validates (§4.2).
-3. `git fetch origin <base>` succeeds.
-4. Where the run works (`workspace`, read from `git show origin/<base>:.issue-forge.json`): a
+3. `git fetch <remote> <base>` succeeds.
+4. Where the run works (`workspace`, read from `git show <remote>/<base>:.issue-forge.json`): a
    checkout is *busy* when `git status --porcelain` isn't empty or HEAD isn't `<base>`. `here`
    blocks a busy checkout; `ask` offers a new worktree for one (no answer blocks); `worktree` always
    makes one. A worktree needs `worktreeDir` ignored by git, and a red type the mod spawns itself.
 5. No other run for this repository is active (§7.4).
 
-**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> origin/<base>` in the checkout, or
-`git worktree add --no-track -b issue-<N>-<slug> <worktreeDir>/<branch> origin/<base>`. A preflight
+**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> <remote>/<base>` in the checkout, or
+`git worktree add --no-track -b issue-<N>-<slug> <worktreeDir>/<branch> <remote>/<base>`. A preflight
 that blocks after this keeps the branch and folder, and resuming it reuses them. `<slug>` is the
 issue title in lowercase, each run of non-alphanumeric characters replaced with one `-`, leading
 and trailing `-` removed, cut to 40 characters (then a trailing `-` removed again). If that branch
-name exists locally or on `origin`, append `-2`, `-3`, … until it doesn't.
+name exists locally, on `origin` or on `<remote>`, append `-2`, `-3`, … until it doesn't.
 `--no-track` keeps git from writing tracking config. Record the merge base.
 
 **Step 3: baseline.** Run `testCommand`; it must exit 0, or the run stops in `blocked`: "tests
@@ -110,7 +120,7 @@ branch coverage as the baseline. If the LCOV file is missing or has no `SF:` rec
 it finishes, stage everything (`git add -A`) and check **gate R**:
 - R1: every staged path (`git diff --cached --name-only <merge base>`) matches `testGlobs`;
 - R2: at least one staged path;
-- R4 (SPEC change 0.5.0, checked first, before any test runs): no path added since the merge base is a Claude Code plugin manifest (`.claude-plugin/plugin.json`), and the guard refused none during the phase. A manifest that matches `testGlobs` is a test fixture and doesn't count.
+- R4 (SPEC change 0.6.0, checked first, before any test runs): no path added since the merge base is a Claude Code plugin manifest (`.claude-plugin/plugin.json`), and the guard refused none during the phase. A manifest that matches `testGlobs` is a test fixture and doesn't count.
 - R3: `testCommand` exits non-zero. The baseline passed and only test files changed, so the new
   tests cause the failure. Which tests fail isn't checked (that depends on the language); the red
   agent's list of failing tests goes into the pull request for review.
@@ -130,7 +140,7 @@ and the last 200 lines of R3's test output. When it finishes, `git add -A` and c
   lists a path matching `behaviourTestGlobs`. When this check alone fails, the run goes back to
   step 4 once, telling the red agent "add a behaviour test for <files>", then continues from step 5;
 - G7: every command in `checks` exits 0 (project-specific checks: linters, type checks, validators).
-- G8 (SPEC change 0.5.0, checked first, before any test runs): as R4, for gates G and F.
+- G8 (SPEC change 0.6.0, checked first, before any test runs): as R4, for gates G and F.
 
 A failed R4 or G8 blocks the run at once, with no retry, as a **final** block. Its hint is `next: build it with /mod-builder:build, then /issue-forge stop <N>`, and `/issue-forge status` lists the next steps. `/issue-forge resume` answers `can't be resumed`. A pull request's number is also a final block. Nothing past red's commit is committed, and nothing is pushed.
 
@@ -145,8 +155,10 @@ a rejected refactor doesn't block the pull request.
 
 **Step 7: confirm and publish.** Show the summary (§7.3, state `ready`) and ask: "Push
 `issue-<N>-<slug>` and open a pull request against `<base>`?" (`on <owner>/<repo>` before `against`). Then:
-- On yes: check `origin` again, then `git push origin issue-<N>-<slug>`, without `-u`, so it writes no tracking config. Then
-  `gh pr create --base <base> --head issue-<N>-<slug> --title "<title> (#<N>)" --body-file <data dir>/<run>/pr.md --repo <host/owner/repo>`.
+- On yes: check `origin` again (a fork run: every push URL of `origin` still names the fork), then `git push origin issue-<N>-<slug>`,
+  without `-u`, so it writes no tracking config. Then
+  `gh pr create --base <base> --head issue-<N>-<slug> --title "<title> (#<N>)" --body-file <data dir>/<run>/pr.md --repo <host/owner/repo>`
+  (a fork run: `--head <fork owner>:issue-<N>-<slug>`).
   The body holds the gate results, the coverage numbers and `Closes #<N>`. State `done`.
 - On no, or no answer possible (`claude -p`): state `ready`, with nothing pushed. `/issue-forge publish` resumes from here.
 
@@ -336,7 +348,7 @@ it doesn't, try `$.tool.call({ tool: 'Agent', … })` next, then run red on Clau
 ```
 
 `blocked` replaces the phase rows with the reason and the next command, for example
-"blocked: tests fail before any change — fix main, then /issue-forge resume". A final block (SPEC change 0.5.0) says `then /issue-forge stop <N>`, adds `steps: /issue-forge status` when it has next steps, and offers Stop and Status, not Resume. `ready` shows the
+"blocked: tests fail before any change — fix main, then /issue-forge resume". A final block (SPEC change 0.6.0) says `then /issue-forge stop <N>`, adds `steps: /issue-forge status` when it has next steps, and offers Stop and Status, not Resume. `ready` shows the
 summary and `[ Publish ]`. `done` shows the PR URL.
 
 ### 7.4 State machine (pure; in the logic module)
@@ -370,7 +382,7 @@ kit) and `tests/ui.test.tsx`.
   refactor is stashed under a named message.
 - **Test integrity is checked, not assumed:** G1 catches tests changed by any means, `Bash`
   included, because it compares files, not tool calls.
-- **No new plugins (SPEC change 0.5.0):** issue-forge never commits or pushes a new Claude Code plugin manifest. An issue that asks for one to be built with mod-builder never starts a run. The live agent's Edit, Write and NotebookEdit may not create one, except under `testGlobs`, where a sample plugin is a test fixture. A manifest a phase agent's shell made anyway is caught by R4 or G8 at the phase's gate, before the next commit. Known gap: an agent's `Bash` can still write plugin files while its phase runs. They are only seen at the gate, and they stay uncommitted in the run's folder, because issue-forge deletes nothing.
+- **No new plugins (SPEC change 0.6.0):** issue-forge never commits or pushes a new Claude Code plugin manifest. An issue that asks for one to be built with mod-builder never starts a run. The live agent's Edit, Write and NotebookEdit may not create one, except under `testGlobs`, where a sample plugin is a test fixture. A manifest a phase agent's shell made anyway is caught by R4 or G8 at the phase's gate, before the next commit. Known gap: an agent's `Bash` can still write plugin files while its phase runs. They are only seen at the gate, and they stay uncommitted in the run's folder, because issue-forge deletes nothing.
 - **Cost:** each run spawns at least three subagents. Retries add up to `attempts.red + attempts.green + attempts.refactor` more.
 - **Trust:** the agents read the issue body, which anyone who can file an issue writes. Run it
   only on repositories and issues you trust. The prompts tell the agents to treat the issue text as
@@ -572,4 +584,4 @@ needs the person: a paid or networked probe, or an interactive session. The issu
 | 14 | #2 | duet | local probe; doc sources fetched |
 | 15 | #4 | duet | local probe |
 | 16 | #3 part B | duet | Owner: signed-in `codex exec` probe |
-| 17 | #18 | new mod | built with `/mod-builder:build`, not issue-forge (a new plugin, not a fix); from SPEC change 0.5.0, `/issue-forge 18` refuses it with next steps |
+| 17 | #18 | new mod | built with `/mod-builder:build`, not issue-forge (a new plugin, not a fix); from SPEC change 0.6.0, `/issue-forge 18` refuses it with next steps |

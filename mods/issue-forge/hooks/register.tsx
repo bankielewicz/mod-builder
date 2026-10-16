@@ -24,6 +24,9 @@ import {
   agentPrompt,
   badgeOf,
   baseOf,
+  baseRefOf,
+  baseRemoteOf,
+  baseRemoteOfRun,
   branchLine,
   branchName,
   canRetry,
@@ -40,14 +43,19 @@ import {
   failuresOf,
   findStash,
   foreignChange,
+  forkOfOrigin,
+  forkRemoteVerdict,
   gateG,
   gateR,
   guardAction,
   hasSourceRecord,
   hasStash,
+  headArg,
+  hostOf,
   isAbsolutePath,
   isActive,
   isDrivenElsewhere,
+  isForkOf,
   isLockError,
   isOwnHandback,
   isOwnMailboxHandback,
@@ -58,6 +66,7 @@ import {
   isWorktreeRun,
   issueLabel,
   keepText,
+  keptForkBlock,
   keptWorktreePlan,
   layoutOf,
   lcovFileOf,
@@ -72,6 +81,7 @@ import {
   othersLine,
   othersOf,
   outsideChecks,
+  ownerOf,
   parseCommand,
   parseLcov,
   parseMergeTree,
@@ -99,6 +109,8 @@ import {
   sharedLcovBlock,
   spawnRefs,
   splitZ,
+  sshHostToResolve,
+  sshHostname,
   stashApplyArgv,
   stashMessage,
   startAnswer,
@@ -116,7 +128,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
+import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -573,7 +585,7 @@ async function issueCheck($: EngineInterface, run: Run, repo: string | null): Pr
   if (view.exitCode !== 0) return block(`issue #${run.issue} not found: ${firstLine(view.stderr)}`, 'check the issue number or URL')
   const issue = JSON.parse(view.stdout) as { title: string; body: string; state: string; url: string }
   // gh issue view answers for a pull request's number too.
-  // Final: a pull request's number never becomes an issue's, so resume can't clear it (Change 0.5.0).
+  // Final: a pull request's number never becomes an issue's, so resume can't clear it (Change 0.6.0).
   if (isPullUrl(issue.url)) return { ...block(`#${run.issue} is a pull request, not an issue`, 'pick another issue'), isFinal: true }
   if (issue.state !== 'OPEN') return block(`issue #${run.issue} is ${issue.state.toLowerCase()}`, 'reopen it or pick another issue')
   return { title: issue.title, body: issue.body ?? '', url: issue.url }
@@ -591,34 +603,148 @@ async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { r
  * Whether a remote URL names `repo`. The URL itself is parsed here and never passed on: it can hold a token. A renamed or
  * transferred repository differs from the URL, so gh is asked for the name it gives `host/owner/repo`.
  */
-async function remoteRepo($: EngineInterface, root: string, url: string, repo: string): Promise<'match' | { other: string | null }> {
-  const verdict = remoteVerdict(url, repo)
+async function remoteRepo($: EngineInterface, root: string, url: string, repo: string, views: Views = new Map()): Promise<RemoteFound> {
+  return foundOf($, root, remoteVerdict(url, repo), repo, views)
+}
+
+/**
+ * `remoteRepo` for a fork clone's remotes (the fork, the base remote): an ssh host other than `repo`'s is resolved with
+ * `ssh -G`, never taken for a nickname (PR #87 review, the owner's choice).
+ */
+async function forkRemoteRepo($: EngineInterface, root: string, url: string, repo: string, views: Views = new Map()): Promise<RemoteFound> {
+  const host = sshHostToResolve(url, repo)
+  return foundOf($, root, forkRemoteVerdict(url, repo, host === null ? undefined : await sshHostOf($, root, host)), repo, views)
+}
+
+/** `ssh -G <host>`: the host ssh reaches for it, ~/.ssh/config applied, without connecting; null when ssh can't say. */
+async function sshHostOf($: EngineInterface, root: string, host: string): Promise<string | null> {
+  const shown = await $.process.run(['ssh', '-G', host], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  return shown?.exitCode === 0 ? sshHostname(shown.stdout) : null
+}
+
+/** A verdict settled: another repository on `repo`'s host is asked about, since gh may call it `repo` renamed. */
+async function foundOf($: EngineInterface, root: string, verdict: RemoteVerdict, repo: string, views: Views): Promise<RemoteFound> {
   if (verdict.kind === 'match') return 'match'
   if (verdict.kind === 'unrecognised') return { other: null }
   if (verdict.kind === 'other') return { other: verdict.repo }
-  const view = await $.process.run(['gh', 'repo', 'view', verdict.repo, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
-  const canonical = view?.exitCode === 0 ? repoOfView(view.stdout) : null
+  const canonical = await canonicalOf($, root, verdict.repo, views)
   return isSameRepo(canonical, repo) ? 'match' : { other: canonical ?? verdict.repo }
+}
+
+/** gh's names for `host/owner/repo`s, asked once each within one check (PR #87 review). */
+type Views = Map<string, Promise<string | null>>
+
+/** The name gh gives `host/owner/repo` (a renamed or transferred repository's new one), or null when gh can't say. */
+function canonicalOf($: EngineInterface, root: string, repo: string, views: Views): Promise<string | null> {
+  const known = views.get(repo)
+  if (known) return known
+  const asked = $.process
+    .run(['gh', 'repo', 'view', repo, '--json', 'nameWithOwner,url'], { cwd: root, timeoutMs: GIT_TIMEOUT })
+    .then(view => (view.exitCode === 0 ? repoOfView(view.stdout) : null))
+    .catch(() => null)
+  views.set(repo, asked)
+  return asked
+}
+
+/** The distinct, non-empty lines of a command's output, in order. */
+function linesOf(stdout: string): string[] {
+  return [...new Set(stdout.split('\n').map(line => line.trim()).filter(line => line !== ''))]
+}
+
+/** `git remote get-url --push --all origin`: every URL git pushes origin to, one line each, and git's exit code. */
+async function pushUrlsOf($: EngineInterface, root: string): Promise<{ exitCode: number; urls: string[] }> {
+  const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
+  return { exitCode: pushed.exitCode, urls: linesOf(pushed.stdout) }
+}
+
+/** Origin's fetch URL and every URL git pushes it to, or null without an origin. Kept in memory only: a URL can hold a token. */
+type OriginUrls = { fetch: string; pushes: string[] }
+
+async function originUrls($: EngineInterface, root: string): Promise<OriginUrls | null> {
+  const fetched = await git($, root, ['remote', 'get-url', 'origin'])
+  const pushed = await pushUrlsOf($, root)
+  return fetched.exitCode !== 0 || pushed.exitCode !== 0 ? null : { fetch: fetched.stdout.trim(), pushes: pushed.urls }
 }
 
 /**
  * Origin fetches from and pushes to `repo`, the repository gh sends the issue and the pull request to. git pushes to every push
- * URL, so each is checked (PR #68 review), and one that is the fetch URL only once.
+ * URL, so each is checked (PR #68 review), and one that is the fetch URL only once. Preflight passes the URLs it read.
  */
-async function originCheck($: EngineInterface, root: string, repo: string): Promise<Blocked | null> {
-  const fetched = await git($, root, ['remote', 'get-url', 'origin'])
-  const pushed = await git($, root, ['remote', 'get-url', '--push', '--all', 'origin'])
-  if (fetched.exitCode !== 0 || pushed.exitCode !== 0) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
-  const fetchUrl = fetched.stdout.trim()
-  const pushUrls = [...new Set(pushed.stdout.split('\n').map(u => u.trim()))].filter(u => u !== '' && u !== fetchUrl)
+async function originCheck($: EngineInterface, root: string, repo: string, read?: OriginUrls | null, views: Views = new Map()): Promise<Blocked | null> {
+  const urls = read === undefined ? await originUrls($, root) : read
+  if (!urls) return block('this checkout has no remote named origin', `add a remote named origin for ${repoLabel(repo)}`)
+  const fetchUrl = urls.fetch
+  const pushUrls = urls.pushes.filter(u => u !== fetchUrl)
   for (const [url, isPush] of [[fetchUrl, false] as const, ...pushUrls.map(u => [u, true] as const)]) {
-    const found = await remoteRepo($, root, url, repo)
+    const found = await remoteRepo($, root, url, repo, views)
     if (found === 'match') continue
     const label = found.other === null ? 'an unrecognised URL' : repoLabel(found.other)
-    const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`
+    const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)}, or whose origin is your fork of ${repoLabel(repo)} with another remote for ${repoLabel(repo)}`
     return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, next)
   }
   return null
+}
+
+/** A fork clone's remotes (#26): the one the base is fetched from, and the fork origin pushes to (`host/owner/repo`). */
+type Fork = { baseRemote: string; headRepo: string }
+
+/** The fork origin pushes to, from the URLs preflight read: each is resolved once, all at once (PR #87 review). */
+async function forkOf($: EngineInterface, root: string, repo: string, urls: OriginUrls | null, views: Views): Promise<string | null> {
+  if (!urls) return null
+  const unique = [...new Set([urls.fetch, ...urls.pushes])]
+  const found = new Map((await Promise.all(unique.map(url => forkRemoteRepo($, root, url, repo, views)))).map((f, i) => [unique[i], f]))
+  const of = (url: string) => found.get(url) ?? { other: null }
+  return forkOfOrigin(of(urls.fetch), urls.pushes.map(of), repo)
+}
+
+/** Whether remote `name`'s fetch URL names `repo`. */
+async function remoteNames($: EngineInterface, root: string, name: string, repo: string, views: Views): Promise<boolean> {
+  const url = await git($, root, ['remote', 'get-url', name])
+  return url.exitCode === 0 && (await forkRemoteRepo($, root, url.stdout.trim(), repo, views)) === 'match'
+}
+
+/** The remotes besides origin whose fetch URL names `repo`, looked up together: a fork clone fetches the base from the one there is. */
+async function baseRemoteFor($: EngineInterface, root: string, repo: string, views: Views): Promise<BaseRemote> {
+  const names = linesOf((await git($, root, ['remote'])).stdout).filter(n => n !== 'origin')
+  const named = await Promise.all(names.map(name => remoteNames($, root, name, repo, views)))
+  return baseRemoteOf(names.filter((_, i) => named[i]))
+}
+
+/**
+ * A clone whose origin isn't `repo` may be a fork clone (#26): origin pushes to a fork of `repo` and another remote is `repo`. The
+ * fork must be a user's, not an organization's, which `gh pr create --head` can't name. This runs before anything is fetched. Any
+ * other clone gets `stray`, the origin block.
+ */
+async function forkCheck($: EngineInterface, root: string, repo: string, stray: Blocked, urls: OriginUrls | null, views: Views): Promise<Blocked | Fork> {
+  const headRepo = await forkOf($, root, repo, urls, views)
+  if (!headRepo) return stray
+  const base = await baseRemoteFor($, root, repo, views)
+  if (base.kind === 'none') return stray
+  if (base.kind === 'several') return block(`remotes ${base.remotes.slice(0, -1).join(', ')} and ${base.remotes.slice(-1).join('')} both point at ${repoLabel(repo)}`, 'remove one of them')
+  const view = await $.process.run(['gh', 'repo', 'view', headRepo, '--json', 'isFork,parent'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  if (!view || view.exitCode !== 0) return block(`could not read ${repoLabel(headRepo)} from gh: ${firstLine(view?.stderr ?? 'gh repo view did not finish')}`, 'check gh and your access to the fork')
+  if (!isForkOf(view.stdout, repo)) return block(`origin ${repoLabel(headRepo)} isn't a fork of ${repoLabel(repo)}`, `point origin at your fork of ${repoLabel(repo)}`)
+  const owner = ownerOf(headRepo)
+  // gh api asks github.com unless told the host (Codex on PR #87).
+  const type = await $.process.run(['gh', 'api', '--hostname', hostOf(headRepo), `users/${owner}`, '--jq', '.type'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  if (!type || type.exitCode !== 0) return block(`could not tell whether ${owner} is a user or an organization: ${firstLine(type?.stderr ?? 'gh api did not finish')}`, 'check gh')
+  if (type.stdout.trim() === 'Organization') return block("gh pr create can't name an organization's fork as the head (cli/cli#10093)", `point origin at a fork in a personal account, not ${owner}'s`)
+  return { baseRemote: base.remote, headRepo }
+}
+
+/** A fork run's origin still pushes only to the fork it was preflighted for: git pushes to every push URL (#26). */
+async function forkPushCheck($: EngineInterface, root: string, headRepo: string): Promise<Blocked | null> {
+  const pushed = await pushUrlsOf($, root)
+  const moved = block(`origin no longer pushes to ${repoLabel(headRepo)}`, 'point origin back at it, or start a new run')
+  if (pushed.exitCode !== 0 || pushed.urls.length === 0) return moved
+  for (const url of pushed.urls) if ((await forkRemoteRepo($, root, url, headRepo)) !== 'match') return moved
+  return null
+}
+
+/** Origin still pushes where the run's branch goes: the fork it was preflighted for (#26), else `repo` itself (#25). */
+async function pushCheck($: EngineInterface, root: string, repo: string | undefined, headRepo: string | undefined): Promise<Blocked | null> {
+  if (headRepo) return forkPushCheck($, root, headRepo)
+  return repo ? originCheck($, root, repo) : null
 }
 
 /** Reads and validates the profile, the outside checks included (§4.2). */
@@ -642,21 +768,35 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
   return problems.length > 0 ? { profile: null, errors: problems } : { profile: p, errors: [] }
 }
 
-/** `git fetch origin <base>`, or the block naming why it failed. */
-async function fetchBase($: EngineInterface, cwd: string, base: string): Promise<Blocked | null> {
-  await setActivity($, `git fetch origin ${base}`)
-  const fetched = await gitRetry($, cwd, ['fetch', 'origin', base])
-  return fetched.exitCode === 0 ? null : block(`git fetch origin ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+/**
+ * A fork run's base remote still fetches from `repo`, as the folder that fetches reads it: the run stores only its name, and a
+ * resume, a kept worktree's own config or the publish merge check would fetch whatever it points at now (Codex on PR #87).
+ * Origin is checked by `originCheck` and `pushCheck`.
+ */
+async function baseRemoteCheck($: EngineInterface, cwd: string, remote: string, repo: string | undefined): Promise<Blocked | null> {
+  if (remote === 'origin' || !repo) return null
+  const url = await git($, cwd, ['remote', 'get-url', remote])
+  if (url.exitCode === 0 && (await forkRemoteRepo($, cwd, url.stdout.trim(), repo)) === 'match') return null
+  return block(`${remote} no longer fetches from ${repoLabel(repo)}`, `point ${remote} back at ${repoLabel(repo)}, or start a new run`)
 }
 
-/** A branch with no commits of its own fast-forwards to origin/<base>, so a fix pushed there reaches it. */
-async function catchUp($: EngineInterface, run: Run, cwd: string, base: string): Promise<Blocked | null> {
-  const hasNoOwnCommits = (await git($, cwd, ['merge-base', '--is-ancestor', 'HEAD', `origin/${base}`])).exitCode === 0
+/** `git fetch <remote> <base>` once the remote is still `repo`'s, or the block naming why it can't be or failed. */
+async function fetchBase($: EngineInterface, cwd: string, remote: string, base: string, repo?: string): Promise<Blocked | null> {
+  const moved = await baseRemoteCheck($, cwd, remote, repo)
+  if (moved) return moved
+  await setActivity($, `git fetch ${remote} ${base}`)
+  const fetched = await gitRetry($, cwd, ['fetch', remote, base])
+  return fetched.exitCode === 0 ? null : block(`git fetch ${remote} ${base} failed: ${firstLine(fetched.stderr)}`, 'check the base branch and the network')
+}
+
+/** A branch with no commits of its own fast-forwards to <remote>/<base>, so a fix pushed there reaches it. */
+async function catchUp($: EngineInterface, run: Run, cwd: string, remote: string, base: string): Promise<Blocked | null> {
+  const hasNoOwnCommits = (await git($, cwd, ['merge-base', '--is-ancestor', 'HEAD', `${remote}/${base}`])).exitCode === 0
   if (!hasNoOwnCommits) return null
   stillDriving(run)
-  await setActivity($, `catching up with origin/${base}`)
-  const ff = await gitWrite($, run, cwd, ['merge', '--ff-only', '-q', `origin/${base}`])
-  return ff.exitCode === 0 ? null : block(`could not fast-forward to origin/${base}: ${firstLine(ff.stderr)}`, 'check the branch')
+  await setActivity($, `catching up with ${remote}/${base}`)
+  const ff = await gitWrite($, run, cwd, ['merge', '--ff-only', '-q', `${remote}/${base}`])
+  return ff.exitCode === 0 ? null : block(`could not fast-forward to ${remote}/${base}: ${firstLine(ff.stderr)}`, 'check the branch')
 }
 
 type Where = { kind: 'here' } | { kind: 'worktree'; worktreeDir: string; minutes: number }
@@ -670,22 +810,22 @@ async function checkoutOf($: EngineInterface, root: string, base: string, heldBy
 }
 
 /**
- * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from origin/<base> before
+ * Here or in a new worktree (Change 0.2.0). The base's profile decides, read from <remote>/<base> before
  * anything is made or switched; a busy checkout is never branched in place.
  */
-async function whereToWork($: EngineInterface, run: Run, root: string, base: string): Promise<Blocked | Where> {
+async function whereToWork($: EngineInterface, run: Run, root: string, remote: string, base: string): Promise<Blocked | Where> {
   const issue = run.issue
-  await setActivity($, `reading ${PROFILE_FILE} from origin/${base}`)
-  const shown = await git($, root, ['show', `origin/${base}:${PROFILE_FILE}`])
+  await setActivity($, `reading ${PROFILE_FILE} from ${remote}/${base}`)
+  const shown = await git($, root, ['show', `${remote}/${base}:${PROFILE_FILE}`])
   const atBase = shown.exitCode === 0 ? parseProfile(shown.stdout, home) : { profile: undefined, errors: [firstLine(shown.stderr) || 'missing'] }
-  if (!atBase.profile) return block(`origin/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
+  if (!atBase.profile) return block(`${remote}/${base} has no valid ${PROFILE_FILE}: ${atBase.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${base}`)
   const { workspace, worktreeDir, commandTimeoutMinutes } = atBase.profile
   // `worktree` makes one whatever the checkout holds, so it isn't looked at (a status is slow on a big tree or a Windows mount).
   // Another active run working in this checkout makes it busy (Change 0.3.0).
   const holder = workspace === 'worktree' ? undefined : (await runsOf($, run.repo ?? root)).find(r => r.id !== run.id && isActive(r) && normalizePath(workOf(r)) === normalizePath(root))
   const state = workspace === 'worktree' ? { isBusy: false, why: '' } : await checkoutOf($, root, base, holder?.issue)
   // Start in the menu under `ask` was the answer to the worktree question: it isn't asked twice.
-  const plan = workspacePlan(run.chosenWorktree && workspace === 'ask' ? 'worktree' : workspace, state, base)
+  const plan = workspacePlan(run.chosenWorktree && workspace === 'ask' ? 'worktree' : workspace, state, base, `${remote}/${base}`)
   if (plan.kind === 'block') return block(plan.reason, plan.next)
   if (plan.kind === 'here') return { kind: 'here' }
   // Everything a worktree needs is checked before anyone is asked for one.
@@ -698,42 +838,50 @@ async function whereToWork($: EngineInterface, run: Run, root: string, base: str
   return { kind: 'worktree', worktreeDir, minutes: commandTimeoutMinutes }
 }
 
-/** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree. */
-async function makeBranch($: EngineInterface, run: Run, issueBody: string): Promise<Blocked | Kept> {
+/**
+ * Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree from `remote`'s base. `repo` is
+ * the pinned repository: the base question can wait on the person, so the base remote is read again before the fetch.
+ */
+async function makeBranch($: EngineInterface, run: Run, issueBody: string, remote: string, repo: string, headRepo?: string): Promise<Blocked | Kept> {
   const root = run.root
-  // This checkout's profile only names the base; the profile that is checked and runs is origin/<base>'s.
+  // This checkout's profile only names the base; the profile that is checked and runs is <remote>/<base>'s.
   await setActivity($, `reading ${PROFILE_FILE}`)
   const profileBase = checkoutBaseOf(await readLocalProfile($, root))
   const asked = baseOf({ baseBranch: profileBase }, issueBody)
   const base = asked === profileBase ? asked : await chooseBase($, run.issue, asked, profileBase)
   if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profileBase}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
   stillDriving(run)
-  const unfetched = await fetchBase($, root, base)
+  const unfetched = await fetchBase($, root, remote, base, repo)
   if (unfetched) return unfetched
-  const where = await whereToWork($, run, root, base)
+  const where = await whereToWork($, run, root, remote, base)
   if ('type' in where) return where
   const local = splitZ((await gitOut($, root, ['for-each-ref', '--format=%(refname:short)%00', `refs/heads/issue-${run.issue}-*`, `refs/heads/issue-${run.issue}`])).replace(/\n/g, ''))
-  const remote = (await gitOut($, root, ['ls-remote', '--heads', 'origin', `issue-${run.issue}*`]))
-    .split('\n')
-    .map(line => line.split('refs/heads/')[1] ?? '')
-    .filter(Boolean)
-  const branch = branchName(run.issue, run.title, [...local, ...remote])
+  // A fork clone's branch name must be free on the fork it is pushed to and on the project it is cut from (#26).
+  const remoteHeads: string[] = []
+  for (const name of new Set(['origin', remote])) {
+    const listed = await gitOut($, root, ['ls-remote', '--heads', name, `issue-${run.issue}*`])
+    remoteHeads.push(...listed.split('\n').map(line => line.split('refs/heads/')[1] ?? '').filter(Boolean))
+  }
+  const branch = branchName(run.issue, run.title, [...local, ...remoteHeads])
+  // A fork clone's branch is kept with the fork its name was checked on, so a resume can't take it elsewhere (Codex on PR #87).
+  const forked = headRepo ? { baseRemote: remote, headRepo } : {}
   stillDriving(run)
   if (where.kind === 'here') {
     await setActivity($, `git switch -c ${branch}`)
-    const switched = await gitWrite($, run, root, ['switch', '--no-track', '-c', branch, `origin/${base}`])
+    const switched = await gitWrite($, run, root, ['switch', '--no-track', '-c', branch, `${remote}/${base}`])
     if (switched.exitCode !== 0) return block(`git switch failed: ${firstLine(switched.stderr)}`, 'check the repository state')
-    await recordMade($, run, { branch, workRoot: root, base })
-    return { branch, workRoot: root, base }
+    const here = { branch, workRoot: root, base, ...forked }
+    await recordMade($, run, here)
+    return here
   }
   const workRoot = worktreePath(root, where.worktreeDir, branch)
   if (await $.fs.exists(workRoot)) return block(`${workRoot} already exists`, 'remove it, or set another worktreeDir')
   await setActivity($, `git worktree add ${where.worktreeDir}/${branch}`)
   // A full checkout can outlast git's 60 s on a slow disk: it runs like the profile's commands, on their timeout.
-  const made = { branch, workRoot, base }
+  const made = { branch, workRoot, base, ...forked }
   let added: CommandResult
   try {
-    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes, GIT_ENV)
+    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `${remote}/${base}`], root, where.minutes, GIT_ENV)
   } catch (err) {
     // A Stop during the add: the branch git already made is kept on the stopped run, like one made before it.
     if (err instanceof Stopped && (await hasBranch($, root, branch))) await recordMade($, run, made)
@@ -774,15 +922,23 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
   const resolved = run.ghRepo ? { repo: run.ghRepo } : await ghRepoOf($, run.root)
   if ('type' in resolved) return resolved
   const { repo } = resolved
-  const stray = await originCheck($, run.root, repo)
-  if (stray) return stray
-  // Pinned once origin agrees, so a later block keeps it; an origin block leaves it open to a fix of the remotes.
+  // Origin is the project, or (#26) the contributor's fork with the project as another remote.
+  // Origin's URLs are read once and each repository named is asked about once (PR #87 review).
+  const urls = await originUrls($, run.root)
+  const views: Views = new Map()
+  const stray = await originCheck($, run.root, repo, urls, views)
+  const fork = stray ? await forkCheck($, run.root, repo, stray, urls, views) : null
+  if (fork && 'type' in fork) return fork
+  const remote = fork?.baseRemote ?? 'origin'
+  // Pinned once origin agrees (or is a fork of it), so a later block keeps it; an origin block leaves it open to a fix of the remotes.
   if (!run.ghRepo) await recordPinned($, run, repo)
   const issue = await issueCheck($, run, repo)
   if ('type' in issue) return issue
   let made: Kept
   if (run.branch) {
     made = { branch: run.branch, workRoot: workOf(run), base: run.base }
+    const moved = keptForkBlock(run.headRepo, fork?.headRepo, repo)
+    if (moved) return { ...block(moved.reason, moved.next), keep: made }
     // A kept worktree that is gone (removed by hand, or never filled) is made again for the kept branch.
     const kept = isWorktreeRun(run) ? await keptWorktree($, run.root, made.workRoot) : 'reuse'
     if (typeof kept !== 'string') return { ...kept, keep: made }
@@ -798,25 +954,25 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
       if (again.exit !== 0) return { ...block(worktreeAddFailure(again, minutes), `check ${made.workRoot}`), keep: made }
     }
     // A kept worktree's own config can give origin other URLs (extensions.worktreeConfig): it is checked where it fetches.
-    const strayThere = made.workRoot !== run.root ? await originCheck($, made.workRoot, repo) : null
+    const strayThere = made.workRoot === run.root ? null : await pushCheck($, made.workRoot, repo, fork?.headRepo)
     if (strayThere) return { ...strayThere, keep: made }
-    const unfetched = await fetchBase($, made.workRoot, made.base)
+    const unfetched = await fetchBase($, made.workRoot, remote, made.base, repo)
     if (unfetched) return { ...unfetched, keep: made }
     // A fix pushed to the base (the profile, a missing command) reaches the kept branch before it is checked again.
-    const behind = await catchUp($, run, made.workRoot, made.base)
+    const behind = await catchUp($, run, made.workRoot, remote, made.base)
     if (behind) return { ...behind, keep: made }
   } else {
-    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body)
+    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body, remote, repo, fork?.headRepo)
     if ('type' in fresh) return fresh
     made = fresh
   }
   try {
-    const mergeBase = (await gitOut($, made.workRoot, ['merge-base', 'HEAD', `origin/${made.base}`])).trim()
+    const mergeBase = (await gitOut($, made.workRoot, ['merge-base', 'HEAD', `${remote}/${made.base}`])).trim()
     // The profile whose commands run is the base's, not the checkout the run started from (which anyone may have pushed).
-    await setActivity($, `reading ${PROFILE_FILE} from origin/${made.base}`)
+    await setActivity($, `reading ${PROFILE_FILE} from ${remote}/${made.base}`)
     const trusted = await loadProfile($, made.workRoot)
-    if (!trusted.profile) return { ...block(`origin/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
-    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot, repo }
+    if (!trusted.profile) return { ...block(`${remote}/${made.base} has no valid ${PROFILE_FILE}: ${trusted.errors[0] ?? 'missing'}`, `commit ${PROFILE_FILE} to ${made.base}`), keep: made }
+    return { type: 'preflighted', title: issue.title, body: issue.body, url: issue.url, base: made.base, branch: made.branch, mergeBase, profile: trusted.profile, workRoot: made.workRoot, repo, ...fork }
   } catch (err) {
     if (err instanceof Stopped) throw err
     return { ...block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status'), keep: made }
@@ -840,11 +996,12 @@ async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEv
   const shared = await lcovShared($, run, p)
   if (shared) return shared
   const root = workOf(run)
-  const unfetched = await fetchBase($, root, run.base)
+  const remote = baseRemoteOfRun(run)
+  const unfetched = await fetchBase($, root, remote, run.base, run.ghRepo)
   if (unfetched) return unfetched
-  const behind = await catchUp($, run, root, run.base)
+  const behind = await catchUp($, run, root, remote, run.base)
   if (behind) return behind
-  const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', `origin/${run.base}`])).trim()
+  const mergeBase = (await gitOut($, root, ['merge-base', 'HEAD', baseRefOf(run)])).trim()
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
   if (tests.exit !== 0) return block(tests.isTimedOut ? 'tests time out before any change' : 'tests fail before any change', `fix ${run.base}`)
@@ -931,7 +1088,7 @@ async function stagedSince($: EngineInterface, root: string, ref: string): Promi
   return splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '-z', ref]))
 }
 
-/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.5.0). */
+/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.6.0). */
 async function recordNewPlugin($: EngineInterface, path: string): Promise<void> {
   const d = drivingNow()
   if (!d) return
@@ -939,7 +1096,7 @@ async function recordNewPlugin($: EngineInterface, path: string): Promise<void> 
   await updateRun($, d.key, stored => (stored?.id === d.runId ? advance(stored, { type: 'newPlugin', path }, now) : null))
 }
 
-/** R4 and G8 (Change 0.5.0): a manifest added since the merge base, or the one the guard refused. Checked before any test runs. */
+/** R4 and G8 (Change 0.6.0): a manifest added since the merge base, or the one the guard refused. Checked before any test runs. */
 async function newPluginAt($: EngineInterface, run: Run, root: string) {
   return newPluginOf(splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z', run.mergeBase])), run.newPlugin, run.profile?.testGlobs ?? [])
 }
@@ -1040,8 +1197,9 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
     const tip = (await gitOut($, workOf(run), ['rev-parse', '--verify', `refs/heads/${run.branch}`])).trim()
     if (tip !== run.gatedHead) return block(`${run.branch} moved after gate F (now ${tip.slice(0, 7)}, checked ${run.gatedHead.slice(0, 7)})`, 'remove the new commits, or start a new run')
   }
-  // A run pinned to a repository pushes only to an origin that is it (#25), as the folder that pushes reads it (PR #68 review 2).
-  const stray = run.ghRepo ? await originCheck($, workOf(run), run.ghRepo) : null
+  // A run pinned to a repository pushes only to an origin that is it (#25), as the folder that pushes reads it (PR #68 review 2);
+  // a fork run, only to the fork it was preflighted for (#26).
+  const stray = await pushCheck($, workOf(run), run.ghRepo, run.headRepo)
   if (stray) return stray
   // The PR body says what was true when it was pushed: the merge is checked again here.
   const merge = await mergeCheck($, run)
@@ -1053,7 +1211,7 @@ async function publish($: EngineInterface, run: Run): Promise<RunEvent> {
   if (pushed.exitCode !== 0) return block(`git push failed: ${firstLine(pushed.stderr)}`, 'check access to origin')
   await stillOwned($, run)
   await setActivity($, 'gh pr create')
-  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', run.branch, '--title', `${run.title} (#${run.issue})`, '--body-file', body, ...(run.ghRepo ? ['--repo', run.ghRepo] : [])], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
+  const pr = await $.process.run(['gh', 'pr', 'create', '--base', run.base, '--head', headArg(run.branch, run.headRepo), '--title', `${run.title} (#${run.issue})`, '--body-file', body, ...(run.ghRepo ? ['--repo', run.ghRepo] : [])], { cwd: workOf(run), timeoutMs: GIT_TIMEOUT })
   if (pr.exitCode !== 0) return block(`gh pr create failed: ${firstLine(pr.stderr)}`, `the branch is pushed; open the pull request by hand or /issue-forge publish`)
   return { type: 'published', url: pr.stdout.trim().split('\n').pop() ?? '', merge }
 }
@@ -1086,11 +1244,14 @@ async function askOr($: EngineInterface, question: string, labels: string[]): Pr
 /** Case 1: does the gated commit still merge into a freshly fetched base? It informs, never blocks, and never throws. */
 async function mergeCheck($: EngineInterface, run: Run): Promise<MergeCheck> {
   const work = workOf(run)
-  await setActivity($, `checking the merge with origin/${run.base}`)
+  const remote = baseRemoteOfRun(run)
+  await setActivity($, `checking the merge with ${baseRefOf(run)}`)
   try {
-    const fetched = await gitRetry($, work, ['fetch', 'origin', run.base])
-    if (fetched.exitCode !== 0) return { isClean: false, files: [], error: `git fetch origin ${run.base} failed: ${firstLine(fetched.stderr)}` }
-    return parseMergeTree(await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', run.gatedHead ?? `refs/heads/${run.branch}`, `origin/${run.base}`]))
+    const moved = await baseRemoteCheck($, work, remote, run.ghRepo)
+    if (moved) return { isClean: false, files: [], error: moved.reason }
+    const fetched = await gitRetry($, work, ['fetch', remote, run.base])
+    if (fetched.exitCode !== 0) return { isClean: false, files: [], error: `git fetch ${remote} ${run.base} failed: ${firstLine(fetched.stderr)}` }
+    return parseMergeTree(await git($, work, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', run.gatedHead ?? `refs/heads/${run.branch}`, baseRefOf(run)]))
   } catch (err) {
     return { isClean: false, files: [], error: err instanceof Error ? err.message : String(err) }
   } finally {
@@ -1288,7 +1449,7 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
  * session, gets one question; otherwise the run starts.
  */
 /**
- * The start's own read of the issue (Change 0.5.0): when its body asks for the plugin to be built with mod-builder,
+ * The start's own read of the issue (Change 0.6.0): when its body asks for the plugin to be built with mod-builder,
  * the answer is the next steps, and nothing is stored. A failed read starts as before; preflight reports the cause.
  */
 async function newModStart($: EngineInterface, root: string, issue: number, ghRepo?: string): Promise<string | null> {
@@ -1401,7 +1562,7 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const run = pick.run
   await setFocus($, run)
   if (!isActive(run)) return 'no run to resume here.'
-  // A final block is one resume can't clear (Change 0.5.0).
+  // A final block is one resume can't clear (Change 0.6.0).
   if (run.step === 'blocked' && run.blocked?.isFinal) return `#${run.issue} can't be resumed: ${run.blocked.reason}. /issue-forge stop ${run.issue} ends it.`
   const d = drivingNow()
   if (d?.runId === run.id) return `#${run.issue} is running already.`
@@ -1692,7 +1853,7 @@ export const register: Register = (on, raw) => {
     const action = guardAction(e, ctx)
     if (action.kind === 'deny') return { deny: action.reason }
     const call = action.kind === 'rewrite' ? ({ ...e, ...action.patch } as typeof e) : e
-    // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.5.0).
+    // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.6.0).
     const manifest = manifestOf(call, ctx, liveWork?.testGlobs ?? [])
     if (manifest && !(await $.fs.stat(manifest.absolute).then(() => true, () => false))) {
       await recordNewPlugin($, manifest.relative)
@@ -1754,7 +1915,7 @@ export const register: Register = (on, raw) => {
     const live = demo ? demoRun(demo, now) : await liveView($)
     const run = live.run
     const view = viewOf(run, live.isDriving, live.me)
-    // A final block is one resume can't clear (Change 0.5.0): no Resume button and no r in the hint.
+    // A final block is one resume can't clear (Change 0.6.0): no Resume button and no r in the hint.
     const canResume = (view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere'
     const others = live.others
     const canHandOff = live.isDriving && (view === 'running' || view === 'ready')

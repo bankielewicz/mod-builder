@@ -70,11 +70,11 @@ export type Gate = {
   isBehaviourOnly?: boolean
   /** Unmeasured source files changed since the merge base. */
   unmeasured?: string[]
-  /** R4 or G8 failed: a phase agent created a plugin manifest, or the guard refused one (Change 0.5.0). */
+  /** R4 or G8 failed: a phase agent created a plugin manifest, or the guard refused one (Change 0.6.0). */
   newPlugin?: NewPlugin
 }
 
-/** A new Claude Code plugin's manifest a phase agent made (`isCreated`) or the guard refused it (Change 0.5.0). */
+/** A new Claude Code plugin's manifest a phase agent made (`isCreated`) or the guard refused it (Change 0.6.0). */
 export type NewPlugin = { path: string; isCreated: boolean }
 
 export type Baseline = { lines: Pct; branches: Pct }
@@ -98,6 +98,10 @@ export type Run = {
   repo?: string
   /** The GitHub repository (`host/owner/repo`) every gh call of the run names with `--repo` (#25). Absent in runs stored before. */
   ghRepo?: string
+  /** The remote the base is fetched from, in a fork clone where origin is the contributor's fork (#26). Absent: origin. */
+  baseRemote?: string
+  /** The fork origin pushes to (`host/owner/repo`), whose owner heads the pull request (#26). Absent: the branch alone. */
+  headRepo?: string
   /** Set while a session drives the run; cleared when the drive ends (Change 0.3.0). */
   driver?: Driver
   /** Started from the menu's Start under `ask`: it works in a new worktree, asked once (Change 0.3.0). */
@@ -143,11 +147,11 @@ export type Run = {
   /** HEAD when the run reached ready (after gate F): publish pushes exactly this commit, and refuses if HEAD moved. */
   gatedHead?: string
   merge?: MergeCheck
-  /** The manifest the guard refused a phase agent, relative to the run's folder: the phase's gate blocks on it (Change 0.5.0). */
+  /** The manifest the guard refused a phase agent, relative to the run's folder: the phase's gate blocks on it (Change 0.6.0). */
   newPlugin?: string
   /**
    * `steps`: what the person does next, one item each; `isFinal`: resume can't clear it, so the hint says stop
-   * (Change 0.5.0). Both absent in runs stored before.
+   * (Change 0.6.0). Both absent in runs stored before.
    */
   blocked?: { at: Step; reason: string; next: string; steps?: string[]; isFinal?: boolean }
 }
