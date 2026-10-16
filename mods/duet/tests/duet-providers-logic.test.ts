@@ -41,6 +41,9 @@ describe('providers as data', () => {
     expect(isAllowedBaseUrl('http://127.0.0.1:8080/v1')).toBe(true)
     expect(isAllowedBaseUrl('http://api.example.com/v1')).toBe(false)
     expect(isAllowedBaseUrl('ftp://x')).toBe(false)
+    // Codex 4298476191: a URL carrying user:password would show that password in the pane and the transcript.
+    expect(isAllowedBaseUrl('https://user:password@gateway.example/v1')).toBe(false)
+    expect(isAllowedBaseUrl('https://user@gateway.example/v1')).toBe(false)
     expect(isAllowedBaseUrl('')).toBe(false)
     expect(baseUrlOf(providerOf('custom')!, { customUrl: 'https://my-gw.example.com/v1/' })).toBe('https://my-gw.example.com/v1')
     expect(baseUrlOf(providerOf('custom')!, { customUrl: '' })).toBe('')
@@ -53,6 +56,8 @@ describe('key file', () => {
   test('the file lives under the home folder, never the project', () => {
     expect(keyFileOf('/home/u')).toBe('/home/u/.claude/duet-data/.env')
     expect(keyFileOf('C:\\Users\\u')).toBe('C:/Users/u/.claude/duet-data/.env')
+    // Codex 4297835997 (P1): with no home folder there is no key file; never a path under the project.
+    expect(keyFileOf('')).toBe('')
     expect(KEY_FILE_NOTE).toContain('~/.claude/duet-data/.env')
   })
 
@@ -69,6 +74,10 @@ describe('key file', () => {
     expect(upsertEnvLine('A=1', 'B', '2')).toBe('A=1\nB=2\n')
     expect(upsertEnvLine('', 'B', '2')).toBe('B=2\n')
     expect(upsertEnvLine(after, 'GEMINI_API_KEY', null)).toBe('# mine\nOTHER=keep this  \n\nTAIL=1\n')
+    // Codex 4297835963: parse reads the last duplicate, so an upsert keeps one line where the last was and drops the others.
+    expect(upsertEnvLine('A=1\nK=old1\nB=2\nexport K=old2\n', 'K', 'new')).toBe('A=1\nB=2\nK=new\n')
+    expect(parseEnvFile(upsertEnvLine('K=old1\nK=old2\n', 'K', 'new'))).toEqual({ K: 'new' })
+    expect(upsertEnvLine('K=old1\nK=old2\nA=1\n', 'K', null)).toBe('A=1\n')
     expect(upsertEnvLine('A=1\n', 'B', null)).toBe('A=1\n')
     // A value with spaces or # is quoted so it reads back whole.
     expect(parseEnvFile(upsertEnvLine('', 'K', 'a b#c'))).toEqual({ K: 'a b#c' })
@@ -98,6 +107,8 @@ describe('redaction', () => {
     expect(redact('nothing here', keys)).toBe('nothing here')
     expect(redact('a  b', ['', '  '])).toBe('a  b')
     expect(redact(KEY + KEY, [KEY])).toBe('[redacted][redacted]')
+    // Codex 4297836038: a key that is a prefix of another is replaced after the longer one, so no suffix leaks.
+    expect(redact('secret and secret-suffix', ['secret', 'secret-suffix'])).toBe('[redacted] and [redacted]')
   })
 })
 
@@ -110,6 +121,12 @@ describe('requests and replies', () => {
     expect(r.init.body).toBeUndefined()
     expect(modelsRequest(providerOf('ollama')!, '', 'http://localhost:11434/v1')!.init.headers.Authorization).toBeUndefined()
     expect(modelsRequest(providerOf('perplexity')!, KEY, 'https://api.perplexity.ai')).toBeNull()
+    // Codex 4298476139: Anthropic's native /v1/models needs anthropic-version; other providers get no such header.
+    expect(modelsRequest(providerOf('anthropic')!, KEY, 'https://api.anthropic.com/v1')!.init.headers['anthropic-version']).toBe('2023-06-01')
+    expect(r.init.headers['anthropic-version']).toBeUndefined()
+    expect(probeRequest(providerOf('anthropic')!, KEY, 'https://api.anthropic.com/v1', '').init.headers['anthropic-version']).toBe('2023-06-01')
+    // Codex 4297835980: OpenRouter's list is public, so its models request carries no header without a key.
+    expect(modelsRequest(providerOf('openrouter')!, '', 'https://openrouter.ai/api/v1')!.init.headers.Authorization).toBeUndefined()
   })
 
   test('probe: a one-token chat completion, no temperature or top_p, the model given or the default', () => {
@@ -119,11 +136,16 @@ describe('requests and replies', () => {
     expect(r.init.headers['Content-Type']).toBe('application/json')
     const body = JSON.parse(r.init.body!)
     expect(body).toEqual({ model: 'sonar-pro', messages: [{ role: 'user', content: 'Reply with ok.' }], max_tokens: 1 })
-    expect(JSON.parse(probeRequest(providerOf('openai')!, KEY, 'https://api.openai.com/v1', 'gpt-5-mini').init.body!).model).toBe('gpt-5-mini')
+    // Codex 4297836005: OpenAI's o-series rejects max_tokens; OpenAI gets max_completion_tokens, every other provider max_tokens.
+    expect(JSON.parse(probeRequest(providerOf('openai')!, KEY, 'https://api.openai.com/v1', 'o3').init.body!)).toEqual({ model: 'o3', messages: [{ role: 'user', content: 'Reply with ok.' }], max_completion_tokens: 1 })
+    expect(JSON.parse(probeRequest(providerOf('google')!, KEY, 'https://generativelanguage.googleapis.com/v1beta/openai', '').init.body!).max_tokens).toBe(1)
   })
 
   test('replies: the models list, a completion, an error body with the key redacted, and non-JSON', () => {
-    expect(parseModelsReply('{"object":"list","data":[{"id":"gemini-2.5-pro"},{"id":"gemini-2.5-flash"}]}')).toEqual({ ids: ['gemini-2.5-pro', 'gemini-2.5-flash'] })
+    expect(parseModelsReply('{"object":"list","data":[{"id":"gemini-2.5-pro"},{"id":"gemini-2.5-flash"}]}')).toEqual({ ids: ['gemini-2.5-pro', 'gemini-2.5-flash'], hasMore: false })
+    // Codex 4297836020: a paginated list (Anthropic's has_more) says there is more; 4298476186: an id that echoes a key is redacted.
+    expect(parseModelsReply('{"data":[{"id":"claude-a"}],"has_more":true,"last_id":"claude-a"}')).toEqual({ ids: ['claude-a'], hasMore: true })
+    expect(parseModelsReply(`{"data":[{"id":"leak-${KEY}"}]}`, [KEY])).toEqual({ ids: ['leak-[redacted]'], hasMore: false })
     expect(parseModelsReply('{"models":[{"name":"x"}]}')).toEqual({ error: 'no model list in the reply' })
     expect(parseModelsReply('<html>')).toEqual({ error: 'the reply is not JSON' })
     const ok = parseChatReply('{"model":"sonar-pro","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}')
@@ -146,7 +168,9 @@ describe('requests and replies', () => {
     expect(testOutcome('probe', { status: 418, ok: false, text: '{"error":"teapot"}' }, 20, at).note).toBe('✕ 418 failed (teapot)')
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[]}' }, 20, at).note).toBe('✕ 200 no reply text')
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms (model not named) · 1 token')
-    expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at).note).toBe('ok 20ms · no model list in the reply')
+    // Codex 4297835969: a 2xx that is not a model list is a failed test, never a green ok.
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at)).toEqual({ ok: false, status: 200, ms: 20, model: '', note: '✕ 200 no model list in the reply', at })
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}],"has_more":true}' }, 20, at).note).toBe('ok 20ms · 1+ models (first page)')
     // OpenRouter's list answers without a key (probed 2026-10-16): the ok says so.
     expect(providerOf('openrouter')!.modelsNeedKey).toBe(false)
     expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}]}' }, 20, at, [], false).note).toBe('ok 20ms · 1 models (the list needs no key; test <id> <model> checks the key)')

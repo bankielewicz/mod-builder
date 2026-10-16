@@ -10,35 +10,49 @@ const MODELS = '{"object":"list","data":[{"id":"gemini-2.5-pro"},{"id":"gemini-2
 const PROBE = '{"model":"sonar-pro","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}'
 
 type Fetch = { url: string; init: any }
+type Reply = { status: number; text: string; headers?: Record<string, string> } | string | { deny: string }
 type World = {
   files?: Record<string, string>
   env?: Record<string, string>
-  /** Answers each fetch by URL substring; a string answer is a 200 body; `{ deny }` is the host refusing. */
-  fetch?: (url: string, init: any) => { status: number; text: string; headers?: Record<string, string> } | string | { deny: string }
+  /** Answers each fetch by URL substring; a string answer is a 200 body; `{ deny }` is the host refusing; a promise answers later. */
+  fetch?: (url: string, init: any) => Reply | Promise<Reply>
   answer?: string
   noAsk?: boolean
+  /** No HOME and no USERPROFILE, as in a stripped container. */
+  noHome?: boolean
+  /** What the store holds before the test, by key. */
+  store?: Record<string, unknown>
+  /** The key file exists but can't be read: fs.read fails with this text. */
+  unreadable?: string
+  /** fs.write fails with this text. */
+  writeDeny?: string
 }
 type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; clock: ReturnType<typeof mock.clock> }
 
 function engine(on: any, o: World = {}): Seen {
-  const seen: Seen = { fetches: [], files: { ...(o.files ?? {}) }, argv: [], opened: [], toasts: [], store: new Map(), asked: 0, closed: [], clock: mock.clock(on) }
+  const seen: Seen = { fetches: [], files: { ...(o.files ?? {}) }, argv: [], opened: [], toasts: [], store: new Map(Object.entries(o.store ?? {})), asked: 0, closed: [], clock: mock.clock(on) }
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
   on('agent.register', () => ({ value: { agent: 'duet:x' } }))
   on('session.cwd', () => ({ value: '/w' }))
   on('session.id', () => ({ value: 's1' }))
-  on('env.get', ($: any, e: any) => ({ value: ({ HOME: '/home/u', ...(o.env ?? {}) } as Record<string, string>)[e.name] }))
-  on('fs.read', ($: any, e: any) => (e.path in seen.files ? { value: seen.files[e.path] } : { deny: 'ENOENT: no such file' }))
-  on('fs.write', ($: any, e: any) => ((seen.files[e.path] = e.text), { value: undefined }))
+  on('env.get', ($: any, e: any) => ({ value: ({ ...(o.noHome ? {} : { HOME: '/home/u' }), ...(o.env ?? {}) } as Record<string, string>)[e.name] }))
+  on('fs.read', ($: any, e: any) => (o.unreadable && e.path === KEY_FILE ? { deny: o.unreadable } : e.path in seen.files ? { value: seen.files[e.path] } : { deny: 'ENOENT: no such file' }))
+  on('fs.write', ($: any, e: any) => (o.writeDeny ? { deny: o.writeDeny } : ((seen.files[e.path] = e.text), { value: undefined })))
+  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'ran', stderr: '' } }))
+  on('tool.call', { tool: 'Read' }, () => ({ result: { type: 'text', file: { filePath: '/w/x', content: 'read', numLines: 1, startLine: 1, totalLines: 1 } } }))
   on('fs.exists', ($: any, e: any) => ({ value: e.path in seen.files }))
   on('fs.list', () => ({ deny: 'ENOENT' }))
   on('process.run', ($: any, e: any) => (seen.argv.push(e.argv), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('http.fetch', ($: any, e: any) => {
-    seen.fetches.push({ url: e.url, init: e.init })
-    const r = o.fetch?.(e.url, e.init) ?? MODELS
+  const answerOf = (r: Reply) => {
     if (typeof r === 'string') return { value: { status: 200, ok: true, headers: {}, text: r } }
     if ('deny' in r) return { deny: r.deny }
     return { value: { status: r.status, ok: r.status >= 200 && r.status < 300, headers: r.headers ?? {}, text: r.text } }
+  }
+  on('http.fetch', ($: any, e: any) => {
+    seen.fetches.push({ url: e.url, init: e.init })
+    const r = o.fetch?.(e.url, e.init) ?? MODELS
+    return r instanceof Promise ? r.then(answerOf) : answerOf(r)
   })
   on('store.get', ($: any, e: any) => ({ value: seen.store.get(e.key) }))
   on('store.set', ($: any, e: any) => (seen.store.set(e.key, e.value), { value: undefined }))
@@ -228,13 +242,18 @@ describe('/duet provider', () => {
     expect(text).toContain('gemini-2.5-pro')
     expect(text).toContain('gemini-2.5-flash')
     expect(await run($, 'provider models perplexity')).toContain('perplexity lists no models')
+    // Codex 4297835980: OpenRouter's list is public, so it is listed with no key and no Authorization header; its probe still needs one.
+    expect(await run($, 'provider models openrouter')).toContain('openrouter models (GET /models)')
+    expect(seen.fetches.at(-1)!.init.headers.Authorization).toBeUndefined()
+    expect(await run($, 'provider test openrouter')).toContain('ok')
+    expect(await run($, 'provider test openrouter some-model')).toBe('openrouter: no key. Press e on its row in /duet provider, or set OPENROUTER_API_KEY.')
     await run($, 'provider key google')
     const ui = await mount($)
     await ui.press({ key: 'prov-models' })
     await seen.clock.settle()
     expect(await ui.find({ type: 'Text', text: /gemini-2.5-flash/ })).toBeDefined()
     await ui.unmount()
-    expect(seen.fetches.length).toBe(2)
+    expect(seen.fetches.length).toBe(4)
   })
 
   test('x asks before removing a key; Keep leaves the file; Remove rewrites it without the line; the typed command is immediate', async ($, on) => {
@@ -249,6 +268,8 @@ describe('/duet provider', () => {
     await ui.unmount()
     expect(await run($, 'provider remove google')).toBe('google: key removed from ~/.claude/duet-data/.env.')
     expect(seen.files[KEY_FILE]).toBe(`A=1\nXAI_API_KEY=${XAI}\n`)
+    // Codex 4297835988: a removal rewrites the secret-bearing file, so it gets the same chmod 600.
+    expect(seen.argv).toContainEqual(['chmod', '600', KEY_FILE])
     expect(seen.asked).toBe(1)
     expect(await run($, 'provider remove google')).toBe('google: no key stored in ~/.claude/duet-data/.env (a key in your environment stays).')
   })
@@ -299,6 +320,126 @@ describe('/duet provider', () => {
     await ui.press({ key: 'prov-close' })
     expect(seen.closed).toEqual(['duet-providers'])
     await ui.unmount()
+  })
+
+  test('Codex 4297835973: saving or removing a key drops that provider\'s old test result, in the pane and the store', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, store: { 'duet:providers:tests': { google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1 }, xai: { ok: false, status: 401, ms: 1, model: '', note: '✕ 401 unauthorized', at: 1 } } } })
+    await start($)
+    expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key …a1b2\s+ok 1ms · 2 models/)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: 'AIza-replacement-0123456789abcdef', kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /google\s+Google Gemini\s+key …cdef\s+untested/ })).toBeDefined()
+    await ui.unmount()
+    const stored = seen.store.get('duet:providers:tests') as Record<string, unknown>
+    expect(stored.google).toBeUndefined()
+    expect(stored.xai).toBeDefined()
+    await run($, 'provider test google')
+    expect((seen.store.get('duet:providers:tests') as Record<string, unknown>).google).toBeDefined()
+    await run($, 'provider remove google')
+    expect((seen.store.get('duet:providers:tests') as Record<string, unknown>).google).toBeUndefined()
+  })
+
+  test('Codex 4298476151: a test result is merged into the shared store, never replacing another session\'s', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` } })
+    await start($)
+    await run($, 'provider list')
+    // Another session stored a result after this one read the store.
+    seen.store.set('duet:providers:tests', { xai: { ok: true, status: 200, ms: 5, model: '', note: 'ok 5ms · 3 models', at: 2 } })
+    await run($, 'provider test google')
+    const stored = seen.store.get('duet:providers:tests') as Record<string, { ok: boolean }>
+    expect(stored.xai!.ok).toBe(true)
+    expect(stored.google!.ok).toBe(true)
+  })
+
+  test('Codex 4297835997 (P1): with no home folder a key is refused, never written under the project', async ($, on) => {
+    const seen = engine(on, { noHome: true, env: { XAI_API_KEY: XAI } })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /not saved: no home folder \(HOME or USERPROFILE\); keys can't be stored/ })).toBeDefined()
+    await ui.unmount()
+    expect(Object.keys(seen.files)).toEqual([])
+    expect(seen.argv).toEqual([])
+    // Keys from the environment still work.
+    expect(await run($, 'provider list')).toMatch(/xai\s+xAI Grok\s+key …9f3e from env/)
+    expect(await run($, 'provider remove google')).toContain("no home folder")
+  })
+
+  test('Codex 4297836029: a key file that cannot be written leaves the field open and says why', async ($, on) => {
+    const seen = engine(on, { writeDeny: `EACCES: permission denied, open ${KEY_FILE}`, files: { [KEY_FILE]: '' } })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /not saved: EACCES: permission denied/ })).toBeDefined()
+    expect(await ui.find({ type: 'Input', key: 'prov-key' })).toBeDefined()
+    await ui.unmount()
+    expect(everything(seen)).not.toContain(KEY)
+  })
+
+  test('Codex 4298476175: a key file that exists but cannot be read is named, not treated as empty', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, unreadable: 'EACCES: permission denied' })
+    await start($)
+    const text = await run($, 'provider list')
+    expect(text).toContain('~/.claude/duet-data/.env could not be read (EACCES: permission denied); only keys from the environment are used')
+    expect(await run($, 'provider test google')).toBe('google: ~/.claude/duet-data/.env could not be read (EACCES: permission denied); fix the file, or set GEMINI_API_KEY.')
+    expect(seen.fetches).toEqual([])
+  })
+
+  test('Codex 4297836014: a provider that never answers is given 30 s, then the test fails and a late reply changes nothing', async ($, on) => {
+    let release: (r: Reply) => void = () => undefined
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => new Promise<Reply>(res => { release = res }) })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.press({ key: 'prov-test' })
+    expect(await ui.find({ type: 'Text', text: /testing… GET \/models/ })).toBeDefined()
+    await seen.clock.advance(30_000)
+    expect(await ui.find({ type: 'Text', text: /✕ not sent: no reply within 30 s/ })).toBeDefined()
+    release(MODELS)
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /✕ not sent: no reply within 30 s/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /ok \d+ms · 2 models/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('Codex 4298476163: a model list that arrives after the person moved to another provider is dropped', async ($, on) => {
+    let releaseGoogle: (r: Reply) => void = () => undefined
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\nXAI_API_KEY=${XAI}\n` }, fetch: (url) => (url.includes('googleapis') ? new Promise<Reply>(res => { releaseGoogle = res }) : '{"data":[{"id":"grok-4"}]}') })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.press({ key: 'prov-models' })
+    await ui.press({ key: 'prov-next' })
+    await ui.press({ key: 'prov-models' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /grok-4/ })).toBeDefined()
+    releaseGoogle(MODELS)
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /grok-4/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /gemini-2.5-flash/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a Bash command or a Read that names the key file is refused; others pass (side note on the mention guard)', async ($, on) => {
+    engine(on)
+    await start($)
+    const bash: any = await $.tool.call({ tool: 'Bash', command: 'cat ~/.claude/duet-data/.env' } as never)
+    expect(bash.deny).toMatch(/duet: that file holds API keys/)
+    const bash2: any = await $.tool.call({ tool: 'Bash', command: 'cat /home/u/.claude/duet-data/.env' } as never)
+    expect(bash2.deny).toMatch(/duet: that file holds API keys/)
+    const ok: any = await $.tool.call({ tool: 'Bash', command: 'ls ~/.claude/duet-data' } as never)
+    expect(ok.deny).toBeUndefined()
+    expect(ok.result.stdout).toBe('ran')
+    const read: any = await $.tool.call({ tool: 'Read', file_path: '/home/u/.claude/duet-data/.env' } as never)
+    expect(read.deny).toMatch(/duet: that file holds API keys/)
+    const readOk: any = await $.tool.call({ tool: 'Read', file_path: '/w/.env' } as never)
+    expect(readOk.deny).toBeUndefined()
   })
 
   test('@-mentioning the key file is denied', async ($, on) => {
