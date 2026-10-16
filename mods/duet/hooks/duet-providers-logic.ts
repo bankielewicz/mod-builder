@@ -202,7 +202,7 @@ function commandReaches(cmd: Word[], depth: number): boolean {
 
 /** Walks a command line: words, operators, `#` comments, and heredocs (whose body counts only when an interpreter reads it). */
 function reaches(text: string, depth: number): boolean {
-  if (depth > 3) return false
+  if (depth > 3) return true   // payloads nested this deep are refused rather than let through
   let cmd: Word[] = []
   let heredocs: { delim: string; strip: boolean; interpreted: boolean }[] = []
   const finish = () => {
@@ -234,7 +234,14 @@ function reaches(text: string, depth: number): boolean {
       i++
     } else if (c === '#') {
       while (i < text.length && text[i] !== '\n') i++
-    } else if (text.startsWith('<<<', i)) i += 3
+    } else if (text.startsWith('<<<', i)) {
+      // A here-string: the next word is the input; an interpreter runs it.
+      let j = i + 3
+      while (text[j] === ' ' || text[j] === '\t') j++
+      const w = readWord(text, j)
+      if (INTERPRETERS.has(commandName(cmd)) && reaches(w.word.value, depth + 1)) return true
+      i = Math.max(w.end, j + 1)
+    }
     else if (text.startsWith('<<', i)) {
       let j = i + 2
       const strip = text[j] === '-'
@@ -355,11 +362,6 @@ export function keyFor(p: ProviderDef, env: Record<string, string | undefined>, 
 // ── Redaction ────────────────────────────────────────────────────────────
 
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g
-
-/** Text with no control characters or line breaks, bounded. Provider text goes through `safeText`, which redacts before it cuts. */
-export function clean(text: string, max: number): string {
-  return text.replace(CONTROLS, '').slice(0, max)
-}
 
 /** `…a1b2`: the last four characters of a key long enough to keep them; `…` for a short one. */
 export function maskKey(key: string): string {
