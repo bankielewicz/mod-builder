@@ -1302,26 +1302,31 @@ host.
 
 **What changes.**
 1. **When it applies.** Preflight still runs `originCheck` first. Only when that blocks does `forkCheck` look for a
-   fork clone, so a clone whose origin is the project runs exactly as in 0.4.0. `forkOf` reads `git remote get-url
-   --push --all origin` (not the filtered list `originCheck` uses, which drops a push URL equal to the fetch URL) and
-   resolves each URL with `remoteRepo`. It is a fork clone when every push URL names the same one repository other than
-   the project, on the project's host. Origin's fetch URL isn't compared: the base comes from another remote. Anything
-   else (no origin, an unrecognised URL, a push URL that is the project, two different repositories, another host)
-   returns `originCheck`'s own block.
-2. **Base remote.** `git remote`, then `git remote get-url <name>` for each remote besides `origin`, each resolved with
-   `remoteRepo` against the project. `baseRemoteOf` (logic) classifies the matching names: none returns the origin
+   fork clone, so a clone whose origin is the project runs exactly as in 0.4.0. Preflight reads origin's fetch URL and
+   every push URL once (`originUrls`) and hands them to both checks. `forkOf` resolves each distinct URL with
+   `forkRemoteRepo` (item 8), all at once, and `forkOfOrigin` (logic) decides: a fork clone when every push URL names the
+   same one repository other than the project, on the project's host, and the fetch URL is that fork or the project
+   (PR #87 review: `git ls-remote origin` then lists a repository that was checked). Anything else (no origin, an
+   unrecognised URL, a fetch URL that is a third repository, a push URL that is the project, two different
+   repositories, another host) returns `originCheck`'s own block.
+2. **Base remote.** `git remote`, then `git remote get-url <name>` for each remote besides `origin`, looked up together
+   and each resolved with `forkRemoteRepo` against the project, so a mirror with the project's owner/repo on another
+   host is not the project (item 8). `baseRemoteOf` (logic) classifies the matching names: none returns the origin
    block, one is the base remote, several block with `remotes a and b both point at o/r` and next `remove one of them`
    (three or more read `a, b and c`).
 3. **Fork check.** `gh repo view <fork> --json isFork,parent`; `isForkOf` (logic) passes when `isFork` is true and the
    parent's owner login and name are the project's, in any case, without comparing a host. Otherwise `origin me/r isn't a
    fork of o/r`. A `gh` failure blocks with its own text (`could not read me/r from gh: …`) rather than claiming it
    isn't a fork.
-4. **Organization.** `gh api users/<owner> --jq .type` printing `Organization` blocks with `gh pr create can't name an
+4. **Organization.** `gh api --hostname <fork's host> users/<owner> --jq .type` printing `Organization` blocks with `gh pr create can't name an
    organization's fork as the head (cli/cli#10093)`. A `gh api` failure blocks with `could not tell whether <owner> is a
    user or an organization`. Both gh checks come before any fetch.
 5. **The remote the base comes from.** `fetchBase`, `catchUp`, `whereToWork`, `makeBranch`, the merge base, the profile
    read, the baseline and the publish merge check take the remote as an argument (`baseRemote`, else `origin`), and their
-   activity labels and block reasons name it. The branch name is checked against `ls-remote --heads` on `origin` and on
+   activity labels and block reasons name it. Before each fetch from it (a kept worktree at preflight, the baseline, the
+   publish merge check), `baseRemoteCheck` reads `git remote get-url <baseRemote>` in that folder again and requires it
+   to be the project (`<remote> no longer fetches from o/r`, next `point <remote> back at o/r, or start a new run`; the
+   merge check reports it as why it couldn't run). The branch name is checked against `ls-remote --heads` on `origin` and on
    the base remote. The merge line, the publish question and the PR body name `baseRefOf(run)` (`upstream/main`).
 6. **Store.** The `preflighted` event carries `baseRemote` and `headRepo` (the fork, `host/owner/repo`, from the
    canonical form `remoteRepo` gives, so a URL with a token never reaches a command line or a text). `advance` stores
@@ -1329,23 +1334,35 @@ host.
    in `types/index.d.ts`. A run without them (0.4.0's shape) fetches from and pushes to `origin`, runs `originCheck` at
    publish and names the branch alone as the head.
 7. **Publish.** A run with `headRepo` runs `forkPushCheck` instead of `originCheck`: every push URL of origin must still
-   resolve to the fork (`remoteRepo` against `headRepo`), else `origin no longer pushes to me/r`, next `point origin back
+   resolve to the fork (`forkRemoteRepo` against `headRepo`), else `origin no longer pushes to me/r`, next `point origin back
    at it, or start a new run`. The push is still `git push origin <sha>:refs/heads/<branch>`; the pull request is
    `gh pr create --base <base> --head <fork owner>:<branch> --title … --body-file … --repo <project>` (`headArg`, logic).
-   A kept worktree resumed through preflight gets the same push check in its own folder.
+   A kept worktree resumed through preflight gets the same push check in its own folder. The publish question names
+   both: `Push <branch> to me/r and open a pull request on o/r against main?`.
+8. **ssh host nicknames** (PR #87 review, the owner's choice). For the fork, the base remote, `baseRemoteCheck` and
+   `forkPushCheck`, an ssh URL whose host isn't the project's is read through `ssh -G <host>` (`sshHostOf`): ssh applies
+   `~/.ssh/config` and prints the `hostname` it would reach, without connecting (probed with OpenSSH 10.2: an alias
+   prints its `HostName`, lowercased; an unknown name prints itself). `forkRemoteVerdict` (logic) then reads the URL on
+   that host, with GitHub's ssh-over-443 host `ssh.github.com` taken for `github.com`, and never assumes another host
+   is a nickname. ssh failing is no match. So `git@gh-personal:me/r.git` with `HostName github.com` is the fork
+   `github.com/me/r`, and `git@gitlab.com:o/r.git` is `gitlab.com/o/r`, not the project. Origin's own check
+   (`originCheck`, `remoteVerdict`) keeps #25's rule, under which the same owner/repo over ssh on any host is the
+   project (#71). `ssh -G` reads ssh's default configuration; a `core.sshCommand` or `GIT_SSH_COMMAND` with its own
+   `-F` isn't followed.
 
 **Differences from the issue's proposal.** (a) The version is 0.5.0: 0.4.0 shipped #25. (b) `remoteRepo` in this repo
-takes a URL, not a remote name and a push flag, so the remotes' URLs are read in `forkOf`, `baseRemoteFor` and
-`forkPushCheck`. (c) The fork must be on the project's host (`hostOf`), else `originCheck`'s block stands, since `isForkOf`
-compares no host. (d) Logic-side texts (the merge line, the publish question, the PR body) name the base remote too.
+takes a URL, not a remote name and a push flag, so the remotes' URLs are read in `originUrls`, `baseRemoteFor` and
+`forkPushCheck`. (c) The fork must be on the project's host (`hostOf`; an ssh host as `ssh -G` resolves it, item 8), else
+`originCheck`'s block stands, since `isForkOf` compares no host. (d) Logic-side texts (the merge line, the publish question, the PR body) name the base remote too.
 
 **What gets touched.** Processes, all in a fork clone only: `git remote`, `git remote get-url <name>`, `git ls-remote
---heads <base remote>`, `gh repo view <fork> --json isFork,parent`, `gh api users/<owner> --jq .type`; fetch, switch and
-merge use the base remote. No new files, store keys or hooks. The push and the pull request still wait for a yes.
+--heads <base remote>`, `gh repo view <fork> --json isFork,parent`, `gh api --hostname <host> users/<owner> --jq .type`,
+`ssh -G <host>` for an ssh URL on another host than the project's (local, never connects); fetch, switch and merge use
+the base remote. No new files, store keys or hooks. The push and the pull request still wait for a yes.
 
 **Not changed:** gates, coverage rules, phases, the guard, `.issue-forge.json`, the store keys. The start menu's `from
-origin/<base>` label and the `the run reads origin/<base>'s copy` hint in a busy-checkout block still say origin: they
-come before any remote is known.
+origin/<base>` label still says origin: it is drawn before preflight knows any remote. The busy-checkout block names the
+ref the profile was read from (`upstream/<base>` in a fork clone; PR #87 review).
 
 **Unverified (issue #26's probe).** Whether `gh pr create --repo <project> --head <fork owner>:<branch>` opens the pull
 request, with a renamed fork too, and what 0.4.0's bare `--head` does from a fork clone, need a throwaway repository and a
@@ -1358,3 +1375,24 @@ there, both remotes asked for a taken branch name, the stored run, the check ord
 organization, two project remotes, not a fork, a fork of another repository), a failed fetch naming `upstream`, resume at
 the baseline, and publish (push, `--head me:<branch>`, `--repo`, the merge check on `upstream/main`, origin moved to another
 repository, one of two push URLs elsewhere).
+
+### PR #87 review round 1 (2026-10-15)
+
+Codex's two inline comments on 9430f83 and the owner's `/code-review` (9 more). Each fix went red → green.
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | (Codex) The stored base remote was trusted by name: a resume at the baseline, a kept worktree's own config and the publish merge check fetched whatever it pointed at | `baseRemoteCheck` before each of those fetches (item 5) |
+| 2 | (Codex) `gh api users/<owner>` had no `--hostname`, so GitHub Enterprise asked github.com | `--hostname <fork's host>` (item 4); the old exact-argv assertions were corrected in their own commit |
+| 3 | Merge conflict with main (#86 took 0.4.1) | main merged in; this stays 0.5.0 |
+| 4 | An ssh-nickname fork was refused, with a hint pointing at #26 | item 8; the hint now names both supported setups |
+| 5 | The busy-checkout block said `origin/<base>` in a fork run | `workspacePlan` takes the ref |
+| 6 | No QA or live check in the PR body | added to the PR body |
+| 7 | Origin's push URLs read twice, gh asked twice about the fork, remotes looked up one at a time | one read (`originUrls`), gh's names memoized per check, remotes looked up together |
+| 8 | Untested paths in `register.tsx` | tests for the gh failures, no project remote, push URLs unreadable or empty, a kept worktree, the fork wording |
+| 9 | `ls-remote origin` used a fetch URL nothing checked | the fetch URL is part of the fork check (item 1) |
+| 10 | The publish question didn't name the fork | it does (item 7) |
+| 11 | A mirror with the project's owner/repo on another host counted as the project and could become the base | item 8 |
+
+Not done: one `gh repo view --json nameWithOwner,url,isFork,parent` in place of two calls (the canonical name and the
+fork check are separate questions, and the memo already removes the repeat).

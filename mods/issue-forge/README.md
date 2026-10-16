@@ -114,10 +114,13 @@ the remotes are fixed and it resumes.
   base (`upstream/main`), pushes the branch to your fork, and opens the pull request on the project with your
   fork's owner as the head (`gh pr create --repo <project> --head <you>:<branch>`). Before anything is
   fetched, preflight checks that exactly one remote besides `origin` names the project (two block, naming
-  both), that every push URL of `origin` is one fork, that `gh repo view` calls it a fork of the project, and
-  that its owner is a user: `gh pr create` can't name an organization's fork as the head
-  ([cli/cli#10093](https://github.com/cli/cli/issues/10093)), so that blocks. The run stores the remote and
-  the fork, and publish blocks if `origin` stops pushing to that fork. Anything else that `gh` and `origin`
+  both), that every push URL of `origin` is one fork and its fetch URL that fork or the project, that
+  `gh repo view` calls it a fork of the project, and that its owner is a user: `gh pr create` can't name an
+  organization's fork as the head ([cli/cli#10093](https://github.com/cli/cli/issues/10093)), so that blocks.
+  An ssh host nickname from `~/.ssh/config` (`git@gh-personal:me/r.git`) counts as the host `ssh -G` says it
+  reaches, which never connects; a mirror with the project's name on another host isn't the project. The run
+  stores the remote and the fork, checks the remote still names the project before each fetch from it, and
+  publish blocks if `origin` stops pushing to that fork. Anything else that `gh` and `origin`
   disagree on still blocks the run before it fetches or switches. With the fork as the only remote, or after
   `gh repo set-default <fork>`, gh names the fork itself, so the run stays inside the fork as before. The
   whole flow is checked by the tests; no live pull request from a fork has been opened (the live probe is in #26).
@@ -260,7 +263,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `session.receive`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, including `--git-common-dir` for each command, status, check-ignore, fetch, show `<remote>/<base>:.issue-forge.json`, for-each-ref, ls-remote (origin, and the project's remote in a fork clone), switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, remote (the list of remotes), remote get-url, push), `gh` (auth status, repo view, api `users/<owner>` for `.type` in a fork clone, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
+| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, including `--git-common-dir` for each command, status, check-ignore, fetch, show `<remote>/<base>:.issue-forge.json`, for-each-ref, ls-remote (origin, and the project's remote in a fork clone), switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, remote (the list of remotes), remote get-url, push), `gh` (auth status, repo view, api `--hostname <host> users/<owner>` for `.type` in a fork clone, issue view, pr create), `ssh -G <host>` in a fork clone for an ssh remote on another host than the project's (reads `~/.ssh/config`, never connects), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |

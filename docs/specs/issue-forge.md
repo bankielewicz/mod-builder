@@ -82,12 +82,15 @@ the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own c
    before its fetch, and publish checks origin in the run's folder before it pushes (a worktree's own config can
    differ). A number start is pinned to the repository as soon as origin agrees with it.
    A fork clone (SPEC change 0.5.0) is the exception to "`origin` is that repository": when every push URL of
-   `origin` names one other repository on the same host and exactly one other remote's fetch URL names the
-   pinned one (`git remote`, `git remote get-url <name>`), that remote is the run's base remote. Two block
-   (`remotes a and b both point at o/r`). `gh repo view <fork> --json isFork,parent` must show a fork of the
-   pinned repository (owner login and name, any case), or the run blocks (`origin me/r isn't a fork of o/r`).
-   `gh api users/<owner> --jq .type` must not print `Organization` (`gh pr create --head` can't name one:
-   cli/cli#10093). The run stores `baseRemote` and `headRepo`; below, `<remote>` is `baseRemote`, else `origin`.
+   `origin` names one other repository on the same host, its fetch URL is that fork or the pinned one, and
+   exactly one other remote's fetch URL names the pinned one (`git remote`, `git remote get-url <name>`), that
+   remote is the run's base remote. Two block (`remotes a and b both point at o/r`). For these remotes an ssh
+   host other than the pinned one counts as `ssh -G <host>` resolves it (never assumed to be a nickname).
+   `gh repo view <fork> --json isFork,parent` must show a fork of the pinned repository (owner login and name,
+   any case), or the run blocks (`origin me/r isn't a fork of o/r`). `gh api --hostname <host> users/<owner>
+   --jq .type` must not print `Organization` (`gh pr create --head` can't name one: cli/cli#10093). The run
+   stores `baseRemote` and `headRepo`; below, `<remote>` is `baseRemote`, else `origin`, and before each fetch
+   from a `baseRemote` its URL is read again in that folder and must still name the pinned repository.
    `gh issue view <N> --repo <host/owner/repo> --json number,title,body,state,url` shows `state: OPEN`
    and a url that isn't a pull request's.
 2. The profile exists and validates (§4.2).
