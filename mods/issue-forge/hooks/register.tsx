@@ -121,7 +121,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
+import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -185,7 +185,9 @@ let knownRefs = new Set<string>()
 let runWrites: Promise<void> = Promise.resolve()
 /** Where git keeps each folder's lock files, asked once per folder and file (PR #88 review). */
 const lockFiles: Record<string, string> = {}
-const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
+/** An agent's final answer and how its turn ended, for the phase waiting on it. */
+type AgentTurn = { answer: string; reason?: TurnEnd }
+const waiting: Record<string, { resolve: (turn: AgentTurn) => void; reject: (err: Error) => void }> = {}
 
 function readOptions(raw: unknown): Options {
   const o = (raw ?? {}) as Record<string, unknown>
@@ -1003,7 +1005,7 @@ async function baseline($: EngineInterface, run: Run, p: Profile): Promise<RunEv
   return { type: 'baselined', baseline: totals(p, lcov), mergeBase }
 }
 
-function waitForAnswer(agentId: string): Promise<string> {
+function waitForAnswer(agentId: string): Promise<AgentTurn> {
   return new Promise((resolve, reject) => {
     waiting[agentId] = { resolve, reject }
   })
@@ -1060,7 +1062,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()), (run as Stamped).driveGen)
   await setActivity($, 'agent working')
   try {
-    return { type: 'agentDone', answer: answer ? await answer : '' }
+    return { type: 'agentDone', ...(answer ? await answer : { answer: '' }) }
   } finally {
     if (liveAgent === agentId) {
       liveAgent = null
@@ -1792,7 +1794,7 @@ export const register: Register = (on, raw) => {
     const w = id ? waiting[id] : undefined
     if (id && w) {
       delete waiting[id]
-      w.resolve(e.answer)
+      w.resolve({ answer: e.answer, reason: e.reason })
     }
     return next(e)
   })

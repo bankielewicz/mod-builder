@@ -862,11 +862,14 @@ export function baseRefOf(run: { base: string; baseRemote?: string }): string {
  */
 export type Kept = { branch: string; workRoot: string; base: string; baseRemote?: string; headRepo?: string }
 
+/** How an agent's turn ended (`turn.complete`'s `reason`); an answer given in-line by another plugin has none. */
+export type TurnEnd = 'answer' | 'aborted' | 'refusal' | 'error'
+
 export type RunEvent =
   | { type: 'preflighted'; title: string; body: string; url: string; base: string; branch: string; mergeBase: string; profile: Profile; workRoot?: string; repo: string; baseRemote?: string; headRepo?: string }
   | { type: 'baselined'; baseline: Baseline; mergeBase?: string }
   | { type: 'spawned'; agent: AgentRef }
-  | { type: 'agentDone'; answer: string }
+  | { type: 'agentDone'; answer: string; reason?: TurnEnd }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
   | { type: 'block'; reason: string; next: string; keep?: Kept }
   | { type: 'merged'; merge: MergeCheck }
@@ -981,7 +984,9 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.type === 'spawned') return { ...run, used: { ...run.used, [phase]: run.used[phase] + 1 }, agents: [...run.agents, ev.agent] }
       if (ev.type !== 'agentDone') return run
       const gate: Step = phase === 'red' ? 'gateR' : phase === 'green' ? 'gateG' : 'gateF'
-      const redAnswer = phase !== 'red' ? run.redAnswer : run.behaviourFor ? `${run.redAnswer ?? ''}\n\n${ev.answer}`.trim() : ev.answer
+      // Green reads red's answer as notes: a turn that errored, was refused or interrupted left none (PR #89 review).
+      const answer = ev.reason === undefined || ev.reason === 'answer' ? ev.answer : ''
+      const redAnswer = phase !== 'red' ? run.redAnswer : run.behaviourFor ? `${run.redAnswer ?? ''}\n\n${answer}`.trim() : answer
       return { ...run, step: gate, redAnswer }
     }
     case 'gateR': {
