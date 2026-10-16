@@ -248,7 +248,8 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
     if (!isLockError(text) && !(await $.fs.exists(indexLock))) return r
     if (attempt === INDEX_ATTEMPTS) throw new Locked(lockPathOf(text) ?? indexLock)
     await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
-    stillDriving(run)
+    // The 5 s watch is too slow for a takeover during the waits: the stored run is read before each attempt.
+    await stillOwned($, run)
   }
 }
 
