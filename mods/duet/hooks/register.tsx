@@ -11,8 +11,8 @@ import {
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
-  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
-  redact, refusalReason, rowWindow, savedNote, testOutcome, testText, upsertEnvLine,
+  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  clean, redact, refusalReason, rowWindow, savedNote, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
 import type { ProviderTest } from '../types'
@@ -71,6 +71,13 @@ const provTests = atom({ plugin: 'duet', key: 'providerTests' } as const, {} as 
 const provFileError = atom({ plugin: 'duet', key: 'providerFileError' } as const, '')
 // Saves, removals and test results are read-modify-write sequences on shared files; this session's go one at a time.
 let keyChain: Promise<unknown> = Promise.resolve()
+/** Per provider, a count bumped by every save, removal and test start: a test whose count moved on records nothing (Codex 4298989626). */
+const provGen = new Map<string, number>()
+const bumpGen = (id: string): number => {
+  const n = (provGen.get(id) ?? 0) + 1
+  provGen.set(id, n)
+  return n
+}
 function serialized<T>(work: () => Promise<T>): Promise<T> {
   const next = keyChain.then(work, work)
   keyChain = next.catch(() => undefined)
@@ -495,8 +502,9 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (now === 'yes') return ''
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
+  const keyFile = await keyFilePath($).catch(() => '')
   try {
-    answer = await $.ui.ask(consentText(cwd, options.sandbox, keyFileExposed(options.fsScope, cwd, await keyFilePath($)) ? KEY_FILE_HOME : undefined), [YES, NO])
+    answer = await $.ui.ask(consentText(cwd, options.sandbox, keyFileExposed(options.fsScope, cwd, keyFile) ? KEY_FILE_HOME : undefined), [YES, NO])
   } catch (err) {
     return consentRefusal(err)
   }
@@ -994,11 +1002,10 @@ async function writeKeyFile($: EngineInterface, path: string, text: string, secr
   if (!(await $.fs.exists(path).catch(() => false))) {
     await $.fs.write(path, '')
     const mode = await chmod600($, path, secret)
+    if (mode !== 'chmod 600') return mode   // the mode could not be set: the key is not written into a file others may read
     await $.fs.write(path, text)
-    return mode
-  }
-  await $.fs.write(path, text)
-  return chmod600($, path, secret)
+  } else await $.fs.write(path, text)
+  return chmod600($, path, secret)   // after the final write too: a host that writes through a temporary file would leave the umask's mode
 }
 
 async function chmod600($: EngineInterface, path: string, secret: string): Promise<string> {
@@ -1032,6 +1039,8 @@ async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Pr
   } catch (err) {
     return { failed: `not saved: ${redact(fsReason(err), [key])}` }
   }
+  if (mode !== 'chmod 600' && !(await $.fs.exists(path).catch(() => true))) return { failed: `not saved: ${mode}` }
+  bumpGen(p.id)
   await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
   await refreshProviderAuth($)
   const cwd = await $.session.cwd().catch(() => '')
@@ -1057,6 +1066,7 @@ async function removeKeyNow($: EngineInterface, p: ProviderDef): Promise<string>
   } catch (err) {
     return `not changed: ${redact(fsReason(err), [held])}`
   }
+  bumpGen(p.id)
   await storeProviderTestNow($, p.id, null)
   await refreshProviderAuth($)
   return `${p.id}: key removed from ${KEY_FILE_HOME}.${mode === 'chmod 600' ? '' : ` (${mode})`}`
@@ -1113,18 +1123,38 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
  * The key test. `GET /models` is free; the one-token completion is billed by most providers, so it runs only where the
  * table says the provider lists no models, or when the person names a model. Nothing is retried.
  */
-async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<string> {
+async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
+  if ((await read($, provTests))[p.id] === 'running') return { ran: false, text: `${p.id}: a test is already running.` }
   const models0 = model === '' && p.modelsPath !== null
   const ready = await providerReady($, p, models0 ? 'models' : 'probe')
-  if (ready.why) return ready.why
+  if (ready.why) return { ran: false, text: ready.why }
+  const gen = bumpGen(p.id)
   await update($, provTests, t => ({ ...t, [p.id]: 'running' as const }))
-  const started = Date.now()
-  const models = models0 ? modelsRequest(p, ready.key, ready.base) : null
-  const step = models ? 'models' : 'probe'
-  const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
-  const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey)
-  await storeProviderTest($, p.id, result)
-  return `${p.id}: ${result.note}`
+  let recorded = false
+  try {
+    const started = Date.now()
+    const models = models0 ? modelsRequest(p, ready.key, ready.base) : null
+    const step = models ? 'models' : 'probe'
+    const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
+    if (provGen.get(p.id) !== gen) {
+      // The key was saved or removed while the request was out: this reply says nothing about the key now stored.
+      await storeProviderTest($, p.id, null)
+      recorded = true
+      return { ran: false, text: `${p.id}: the key changed during the test; nothing recorded. Run it again.` }
+    }
+    const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey, maskKey(ready.key))
+    await storeProviderTest($, p.id, result)
+    recorded = true
+    return { ran: true, text: `${p.id}: ${result.note}` }
+  } catch (err) {
+    const note = `✕ internal error (${clean(redact(String((err as Error)?.message ?? err), ready.keys), 80)})`
+    await storeProviderTest($, p.id, { ok: false, status: 0, ms: 0, model: '', note, at: Date.now(), key: maskKey(ready.key) }).catch(() => undefined)
+    recorded = true
+    return { ran: true, text: `${p.id}: ${note}` }
+  } finally {
+    // Nothing stays on `testing…` whatever happened above (Codex 4298989618).
+    if (!recorded) await update($, provTests, t => { const { [p.id]: _, ...rest } = t; return rest }).catch(() => undefined)
+  }
 }
 
 /** `GET /models` as text, or why not. */
@@ -1188,8 +1218,8 @@ async function testHighlighted($: EngineInterface): Promise<void> {
   const p = await highlightedProvider($)
   await update($, provEditing, () => false)
   await update($, provNote, () => '')
-  const text = await testProvider($, p, '')
-  if (!(p.id in (await read($, provTests)))) await update($, provNote, () => text)
+  const r = await testProvider($, p, '')
+  if (!r.ran) await update($, provNote, () => r.text)
 }
 
 /** Opens the providers pane with the keyboard, its rows refreshed; `rowId` highlights a provider and `edit` opens its key field. */
@@ -1213,7 +1243,9 @@ async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; 
   const auth = await read($, provAuth)
   const tests = await read($, provTests)
   // `used` marks a provider a route uses; routes arrive in 0.4.0 with the mark's legend, so no row is marked yet.
-  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(tests[p.id]), used: false }))
+  // A stored result vouches only for the key it tested: its mask must be the one the sign-in column shows now (Codex 4298989626).
+  const current = (id: string, t: ProviderTest | 'running' | undefined) => (t === undefined || t === 'running' || !t.key || (auth[id] ?? '').includes(t.key) ? t : undefined)
+  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
   const keys = rows.filter(r => r.auth.startsWith('key ')).length
   const tested = Object.values(tests).filter(t => t !== 'running').length
   return { rows, keys, tested }
@@ -1243,7 +1275,7 @@ async function providerCommand($: EngineInterface, words: string[]): Promise<str
     if (!p.keyName) return p.auth === 'cli' ? 'codex signs in with codex login; duet keeps no key for it.' : `${p.id} takes no key.`
     return openProvidersPane($, p.id, true)
   }
-  if (verb === 'test') return testProvider($, p, rest.join(' ').trim())
+  if (verb === 'test') return (await testProvider($, p, rest.join(' ').trim())).text
   if (verb === 'models') {
     const r = await listProviderModels($, p)
     return r.error ? (r.error.startsWith(p.id) ? r.error : `${p.id}: ${r.error}`) : [`${p.id} models (GET /models)`, ...r.ids.map(m => `  ${m}`)].join('\n')
@@ -1443,6 +1475,8 @@ export const register: Register = (on, raw) => {
     const modelNow = draft[MODEL_FIELD.field] ?? storedText(rawOptions, MODEL_FIELD)
     const picks = pickable(models)
     const warning = onModel ? modelWarning(modelNow, models) : ''
+    // The option rows scroll in a window around the highlighted one, as the providers pane's do (the pane gained rows in 0.3.0).
+    const cfgWin = rowWindow(at, CONFIG_FIELDS.length, e.props.scroll.bodyRows, 7 + (editing ? 1 : 0) + (note !== '' ? 1 : 0) + (warning ? 1 : 0) + (picking ? picks.length + 2 : 0))
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
@@ -1450,13 +1484,14 @@ export const register: Register = (on, raw) => {
           <Text dimColor>{saving ? 'saving…' : isDirty ? 'unsaved changes' : 'saved'}</Text>
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
-        {CONFIG_FIELDS.map((f, i) => {
+        {CONFIG_FIELDS.slice(cfgWin.start, cfgWin.start + cfgWin.room).map((f, j) => {
+          const i = cfgWin.start + j
           const stored = storedText(rawOptions, f)
           const shown = draft[f.field] ?? stored
           const changed = draft[f.field] !== undefined && draft[f.field] !== stored
           const value = shown === '' ? '(empty)' : shown
           const choices = f.choices ? `   [${f.choices.join(' | ')}]` : ''
-          const line = `${i === at ? '▸' : ' '} ${changed ? '•' : ' '} ${f.alias.padEnd(8)} ${value}${choices}`
+          const line = `${i === at ? '▸' : ' '} ${changed ? '•' : ' '} ${f.alias.padEnd(11)} ${value}${choices}`
           return <Text key={`cfg-row-${f.field}`} inverse={i === at} color={changed ? COLORS.warn : undefined}>{line.slice(0, width)}</Text>
         })}
         <Text dimColor>{'─'.repeat(width)}</Text>
@@ -1539,8 +1574,12 @@ export const register: Register = (on, raw) => {
     const focused = e.props.isFocused
     // The pane is a window: rows besides the providers (header, rules, routes, the field, a note, buttons, the hint, the two
     // "more" marks) are counted, and the providers scroll in what is left, the highlighted one always in view (seen live).
-    const shown = listing ? Math.min(models.length, 12) + (models.length > 12 ? 1 : 0) + (modelsState !== 'idle' ? 1 : 0) : 0
-    const fixed = 8 + (keys === 0 ? 1 : 0) + (fileError !== '' ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? note.split('\n').length : 0) + shown
+    const fixed0 = 8 + (keys === 0 ? 1 : 0) + (fileError !== '' ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? note.split('\n').length : 0)
+    // The model list under a row takes only what the window has left after the fixed lines and three rows (Codex 4298989642).
+    const modelRoom = listing ? detailLinesThatFit(e.props.scroll.bodyRows, fixed0 + (modelsState !== 'idle' ? 1 : 0), 13) : 0
+    const listed = Math.max(0, Math.min(models.length, modelRoom - (models.length > modelRoom ? 1 : 0)))
+    const shown = listing ? listed + (models.length > listed ? 1 : 0) + (modelsState !== 'idle' ? 1 : 0) : 0
+    const fixed = fixed0 + shown
     const win = rowWindow(at, rows.length, e.props.scroll.bodyRows, fixed)
     const visible = rows.slice(win.start, win.start + win.room)
     const above = win.start
@@ -1564,8 +1603,8 @@ export const register: Register = (on, raw) => {
               <Box flexDirection="column" paddingLeft={4}>
                 {modelsState === 'fetching' && <Text dimColor>{`asking ${r.p.id} for its models…`}</Text>}
                 {modelsState !== 'fetching' && modelsState !== 'idle' && <Text color={COLORS.warn}>{modelsState.slice(0, width - 4)}</Text>}
-                {models.slice(0, 12).map(m => <Text key={`prov-model-${r.p.id}-${m}`} dimColor>{m.slice(0, width - 4)}</Text>)}
-                {models.length > 12 && <Text dimColor>{`… ${models.length - 12} more: /duet provider models ${r.p.id}`}</Text>}
+                {models.slice(0, listed).map(m => <Text key={`prov-model-${r.p.id}-${m}`} dimColor>{m.slice(0, width - 4)}</Text>)}
+                {models.length > listed && <Text dimColor>{`… ${models.length - listed} more: /duet provider models ${r.p.id}`}</Text>}
               </Box>
             )}
           </Box>

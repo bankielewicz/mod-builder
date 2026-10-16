@@ -82,7 +82,7 @@
     "apiCustomModel": {
       "type": "string",
       "title": "Custom provider default model",
-      "description": "The model id the custom provider's key test and runs use when no other is given.",
+      "description": "The model id runs on the custom provider use (0.4.0). In 0.3.0 the key test lists models instead; test custom <model> names a model directly.",
       "default": ""
     }
   }

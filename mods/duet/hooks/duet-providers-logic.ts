@@ -93,18 +93,27 @@ export const NO_HOME = "no home folder (HOME or USERPROFILE); keys can't be stor
 const KEY_FILE_RE = /duet-data[\\/]\.env(?![\w.-])/
 
 /**
- * True when a shell command or a file path names the key file: a guard keeps it out of the conversation. Text inside
- * quotes is a pattern or a message, not a path, unless the quoted text is nothing but a path (`cat "~/…/.env"`).
+ * True when a shell command or a file path reaches the key file: a guard keeps it out of the conversation. A rooted path
+ * (`~/…`, `/…`, `./…`, `$HOME/…`, `C:…`) to the file or to its folder counts wherever it stands: quoted, inside a `-c`
+ * payload, with `//` or `/.` in it, as a wildcard, or as the folder itself (`cd` there, `ls`, `grep -r`). A heredoc body
+ * and a `#` comment do not, nor does an unrooted mention (a grep pattern): this repo's docs name the path all the time.
+ * A text match, not a check on what the command opens: a tripwire for the obvious case.
  */
 export function namesKeyFile(text: string): boolean {
-  // A quoted segment counts only when it is a rooted path (`~/…`, `/…`, `./…`, `C:…`) to the file: `cat "~/.claude/duet-data/.env"`.
-  const unquoted = text.replace(/"([^"]*)"|'([^']*)'/g, (m, d: string | undefined, q: string | undefined) => (/^(?:~|\/|\.{1,2}[\\/]|[A-Za-z]:)\S*duet-data[\\/]\.env$/.test((d ?? q ?? '').trim()) ? m : ' '))
-  return KEY_FILE_RE.test(unquoted)
+  const stripped = text
+    .replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '<<HEREDOC')   // heredoc bodies
+    .replace(/(^|\s)#[^\n]*/g, '$1')                                                    // comments
+    .replace(/\$\{HOME\}|\$HOME/g, '~')
+    .replace(/\\/g, '/')
+    .replace(/\/\.(?=\/)/g, '')
+    .replace(/\/{2,}/g, '/')
+  const tokens = stripped.match(/(?:~|\/|\.{1,2}\/|[A-Za-z]:)[^\s"'<>|;&()]*/g) ?? []
+  return tokens.some(t => /duet-data(?:\/|$)(?![\w.-])/.test(t) || KEY_FILE_RE.test(t))
 }
 
-/** True when a path or glob names the key file or its folder (a Grep over the folder reads the file). */
+/** True when a Grep's path or glob names the key file or its folder (a Grep over the folder reads the file). */
 export function namesKeyFolder(text: string): boolean {
-  return KEY_FILE_RE.test(text) || /duet-data(?![\w.-])[\\/]?$/.test(text.trim())
+  return namesKeyFile(text) || KEY_FILE_RE.test(text) || /duet-data(?![\w.-])[\\/]?$/.test(text.trim())
 }
 
 /**
@@ -113,16 +122,24 @@ export function namesKeyFolder(text: string): boolean {
  */
 export function keyFileExposed(fsScope: 'anything' | 'project', cwd: string, keyFile: string): boolean {
   if (fsScope === 'anything') return true
-  if (keyFile === '') return false
-  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
-  return keyFile.startsWith(norm(cwd) + '/')
+  if (keyFile === '' || cwd.trim() === '') return false   // an unknown session folder is no reason to warn
+  const norm = (p: string) => {
+    const n = p.replace(/\\/g, '/').replace(/\/+$/, '')
+    return /^[A-Za-z]:/.test(n) ? n.toLowerCase() : n   // Windows paths compare without case
+  }
+  return norm(keyFile).startsWith(norm(cwd) + '/')
+}
+
+/** How many detail lines (a model list) fit under a row once the fixed lines and the three rows always drawn are taken. */
+export function detailLinesThatFit(bodyRows: number, fixedLines: number, wanted: number): number {
+  return Math.max(0, Math.min(wanted, bodyRows - fixedLines - 3))
 }
 
 /** `NAME=value` lines: an `export ` prefix, single or double quotes, `#` comments after an unquoted value, CRLF. Lines that are not assignments are skipped. */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const raw of text.split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw)
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=([\s\S]*)$/.exec(raw)
     if (!m) continue
     let v = m[2]!.trim()
     if (v.startsWith('"')) {
@@ -142,7 +159,7 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 /** A value with a space, `#`, a quote, a backslash or a control character is written as a JSON string, which the parser decodes. */
-const envLine = (name: string, value: string) => `${name}=${/[\s#"'\\\x00-\x1f]/.test(value) ? JSON.stringify(value) : value}`
+const envLine = (name: string, value: string) => `${name}=${/[\s#"'\\\x00-\x1f\u2028\u2029]/.test(value) ? JSON.stringify(value).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029') : value}`
 
 /**
  * The file with one variable set (or removed, for null), every other byte kept; a missing file is created. The parser
@@ -178,6 +195,11 @@ export function keyFor(p: ProviderDef, env: Record<string, string | undefined>, 
 
 // ── Redaction ────────────────────────────────────────────────────────────
 
+/** Provider-controlled text made safe for a pane, a note or the store: no control characters or line breaks, bounded. */
+export function clean(text: string, max: number): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '').slice(0, max)
+}
+
 /** `…a1b2`: the last four characters of a key long enough to keep them; `…` for a short one. */
 export function maskKey(key: string): string {
   if (key === '') return ''
@@ -202,7 +224,10 @@ export const ANTHROPIC_VERSION = '2023-06-01'
 function headersFor(p: ProviderDef, key: string): Record<string, string> {
   const h: Record<string, string> = { Accept: 'application/json' }
   if (key !== '' && p.auth !== 'none') h.Authorization = `Bearer ${key}`
-  if (p.id === 'anthropic') h['anthropic-version'] = ANTHROPIC_VERSION
+  if (p.id === 'anthropic') {
+    h['anthropic-version'] = ANTHROPIC_VERSION
+    if (key !== '') h['x-api-key'] = key   // the native endpoints document x-api-key (Codex 4298989651); Bearer rides too
+  }
   return h
 }
 
@@ -228,20 +253,20 @@ function parseJson(text: string): unknown | undefined {
 
 /** The ids (keys redacted, Codex 4298476186) and whether the list is paginated (`has_more`, Codex 4297836020). */
 export function parseModelsReply(text: string, keys: readonly string[] = []): { ids: string[]; hasMore: boolean } | { error: string } {
-  const j = parseJson(text) as { data?: unknown; has_more?: unknown } | unknown[] | undefined
-  if (j === undefined) return { error: 'the reply is not JSON' }
+  const j = parseJson(text) as { data?: unknown; has_more?: unknown } | unknown[] | null | undefined
+  if (j === undefined || j === null) return { error: 'the reply is not JSON' }
   // `{ data: [...] }` (OpenAI's shape), or a top-level array (Together AI, [field]).
-  const list = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : null
+  const list = Array.isArray(j) ? j : typeof j === 'object' && Array.isArray(j.data) ? j.data : null
   if (!list) return { error: 'no model list in the reply' }
-  return { ids: list.map(m => redact(String((m as { id?: unknown })?.id ?? ''), keys)).filter(Boolean), hasMore: !Array.isArray(j) && j?.has_more === true }
+  return { ids: list.map(m => clean(redact(String((m as { id?: unknown })?.id ?? ''), keys), 120)).filter(Boolean), hasMore: !Array.isArray(j) && j.has_more === true }
 }
 
 type ChatReply = { model?: unknown; choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; error?: { message?: unknown } | string }
 
 /** The reply's text, token total and model; or the error the body carries, with keys redacted. */
 export function parseChatReply(text: string, keys: readonly string[] = []): { text: string; tokens: number; model: string } | { error: string } {
-  const j = parseJson(text) as ChatReply | undefined
-  if (j === undefined) return { error: 'the reply is not JSON' }
+  const j = parseJson(text) as ChatReply | null | undefined
+  if (j === undefined || j === null || typeof j !== 'object') return { error: 'the reply is not JSON' }
   if (j.error) {   // `"error": null` beside a reply is no error
     const msg = typeof j.error === 'string' ? j.error : String(j.error?.message ?? 'error')
     return { error: redact(msg, keys) }
@@ -250,7 +275,7 @@ export function parseChatReply(text: string, keys: readonly string[] = []): { te
   if (!Array.isArray(j.choices) || j.choices.length === 0) return { error: 'no reply text' }
   const content = j.choices[0]?.message?.content
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: redact(String(j.model ?? ''), keys).slice(0, 60) }
+  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: clean(redact(String(j.model ?? ''), keys), 60) }
 }
 
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
@@ -262,18 +287,19 @@ export type HttpReply = { status: number; ok: boolean; text: string; headers?: R
 export function refusalReason(message: string): string {
   return message.split('\n')[0]!.replace(/^\S+: \$\.http\.fetch(?:\([^)]*\))?(?: failed)?: /, '').trim()
 }
-export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number }
+export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number; key: string }
 
 const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 405: 'not allowed', 429: 'rate limited' }
 
 function errorDetail(r: { status: number; text: string; headers?: Record<string, string> }, keys: readonly string[]): string {
   const parsed = parseChatReply(r.text, keys)
-  const msg = 'error' in parsed && parsed.error !== 'the reply is not JSON' && parsed.error !== 'no reply text' ? parsed.error : redact(r.text.trim().split('\n')[0] ?? '', keys)
+  const msg = clean('error' in parsed && parsed.error !== 'the reply is not JSON' && parsed.error !== 'no reply text' ? parsed.error : redact(r.text.trim().split('\n')[0] ?? '', keys), 80)
   if (r.status === 429) {
+    // The body's message stays (an exhausted quota is not a transient limit); Retry-After is provider text too (Codex 4298989611).
     const after = r.headers?.['retry-after']
-    return `(retry-after ${after ? `${after} s` : 'not given'}); not retried`
+    return `(${msg ? `${msg}; ` : ''}retry-after ${after ? `${clean(redact(after, keys), 40)} s` : 'not given'}); not retried`
   }
-  return msg ? `(${msg.slice(0, 80)})` : ''
+  return msg ? `(${msg})` : ''
 }
 
 /**
@@ -281,27 +307,27 @@ function errorDetail(r: { status: number; text: string; headers?: Record<string,
  * The probe (a one-token completion, billed by most providers) is a step of its own, taken only for a provider
  * the table says lists no models, or when the person names a model to test.
  */
-export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = [], modelsNeedKey = true): TestResult {
-  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${redact(refusalReason(r.refused), keys)}`, at }
+export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = [], modelsNeedKey = true, key = ''): TestResult {
+  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${redact(refusalReason(r.refused), keys)}`, at, key }
   // A provider that should list models and answers 404/405 most likely has the wrong base URL: say so, and never spend a
   // token on the probe for it (the probe runs only where the table says the provider lists no models, or on request).
-  if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at }
+  if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at, key }
   if (r.ok) {
     if (step === 'models') {
       const list = parseModelsReply(r.text, keys)
       // A 2xx that is not a model list is a failed test, never a green ok (Codex 4297835969).
-      if ('error' in list) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${list.error}`, at }
+      if ('error' in list) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${list.error}`, at, key }
       const count = `${list.ids.length}${list.hasMore ? '+' : ''} models${list.hasMore ? ' (first page)' : ''}`
       const caveat = modelsNeedKey ? '' : ' (the list needs no key; test <id> <model> checks the key)'
-      return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at }
+      return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at, key }
     }
     const reply = parseChatReply(r.text, keys)
-    if ('error' in reply) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${reply.error}`, at }
-    return { ok: true, status: r.status, ms, model: reply.model, note: `ok ${ms}ms ${reply.model || '(model not named)'} · 1 token`, at }
+    if ('error' in reply) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${reply.error}`, at, key }
+    return { ok: true, status: r.status, ms, model: reply.model, note: `ok ${ms}ms ${reply.model || '(model not named)'} · 1 token`, at, key }
   }
   const word = STATUS_WORD[r.status] ?? (r.status >= 500 ? 'server error' : 'failed')
   const detail = errorDetail(r, keys)
-  return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${word}${detail ? ` ${detail}` : ''}`, at }
+  return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${word}${detail ? ` ${detail}` : ''}`, at, key }
 }
 
 // ── Pane text ────────────────────────────────────────────────────────────
