@@ -344,6 +344,17 @@ async function shownModsDir($: Engine, isDrawing = false): Promise<string> {
   return (await read($, judged)).modsDir ?? currentModsDir($, isDrawing)
 }
 
+/** A folder of `at` that its listing `top` names, listed in turn; one it doesn't name reads as empty. A failed listing goes in `unlisted`. */
+function listIn($: Engine, at: string, top: readonly Lab.Entry[], folder: string, unlisted: string[]): Promise<Lab.Entry[]> {
+  return top.some(entry => entry.name === folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([])
+}
+
+/** The folders the quick signature reads besides the mod's own listing: the full read and the quick check list them here alike. */
+async function quickFoldersOf($: Engine, at: string, top: readonly Lab.Entry[], unlisted: string[]): Promise<Omit<Lab.QuickRead, 'top'>> {
+  const [manifestDir, hooks, tests] = await Promise.all([listIn($, at, top, '.claude-plugin', unlisted), listIn($, at, top, 'hooks', unlisted), listIn($, at, top, 'tests', unlisted)])
+  return { manifestDir, hooks, tests }
+}
+
 /** One mod folder's file facts, as a scan judges them; null when it isn't a mod. */
 async function modFactsOf($: Engine, modsDir: string, name: string, marketplace: string): Promise<Lab.FileFacts | null> {
   const at = `${modsDir}/${name}`
@@ -351,15 +362,12 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   const has = (entry: string): boolean => top.some(one => one.name === entry)
   // A folder that can't be listed reads as empty, so the facts say which ones (a delete would look the same).
   const unlisted: string[] = []
-  const listIf = (folder: string): Promise<Lab.Entry[]> => (has(folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([]))
-  const [manifestDir, hooks, tests, types, agents, commands, skills] = await Promise.all([
-    listIf('.claude-plugin'),
-    listIf('hooks'),
-    listIf('tests'),
-    listIf('types'),
-    listIf('agents'),
-    listIf('commands'),
-    listIf('skills'),
+  const [{ manifestDir, hooks, tests }, types, agents, commands, skills] = await Promise.all([
+    quickFoldersOf($, at, top, unlisted),
+    listIn($, at, top, 'types', unlisted),
+    listIn($, at, top, 'agents', unlisted),
+    listIn($, at, top, 'commands', unlisted),
+    listIn($, at, top, 'skills', unlisted),
   ])
   // The baseline the quick check after a tool batch compares, kept whether or not the folder is a mod yet (Codex 4296025357).
   folderSigs.set(at, Lab.quickSigOf({ top, manifestDir, hooks, tests }))
@@ -506,16 +514,17 @@ async function scanPasses($: Engine, isAnnounced: boolean, request: Lab.ScanRequ
  * tell isn't unchanged.
  */
 async function movedMods($: Engine, modsDir: string, names: readonly string[]): Promise<string[]> {
-  const moved: string[] = []
-  for (const name of names) {
-    const at = `${modsDir}/${name}`
-    const unlisted: string[] = []
-    const top = await list($, at, unlisted)
-    const listIf = (folder: string): Promise<Lab.Entry[]> => (top.some(one => one.name === folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([]))
-    const [manifestDir, hooks, tests] = await Promise.all([listIf('.claude-plugin'), listIf('hooks'), listIf('tests')])
-    if (unlisted.length || Lab.quickSigOf({ top, manifestDir, hooks, tests }) !== folderSigs.get(at)) moved.push(name)
-  }
-  return moved
+  // Every folder at once, as nestedFiles lists siblings: /mnt/c is slow.
+  const isMoved = await Promise.all(names.map(name => hasMoved($, `${modsDir}/${name}`)))
+  return names.filter((_, at) => isMoved[at])
+}
+
+/** One folder's quick signature now differs from the one recorded when it was last read, or a listing failed. */
+async function hasMoved($: Engine, at: string): Promise<boolean> {
+  const unlisted: string[] = []
+  const top = await list($, at, unlisted)
+  const folders = await quickFoldersOf($, at, top, unlisted)
+  return unlisted.length > 0 || Lab.quickSigOf({ top, ...folders }) !== folderSigs.get(at)
 }
 
 /** The mtime of the marketplace file beside a mods folder, or null when it isn't there (Codex 4296025346): a stat, no read. */
