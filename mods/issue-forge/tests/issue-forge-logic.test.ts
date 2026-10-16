@@ -1305,6 +1305,16 @@ describe('parallel runs (Change 0.3.0)', () => {
     for (const m of [menu, both, onBlocked, ready, interrupted]) expect((m?.options.length ?? 0) <= 4).toBe(true)
   })
 
+  test('startChoices: a run with a final block is offered stop, not resume, which it would refuse (PR #103 /code-review)', () => {
+    const final = at(52, 'blocked', { blocked: { ...BLOCKED, isFinal: true } as Run['blocked'], startedAt: 1 })
+    const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving: null, others: [final], me: ME, now: 0 })
+    expect(menu?.options).toEqual([
+      { label: 'Start #40 in a new worktree from origin/main (Recommended)', action: { kind: 'start' } },
+      { label: 'Stop #52, then start #40', action: { kind: 'stopThenStart', issue: 52 } },
+      { label: 'Cancel', action: { kind: 'cancel' } },
+    ])
+  })
+
   test('startChoices: the session driving a run offers keep (the default) or hand-off, never a second drive', () => {
     const driving = at(44, 'green', { driver: { session: ME, since: 0 } })
     const menu = startChoices({ issue: 40, base: 'main', workspace: 'worktree', driving, others: [at(52, 'blocked', { blocked: BLOCKED })], me: ME, now: 0 })
