@@ -2425,4 +2425,19 @@ describe('a held git index lock (#28)', () => {
     expect(calls.some(c => c.text.startsWith('git status'))).toBe(true)
     expect(calls.filter(c => c.env?.GIT_OPTIONAL_LOCKS !== '0').map(c => c.text)).toEqual([])
   })
+
+  // PR #88 review: the README says the run's git takes no optional locks; the root lookup and worktree add are git too.
+  test('in a worktree run every git call carries GIT_OPTIONAL_LOCKS=0, rev-parse --show-toplevel and worktree add included', async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.spawned.length).toBe(1)
+    const calls = w.argv.flatMap((a, i) => (a[0] === 'git' ? [{ text: a.join(' '), env: w.inits[i]?.env }] : []))
+    expect(calls.some(c => c.text.startsWith('git rev-parse --show-toplevel'))).toBe(true)
+    expect(calls.some(c => c.text.startsWith('git worktree add'))).toBe(true)
+    expect(calls.filter(c => c.env?.GIT_OPTIONAL_LOCKS !== '0').map(c => c.text)).toEqual([])
+    // The profile's own commands run as the user wrote them.
+    expect(w.argv.flatMap((a, i) => (a[0] === 't' ? [w.inits[i]?.env] : []))).toEqual([undefined])
+  })
 })
