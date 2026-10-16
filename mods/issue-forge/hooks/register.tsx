@@ -37,6 +37,7 @@ import {
   findStash,
   foreignChange,
   forkOfOrigin,
+  forkRemoteVerdict,
   gateG,
   gateR,
   guardAction,
@@ -99,6 +100,8 @@ import {
   sharedLcovBlock,
   spawnRefs,
   splitZ,
+  sshHostToResolve,
+  sshHostname,
   stashApplyArgv,
   stashMessage,
   startAnswer,
@@ -116,7 +119,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
+import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -498,7 +501,26 @@ async function ghRepoOf($: EngineInterface, root: string): Promise<Blocked | { r
  * transferred repository differs from the URL, so gh is asked for the name it gives `host/owner/repo`.
  */
 async function remoteRepo($: EngineInterface, root: string, url: string, repo: string, views: Views = new Map()): Promise<RemoteFound> {
-  const verdict = remoteVerdict(url, repo)
+  return foundOf($, root, remoteVerdict(url, repo), repo, views)
+}
+
+/**
+ * `remoteRepo` for a fork clone's remotes (the fork, the base remote): an ssh host other than `repo`'s is resolved with
+ * `ssh -G`, never taken for a nickname (PR #87 review, the owner's choice).
+ */
+async function forkRemoteRepo($: EngineInterface, root: string, url: string, repo: string, views: Views = new Map()): Promise<RemoteFound> {
+  const host = sshHostToResolve(url, repo)
+  return foundOf($, root, forkRemoteVerdict(url, repo, host === null ? undefined : await sshHostOf($, root, host)), repo, views)
+}
+
+/** `ssh -G <host>`: the host ssh reaches for it, ~/.ssh/config applied, without connecting; null when ssh can't say. */
+async function sshHostOf($: EngineInterface, root: string, host: string): Promise<string | null> {
+  const shown = await $.process.run(['ssh', '-G', host], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  return shown?.exitCode === 0 ? sshHostname(shown.stdout) : null
+}
+
+/** A verdict settled: another repository on `repo`'s host is asked about, since gh may call it `repo` renamed. */
+async function foundOf($: EngineInterface, root: string, verdict: RemoteVerdict, repo: string, views: Views): Promise<RemoteFound> {
   if (verdict.kind === 'match') return 'match'
   if (verdict.kind === 'unrecognised') return { other: null }
   if (verdict.kind === 'other') return { other: verdict.repo }
@@ -567,7 +589,7 @@ type Fork = { baseRemote: string; headRepo: string }
 async function forkOf($: EngineInterface, root: string, repo: string, urls: OriginUrls | null, views: Views): Promise<string | null> {
   if (!urls) return null
   const unique = [...new Set([urls.fetch, ...urls.pushes])]
-  const found = new Map((await Promise.all(unique.map(url => remoteRepo($, root, url, repo, views)))).map((f, i) => [unique[i], f]))
+  const found = new Map((await Promise.all(unique.map(url => forkRemoteRepo($, root, url, repo, views)))).map((f, i) => [unique[i], f]))
   const of = (url: string) => found.get(url) ?? { other: null }
   return forkOfOrigin(of(urls.fetch), urls.pushes.map(of), repo)
 }
@@ -575,7 +597,7 @@ async function forkOf($: EngineInterface, root: string, repo: string, urls: Orig
 /** Whether remote `name`'s fetch URL names `repo`. */
 async function remoteNames($: EngineInterface, root: string, name: string, repo: string, views: Views): Promise<boolean> {
   const url = await git($, root, ['remote', 'get-url', name])
-  return url.exitCode === 0 && (await remoteRepo($, root, url.stdout.trim(), repo, views)) === 'match'
+  return url.exitCode === 0 && (await forkRemoteRepo($, root, url.stdout.trim(), repo, views)) === 'match'
 }
 
 /** The remotes besides origin whose fetch URL names `repo`, looked up together: a fork clone fetches the base from the one there is. */
@@ -612,7 +634,7 @@ async function forkPushCheck($: EngineInterface, root: string, headRepo: string)
   const pushed = await pushUrlsOf($, root)
   const moved = block(`origin no longer pushes to ${repoLabel(headRepo)}`, 'point origin back at it, or start a new run')
   if (pushed.exitCode !== 0 || pushed.urls.length === 0) return moved
-  for (const url of pushed.urls) if ((await remoteRepo($, root, url, headRepo)) !== 'match') return moved
+  for (const url of pushed.urls) if ((await forkRemoteRepo($, root, url, headRepo)) !== 'match') return moved
   return null
 }
 
@@ -651,7 +673,7 @@ async function loadProfile($: EngineInterface, root: string): Promise<{ profile:
 async function baseRemoteCheck($: EngineInterface, cwd: string, remote: string, repo: string | undefined): Promise<Blocked | null> {
   if (remote === 'origin' || !repo) return null
   const url = await git($, cwd, ['remote', 'get-url', remote])
-  if (url.exitCode === 0 && (await remoteRepo($, cwd, url.stdout.trim(), repo)) === 'match') return null
+  if (url.exitCode === 0 && (await forkRemoteRepo($, cwd, url.stdout.trim(), repo)) === 'match') return null
   return block(`${remote} no longer fetches from ${repoLabel(repo)}`, `point ${remote} back at ${repoLabel(repo)}, or start a new run`)
 }
 

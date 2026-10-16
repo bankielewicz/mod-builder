@@ -717,6 +717,39 @@ export function remoteVerdict(url: string, repo: string): RemoteVerdict {
   return hostOf(remote.repo) === hostOf(repo) ? { kind: 'ask', repo: remote.repo } : { kind: 'other', repo: remote.repo }
 }
 
+/** The host `ssh -G` is asked about for a fork clone's URL: an ssh URL's host when it isn't `repo`'s; any other needs none. */
+export function sshHostToResolve(url: string, repo: string): string | null {
+  const remote = parseRemote(url)
+  return remote?.isSsh && hostOf(remote.repo) !== hostOf(repo) ? hostOf(remote.repo) : null
+}
+
+/** `ssh -G <host>`'s `hostname` line: the host ssh connects to once ~/.ssh/config is applied (a nickname's HostName). */
+export function sshHostname(stdout: string): string | null {
+  const host = stdout
+    .split(/\r?\n/)
+    .find(line => /^hostname\s/i.test(line))
+    ?.trim()
+    .split(/\s+/)[1]
+  return host ? host.toLowerCase() : null
+}
+
+/**
+ * What a fork clone's remote URL names (PR #87 review, the owner's choice). Unlike `remoteVerdict`, an ssh host other than
+ * `repo`'s is never assumed to be its nickname: it counts only as ssh resolves it (`resolved`, from `ssh -G`; null or absent
+ * when ssh couldn't say), with GitHub's ssh-over-443 host taken for github.com. Origin's own check keeps #25's rule (#71).
+ */
+export function forkRemoteVerdict(url: string, repo: string, resolved?: string | null): RemoteVerdict {
+  const remote = parseRemote(url)
+  if (!remote) return { kind: 'unrecognised' }
+  let named = remote.repo
+  if (sshHostToResolve(url, repo) !== null) {
+    if (!resolved) return { kind: 'unrecognised' }
+    named = `${resolved === 'ssh.github.com' ? 'github.com' : resolved}${named.slice(named.indexOf('/'))}`
+  }
+  if (isSameRepo(named, repo)) return { kind: 'match' }
+  return hostOf(named) === hostOf(repo) ? { kind: 'ask', repo: named } : { kind: 'other', repo: named }
+}
+
 /** The same host, owner and repository, in any case; a null side never matches. */
 export function isSameRepo(a: string | null, b: string | null): boolean {
   return a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
