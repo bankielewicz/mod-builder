@@ -49,13 +49,23 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `claude -p --plugin-dir`, `/mod-builder config` reached the command and both skills were still
   listed (2026-10-13, 2.1.296).
 - **[field]** A `command.run` hook that awaits its own pane can deadlock or time out, with the
-  message "registered /x but no command.run hook answered it". Return `{ text }` at once, and open
-  the pane in `void (async () => …)().catch(…)`.
+  message "registered /x but no command.run hook answered it". **[probe]** Not reproduced on
+  2.1.296 or 2.1.301 (2026-10-15, #90): `await $.ui.open(…)` in a `command.run` hook answered at
+  once and the pane drew. Either way, call `$.ui.open` before the hook returns, awaited or as
+  `void openPane($)` with no `await` ahead of it. Put slow work (a scan) after the open, in
+  `void (async () => …)().catch(…)`. An open made after such work runs after the hook and counts
+  as unasked.
 - **[field]** Track whether the pane is open with `$.ui.panes()`, not a module flag. Reloads and
   Esc-closes desync flags.
 - **[d.ts]** A pane opened unasked (from a timer or hook, with no command, press or prompt behind
   it) is placed only from 144 columns (110 once asked before). Otherwise it waits undrawn with
   `isPlaced: false`. Open from a command or button, and toast when it isn't placed.
+- **[probe]** A `tool.call` hook is never asked (2.1.301, #90). Opened from the `Skill` tool's
+  call (Claude starting `/mod-builder:build` from a plain-words request), `$.ui.open` resolved
+  `isPlaced: false`, reason "unasked below 110 columns (97 now, an id the person opened before)".
+  A skill the person types (`/plugin:skill args`) reaches `command.run` as
+  `{ command: 'plugin:skill', args, origin: { kind: 'composer' } }`, and an open from that hook is
+  asked. Return `next(e)` to run the skill.
 - **[d.ts]** `ui.render` runs once per input. A repaint reuses the answer. To redraw on a timer,
   update an atom the render reads, or call `$.ui.invalidate('ui.render')`.
 - **[d.ts]** A tree that doesn't validate draws the engine's own. Under `--plugin-dir`, a dim
@@ -227,15 +237,23 @@ Re-check [field] items against the d.ts after a Claude Code update.
   Atoms survive the reload, and module variables and pane focus don't.
 - **[probe]** A row computed at scan time goes stale while a run streams. Anything that changes
   during a run (status, time) has to be read from the live run when drawing.
-- **[probe]** `$.session.cwd()` follows `/cd` and not a shell `cd`. Probed on 2.1.296 with Mod Lab's
+- **[probe]** `$.session.cwd()` follows `/cd` and not the person's `!cd`. Probed on 2.1.296 with Mod Lab's
   detail header: after `/cd mods` the header switched to the path relative to the new folder, with no
   rescan, so a `/cd` also redraws the pane; after `!cd mods` the header didn't change. A path shown
   relative to the working directory should be worked out when drawing, not cached at scan time.
+- **[probe]** On 2.1.301 the model's own Bash `cd` does move `$.session.cwd()`, unlike the person's `!cd`
+  above: after `cd scratch/wt && pwd` it read the worktree, and still did at the next Bash call. A `cd` out of
+  the project reset it to the project root. `$.session.root()` stayed at the project root throughout
+  (`/cd` and a worktree move change it, per the d.ts). Probed headless with a throwaway mod whose tool
+  returned both values (#92). So a mod that must not follow Claude's shell walks from the root; Mod Lab
+  does, from 0.2.20. 2.1.296's binary also defines `$.session.root` (`root:()=>t("session.root",{})`).
+- **[probe]** A worktree's `.git` is a file, `gitdir: <common>/worktrees/<name>`, and a repository top's `.git` is a folder. Mod Lab reads these to tell whether a reported folder is the project's own repository (from 0.2.20). Probed in WSL with git 2.53 (`scratch/gitprobe-92`): `git worktree add --relative-paths ../wt-rel` wrote `gitdir: ../main/.git/worktrees/wt-rel`, which Mod Lab resolves against the worktree. Git for Windows' `git.exe worktree add` wrote `gitdir: C:/Projects/ClaudeMod/scratch/gitprobe-92/main/.git/worktrees/wt-win`. That never matches a `/mnt/c/…` root read under WSL, so such a worktree is refused, not misread. Git's own record of each worktree, `<common>/worktrees/<name>/gitdir`, names the worktree's `.git` back. In the same probe it held `../../../../wt-rel/.git` (relative to the record's folder) with `--relative-paths`, `C:/Projects/ClaudeMod/scratch/gitprobe-92/wt-win/.git` from Git for Windows, and `/mnt/c/Projects/ClaudeMod/scratch/issue-92-mod-lab-pin/.git` for this repository's worktree. Mod Lab requires this back-link, so a hand-written `.git` file doesn't make a folder a worktree.
 - **[probe]** With a relative `--plugin-dir` (`claude --plugin-dir plugins/mod-builder`), after `/cd`
   the session ran the installed copy of that plugin instead: Mod Lab's `modsDir` switched to the
   installed folder's `mods/`. Pass an absolute path to `--plugin-dir` when a live check uses `/cd`.
   (Probed with Mod Lab before 0.2.9, whose default `modsDir` came from the plugin's own folder. From
-  0.2.9 it follows the working directory, so check the version in the session-start log line instead.)
+  0.2.9 it follows the working directory, and from 0.2.20 the project root, so check the version in the
+  session-start log line instead.)
 
 ## Testing and checking
 

@@ -185,7 +185,7 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N or issue URL>` or
    keep `waiting[agentId] = resolve`; the `turn.complete` hook resolves it with `e.answer`
    (main-loop turns pass straight through). Pure `phasePrompt` builds the prompt: the phase's
    rules, issue number, title, body, the globs, `notes`, for green the red agent's answer
-   (Change 0.4.2), and on a retry the failed checks verbatim.
+   (Change 0.5.1), and on a retry the failed checks verbatim.
    The run's agent ids and names are stored. **From the probes (C0):**
    - The mod's own types are spawned with `name: issue-forge-<N>-<phase>-<k>`. duet routes a mod's
      spawn like a model's Agent call, and with `codexAgents: "*"` it would send an unnamed
@@ -1293,7 +1293,269 @@ round takes. It supersedes items 1 and 3 above.
 
 ## Change 0.4.2 (2026-10-15)
 
+> issue-forge: a held .git/index.lock blocks the run with "unexpected" instead of retrying (#28)
+
+**Why.** Another process holding `.git/index.lock` makes every index-writing git call fail at once: `add -A`,
+`commit`, `switch` (when it must write the index), `merge --ff-only` (when a fast-forward is due), and `stash push`
+and `stash apply`, which print nothing. A plain `git status` takes the lock too, to refresh the index. Run #2 of
+2026-10-13 blocked at gate R with `unexpected: git commit failed: fatal: Unable to create '…/index.lock': File
+exists.` and the next step `see /issue-forge status`. The evidence (git 2.43.0, Claude Code 2.1.296) is in issue #28.
+
+**What changes.**
+1. **`gitWrite`** (`register.tsx`) runs an index-writing call and, when a held lock caused its failure, waits a second
+   and tries again, five attempts in all (4 s of waiting). `stash apply` (gate R's restore), `switch` (preflight) and
+   `merge --ff-only` (the catch-up) use it; `gitWriteOut` wraps it for `add -A` (gates R, G and F), `commit`
+   (`commitAll`) and `stash push` (`stashAll`), throwing as `gitOut` does. The stash and commit calls no longer use
+   `gitRetry`, whose two immediate retries a second-long lock would outlast; the two fetches keep it.
+2. **A lock failure** is a non-zero exit with `isIndexLockError(stderr)` (the pure rule in `issue-forge-logic.ts`:
+   `Unable to create '…index.lock': File exists`), or with the lock file present (`$.fs.exists` of the path
+   `git rev-parse --path-format=absolute --git-path index.lock` prints, asked once per call after its first failure;
+   in a linked worktree that is under the main `.git/worktrees/<name>/`). The file check catches the stash calls. A
+   lock released between the failure and the check is missed, and the call fails as it did. Any other failure comes
+   back as it is: `commit`'s is still `unexpected: git commit failed: …`, `stash apply`'s still names where
+   green's work is.
+3. **The wait** is a promise around `$.clock.after(1000, …)`, as `runLong`'s timer is, not `$.clock.sleep`, which
+   counts against a hook's 10 s budget. `stillDriving(run)` is checked after each wait, so a Stop or takeover ends
+   the retries.
+4. **After the fifth failure** `gitWrite` throws `IndexLocked`; the drive's catch makes it a block, not
+   `unexpected`: reason `another git process is using <lock path> (5 attempts over 4 s)`, next `wait for the other
+   git process to finish, or delete <lock path> if none is running`. The pane adds `, then /issue-forge resume`.
+5. **`git()` sets `GIT_OPTIONAL_LOCKS=0`** (`ProcessRunInit.env`, [d.ts]), so the run's own `git status` doesn't
+   refresh the index, and doesn't hold the lock that an agent's or the user's git needs. It skips optional locks
+   only: with a lock held, `commit` and `add` still fail. The one git call outside `git()`, `rev-parse
+   --show-toplevel`, takes no lock.
+6. **README**, "Limits worth knowing": the run uses the session's checkout; a git command there between steps can
+   collide with its writes (it retries for 4 s, then blocks, and `/issue-forge resume` continues); a lock in the
+   main checkout doesn't affect a linked worktree; start issue-forge in a dedicated worktree when sessions share the
+   checkout.
+
+**What gets touched.** No new processes, files, store keys or hooks: `git rev-parse --git-path` is read-only, and
+`$.fs.exists` is already used. Nothing is pushed.
+
+**Not changed:** gates, coverage rules, phases, the guard, the store, and `resume` re-running gate R from the staged
+tests without a new red agent (the SPEC intends it).
+
+**Tests** (`issue-forge-logic.test.ts`, `ui.test.tsx`): `isIndexLockError`; a commit that meets the lock once and five
+times; a commit that fails for another reason after a retry; `add -A` at gates R and G; `stash apply` with and
+without the lock file; `switch` five times at preflight; `merge --ff-only` once at the catch-up; the env on every git
+call. The live check (an interactive session in a worktree, a lock held while red works, then through `resume`) is
+run before the PR merges.
+
+### PR #88 review round 1 (2026-10-15)
+
+Codex's three findings (a P1 and two P2s) and the owner's `/code-review` (11 findings), each checked against the
+code. git's lock texts below were captured with git 2.53.0 in a scratch repository, the lock files made by hand
+[probe]. This round supersedes items 1, 2, 3 and 5 above where they differ.
+
+- **Version** (review 3): PR #86 merged 0.4.1 (#27), so this change is **0.4.2** (merge cb763ac). Open PR #89 also
+  takes 0.4.2, and #87 takes 0.5.0: whichever merges second re-bumps plugin.json, marketplace.json and this heading
+  (the owner's merge-time rule).
+- **Any git lock, as 0.3.0 retried** (Codex P2; reviews 1 and 8). `gitWrite` judges a failure with `isLockError`
+  over stderr and stdout, so commit's branch ref lock and the shared `refs/stash` lock wait and retry as the index's
+  does. `isIndexLockError` is gone; its test pinned a ref's lock as "not a lock". `lockPathOf` (logic module) reads
+  the lock file git names (`Unable to create '<path>.lock'`) for the block. A lock git doesn't name falls back to the
+  lock file found. When none is found, the last failure comes back as git said it (Codex 4290283822: git 2.53.0
+  refuses a commit on a broken ref with `fatal: cannot lock ref 'HEAD': unable to resolve reference '…': reference
+  broken`, which `isLockError` takes, and the block named an index.lock that wasn't there) [probe]. `IndexLocked` is
+  now `Locked`.
+- **git's own texts** [probe, git 2.53.0]:
+  - `commit` with `refs/heads/main.lock` held: `fatal: cannot lock ref 'HEAD': Unable to create
+    '…/refs/heads/main.lock': File exists.` and git's hint, exit 128;
+  - `stash push` with `refs/stash.lock` held: only `Cannot save the current status` on stderr, exit 1. The tree is
+    left as it was, and a dangling stash commit remains;
+  - `stash push` and `stash apply` with `index.lock` held: `error: Unable to create '…/index.lock': File exists.`,
+    the hint, then `error: could not write index`, exit 1. Issue #28 recorded both as silent on git 2.43.0, so the
+    file check stays.
+
+  So `stash push` also looks for `refs/stash.lock`. The first test of it used a refusal written from git's usual
+  wording, not one git prints, and passed on it; 0d29829 replaced it with the captured text.
+- **The lock's path** (Codex P2; reviews 4 and 5). `rev-parse --git-path index.lock` (and `--git-path
+  refs/stash.lock` before a stash push), without `--path-format=absolute`, which git before 2.31 doesn't know.
+  rev-parse prints an option it doesn't know back with exit 0 instead of failing (shown on 2.53.0 with an invented
+  `--bogus-flag=absolute`; no pre-2.31 git was run), so the old lookup's answer wasn't a path. A relative answer (the main checkout's `.git/index.lock`; a linked worktree's
+  is absolute) is joined to the folder. The path is asked before the first attempt, once per folder, so only the
+  `fs.exists` call sits between a silent failure and its check. A lock let go in that moment is still missed.
+- **Ownership** (Codex P1; review 2). `stillOwned`, which reads the stored run, runs after each wait, so a takeover
+  or Stop from another session ends the retries before git writes again. The 5 s watch was too slow for 4 s of waits.
+- **Gate R's restore** (review 6). A lock that outlasts the behaviour pass's `stash apply` blocks after the commit,
+  as any failed restore does: reason `<the lock reason>; green's work is in stash <sha7> "<message>"`, next
+  `restore green's work by hand (git stash apply <sha7>)`.
+- **The wait** (review 7). `lockWait` sets `stopCommand`, as `runLong` does, so a Stop, hand-off or takeover
+  cancels the timer, and the drive ends and releases at once. **Not covered:** a refused `clock.after` with nobody
+  stopping the run still waits; `/issue-forge stop` ends it, and resume starts a new drive. `runLong`'s timer has the
+  same gap.
+- **Env** (review 9). `rev-parse --show-toplevel` and `runLong`'s git (`worktree add`, through spawn and its
+  `process.run` fallback) carry `GIT_OPTIONAL_LOCKS=0` too. The profile's commands keep the session's env.
+- **Tests** (review 10), in `ui.test.tsx` unless named:
+  - a ref lock on commit, met once and five times, and a broken ref, which no lock explains;
+  - the `refs/stash` lock on stash push, met once and five times;
+  - a takeover during the wait, and a Stop during the wait;
+  - git before 2.31, and a lock let go during the lookup;
+  - a lock that outlasts gate R's apply;
+  - the env in a worktree run;
+  - `lockPathOf` in the logic tests.
+
+  The 5-attempt test now counts `rev-parse --git-path index.lock`, changed in its own commit (cf78eb9).
+- **QA** (review 11) is in the PR body.
+- **Codex rounds 2 and 3** (on 59b2fe4's parent and on f5685de), each checked against the code, git's texts captured
+  in a scratch repository [probe, git 2.53.0]:
+  - 4290283822: a lock refusal that no lock file explains (`cannot lock ref 'HEAD': unable to resolve reference
+    '…': reference broken`) comes back as git said it after the attempts (above; 4bd5c8b, a795be4);
+  - 4290341993 and 4290341987: `lockPathOf` takes only `': File exists` (a read-only `.git` gives `Unable to create
+    '…/index.lock': Permission denied`, which is no other process's lock), and reads up to `.lock': File exists`,
+    so a repository path with an apostrophe keeps its ref-lock block (41e03c9);
+  - 4290342002: `runLong` and `runShort` take the env from the caller, and only the two `worktree add` calls pass
+    `GIT_OPTIONAL_LOCKS=0`; a profile command that is itself git keeps the session's env (bbc5ce1);
+  - 4290341996 (P1): a gate commits the index as it is when `git commit` runs, not the tree it tested. That gap is
+    older than this change (staging, then minutes of tests, then the commit); the retries add up to 4 s to it. Filed
+    as #101. **Stopping rule** (the owner's call, 2026-10-16): later Codex findings on this change's lock handling
+    go to #101, not into this PR.
+- **Live check** (2026-10-16, Claude Code 2.1.301, git 2.53.0, head 59b2fe4) [probe]. Throwaway issue #99 ran in
+  a fresh clone in a private tmux (agent teams, in-process; the installed claudemod plugins off), and a `git`
+  wrapper on PATH logged each call's `GIT_OPTIONAL_LOCKS`:
+  - every git call the mod made carried `GIT_OPTIONAL_LOCKS=0`, `rev-parse --show-toplevel` and `worktree add`
+    (through spawn) included. `rev-parse --git-path index.lock` ran once, before the first write;
+  - `.git/worktrees/<branch>/index.lock`, made by hand while gate R's tests ran, met the red commit: five
+    `commit` attempts, then `blocked at gateR: another git process is using <that path> (5 attempts over 4 s)`,
+    the same in the pane and in `/issue-forge status`;
+  - `/issue-forge resume` with the lock still held: `add -A` failed twice, 1.05 s and 1.01 s apart. The lock
+    was released between attempts 2 and 3, and attempt 3 went through. Gate R then committed red (05abddc) and
+    green started. The run was stopped there; nothing was pushed, and #99 is closed;
+  - the engine adds its own `-c` options to every git call a mod runs, `core.hooksPath=/dev/null` among them,
+    so the run's commits skip the repository's git hooks. A repository that checks through hooks needs those
+    checks in the profile's `checks`.
+
+## Change 0.5.0 (2026-10-15)
+
+> issue-forge: support fork clones, where origin is the contributor's fork and the project is another remote (#26)
+
+**Why.** 0.4.0 blocks a clone whose `origin` isn't the repository `gh` names, which is every fork clone with an
+`upstream` remote. The evidence (`gh` 2.102.0, Claude Code 2.1.296) is in issue #26: with no default set, `gh` resolves
+`upstream` silently, while fetch and push go to `origin`; `gh pr create --head` takes `<user>:<branch>` but not an
+organization as `<user>` (cli/cli#10093); `parent` from `gh repo view --json parent` has an owner login and a name, no
+host.
+
+**What changes.**
+1. **When it applies.** Preflight still runs `originCheck` first. Only when that blocks does `forkCheck` look for a
+   fork clone, so a clone whose origin is the project runs exactly as in 0.4.0. Preflight reads origin's fetch URL and
+   every push URL once (`originUrls`) and hands them to both checks. `forkOf` resolves each distinct URL with
+   `forkRemoteRepo` (item 8), all at once, and `forkOfOrigin` (logic) decides: a fork clone when every push URL names the
+   same one repository other than the project, on the project's host, and the fetch URL is that fork too (PR #87
+   review: `git ls-remote origin` reads the fetch URL, so the taken-name check sees the fork's branches). Anything else
+   (no origin, an unrecognised URL, a fetch URL that is the project or a third repository, a push URL that is the
+   project, two different repositories, another host) returns `originCheck`'s own block.
+2. **Base remote.** `git remote`, then `git remote get-url <name>` for each remote besides `origin`, looked up together
+   and each resolved with `forkRemoteRepo` against the project, so a mirror with the project's owner/repo on another
+   host is not the project (item 8). `baseRemoteOf` (logic) classifies the matching names: none returns the origin
+   block, one is the base remote, several block with `remotes a and b both point at o/r` and next `remove one of them`
+   (three or more read `a, b and c`).
+3. **Fork check.** `gh repo view <fork> --json isFork,parent`; `isForkOf` (logic) passes when `isFork` is true and the
+   parent's owner login and name are the project's, in any case, without comparing a host. Otherwise `origin me/r isn't a
+   fork of o/r`. A `gh` failure blocks with its own text (`could not read me/r from gh: …`) rather than claiming it
+   isn't a fork.
+4. **Organization.** `gh api --hostname <fork's host> users/<owner> --jq .type` printing `Organization` blocks with `gh pr create can't name an
+   organization's fork as the head (cli/cli#10093)`. A `gh api` failure blocks with `could not tell whether <owner> is a
+   user or an organization`. Both gh checks come before any fetch.
+5. **The remote the base comes from.** `fetchBase`, `catchUp`, `whereToWork`, `makeBranch`, the merge base, the profile
+   read, the baseline and the publish merge check take the remote as an argument (`baseRemote`, else `origin`), and their
+   activity labels and block reasons name it. Before each fetch from it (the first one, since the base question can
+   wait on the person; a kept worktree at preflight; the baseline; the publish merge check), `baseRemoteCheck` reads `git remote get-url <baseRemote>` in that folder again and requires it
+   to be the project (`<remote> no longer fetches from o/r`, next `point <remote> back at o/r, or start a new run`; the
+   merge check reports it as why it couldn't run). The branch name is checked against `ls-remote --heads` on `origin` and on
+   the base remote. The merge line, the publish question and the PR body name `baseRefOf(run)` (`upstream/main`).
+6. **Store.** The `preflighted` event carries `baseRemote` and `headRepo` (the fork, `host/owner/repo`, from the
+   canonical form `remoteRepo` gives, so a URL with a token never reaches a command line or a text). `advance` stores
+   them when present; a block and a resume keep them with the rest of the run. `Run.baseRemote?` and `Run.headRepo?`
+   in `types/index.d.ts`. A run without them (0.4.0's shape) fetches from and pushes to `origin`, runs `originCheck` at
+   publish and names the branch alone as the head.
+7. **Publish.** A run with `headRepo` runs `forkPushCheck` instead of `originCheck`: every push URL of origin must still
+   resolve to the fork (`forkRemoteRepo` against `headRepo`), else `origin no longer pushes to me/r`, next `point origin back
+   at it, or start a new run`. The push is still `git push origin <sha>:refs/heads/<branch>`; the pull request is
+   `gh pr create --base <base> --head <fork owner>:<branch> --title … --body-file … --repo <project>` (`headArg`, logic).
+   A kept worktree resumed through preflight gets the same push check in its own folder. The publish question names
+   both: `Push <branch> to me/r and open a pull request on o/r against main?`.
+8. **ssh host nicknames** (PR #87 review, the owner's choice). For the fork, the base remote, `baseRemoteCheck` and
+   `forkPushCheck`, an ssh URL whose host isn't the project's is read through `ssh -G <host>` (`sshHostOf`): ssh applies
+   `~/.ssh/config` and prints the `hostname` it would reach, without connecting (probed with OpenSSH 10.2: an alias
+   prints its `HostName`, lowercased; an unknown name prints itself). `forkRemoteVerdict` (logic) then reads the URL on
+   that host, with GitHub's ssh-over-443 host `ssh.github.com` taken for `github.com`, and never assumes another host
+   is a nickname. ssh failing is no match. So `git@gh-personal:me/r.git` with `HostName github.com` is the fork
+   `github.com/me/r`, and `git@gitlab.com:o/r.git` is `gitlab.com/o/r`, not the project. Origin's own check
+   (`originCheck`, `remoteVerdict`) keeps #25's rule, under which the same owner/repo over ssh on any host is the
+   project (#71). `ssh -G` reads ssh's default configuration; a `core.sshCommand` or `GIT_SSH_COMMAND` with its own
+   `-F` isn't followed.
+
+**Differences from the issue's proposal.** (a) The version is 0.5.0: 0.4.0 shipped #25. (b) `remoteRepo` in this repo
+takes a URL, not a remote name and a push flag, so the remotes' URLs are read in `originUrls`, `baseRemoteFor` and
+`forkPushCheck`. (c) The fork must be on the project's host (`hostOf`; an ssh host as `ssh -G` resolves it, item 8), else
+`originCheck`'s block stands, since `isForkOf` compares no host. (d) Logic-side texts (the merge line, the publish question, the PR body) name the base remote too.
+
+**What gets touched.** Processes, all in a fork clone only: `git remote`, `git remote get-url <name>`, `git ls-remote
+--heads <base remote>`, `gh repo view <fork> --json isFork,parent`, `gh api --hostname <host> users/<owner> --jq .type`,
+`ssh -G <host>` for an ssh URL on another host than the project's (local, never connects); fetch, switch and merge use
+the base remote. No new files, store keys or hooks. The push and the pull request still wait for a yes.
+
+**Not changed:** gates, coverage rules, phases, the guard, `.issue-forge.json`, the store keys. The start menu's `from
+origin/<base>` label still says origin: it is drawn before preflight knows any remote. The busy-checkout block names the
+ref the profile was read from (`upstream/<base>` in a fork clone; PR #87 review).
+
+**Unverified (#102, the fork pull request probe; it was #26's).** Whether `gh pr create --repo <project> --head <fork owner>:<branch>` opens the pull
+request, with a renamed fork too, and what 0.4.0's bare `--head` does from a fork clone, need a throwaway repository and a
+second personal GitHub account. No pull request from a fork has been opened by this change; the UI tests assert the
+command line, not gh's answer.
+
+**Tests** (`issue-forge-logic.test.ts`, `ui.test.tsx`): `baseRemoteOf`, `isForkOf`, `headArg` and `advance` with and
+without the fork; in the UI file, start (fetch, switch and worktree add from `upstream`, the profile and merge base read
+there, both remotes asked for a taken branch name, the stored run, the check order and a token in a URL), the blocks (an
+organization, two project remotes, not a fork, a fork of another repository), a failed fetch naming `upstream`, resume at
+the baseline, and publish (push, `--head me:<branch>`, `--repo`, the merge check on `upstream/main`, origin moved to another
+repository, one of two push URLs elsewhere).
+
+### PR #87 review round 1 (2026-10-15)
+
+Codex's two inline comments on 9430f83 and the owner's `/code-review` (9 more). Each fix went red → green.
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | (Codex) The stored base remote was trusted by name: a resume at the baseline, a kept worktree's own config and the publish merge check fetched whatever it pointed at | `baseRemoteCheck` before each of those fetches (item 5) |
+| 2 | (Codex) `gh api users/<owner>` had no `--hostname`, so GitHub Enterprise asked github.com | `--hostname <fork's host>` (item 4); the old exact-argv assertions were corrected in their own commit |
+| 3 | Merge conflict with main (#86 took 0.4.1) | main merged in; this stays 0.5.0 |
+| 4 | An ssh-nickname fork was refused, with a hint pointing at #26 | item 8; the hint now names both supported setups |
+| 5 | The busy-checkout block said `origin/<base>` in a fork run | `workspacePlan` takes the ref |
+| 6 | No QA or live check in the PR body | added to the PR body |
+| 7 | Origin's push URLs read twice, gh asked twice about the fork, remotes looked up one at a time | one read (`originUrls`), gh's names memoized per check, remotes looked up together |
+| 8 | Untested paths in `register.tsx` | tests for the gh failures, no project remote, push URLs unreadable or empty, a kept worktree, the fork wording |
+| 9 | `ls-remote origin` used a fetch URL nothing checked | the fetch URL is part of the fork check (item 1) |
+| 10 | The publish question didn't name the fork | it does (item 7) |
+| 11 | A mirror with the project's owner/repo on another host counted as the project and could become the base | item 8 |
+
+### PR #87 review round 2 (2026-10-15)
+
+Codex on 008f39f, two inline comments.
+
+| Finding | Fix |
+| --- | --- |
+| (P1 4290274553) Round 1 let origin fetch from the project and push to the fork, but `git ls-remote origin` reads the fetch URL, so the fork's branches were never seen and the name could collide there | the fetch URL must be the fork too (item 1); the two tests that allowed it were corrected in their own commit |
+| (P2 4290274549) The first fetch skipped `baseRemoteCheck`, but the base question can wait on the person after `forkCheck` read the remote | `makeBranch` passes the pinned repository to `fetchBase` |
+
+### PR #87 review round 3 (2026-10-15)
+
+Codex on 54aaa27 (P2 4290457132): a fork preflight that blocked after making its branch kept only the branch, folder and
+base, so a resume with origin pointed at another personal fork accepted it, skipped the taken-name check for the kept branch
+and could publish over a same-named branch there. `Kept` now carries `baseRemote` and `headRepo`, `makeBranch` records them
+with the branch, and the kept-branch path of a resume blocks through `keptForkBlock` (logic) unless origin still pushes
+where the name was checked: `origin now pushes to you/r, not me/r, where the run's branch was named`, next `point origin
+back at me/r, or start a new run`.
+
+Not done (round 1): one `gh repo view --json nameWithOwner,url,isFork,parent` in place of two calls (the canonical name and the
+fork check are separate questions, and the memo already removes the repeat).
+
+## Change 0.5.1 (2026-10-15)
+
 > issue-forge: the green agent sees the red agent's answer (#78)
+
+Numbered 0.4.2 when this was written; PR #88 (#28) shipped as 0.4.2 and PR #87 (#26) as 0.5.0 first,
+so this change is 0.5.1.
 
 **Why.** `run.redAnswer` was kept for the PR body only. In #10 (PR #74) red had found that the issue's
 suggested fix times out five existing tests and that the fallback passes all 173; green tried the suggested

@@ -25,6 +25,9 @@ const ISSUE = { number: 16, title: 'Fix the thing', body: 'Make it work.', state
 const DIFF = 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+x\n+y\n'
 const LCOV = 'SF:/w/src/a.ts\nDA:1,1\nDA:2,3\nLF:2\nLH:2\nBRF:0\nBRH:0\nend_of_record\n'
 
+/** One answer of `gitFails` (#28): `isLocked` leaves .git/index.lock in place, `isStashLocked` .git/refs/stash.lock (PR #88 review). */
+type GitFail = { stderr: string; code: number; isLocked: boolean; isStashLocked?: boolean }
+
 /** The first store.set of a value `when` picks lands only once `until` settles; `isHeld` says it is waiting. */
 type StoreHold = { when: (value: any) => boolean; until: Promise<void>; isHeld?: boolean }
 
@@ -109,14 +112,51 @@ type World = {
   pushUrl?: string | string[] | { exitCode: number; stderr: string }
   /** What `gh repo view <host/owner/repo>` canonicalises an argument to (its nameWithOwner); absent, the argument itself (#25). */
   canonical?: Record<string, string>
+  /** Remotes other than origin, name to fetch URL: `git remote` lists origin and these, sorted; absent, origin alone (#26). */
+  remotes?: Record<string, string>
+  /** `ssh -G <host>`: the HostName ~/.ssh/config gives a nickname; absent, the host itself, as ssh prints it. */
+  sshHosts?: Record<string, string>
+  /** `gh repo view <fork> --json isFork,parent` exits 1 with this on stderr. */
+  forkViewFails?: string
+  /** `gh api users/<owner>` exits 1 with this on stderr. */
+  ownerTypeFails?: string
+  /** `ssh -G` can't run (no ssh). */
+  sshFails?: boolean
+  /** `gh repo view <repo> --json nameWithOwner,url` for this one repository answers only once `until` settles. */
+  viewHold?: { repo: string; until: Promise<void> }
+  /** Per folder, remotes whose fetch URL differs there (a worktree's own config); absent, `remotes` everywhere. */
+  remotesIn?: Record<string, Record<string, string>>
+  /** `gh repo view <host/owner/repo> --json isFork,parent`: the parent as `owner/name`, or null for a repository that isn't a fork; absent, a fork of o/r (#26). */
+  parentOf?: Record<string, string | null>
+  /** Owners `gh api users/<owner> --jq .type` calls an Organization, as `owner` on any host or `host/owner` on that host only; any other is a User (#26). */
+  orgOwners?: string[]
+  /** `git ls-remote --heads <remote>`: the branch names already on a remote; absent, none (#26). */
+  remoteHeads?: Record<string, string[]>
+  /**
+   * Index-writing git calls that fail (#28): a call whose arguments are, or start with, `on` takes the next answer;
+   * once `seq` is empty the calls pass. `isLocked` says the answer leaves .git/index.lock in place (fs.exists sees it).
+   */
+  gitFails?: { on: string; seq: GitFail[] }
+  /** Whether .git/index.lock exists now: set by a failure that held it, cleared by the next call `gitFails` matches. */
+  lockFile?: boolean
+  /** Whether .git/refs/stash.lock exists now, as `lockFile` (PR #88 review). */
+  stashLockFile?: boolean
+  /** git before 2.31: rev-parse doesn't know `--path-format` and prints it back, exit 0, before the path (PR #88 review). */
+  isGitBefore231?: boolean
+  /** The other process lets go of .git/index.lock while the mod asks git where that file is (PR #88 review). */
+  isLockGoneOnLookup?: boolean
+  /** `git stash list`'s output; absent, empty. */
+  stashList?: string
   /** The url `gh issue view` answers with; absent, ISSUE's (#25). */
   issueUrl?: string
   /** `gh issue view` exits 1 with this on stderr (#25). */
   issueFails?: string
   /** What $.command.register was given. */
   registered: { name: string; argumentHint?: string }[]
-  /** Every process.run with the folder it ran in. */
-  calls: { argv: string[]; cwd?: string; timeoutMs?: number }[]
+  /** Every process.run with the folder it ran in and the mock time it ran at. */
+  calls: { argv: string[]; cwd?: string; timeoutMs?: number; at: number }[]
+  /** Every process.run's init, parallel to `argv`: the env and stdin a call carried (#28). */
+  inits: any[]
   /** The command each Bash call reached beneath the mod with. */
   bash: string[]
   argv: string[][]
@@ -129,6 +169,11 @@ type World = {
   beneath: string[]
   clock: any
 }
+
+/** Where git keeps /w's index lock (#28). */
+const LOCK_PATH = `${ROOT}/.git/index.lock`
+/** The lock of refs/stash, which every worktree shares (PR #88 review). */
+const STASH_LOCK_PATH = `${ROOT}/.git/refs/stash.lock`
 
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 const fail = (stderr: string, code = 1) => ({ value: { exitCode: code, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
@@ -156,6 +201,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     wtProfiles: {},
     registered: [],
     calls: [],
+    inits: [],
     bash: [],
     argv: [],
     commits: [],
@@ -212,7 +258,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   const worktreeOf = (path: string) => world.worktrees.find(wt => path === `${wt}/.issue-forge.json`)
   const isWorktreeProfile = (path: string) => worktreeOf(path) !== undefined
   on('fs.exists', ($: any, e: any) => ({
-    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path)),
+    value: !world.fsBlind?.includes(e.path) && (((e.path === profilePath || isWorktreeProfile(e.path)) && world.hasProfile) || e.path in world.files || world.worktrees.includes(e.path) || (e.path === LOCK_PATH && world.lockFile === true) || (e.path === STASH_LOCK_PATH && world.stashLockFile === true)),
   }))
   on('fs.read', ($: any, e: any) => {
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
@@ -225,7 +271,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     world.argv.push(argv)
-    world.calls.push({ argv, cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs })
+    world.calls.push({ argv, cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs, at: world.clock.now() })
+    world.inits.push(e.init)
     const inWorktree = world.worktrees.includes(e.init?.cwd)
     const [cmd, ...a] = argv
     const s = a.join(' ')
@@ -237,10 +284,26 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
       if (s === 'repo view --json nameWithOwner,url') return world.repoView ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.repoView } } : ok(JSON.stringify({ nameWithOwner: 'o/r', url: 'https://github.com/o/r' }))
+      if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'isFork,parent') {
+        if (world.forkViewFails) return fail(world.forkViewFails)
+        const parent = world.parentOf && (a[2] ?? '') in world.parentOf ? world.parentOf[a[2] ?? ''] : 'o/r'
+        const [owner = '', name = ''] = (parent ?? '').split('/')
+        return ok(JSON.stringify(parent === null ? { isFork: false, parent: null } : { isFork: true, parent: { id: 'R_1', name, owner: { id: 'U_1', login: owner } } }))
+      }
+      // As gh does: without --hostname, gh api asks github.com.
+      const user = a[0] === 'api' ? a.find(x => x.startsWith('users/')) : undefined
+      if (user !== undefined) {
+        if (world.ownerTypeFails) return fail(world.ownerTypeFails)
+        const host = a[1] === '--hostname' ? (a[2] ?? '') : 'github.com'
+        const owner = user.slice('users/'.length)
+        return ok(`${world.orgOwners?.includes(owner) || world.orgOwners?.includes(`${host}/${owner}`) ? 'Organization' : 'User'}\n`)
+      }
       if (a[0] === 'repo' && a[1] === 'view' && a[3] === '--json' && a[4] === 'nameWithOwner,url') {
         const [host = '', owner = '', name = ''] = (a[2] ?? '').split('/')
         const nameWithOwner = world.canonical?.[a[2] ?? ''] ?? `${owner}/${name}`
-        return ok(JSON.stringify({ nameWithOwner, url: `https://${host}/${nameWithOwner}` }))
+        const answer = ok(JSON.stringify({ nameWithOwner, url: `https://${host}/${nameWithOwner}` }))
+        const held = world.viewHold
+        return held && held.repo === a[2] ? held.until.then(() => answer) : answer
       }
       if (a[0] === 'issue') {
         world.beforeIssueView?.()
@@ -249,13 +312,38 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       }
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
+    // As OpenSSH 10.2 does: ssh -G applies ~/.ssh/config and prints the host it would reach, lowercased, without connecting.
+    if (cmd === 'ssh' && a[0] === '-G') return world.sshFails ? fail('sh: 1: ssh: not found', 127) : ok(`user git\nhostname ${world.sshHosts?.[a[1] ?? ''] ?? (a[1] ?? '').toLowerCase()}\nport 22\n`)
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
+    // A held index.lock (#28): the call takes the next scripted failure, and the lock file stays while that failure says so.
+    const failing = world.gitFails
+    if (failing && (s === failing.on || s.startsWith(`${failing.on} `))) {
+      const next = failing.seq.shift()
+      world.lockFile = next?.isLocked ?? false
+      world.stashLockFile = next?.isStashLocked ?? false
+      if (next) return fail(next.stderr, next.code)
+    }
+    // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
+    if (s === 'rev-parse --git-path index.lock' || s === 'rev-parse --path-format=absolute --git-path index.lock') {
+      if (world.isLockGoneOnLookup) world.lockFile = false
+      if (a[1] === '--git-path') return ok(inWorktree ? `${ROOT}/.git/worktrees/${(e.init?.cwd ?? '').split('/').pop()}/index.lock\n` : '.git/index.lock\n')
+      return ok(world.isGitBefore231 ? '--path-format=absolute\n.git/index.lock\n' : `${LOCK_PATH}\n`)
+    }
+    // git 2.53 prints refs' lock paths absolute, in the main checkout too.
+    if (s === 'rev-parse --git-path refs/stash.lock') return ok(`${STASH_LOCK_PATH}\n`)
+    if (a[0] === 'stash' && a[1] === 'list' && world.stashList !== undefined) return ok(world.stashList)
     // git's common folder: the main checkout answers relative, as git does there.
     // As git 2.53 prints them: `--all` lists every push URL, one per line.
     if (s === 'remote get-url origin' || s === 'remote get-url --push --all origin') {
       const url = (s === 'remote get-url origin' ? world.originUrl : (world.pushUrl ?? world.originUrl)) ?? 'https://github.com/o/r.git'
       return typeof url === 'string' ? ok(`${url}\n`) : Array.isArray(url) ? ok(url.map(u => `${u}\n`).join('')) : fail(url.stderr, url.exitCode)
     }
+    if (s === 'remote') return ok(`${['origin', ...Object.keys(world.remotes ?? {})].sort().join('\n')}\n`)
+    if (a[0] === 'remote' && a[1] === 'get-url' && a.length === 3) {
+      const url = world.remotesIn?.[e.init?.cwd ?? '']?.[a[2] ?? ''] ?? world.remotes?.[a[2] ?? '']
+      if (url !== undefined) return ok(`${url}\n`)
+    }
+    if (a[0] === 'ls-remote') return ok((world.remoteHeads?.[a[2] ?? ''] ?? []).map(name => `0123abc\trefs/heads/${name}\n`).join(''))
     if (s === 'rev-parse --git-common-dir') return ok('.git\n')
     if (s === 'rev-parse --show-toplevel') return world.isRepo ? ok(`${ROOT}\n`) : fail('fatal: not a git repository', 128)
     if (s === 'rev-parse --abbrev-ref HEAD' && inWorktree) return ok(`${world.wtHead}\n`)
@@ -1649,7 +1737,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
   const ISSUE_VIEW = ['gh', 'issue', 'view', '16', '--repo', 'github.com/o/r', '--json', 'number,title,body,state,url']
   const REPO_VIEW = ['gh', 'repo', 'view', '--json', 'nameWithOwner,url']
   const BUT = 'but gh sends issues and pull requests to o/r'
-  const NEXT_CLONE = 'work from a clone whose origin is o/r (forks: #26)'
+  const NEXT_CLONE = 'work from a clone whose origin is o/r, or whose origin is your fork of o/r with another remote for o/r'
   /** The store the mod writes to, readable here. */
   const watched = (): Record<string, unknown> => ({})
   const WATCH = { when: () => false, until: Promise.resolve() }
@@ -2059,5 +2147,841 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await run($, 'status')
     const ui = await pane($)
     expect(await ui.find({ type: 'Text', text: /^\/issue-forge <issue number or URL> starts another\.$/ })).toBeDefined()
+  })
+})
+
+// Issue #26: a fork clone. Origin is the contributor's fork (me/r) and another remote is the project (o/r), which is
+// what gh resolves; the base is fetched from that remote, the branch is pushed to origin, and the pull request names
+// the fork's owner as its head. The pinned repository is `Run.ghRepo` (as in #25), the new fields `baseRemote` and
+// `headRepo` (`host/owner/repo` of origin).
+describe('a fork clone: origin is the contributor\'s fork and the project is another remote (#26)', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const FORK = { originUrl: 'https://github.com/me/r.git', remotes: { upstream: 'https://github.com/o/r.git' } }
+  const WATCH = { when: () => false, until: Promise.resolve() }
+  const FORK_VIEW = ['gh', 'repo', 'view', 'github.com/me/r', '--json', 'isFork,parent']
+  /** The project remote, pointed elsewhere after preflight read it (Codex on PR #87). */
+  const MOVED = { upstream: 'https://github.com/evil/r.git' }
+  const forkRun = (extra: Record<string, unknown> = {}) => storedRun('ready', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', greenCommit: 'c2', gatedHead: 'c0', ...extra })
+  const isGitWrite = (a: string[]) => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch' || a[1] === 'worktree')
+  const isPublished = (w: World) => w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))
+  /** Starts #16 and waits for the first block: preflight's, or the red phase's once a run gets that far. */
+  async function started($: any, w: World): Promise<string> {
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    return (await run($, 'status')).text ?? ''
+  }
+
+  test('start: the base is fetched from the project remote, the branch is cut from it, and red is spawned', async ($, on) => {
+    const w = engine(on, FORK)
+    await start($)
+    await started($, w)
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.argv).toContainEqual(['git', 'switch', '--no-track', '-c', BRANCH, 'upstream/main'])
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+  })
+
+  test("start: the profile, the merge base and the catch-up all read the project remote's base, never origin's", async ($, on) => {
+    const w = engine(on, FORK)
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'show', 'upstream/main:.issue-forge.json'])
+    expect(w.argv).toContainEqual(['git', 'merge-base', 'HEAD', 'upstream/main'])
+    expect(w.argv).toContainEqual(['git', 'merge-base', '--is-ancestor', 'HEAD', 'upstream/main'])
+    expect(w.argv).toContainEqual(['git', 'merge', '--ff-only', '-q', 'upstream/main'])
+    expect(w.argv.flat().some(x => x.startsWith('origin/'))).toBe(false)
+  })
+
+  test('start in a new worktree: it is added from the project remote\'s base', async ($, on) => {
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'upstream/main'])
+    expect(w.argv.flat().some(x => x.startsWith('origin/'))).toBe(false)
+  })
+
+  test('start: a branch name taken on either remote is avoided, so origin and the project remote are both asked', async ($, on) => {
+    const w = engine(on, { ...FORK, remoteHeads: { origin: [BRANCH], upstream: [`${BRANCH}-2`] } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'ls-remote', '--heads', 'origin', 'issue-16*'])
+    expect(w.argv).toContainEqual(['git', 'ls-remote', '--heads', 'upstream', 'issue-16*'])
+    expect(w.argv).toContainEqual(['git', 'switch', '--no-track', '-c', `${BRANCH}-3`, 'upstream/main'])
+  })
+
+  test('start: the run is stored with the project remote and the fork, and stays pinned to the project', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { ...FORK, storeHold: WATCH }, store)
+    await start($)
+    await started($, w)
+    const stored = Object.entries(store).find(([k]) => k.startsWith('issue-forge:repo-run:') && k.endsWith('#16'))?.[1] as Record<string, unknown> | undefined
+    expect(stored?.issue).toBe(16)
+    expect(stored?.baseRemote).toBe('upstream')
+    expect(stored?.headRepo).toBe('github.com/me/r')
+    expect(stored?.ghRepo).toBe('github.com/o/r')
+  })
+
+  test("start: origin is checked to be a fork of the project and not an organization's, by host/owner/repo and before anything is fetched; a token in a URL goes nowhere", async ($, on) => {
+    const w = engine(on, { originUrl: 'https://x-access-token:SECRET@github.com/me/r.git', remotes: { upstream: 'https://x-access-token:SECRET@github.com/o/r.git' } })
+    await start($)
+    const status = await started($, w)
+    expect(w.argv).toContainEqual(FORK_VIEW)
+    expect(w.argv).toContainEqual(['gh', 'api', '--hostname', 'github.com', 'users/me', '--jq', '.type'])
+    const forkAt = w.argv.findIndex(a => a.join(' ') === FORK_VIEW.join(' '))
+    const ownerAt = w.argv.findIndex(a => a[0] === 'gh' && a[1] === 'api')
+    const fetchAt = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'fetch')
+    expect(fetchAt).toBeGreaterThan(forkAt)
+    expect(fetchAt).toBeGreaterThan(ownerAt)
+    expect(forkAt).toBeGreaterThanOrEqual(0)
+    expect(JSON.stringify([w.argv, w.toasts, w.asked, status])).not.toContain('SECRET')
+  })
+
+  test('start: a parent that is the project in another case still passes the fork check', async ($, on) => {
+    const w = engine(on, { ...FORK, parentOf: { 'github.com/me/r': 'O/R' } })
+    await start($)
+    await started($, w)
+    expect(w.spawned).toHaveLength(1)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+  })
+
+  test("start: an organization's fork blocks before anything is fetched or made, since gh pr create can't name it as the head", async ($, on) => {
+    const w = engine(on, { ...FORK, orgOwners: ['me'] })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain("blocked at preflight: gh pr create can't name an organization's fork as the head (cli/cli#10093)")
+    expect(w.argv).toContainEqual(['gh', 'api', '--hostname', 'github.com', 'users/me', '--jq', '.type'])
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start on GitHub Enterprise: the owner is looked up on the project's host, so an organization there blocks though github.com has a user of that name", async ($, on) => {
+    const GHE = { repoView: { exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'o/r', url: 'https://ghe.example.com/o/r' }) }, originUrl: 'https://ghe.example.com/me/r.git', remotes: { upstream: 'https://ghe.example.com/o/r.git' } }
+    const w = engine(on, { ...GHE, orgOwners: ['ghe.example.com/me'] })
+    await start($)
+    const status = await started($, w)
+    expect(w.argv).toContainEqual(['gh', 'api', '--hostname', 'ghe.example.com', 'users/me', '--jq', '.type'])
+    expect(status).toContain("blocked at preflight: gh pr create can't name an organization's fork as the head (cli/cli#10093)")
+    expect(w.spawned).toEqual([])
+  })
+
+  test('start: two remotes that point at the project block, naming both and saying to remove one', async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/me/r.git', remotes: { project: 'https://github.com/o/r.git', upstream: 'git@github.com:o/r.git' } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: remotes project and upstream both point at o/r')
+    expect(status).toContain('next: remove one of them')
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: an origin that isn't a fork blocks", async ($, on) => {
+    const w = engine(on, { ...FORK, parentOf: { 'github.com/me/r': null } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain("blocked at preflight: origin me/r isn't a fork of o/r")
+    expect(w.argv).toContainEqual(FORK_VIEW)
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: an origin that is a fork of another repository blocks", async ($, on) => {
+    const w = engine(on, { ...FORK, parentOf: { 'github.com/me/r': 'x/r' } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain("blocked at preflight: origin me/r isn't a fork of o/r")
+    expect(w.spawned).toEqual([])
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: a failed fetch of the base names the project remote", async ($, on) => {
+    const w = engine(on, { ...FORK, fetchFails: true })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: git fetch upstream main failed: fatal: unable to access origin')
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+  })
+
+  test("resume at the baseline fetches and catches up from the stored project remote", async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { ...FORK, head: BRANCH, fetchFails: true }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at baseline: git fetch upstream main failed: fatal: unable to access origin')
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+    w.fetchFails = false
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'red')
+    expect(w.argv).toContainEqual(['git', 'merge', '--ff-only', '-q', 'upstream/main'])
+    expect(w.argv).toContainEqual(['git', 'merge-base', 'HEAD', 'upstream/main'])
+    expect(w.argv.flat().some(x => x.startsWith('origin/'))).toBe(false)
+  })
+
+  test("publish pushes to origin and opens the pull request on the project with the fork's owner as the head", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    expect((await run($, 'publish')).text).toBe(`publishing #16: pushing ${BRANCH} and opening a pull request against main.`)
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the PR or a block')
+    expect(w.toasts.some(t => t.startsWith('PR opened'))).toBe(true)
+    const pushUrl = w.argv.findIndex(a => a.join(' ') === 'git remote get-url --push --all origin')
+    const push = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'push')
+    expect(pushUrl >= 0 && pushUrl < push).toBe(true)
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
+    expect(w.argv.find(a => a[0] === 'gh' && a[1] === 'pr')).toEqual(['gh', 'pr', 'create', '--base', 'main', '--head', `me:${BRANCH}`, '--title', 'Fix the thing (#16)', '--body-file', '/home/u/.claude/issue-forge-data/16-1/pr.md', '--repo', 'github.com/o/r'])
+  })
+
+  test("publish checks the merge against the project remote's base, fetched there", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the PR or a block')
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'origin')).toBe(false)
+    expect(w.argv.find(a => a[1] === 'merge-tree')?.at(-1)).toBe('upstream/main')
+  })
+
+  test('publish blocks when origin now pushes to another repository than the fork the run was preflighted for: no push, no pull request', async ($, on) => {
+    const w = engine(on, { head: BRANCH, originUrl: 'https://github.com/other/r.git', remotes: { upstream: 'https://github.com/o/r.git' } }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(status).toContain('next: point origin back at it, or start a new run')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test('publish blocks when any of origin\'s push URLs is another repository than the fork, since git pushes to all of them', async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: ['https://github.com/me/r.git', 'git@github.com:other/r.git'] }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  // PR #87 review: origin's fetch URL is part of the fork check, and each URL is read and resolved once.
+  test("start: an origin that fetches from a third repository though it pushes to a fork is no fork clone: the origin block, and the fork isn't looked up", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'https://github.com/x/r.git', pushUrl: 'https://github.com/me/r.git' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from x/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv).not.toContainEqual(FORK_VIEW)
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: an origin that fetches from the project and pushes to the fork is no fork clone: ls-remote origin couldn't see the fork's branches", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'https://github.com/o/r.git', pushUrl: 'https://github.com/me/r.git' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin pushes to me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv).not.toContainEqual(FORK_VIEW)
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: preflight reads origin's push URLs once and asks gh about the fork's name once", async ($, on) => {
+    const w = engine(on, FORK)
+    await start($)
+    await started($, w)
+    const firstFetch = w.argv.findIndex(a => a[0] === 'git' && a[1] === 'fetch')
+    const before = w.argv.slice(0, firstFetch).map(a => a.join(' '))
+    expect(before.filter(a => a === 'git remote get-url --push --all origin')).toHaveLength(1)
+    expect(before.filter(a => a === 'gh repo view github.com/me/r --json nameWithOwner,url')).toHaveLength(1)
+  })
+
+  test("start: the other remotes are looked up together, so one slow gh answer doesn't hold up the rest", async ($, on) => {
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    const w = engine(on, { ...FORK, remotes: { fork2: 'https://github.com/x/r.git', upstream: 'https://github.com/o/r.git' }, viewHold: { repo: 'github.com/x/r', until: held } })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.argv.some(a => a.join(' ') === 'gh repo view github.com/x/r --json nameWithOwner,url'), 'the held lookup')
+    for (let i = 0; i < 10; i++) await w.clock.advance(5)
+    expect(w.argv).toContainEqual(['git', 'remote', 'get-url', 'upstream'])
+    release()
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  // PR #87 review, the owner's choice: an ssh host nickname is resolved with ssh -G for the fork and the base remote, never
+  // assumed; origin's own check keeps #25's rule (#71).
+  test("start: origin through an ssh nickname for the project's host is a fork clone once ssh -G resolves it", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'git@gh-personal:me/r.git', sshHosts: { 'gh-personal': 'github.com' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['ssh', '-G', 'gh-personal'])
+    expect(w.argv).toContainEqual(FORK_VIEW)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test("start: an ssh nickname ssh can't resolve is no fork: the origin block, and nothing is fetched", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'git@gh-personal:me/r.git', sshFails: true })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from gh-personal/me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test('start: a mirror on another host with the same owner/repo is not the project, so the real project remote is the base', async ($, on) => {
+    const w = engine(on, { ...FORK, remotes: { gitlab: 'git@gitlab.com:o/r.git', upstream: 'https://github.com/o/r.git' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'gitlab')).toBe(false)
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test('start: a mirror alone is no base remote: the origin block, and nothing is fetched from it', async ($, on) => {
+    const w = engine(on, { ...FORK, remotes: { gitlab: 'git@gitlab.com:o/r.git' } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: a project remote through an ssh nickname for the project's host is the base", async ($, on) => {
+    const w = engine(on, { ...FORK, remotes: { upstream: 'git@gh-work:o/r.git' }, sshHosts: { 'gh-work': 'github.com' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test("publish blocks a push URL with the fork's owner/repo on another host: git would push there", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: ['https://github.com/me/r.git', 'git@gitlab.com:me/r.git'] }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test('resume at the baseline blocks when the project remote is now a mirror on another host', async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { ...FORK, head: BRANCH, remotes: { upstream: 'git@gitlab.com:o/r.git' } }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain('blocked at baseline: upstream no longer fetches from o/r')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+  })
+
+  // PR #87 review: the paths through the fork check and the push check that had no test.
+  test("start: gh failing to read the fork blocks with gh's reason, not as \"isn't a fork\"", async ($, on) => {
+    const w = engine(on, { ...FORK, forkViewFails: 'HTTP 502: Bad Gateway' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: could not read me/r from gh: HTTP 502: Bad Gateway')
+    expect(status).toContain('next: check gh and your access to the fork')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: gh failing to say whether the fork's owner is an organization blocks with gh's reason", async ($, on) => {
+    const w = engine(on, { ...FORK, ownerTypeFails: 'HTTP 404: Not Found (https://api.github.com/users/me)' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: could not tell whether me is a user or an organization: HTTP 404: Not Found')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: origin a fork but no remote for the project is the origin block, and the fork isn't looked up", async ($, on) => {
+    const w = engine(on, { originUrl: 'https://github.com/me/r.git' })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv).not.toContainEqual(FORK_VIEW)
+  })
+
+  test('publish blocks when origin has no push URL to read, or none at all', async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: { exitCode: 2, stderr: "error: No such remote 'origin'" } }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test('publish blocks when origin lists no push URL', async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: [] }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test("resume of a fork run's kept worktree at preflight checks origin's push URLs there against the fork, then fetches the base there", async ($, on) => {
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' }, worktrees: [WT], wtHead: BRANCH }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const pushedThere = w.calls.findIndex(c => c.cwd === WT && c.argv.join(' ') === 'git remote get-url --push --all origin')
+    const fetchedThere = w.calls.findIndex(c => c.cwd === WT && c.argv.join(' ') === 'git fetch upstream main')
+    expect(pushedThere >= 0 && pushedThere < fetchedThere).toBe(true)
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test('start: a project remote repointed while the base question is open is read again before the first fetch (Codex on PR #87)', async ($, on) => {
+    let answer = (_label: string) => {}
+    const hold = new Promise<string>(resolve => (answer = resolve))
+    const w = engine(on, { ...FORK, issueBody: 'Make it work.\nBase branch: dev', hold })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.asked.length === 1, 'the base question')
+    w.remotes = MOVED
+    answer('Use dev')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain('blocked at preflight: upstream no longer fetches from o/r')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+  })
+
+  // PR #87 review (Codex): the stored base remote is a name; what it fetches from is read again where it is fetched.
+  const ZERO = { redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } }
+
+  test('resume at the baseline blocks when the project remote now fetches from another repository: nothing is fetched or spawned', async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, ...ZERO })
+    const w = engine(on, { ...FORK, head: BRANCH, remotes: MOVED }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at baseline: upstream no longer fetches from o/r')
+    expect(status).toContain('next: point upstream back at o/r, or start a new run')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
+
+  test("resume of a fork run's kept worktree at preflight reads the project remote there before it fetches: its own config can point it elsewhere", async ($, on) => {
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, workRoot: WT, ...ZERO })
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' }, worktrees: [WT], wtHead: BRANCH, remotesIn: { [WT]: MOVED } }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain('blocked at preflight: upstream no longer fetches from o/r')
+    expect(w.calls.some(c => c.cwd === WT && c.argv[1] === 'fetch')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
+
+  test("publish doesn't fetch a project remote that now points elsewhere: the pull request says why the merge check is unavailable", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, remotes: MOVED }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the PR or a block')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+    expect(w.files['/home/u/.claude/issue-forge-data/16-1/pr.md']).toContain("the merge check couldn't run: upstream no longer fetches from o/r")
+  })
+
+  // Codex on PR #87 (round 3): a branch kept by a preflight block was named for the fork origin pushed to then.
+  test('start: a fork run that blocks after making its branch keeps the fork and the base remote with it', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' }, worktreeAddFails: true, storeHold: WATCH }, store)
+    await start($)
+    expect(await started($, w)).toContain('blocked at preflight')
+    const stored = Object.entries(store).find(([k]) => k.startsWith('issue-forge:repo-run:') && k.endsWith('#16'))?.[1] as Record<string, unknown> | undefined
+    expect(stored?.branch).toBe(BRANCH)
+    expect(stored?.headRepo).toBe('github.com/me/r')
+    expect(stored?.baseRemote).toBe('upstream')
+  })
+
+  test("resume at preflight of a fork run's kept branch blocks when origin now pushes to another fork: the name was checked on the first", async ($, on) => {
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, ...ZERO })
+    const w = engine(on, { ...FORK, originUrl: 'https://github.com/you/r.git', head: BRANCH }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain("blocked at preflight: origin now pushes to you/r, not me/r, where the run's branch was named")
+    expect(status).toContain('next: point origin back at me/r, or start a new run')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
+})
+
+// #28: another process holds .git/index.lock, so the index-writing calls (add, commit, stash apply, switch,
+// merge --ff-only) fail at once. They wait a second and try again, five attempts in all, then the run blocks naming the lock.
+describe('a held git index lock (#28)', () => {
+  /** git 2.43.0's refusal of add, commit and switch, with its hint. */
+  const LOCK_STDERR = `fatal: Unable to create '${LOCK_PATH}': File exists.\n\nAnother git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'. Please make sure all processes\nare terminated then try again. If it still fails, a git process\nmay have crashed in this repository earlier:\nremove the file manually to continue.\n`
+  /** `n` failures that leave the lock file in place; the call after them passes. */
+  const locked = (n: number, stderr = LOCK_STDERR, code = 128): GitFail[] => Array.from({ length: n }, () => ({ stderr, code, isLocked: true }))
+  /** Keeps $.agent.spawn pending, so the drive stays at the spawn (under test a spawn never gets an agent id). */
+  const held = () => new Promise<void>(() => undefined)
+  const STASH = { sha: 'abc1234def', message: 'issue-forge #16 green before behaviour test (run 16-1, attempt 1)' }
+  const isBlocked = (w: World) => w.toasts.some(t => t.includes('blocked'))
+  /** Advances the mock clock a step at a time until `cond` holds, or `ms` have passed. It never throws, so the test's own expect says what failed. */
+  async function pump(w: World, cond: () => boolean, ms = 12_000): Promise<void> {
+    for (let t = 0; t < ms && !cond(); t += 50) await w.clock.advance(50)
+    await w.clock.settle()
+  }
+  /** Each git call whose arguments are, or start with, `prefix`. */
+  const callsOf = (w: World, prefix: string) => w.calls.filter(c => c.argv[0] === 'git' && (c.argv.slice(1).join(' ') === prefix || c.argv.slice(1).join(' ').startsWith(`${prefix} `)))
+  const stdinsOf = (w: World, prefix: string) => w.argv.flatMap((a, i) => (a[0] === 'git' && a.slice(1).join(' ').startsWith(prefix) ? [w.inits[i]?.stdin] : []))
+  /** The wait between one attempt and the next: at least a second each, as the issue says. */
+  const gaps = (calls: { at: number }[]) => calls.slice(1).map((c, i) => c.at - calls[i]!.at)
+  const atGateR = (extra: Partial<World> = {}, run: Record<string, unknown> = {}) => {
+    const stored = { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], ...run }) }
+    return { world: { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), ...extra }, stored }
+  }
+
+  test('gate R: a commit that meets the lock waits a second and tries again with the same message; the run goes on', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(1) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(2)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    // The retry sends the message again: stdin is not a stream that the first attempt used up.
+    expect(stdinsOf(w, 'commit')).toEqual([w.commits[0], w.commits[0]])
+    expect(w.commits[0]).toBe('test(#16): red: Fix the thing\n\nCo-Authored-By: Tester <t@example.com>\n')
+    expect(w.spawned.length).toBe(1)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
+  test('gate R: a commit that meets the lock five times blocks naming the lock, after four waits, with no sixth attempt', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: another git process is using ${LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${LOCK_PATH} if none is running, then /issue-forge resume`)
+    expect(w.toasts.some(t => t.startsWith('#16 blocked: another git process is using /w/.git/index.lock'))).toBe(true)
+    // Long enough for a sixth attempt, were there one.
+    await w.clock.advance(5000)
+    await w.clock.settle()
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(5)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    expect(commits[4]!.at - commits[0]!.at).toBeGreaterThanOrEqual(4000)
+    // The lock's path is asked of git once and reused by the later attempts.
+    expect(w.argv.filter(a => a.join(' ') === 'git rev-parse --git-path index.lock').length).toBe(1)
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned.length).toBe(0)
+  })
+
+  test('gate R: after a retry, a commit that fails for another reason is not tried again, and the block is the unexpected one', async ($, on) => {
+    const emptyIdent: GitFail = { stderr: 'fatal: empty ident name (for <u@h>) not allowed\n', code: 128, isLocked: false }
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: [...locked(1), emptyIdent] } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    expect((await run($, 'status')).text).toContain('blocked at gateR: unexpected: git commit failed: fatal: empty ident name (for <u@h>) not allowed')
+    await w.clock.advance(5000)
+    await w.clock.settle()
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(2)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    expect(w.commits.length).toBe(0)
+  })
+
+  // PR #88 review (Codex P2): 0.3.0 retried commit and stash on any git lock; a ref's lock is retried as the index's is.
+  // The refusals are git 2.53.0's, captured in a scratch repository with the lock file made by hand.
+  const REF_LOCK_PATH = `${ROOT}/.git/refs/heads/${BRANCH}.lock`
+  const refLocked = (n: number): GitFail[] => locked(n, `fatal: cannot lock ref 'HEAD': Unable to create '${REF_LOCK_PATH}': File exists.\n`).map(f => ({ ...f, isLocked: false }))
+
+  test("gate R: a commit that meets a held branch ref lock waits a second and tries again; the run goes on (PR #88 review)", async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: refLocked(1) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(2)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
+  test('gate R: a commit that meets a ref lock five times blocks naming that lock, not the index (PR #88 review)', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: refLocked(5) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: another git process is using ${REF_LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${REF_LOCK_PATH} if none is running, then /issue-forge resume`)
+    expect(callsOf(w, 'commit').length).toBe(5)
+  })
+
+  // PR #88 review (Codex 4290283822): `cannot lock ref` also opens git's refusal of a broken ref, which no lock file
+  // explains. git 2.53.0's text, captured in a scratch repository with the branch's ref file overwritten.
+  test('gate R: a commit refused for a broken ref is not blamed on a lock: the block is git\'s own failure', async ($, on) => {
+    const broken = `fatal: cannot lock ref 'HEAD': unable to resolve reference 'refs/heads/${BRANCH}': reference broken\n`
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5, broken).map(f => ({ ...f, isLocked: false })) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: unexpected: git commit failed: fatal: cannot lock ref 'HEAD': unable to resolve reference 'refs/heads/${BRANCH}': reference broken`)
+    expect(status).not.toContain('another git process')
+    expect(w.commits).toEqual([])
+  })
+
+  // PR #88 (Codex 4290341993): a lock git couldn't create for another reason is no other process's. git 2.53.0's
+  // refusal of add with a read-only .git, captured in a scratch repository.
+  test("gate R: git add -A that can't create the index lock (Permission denied) blocks with git's own failure, not a held lock", async ($, on) => {
+    const denied = `fatal: Unable to create '${LOCK_PATH}': Permission denied\n`
+    const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(5, denied).map(f => ({ ...f, isLocked: false })) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: unexpected: git add failed: fatal: Unable to create '${LOCK_PATH}': Permission denied`)
+    expect(status).not.toContain('another git process')
+  })
+
+  // git 2.53.0 names no lock here: stderr is only this line, exit 1, and the tree is left as it was.
+  const STASH_LOCKED: GitFail = { stderr: 'Cannot save the current status\n', code: 1, isLocked: false, isStashLocked: true }
+
+  test("gate F: a stash push that meets the shared refs/stash lock waits a second and tries again; the rejected refactor is stashed (PR #88 review)", async ($, on) => {
+    // Resume gives the phase its attempts again, so a profile with no refactor retry is what sends a failed gate F to the stash.
+    const noRetry = storedRun('gateF', { greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } })
+    const stored = { [`issue-forge:run:${ROOT}`]: { ...noRetry, profile: { ...noRetry.profile, attempts: { red: 2, green: 3, refactor: 0 } } } }
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], gitFails: { on: 'stash push', seq: [STASH_LOCKED] } }, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => callsOf(w, 'stash list').length > 0 || isBlocked(w))
+    const pushes = callsOf(w, 'stash push')
+    expect(pushes.length).toBe(2)
+    expect(gaps(pushes).every(g => g >= 1000)).toBe(true)
+    expect((await run($, 'status')).text).not.toContain('git stash failed')
+  })
+
+  // PR #88 review (Codex P1): the 5 s watch can't see a takeover in time, so each attempt after a wait reads the stored
+  // run first, as commitAll and stashAll do before their first one.
+  test('gate R: a run another session takes over during the lock wait gets no further commit attempt (PR #88 review)', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5) } })
+    const store: Record<string, unknown> = { ...stored }
+    const w = engine(on, { ...world, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => callsOf(w, 'commit').length === 1)
+    // Another session writes the run (the store is shared live between sessions).
+    store[key(16)] = { ...(store[key(16)] as any), driver: { session: OTHER, since: 1 } }
+    // Three waits' worth, still short of the 5 s watch.
+    for (let t = 0; t < 3000; t += 50) await w.clock.advance(50)
+    await w.clock.settle()
+    expect(callsOf(w, 'commit').length).toBe(1)
+    expect((store[key(16)] as any).driver).toEqual({ session: OTHER, since: 1 })
+    expect(w.commits).toEqual([])
+  })
+
+  test('gate F: a stash push that meets the refs/stash lock five times blocks naming that lock (PR #88 review)', async ($, on) => {
+    const noRetry = storedRun('gateF', { greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } })
+    const stored = { [`issue-forge:run:${ROOT}`]: { ...noRetry, profile: { ...noRetry.profile, attempts: { red: 2, green: 3, refactor: 0 } } } }
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], gitFails: { on: 'stash push', seq: Array.from({ length: 5 }, () => STASH_LOCKED) } }, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`another git process is using ${STASH_LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${STASH_LOCK_PATH} if none is running, then /issue-forge resume`)
+    expect(callsOf(w, 'stash push').length).toBe(5)
+  })
+
+  // PR #88 review: the wait's timer may never fire (a hook refuses clock.after, a reload cancels it); a Stop ends the
+  // wait itself, so the drive ends and clears this session as the driver at once.
+  test('a Stop during the lock wait ends the drive at once, without waiting for the timer (PR #88 review)', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: locked(5) } })
+    const store: Record<string, unknown> = { ...stored }
+    const w = engine(on, { ...world, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => callsOf(w, 'commit').length === 1)
+    expect((store[key(16)] as any).driver?.session).toBe(SESSION)
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    // The clock stays where it is: the wait's timer doesn't fire.
+    await w.clock.settle()
+    expect((store[key(16)] as any).step).toBe('stopped')
+    expect((store[key(16)] as any).driver).toBeUndefined()
+    expect(callsOf(w, 'commit').length).toBe(1)
+  })
+
+  test('gate R: git add -A that meets the lock is retried after a second, and gate R goes on', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(1) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const adds = callsOf(w, 'add -A')
+    expect(adds.length).toBe(2)
+    expect(gaps(adds).every(g => g >= 1000)).toBe(true)
+    expect(w.commits.length).toBe(1)
+    expect(w.spawned.length).toBe(1)
+  })
+
+  test('gate G: git add -A that meets the lock is retried after a second, and the green commit is made', async ($, on) => {
+    const stored = { [`issue-forge:run:${ROOT}`]: storedRun('gateG') }
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), gitFails: { on: 'add', seq: locked(1) } }, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const adds = callsOf(w, 'add -A')
+    expect(adds.length).toBe(2)
+    expect(gaps(adds).every(g => g >= 1000)).toBe(true)
+    expect(w.commits[0]).toStartWith('fix(#16): green: Fix the thing')
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+  })
+
+  describe("restoring green's stash", () => {
+    const behaviour = (gitFails: { on: string; seq: GitFail[] }) =>
+      atGateR(
+        { testsExit: 1, sinceRed: ['tests/b.ui.test.ts'], staged: ['tests/a.test.ts', 'tests/b.ui.test.ts'], stashList: `${STASH.sha}\tOn ${BRANCH}: ${STASH.message}\n`, gitFails },
+        { redCommit: 'c1', behaviourFor: ['src/register.tsx'], greenStash: STASH, used: { red: 1, green: 1, refactor: 0 }, agents: [{ id: 'old-green', name: 'issue-forge-16-green-1', phase: 'green' }] },
+      )
+    const applies = (w: World) => callsOf(w, `stash apply ${STASH.sha}`)
+
+    test('gate R: git stash apply that exits 1 with no output while the lock file exists is retried, and gate R goes on', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }] })
+      const w = engine(on, world, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')) || isBlocked(w))
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(applies(w).length).toBe(2)
+      expect(gaps(applies(w)).every(g => g >= 1000)).toBe(true)
+      expect(w.commits[0]).toStartWith('test(#16): red: behaviour test for src/register.tsx')
+      // Gate G has begun: green's work is back in the tree.
+      expect(w.argv.some(a => a[1] === 'diff' && a.includes('-U0'))).toBe(true)
+    })
+
+    // PR #88 review (Codex P2): before 2.31, `rev-parse --path-format=absolute --git-path index.lock` exits 0 with the
+    // option on its first line, so the file looked for was never the lock and a silent stash failure was never retried.
+    test('gate R: with git before 2.31, a stash apply that exits 1 with no output while the lock file exists is still retried', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }] })
+      const w = engine(on, { ...world, isGitBefore231: true }, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')) || isBlocked(w))
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(applies(w).length).toBe(2)
+    })
+
+    // PR #88 review: stash apply says nothing when it meets the lock, so the file is the only sign. Its path is known
+    // before the call, so a lock let go while git was asked where it is still counts.
+    test('gate R: a silent stash apply is retried even when the lock is let go while its path would be looked up', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }] })
+      const w = engine(on, { ...world, isLockGoneOnLookup: true }, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')) || isBlocked(w))
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(applies(w).length).toBe(2)
+    })
+
+    // PR #88 review: the behaviour commit is made before the apply, so a lock that outlasts the apply blocks after it,
+    // with the stash named, as any other failed restore does. git 2.53.0's refusal, captured in a scratch repository.
+    test("gate R: a stash apply that meets the lock five times keeps the behaviour commit and blocks naming green's stash", async ($, on) => {
+      const applyLocked = `error: Unable to create '${LOCK_PATH}': File exists.\n\nAnother git process seems to be running in this repository.\nerror: could not write index\n`
+      const { world, stored } = behaviour({ on: 'stash apply', seq: locked(5, applyLocked, 1) })
+      const w = engine(on, world, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => isBlocked(w))
+      const status = (await run($, 'status')).text
+      expect(status).toContain(`blocked at gateG: another git process is using ${LOCK_PATH} (5 attempts over 4 s); green's work is in stash abc1234 "${STASH.message}"`)
+      expect(status).toContain("next: restore green's work by hand (git stash apply abc1234)")
+      expect(w.commits[0]).toStartWith('test(#16): red: behaviour test for src/register.tsx')
+      expect(applies(w).length).toBe(5)
+    })
+
+    test('gate R: a stash apply that fails with no lock file is not tried again, and the block says where green\'s work is', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }, { stderr: '', code: 1, isLocked: false }] })
+      const w = engine(on, world, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => isBlocked(w))
+      expect((await run($, 'status')).text).toContain(`blocked at gateG: could not restore green's work; it is in stash abc1234 "${STASH.message}"`)
+      await w.clock.advance(5000)
+      await w.clock.settle()
+      expect(applies(w).length).toBe(2)
+      expect(gaps(applies(w)).every(g => g >= 1000)).toBe(true)
+    })
+  })
+
+  test('preflight: git switch that meets the lock five times blocks at preflight naming the lock, and nothing after the switch runs', async ($, on) => {
+    const w = engine(on, { spawnHold: held(), gitFails: { on: 'switch', seq: locked(5) } })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at preflight: another git process is using ${LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${LOCK_PATH} if none is running, then /issue-forge resume`)
+    await w.clock.advance(5000)
+    await w.clock.settle()
+    const switches = callsOf(w, 'switch')
+    expect(switches.length).toBe(5)
+    expect(gaps(switches).every(g => g >= 1000)).toBe(true)
+    const lastSwitch = w.argv.map(a => a[1]).lastIndexOf('switch')
+    const after = w.argv.slice(lastSwitch + 1)
+    expect(after.some(a => a[0] === 't' || a[0] === 'c' || a[1] === 'merge-base')).toBe(false)
+    expect(w.spawned.length).toBe(0)
+  })
+
+  test('baseline: git merge --ff-only that meets the lock (error: text, exit 1) is retried after a second, and the baseline is recorded', async ($, on) => {
+    const blocked = storedRun('blocked', { blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const lockError = `error: Unable to create '${LOCK_PATH}': File exists.\n\nAnother git process seems to be running in this repository.\n`
+    const w = engine(on, { head: BRANCH, spawnHold: held(), gitFails: { on: 'merge --ff-only', seq: locked(1, lockError, 1) } }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const merges = callsOf(w, 'merge --ff-only')
+    expect(merges.length).toBe(2)
+    expect(gaps(merges).every(g => g >= 1000)).toBe(true)
+    expect(w.spawned.length).toBe(1)
+    expect((await run($, 'status')).text).toContain('baseline: total lines 100.00% · branches n/a')
+  })
+
+  test("the run's own git calls take no optional locks: each carries GIT_OPTIONAL_LOCKS=0, its git status included", async ($, on) => {
+    const w = engine(on, { spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.spawned.length).toBe(1)
+    // The one git call outside git(): it finds the root the others run in.
+    const calls = w.argv.flatMap((a, i) => (a[0] === 'git' && a.slice(1).join(' ') !== 'rev-parse --show-toplevel' ? [{ text: a.join(' '), env: w.inits[i]?.env }] : []))
+    expect(calls.some(c => c.text.startsWith('git status'))).toBe(true)
+    expect(calls.filter(c => c.env?.GIT_OPTIONAL_LOCKS !== '0').map(c => c.text)).toEqual([])
+  })
+
+  // PR #88 review: the README says the run's git takes no optional locks; the root lookup and worktree add are git too.
+  test('in a worktree run every git call carries GIT_OPTIONAL_LOCKS=0, rev-parse --show-toplevel and worktree add included', async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.spawned.length).toBe(1)
+    const calls = w.argv.flatMap((a, i) => (a[0] === 'git' ? [{ text: a.join(' '), env: w.inits[i]?.env }] : []))
+    expect(calls.some(c => c.text.startsWith('git rev-parse --show-toplevel'))).toBe(true)
+    expect(calls.some(c => c.text.startsWith('git worktree add'))).toBe(true)
+    expect(calls.filter(c => c.env?.GIT_OPTIONAL_LOCKS !== '0').map(c => c.text)).toEqual([])
+    // The profile's own commands run as the user wrote them.
+    expect(w.argv.flatMap((a, i) => (a[0] === 't' ? [w.inits[i]?.env] : []))).toEqual([undefined])
+  })
+
+  // PR #88 (Codex 4290342002): a profile command that is itself git is the user's command, not one of the run's.
+  test("a profile command that is git runs with the session's env; worktree add still takes no optional locks", async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree', testCommand: ['git', 'diff', '--check'] }, spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.spawned.length).toBe(1)
+    const envs = (prefix: string) => w.argv.flatMap((a, i) => (a.join(' ').startsWith(prefix) ? [w.inits[i]?.env] : []))
+    expect(envs('git diff --check').length).toBeGreaterThan(0)
+    expect(envs('git diff --check').filter(e => e !== undefined)).toEqual([])
+    expect(envs('git worktree add').map(e => e?.GIT_OPTIONAL_LOCKS)).toEqual(['0'])
   })
 })

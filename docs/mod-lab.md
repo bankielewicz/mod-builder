@@ -25,6 +25,7 @@ the pane lights up live.
 
 - **Status and time** follow a run as it streams (`running tests · 7 of 12`).
 - **The selection follows the active build.** <kbd>J</kbd>/<kbd>P</kbd> still move it.
+- **A mod appears as soon as a build reports it,** before its folder exists. Until the folder is written its row shows the reported stage running and `folder not written yet`, with no Validate, Test, Type-check or README buttons, and counts as building; the next scan that finds the folder replaces it.
 
 ## The eight stages
 
@@ -76,6 +77,11 @@ share" fires again, when all eight are green.
 | `/modlab <mod>` | Open the pane on that mod |
 | `/modlab new <idea>` | Put `/mod-builder:build <idea>` in the prompt box |
 
+Typing `/mod-builder:build` or `/mod-builder:edit` opens Mod Lab too. A command you type opens the pane at any
+width. When Mod Lab opens it on its own (`autoOpen`, or when Claude starts a build you asked for in plain words),
+the window must be at least 144 columns wide, or 110 once you've opened Mod Lab yourself. Narrower than that, watch
+the status line.
+
 ## Keys
 
 Press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to give the pane the keyboard (again, or
@@ -97,8 +103,8 @@ Set them on the install options screen, or in `/config`.
 
 | Option | Default | What it does |
 |---|---|---|
-| Mods folder (`modsDir`) | the `mods/` of the marketplace nearest your working directory (a git worktree's own), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow your working directory, or set it to pin one folder. |
-| `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide) |
+| Mods folder (`modsDir`) | the `mods/` of the marketplace nearest the session's project root (a git worktree's own after `/cd`), else the one next to the plugin | The folder Mod Lab tracks. Leave it empty to follow the session (`/cd` moves it; Claude's own `cd` doesn't), or set it to pin one folder; a set one always wins. With it empty, while a build or edit reports its mod's folder (a marketplace's `mods/` in the project's own git repository: its top folder or one of its worktrees), Mod Lab watches that folder, so a worktree edited by path shows up with nothing to type. |
+| `autoOpen` | off | Open the pane when a skill reports a running stage (needs a window 144 columns wide, or 110 once you've opened Mod Lab yourself). Typing `/mod-builder:build` or `/mod-builder:edit` opens it whatever this is set to. |
 | `autoRerun` | on | Re-run stale Validate and Test at the end of each turn |
 | `testTimeoutMinutes` | 3 | Minutes a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10). Checks a reload left shown as running are cleared when Mod Lab loads, and one still shown as running 30 s past this stops counting, so neither blocks the next one |
 | `logging` | normal | `off` · `normal` (errors, session start, check results) · `verbose` (+ reports, scans, processes, commands) · `debug` (+ expected misses, lights, process output). Log: `~/.claude/mod-builder-data/logs/` |

@@ -22,7 +22,12 @@ export type Reported = {
   note?: string
   /** When this report arrived, for the band's timer. */
   since: number
+  /** The mods folder the session was in when it reported: a placeholder row shows only there (#19). */
+  dir?: string
 }
+
+/** A build's mods folder, pinned for the session by a `lab_report` with `path`, and the project root it was pinned under (#92). */
+export type Pin = { modsDir: string; root: string }
 
 /** One mod as the pane, band and status line draw it. */
 export type ModView = {
@@ -50,6 +55,8 @@ export type ModView = {
   gates: Gate[]
   errors: string[]
   failedStage: Stage | null
+  /** Reported by a build before its folder exists: a row with no actions, until a scan finds the folder. */
+  isPlaceholder: boolean
 }
 
 /** A run in flight: which mod, which kind, since when, and how far it has got. */
@@ -76,6 +83,8 @@ declare module 'claude-code' {
       selected: string | null
       runs: Run[]
       reported: Record<string, Reported>
+      /** Builds still running, per mods folder then mod name, for placeholder rows (see `withBuilding`). */
+      building: Record<string, Record<string, Reported>>
       /** The animation clock: frame count and the time it last ticked. */
       frame: { n: number; now: number }
       /** When the demo started, or null when none runs. */
@@ -86,6 +95,8 @@ declare module 'claude-code' {
       fresh: string[]
       /** The "too narrow" toast fired for the current narrow spell; reset once wide again. */
       hasWarnedNarrow: boolean
+      /** The folder a build reported with `path`: watched until the project root changes (#92). */
+      pinned: Pin | null
     }
   }
 }

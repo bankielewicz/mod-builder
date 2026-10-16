@@ -1,6 +1,6 @@
 {
   "name": "mod-builder",
-  "version": "0.2.15",
+  "version": "0.2.21",
   "description": "Build Claude Code mods spec-first (interview \u2192 SPEC \u2192 approve \u2192 build \u2192 verify), and watch them come together in Mod Lab: a pane, band, status line and toasts tracking every mod's pipeline.",
   "author": {
     "name": "Bryan Ankielewicz"
@@ -11,13 +11,13 @@
     "modsDir": {
       "type": "directory",
       "title": "Mods folder",
-      "description": "The folder whose child folders are the mods Mod Lab tracks. Empty: the mods/ folder of the marketplace nearest the working directory (a git worktree's own), else the one beside this plugin.",
+      "description": "The folder whose child folders are the mods Mod Lab tracks. Set, it always wins. Empty: the mods folder a build reports (a marketplace's mods/ in the project's own git repository: its top folder or one of its worktrees), else the mods/ of the marketplace nearest the session's project root (a git worktree's own after /cd), else nearest the working directory, else the one beside this plugin.",
       "default": ""
     },
     "autoOpen": {
       "type": "boolean",
-      "title": "Open Mod Lab when a build starts",
-      "description": "Open the Mod Lab pane when a mod's files start changing, if the window is wide enough.",
+      "title": "Open Mod Lab when Claude reports a build stage",
+      "description": "Open the Mod Lab pane when a skill reports a running stage. Claude Code shows it then only in a window at least 144 columns wide (110 once you have opened Mod Lab yourself). Typing /mod-builder:build or /mod-builder:edit opens Mod Lab whatever this is set to.",
       "default": false
     },
     "autoRerun": {

@@ -55,11 +55,12 @@ After that, `/reload-plugins` picks up edits. It never loads a plugin that isn't
 
 ## 5. Mod Lab finds your mods
 
-With its **Mods folder** option (`modsDir`) empty, Mod Lab watches the `mods/` of the marketplace
-nearest the session's working directory: your project's, the same folder `/mod-builder:build`
-writes to. In a git worktree it's that worktree's, and a `/cd` takes effect at the next scan. Set
-`modsDir` (on the install options screen or later in `/config`) only to pin one folder, for example
-when your marketplace keeps its mods somewhere other than `mods/`.
+With its **Mods folder** option (`modsDir`) empty, Mod Lab watches the folder a build or edit is
+working in: `/mod-builder:build` and `/mod-builder:edit` report it, so a git worktree you edit by
+path shows up with nothing to type. Before any report, it watches the `mods/` of the marketplace
+nearest the session's project root, your project's (`/cd` moves it; Claude's own `cd` doesn't).
+Set `modsDir` (on the install options screen or later in `/config`) only to pin one folder, for
+example when your marketplace keeps its mods somewhere other than `mods/`. A set `modsDir` always wins.
 
 ## 6. Keep engine types out of git
 

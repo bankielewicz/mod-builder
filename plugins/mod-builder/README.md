@@ -114,6 +114,11 @@ Then start a real one, and change it later:
 | `/modlab <mod>` | Open the pane on that mod |
 | `/modlab new <idea>` | Put `/mod-builder:build <idea>` in the prompt box |
 
+Typing `/mod-builder:build` or `/mod-builder:edit` opens Mod Lab too. A command you type opens the pane at any
+width. When Mod Lab opens it on its own (`autoOpen`, or when Claude starts a build you asked for in plain words),
+the window must be at least 144 columns wide, or 110 once you've opened Mod Lab yourself. Narrower than that, watch
+the status line.
+
 ## Install
 
 From GitHub:
@@ -140,8 +145,8 @@ or a `/cd` into another worktree), Validate and Test show `○` until you press 
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `modsDir` | empty: the `mods/` of the marketplace nearest the session's working directory, else the one next to this plugin | The folder whose child folders Mod Lab tracks. Empty, it is found the way `/mod-builder:build` finds where to write, so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan. In another repository with a `.claude-plugin/marketplace.json`, that is its `mods/`, and the pane says `No mods yet.` if it keeps its plugins elsewhere. Set it to pin one folder. |
-| `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide |
+| `modsDir` | empty: the `mods/` of the marketplace nearest the session's project root (where it started, or where `/cd` took it), else the one next to this plugin | The folder whose child folders Mod Lab tracks. Set, it always wins. Empty, a build that reports its folder (the build and edit skills do) is watched for the rest of the session, until a `/cd` moves the project root or the folder's marketplace is gone; only a marketplace's `mods/` in the project's own git repository (its top folder or one of its worktrees, read from `.git` on disk) is taken, since Validate and Test run there; a nested clone or a copy, such as community mods kept in an ignored folder, is not. Before any report, it is the `mods/` of the marketplace nearest the project root (then nearest the working directory), so a session in a git worktree watches that worktree's `mods/`; a `/cd` takes effect at the next scan, and Claude's own `cd` in Bash doesn't move it. In another repository with a `.claude-plugin/marketplace.json`, that is its `mods/`, and the pane says `No mods yet.` if it keeps its plugins elsewhere. Set it to pin one folder. |
+| `autoOpen` | `false` | Open Mod Lab when a skill reports a running stage, if the window is at least 144 columns wide (110 once you've opened Mod Lab yourself). Typing `/mod-builder:build` or `/mod-builder:edit` opens it whatever this is set to. |
 | `autoRerun` | `true` | At the end of each of Claude's turns, re-run stale checks: a stale Validate, then Test if Validate passes and Test has run before; a stale Test alone, if Validate passed |
 | `testTimeoutMinutes` | `3` | How long a Validate, Test or type-check may run before Mod Lab stops it and shows it as timed out (at most 10; fractions are fine). When Mod Lab loads, it clears checks a reload left shown as running. One still shown as running 30 s past this stops counting: V, T and K light again and the auto re-run goes on |
 | `logging` | `normal` | `off`: nothing. `normal`: errors, session start and check results. `verbose`: also reports, scans, processes and commands. `debug`: also expected misses (a folder or file not there yet), each mod's lights and process output. One file per session in `~/.claude/mod-builder-data/logs/`, each line also in the debug log (`claude --debug`). |
@@ -155,19 +160,19 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
+| Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `command.run{mod-builder:build}` and `command.run{mod-builder:edit}` (gating, with `.catch`: open the pane, then run the skill), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
 | Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (its child is killed) and shown as timed out. |
-| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. With `modsDir` empty, checks whether `.claude-plugin/marketplace.json` exists in the working directory and then each folder above it, stopping at the first found, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
+| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. When a build reports a folder, checks its marketplace file and reads `.git` in the folder above it and at or above the project root, to tell whether it is the project's own repository or a worktree of it. With `modsDir` empty and no build's folder kept, checks whether `.claude-plugin/marketplace.json` exists in the project root (the working directory when the root can't be read) and then each folder above it, stopping at the first found, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Prompt box | `$.prompt.fill` puts `/mod-builder:build ` (N, or `/modlab new <idea>`) or a fix request (F) in the prompt box; it never submits |
 | Notifications | `$.ui.notify`: a native notification when a mod is ready to share |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |
-| Session | Reads the working directory (to find the mods folder when `modsDir` is empty, and to name a mod's folder the way the session reads it) and the session id (to name the log file) |
+| Session | Reads the project root (to find the mods folder when `modsDir` is empty, and to keep a build's folder until a `/cd`), the working directory (to name a mod's folder the way the session reads it, and to find the mods folder when the root can't be read) and the session id (to name the log file). Keeps the folder a build reported in its own session state. |
 | Store | Its own `$.store`, one set of keys per mods folder: last results per mod, which mods were announced, and edit generations |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
-| Tools it adds | `lab_report`, which records progress and runs nothing beyond the Validate and Test above |
-| Gating hooks | 3, all with `.catch`: `/mod-builder` (command), `lab_report`, `ui.close` |
+| Tools it adds | `lab_report`, which records progress (with `path`, the folder being built in) and runs nothing beyond the Validate and Test above |
+| Gating hooks | 5, all with `.catch`: `/mod-builder` (command), `/mod-builder:build` and `/mod-builder:edit` (they open the pane and always run the skill), `lab_report`, `ui.close` |
 
 ## Development
 

@@ -109,17 +109,29 @@ the remotes are fixed and it resumes.
   passes too: #71). A renamed or transferred repository passes: when the name differs on the same host,
   `gh` is asked what it calls it; `gh` is never asked about another host. A URL is never printed or
   passed on, since it can hold a token. GitHub Enterprise Server on a non-default port isn't supported (#71).
-- A fork clone blocks the run before it fetches or switches anything when `gh repo view` names another
-  repository than `origin` does, as it does with an `upstream` remote and no `gh repo set-default`. With
-  the fork as the only remote, or after `gh repo set-default <fork>`, gh names the fork itself, so the run
-  is pinned to the fork: its issue is read there, and its pull request opens there. Forks are tracked in #26.
+- A fork clone, where `origin` is your fork and another remote (usually `upstream`) is the project `gh`
+  names, runs against the project. The run reads its issue there, fetches and branches from that remote's
+  base (`upstream/main`), pushes the branch to your fork, and opens the pull request on the project with your
+  fork's owner as the head (`gh pr create --repo <project> --head <you>:<branch>`). Before anything is
+  fetched, preflight checks that exactly one remote besides `origin` names the project (two block, naming
+  both), that `origin` fetches from and pushes to one fork, that
+  `gh repo view` calls it a fork of the project, and that its owner is a user: `gh pr create` can't name an
+  organization's fork as the head ([cli/cli#10093](https://github.com/cli/cli/issues/10093)), so that blocks.
+  An ssh host nickname from `~/.ssh/config` (`git@gh-personal:me/r.git`) counts as the host `ssh -G` says it
+  reaches, which never connects; a mirror with the project's name on another host isn't the project. The run
+  stores the remote and the fork, checks the remote still names the project before each fetch from it, and
+  publish blocks if `origin` stops pushing to that fork. Anything else that `gh` and `origin`
+  disagree on still blocks the run before it fetches or switches. With the fork as the only remote, or after
+  `gh repo set-default <fork>`, gh names the fork itself, so the run stays inside the fork as before. The
+  whole flow is checked by the tests; no live pull request from a fork has been opened (the live probe is #102).
 - A pasted issue URL must name that same repository, or the command answers
   `x/y#16 is in another repository: this checkout's GitHub repository is o/r. …` and starts nothing.
   Only `https://<host>/<owner>/<repo>/issues/<N>` is read.
 - A pull request's number is refused (`#24 is a pull request, not an issue`), since `gh issue view`
   answers for those too.
 - A run started by 0.3 or earlier has no repository recorded: it resumes and publishes as before, with no
-  `--repo` and no check of `origin`.
+  `--repo` and no check of `origin`. A run started by 0.4 has no fork recorded: it fetches from and pushes to
+  `origin` and names the branch alone as the head.
 
 ### Parallel runs
 
@@ -153,8 +165,8 @@ Hand off (`/issue-forge handoff` or `h`) ends this session's drive at once, as S
 step: the run reads *interrupted* everywhere, and `/issue-forge resume <N>` continues it in any session.
 A stopped run can't be resumed.
 
-Parallel runs share git's refs. A `git fetch`, `git stash` or `git commit` that finds another process
-holding a lock is retried twice. One coverage file can't serve two runs at once, so an absolute `lcovPath`
+Parallel runs share git's refs. A `git fetch` that finds another process holding a lock is retried twice;
+a `git stash` or `git commit` waits a second and retries, five attempts in all (see "Limits worth knowing"). One coverage file can't serve two runs at once, so an absolute `lcovPath`
 (wherever it points) blocks a run's baseline and gates while another run is being driven: make it
 relative (and gitignored), as this repository's `coverage/issue-forge.lcov` is. When a run starts, finished runs beyond the
 repository's 20 newest are deleted from the store; their agents stay on the guard's list.
@@ -200,6 +212,15 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - Command lookup uses `sh -c 'command -v …'`, so `sh` must be on PATH (Git Bash on Windows).
 - The profile that runs is the one on `origin/<base>`, read after the switch; the checkout you start
   from only names the base.
+- The run works in the session's own checkout (or its worktree). A git command in that checkout from any
+  session while the run is between steps, a plain `git status` included, can take `.git/index.lock` just
+  as the run writes the index; another run of the repository can hold a branch's lock or `refs/stash`'s.
+  The run's `add`, `commit`, `stash`, `switch` and `merge` retry for 4 s (five attempts, a second apart);
+  if the lock is still there the run blocks with `another git process is using <path> (5 attempts over
+  4 s)`, and `/issue-forge resume` continues once it is gone. A Stop during the wait ends it at once. The run's own git calls take no optional locks (`GIT_OPTIONAL_LOCKS=0`), so its `git status`
+  doesn't hold the lock against yours. A lock in the main checkout doesn't affect a linked worktree,
+  which has its own index. When other sessions share the checkout, start issue-forge in a dedicated
+  worktree (`"workspace": "worktree"`).
 - If two sessions start the same issue at the same moment, the second write wins, and the other
   session's run stops at its next step.
 - A crashed session leaves its run marked as driven until another session answers Take over.
@@ -251,8 +272,8 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Reach | Detail |
 | --- | --- |
 | Hooks | `session.start`, `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `session.receive`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
-| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git` (rev-parse, including `--git-common-dir` for each command, status, check-ignore, fetch, show `origin/<base>:.issue-forge.json`, for-each-ref, ls-remote, switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, remote get-url, push), `gh` (auth status, repo view, issue view, pr create), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
-| Files | reads `.issue-forge.json` and the LCOV file; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
+| Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git`, with `GIT_OPTIONAL_LOCKS=0` (rev-parse, including `--show-toplevel` and `--git-common-dir` for each command and, once per folder before its first index or ref write, `--git-path index.lock`, and `--git-path refs/stash.lock` before a stash push, status, check-ignore, fetch, show `<remote>/<base>:.issue-forge.json`, for-each-ref, ls-remote (origin, and the project's remote in a fork clone), switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A, diff, commit, stash push/list/apply, merge-tree, remote (the list of remotes), remote get-url, push), `gh` (auth status, repo view, api `--hostname <host> users/<owner>` for `.type` in a fork clone, issue view, pr create), `ssh -G <host>` in a fork clone for an ssh remote on another host than the project's (reads `~/.ssh/config`, never connects), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand` and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
+| Files | reads `.issue-forge.json` and the LCOV file, and looks for git's `index.lock` (and `refs/stash.lock` on a stash push) when a git call that writes the index or a ref fails; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
