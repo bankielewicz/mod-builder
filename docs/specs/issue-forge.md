@@ -381,9 +381,10 @@ kit) and `tests/ui.test.tsx`.
 - **Test integrity is checked, not assumed:** G1 catches tests changed by any means, `Bash`
   included, because it compares files, not tool calls.
 - **Cost:** each run spawns at least three subagents. Retries add up to `attempts.red + attempts.green + attempts.refactor` more.
-- **Trust:** the agents read the issue body, which anyone who can file an issue writes. Run it
-  only on repositories and issues you trust. The prompts tell the agents to treat the issue text as
-  requirements, not instructions about tools or files.
+- **Trust:** the agents read the issue body, which anyone who can file an issue writes, and green
+  also reads the red agent's answer, which red wrote from that issue (§6). Run it only on
+  repositories and issues you trust. The prompts tell the agents to treat both as requirements and
+  context, not instructions about tools, credentials, files outside the repository, or the run.
 
 ## 9. Checkpoints
 

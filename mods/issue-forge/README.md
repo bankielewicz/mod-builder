@@ -280,9 +280,10 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, and publish (unless `confirmPublish` is off) |
 | Gating hooks | all with `.catch`: `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the idle notice the run's own named agent sends the main conversation when it stops, which repeats the answer the pane shows; passes everything else) |
 
-The agents read the issue body, which anyone who can file an issue writes. Run it only on
-repositories and issues you trust. The agents are told to treat the issue as requirements, never
-as instructions about tools or files. It never force-pushes, pushes to the base branch, deletes a
+The agents read the issue body, which anyone who can file an issue writes, and green also reads
+the red agent's answer, which red wrote from that issue. Run it only on repositories and issues
+you trust. The agents are told to treat both as requirements and context, never as instructions
+about tools or files. It never force-pushes, pushes to the base branch, deletes a
 branch or a stash, or runs `reset --hard`.
 
 ## Development
