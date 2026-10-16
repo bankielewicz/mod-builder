@@ -110,7 +110,7 @@ branch coverage as the baseline. If the LCOV file is missing or has no `SF:` rec
 it finishes, stage everything (`git add -A`) and check **gate R**:
 - R1: every staged path (`git diff --cached --name-only <merge base>`) matches `testGlobs`;
 - R2: at least one staged path;
-- R4 (SPEC change 0.5.0, checked first, before any test runs): no path added since the merge base is a Claude Code plugin manifest (`.claude-plugin/plugin.json`), and the guard refused none during the phase.
+- R4 (SPEC change 0.5.0, checked first, before any test runs): no path added since the merge base is a Claude Code plugin manifest (`.claude-plugin/plugin.json`), and the guard refused none during the phase. A manifest that matches `testGlobs` is a test fixture and doesn't count.
 - R3: `testCommand` exits non-zero. The baseline passed and only test files changed, so the new
   tests cause the failure. Which tests fail isn't checked (that depends on the language); the red
   agent's list of failing tests goes into the pull request for review.
@@ -370,7 +370,7 @@ kit) and `tests/ui.test.tsx`.
   refactor is stashed under a named message.
 - **Test integrity is checked, not assumed:** G1 catches tests changed by any means, `Bash`
   included, because it compares files, not tool calls.
-- **No new plugins (SPEC change 0.5.0):** issue-forge never commits or pushes a new Claude Code plugin manifest. An issue that asks for one to be built with mod-builder never starts a run. The live agent's Edit, Write and NotebookEdit may not create one. A manifest a phase agent's shell made anyway is caught by R4 or G8 at the phase's gate, before the next commit. Known gap: an agent's `Bash` can still write plugin files while its phase runs. They are only seen at the gate, and they stay uncommitted in the run's folder, because issue-forge deletes nothing.
+- **No new plugins (SPEC change 0.5.0):** issue-forge never commits or pushes a new Claude Code plugin manifest. An issue that asks for one to be built with mod-builder never starts a run. The live agent's Edit, Write and NotebookEdit may not create one, except under `testGlobs`, where a sample plugin is a test fixture. A manifest a phase agent's shell made anyway is caught by R4 or G8 at the phase's gate, before the next commit. Known gap: an agent's `Bash` can still write plugin files while its phase runs. They are only seen at the gate, and they stay uncommitted in the run's folder, because issue-forge deletes nothing.
 - **Cost:** each run spawns at least three subagents. Retries add up to `attempts.red + attempts.green + attempts.refactor` more.
 - **Trust:** the agents read the issue body, which anyone who can file an issue writes. Run it
   only on repositories and issues you trust. The prompts tell the agents to treat the issue text as

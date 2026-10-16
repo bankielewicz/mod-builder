@@ -25,7 +25,8 @@ Several sessions can each run an issue in the same repository at once, each in i
 
 It fixes code; it doesn't build new plugins. An issue that asks for its plugin to be built with
 `/mod-builder:build` gets next steps that lead there, and nothing starts. A phase agent that tries
-to create a `.claude-plugin/plugin.json` is refused, and the run stops with the same kind of steps
+to create a `.claude-plugin/plugin.json` outside the test folders is refused (a sample plugin under
+the profile's `testGlobs` is a test fixture, and is fine), and the run stops with the same kind of steps
 before anything past red's tests is committed. Such a stop is final: `/issue-forge stop <N>` ends it.
 
 ## Try it
