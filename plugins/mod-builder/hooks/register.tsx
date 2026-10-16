@@ -183,12 +183,14 @@ async function writeLog($: Engine): Promise<void> {
 const cwdOf = ($: Engine): Promise<string | null> =>
   $.session.cwd().catch((error: unknown) => (logCaught($, 'session.cwd', error), null))
 
-const list = ($: Engine, path: string): Promise<Lab.Entry[]> =>
+/** A folder's entries; none when it can't be listed, and then its path goes in `unlisted`, if given. */
+const list = ($: Engine, path: string, unlisted?: string[]): Promise<Lab.Entry[]> =>
   $.fs
     .list(path)
     .then(entries => entries.map(({ name, kind, mtimeMs }) => ({ name, kind, mtimeMs })))
     .catch((error: unknown) => {
       logCaught($, 'fs.list', error, 'debug', { path })
+      unlisted?.push(path)
       return []
     })
 
@@ -336,7 +338,9 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   const at = `${modsDir}/${name}`
   const top = await list($, at)
   const has = (entry: string): boolean => top.some(one => one.name === entry)
-  const listIf = (folder: string): Promise<Lab.Entry[]> => (has(folder) ? list($, `${at}/${folder}`) : Promise.resolve([]))
+  // A folder that can't be listed reads as empty, so the facts say which ones (a delete would look the same).
+  const unlisted: string[] = []
+  const listIf = (folder: string): Promise<Lab.Entry[]> => (has(folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([]))
   const [manifestDir, hooks, tests, types, agents, commands, skills] = await Promise.all([
     listIf('.claude-plugin'),
     listIf('hooks'),
@@ -348,13 +352,14 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
   ])
   // Their subfolders are walked too; the manifest folder's are not.
   const codeFolders = { hooks, tests, types, agents, commands, skills }
-  const nested = await Promise.all(Object.entries(codeFolders).map(([folder, entries]) => nestedFiles($, at, folder, entries)))
+  const nested = await Promise.all(Object.entries(codeFolders).map(([folder, entries]) => nestedFiles($, at, folder, entries, unlisted)))
   return Lab.factsOf({
     name,
     top,
     manifestDir,
     ...codeFolders,
     nested: nested.flat(),
+    unlisted: unlisted.map(path => path.slice(at.length + 1)),
     spec: has('SPEC.md') ? await readText($, `${at}/SPEC.md`) : null,
     readme: has('README.md') ? await readText($, `${at}/README.md`) : null,
     manifest: manifestDir.some(entry => entry.name === 'plugin.json') ? await readText($, `${at}/.claude-plugin/plugin.json`) : null,
@@ -368,17 +373,17 @@ const marketplaceOf = async ($: Engine, modsDir: string): Promise<string> => (aw
 /**
  * The files in `folder`'s subfolders (from its `entries`), up to `depth` levels down, named by
  * their path from the mod folder `at`. Sibling folders are listed at once, since /mnt/c is slow;
- * dot-folders and node_modules are skipped.
+ * dot-folders and node_modules are skipped. A subfolder that can't be listed goes in `unlisted`.
  */
-async function nestedFiles($: Engine, at: string, folder: string, entries: readonly Lab.Entry[], depth = 3): Promise<Lab.Entry[]> {
+async function nestedFiles($: Engine, at: string, folder: string, entries: readonly Lab.Entry[], unlisted: string[], depth = 3): Promise<Lab.Entry[]> {
   if (depth === 0) return []
   const subfolders = entries.filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.') && entry.name !== 'node_modules')
   const found = await Promise.all(
     subfolders.map(async sub => {
       const path = `${folder}/${sub.name}`
-      const inner = await list($, `${at}/${path}`)
+      const inner = await list($, `${at}/${path}`, unlisted)
       const files = inner.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${path}/${entry.name}` }))
-      return [...files, ...(await nestedFiles($, at, path, inner, depth - 1))]
+      return [...files, ...(await nestedFiles($, at, path, inner, unlisted, depth - 1))]
     }),
   )
   return found.flat()
@@ -406,10 +411,16 @@ const resultsOf = async ($: Engine, modsDir: string): Promise<StoredResults> =>
   ((await storedOf($, RESULTS_KEY, modsDir)) ?? {}) as StoredResults
 
 /**
- * When each mod's current edit started (a build generation), for mods being edited, and the
- * version it started from. `repeatedAt` is when a Spec running last repeated during the edit.
+ * The version and the logic and test files an edit starts from. `logicSig` is absent in records from before 0.2.21,
+ * and null when a folder under hooks/ or tests/ couldn't be listed then; either way the edit keeps the mtime rule.
  */
-type Generation = { since: number; fromVersion: string | null; repeatedAt?: number }
+type Baseline = Omit<Lab.Edit, 'since'>
+/**
+ * When each mod's current edit started (a build generation), for mods being edited, and its baseline.
+ * `repeatedAt` is when a Spec running last repeated during the edit, and `repeatedFrom` the mod on disk
+ * then: the baseline of the next edit, should a scan that read the edit before the repeat end it.
+ */
+type Generation = Lab.Edit & { repeatedAt?: number; repeatedFrom?: Baseline }
 /** As stored: an older version wrote the bare start time. */
 type StoredGenerations = Record<string, number | Generation>
 const generationsFrom = (stored: StoredGenerations): Record<string, Generation> =>
@@ -500,8 +511,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         inFlight.filter(one => one.mod === facts.name),
         Lab.reportIn(reports[facts.name], dir),
         freshIds.includes(freshIdOf(facts.name)),
-        generations[facts.name]?.since ?? null,
-        generations[facts.name]?.fromVersion ?? null,
+        generations[facts.name] ?? null,
         Lab.displayPathOf(`${dir}/${facts.name}`, cwd),
       ),
     ),
@@ -512,7 +522,6 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         inFlight.filter(one => one.mod === name),
         builds[name] ?? null,
         false,
-        null,
         null,
         Lab.displayPathOf(`${dir}/${name}`, cwd),
       ),
@@ -535,7 +544,9 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         const [latest, read] = [remaining[view.name], generations[view.name]]
         if (isSameGeneration(latest, read)) delete remaining[view.name]
         else if (latest?.since === read?.since && latest?.repeatedAt !== undefined) {
-          remaining[view.name] = { since: latest.repeatedAt, fromVersion: found.get(view.name)?.version ?? null }
+          // The repeat read the mod as it began; a record from 0.2.20 or earlier has only this scan's facts.
+          const facts = found.get(view.name)
+          remaining[view.name] = { since: latest.repeatedAt, ...(latest.repeatedFrom ?? { fromVersion: facts?.version ?? null, logicSig: facts?.logicSig }) }
         }
       }
       return remaining
@@ -1133,17 +1144,19 @@ export const register: Register = (on, options) => {
     const known = (await read($, judged)).views.find(view => view.name === mod)
     // A mod with no folder yet is being built, not edited.
     if (Lab.startsGeneration(report, known && !known.isPlaceholder ? known.lights : null)) {
-      // The version on disk as the edit begins (a bump may land after the last scan); a repeat keeps its own.
-      const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
-      const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
+      // The mod on disk as the edit begins, not as the last scan saw it: a bump or a saved file may land in between.
+      // The skill reports the edit before it changes any file. A folder or manifest that can't be read falls back to the last scan.
+      const onDisk = await modFactsOf($, modsDir, mod, await marketplaceOf($, modsDir))
+      const last = factsByMod.get(mod)
+      const baseline: Baseline = { fromVersion: onDisk?.version ?? last?.version ?? null, logicSig: (onDisk ?? last)?.logicSig }
       // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
-      // The stamp tells a scan that judged the edit finished before this report that the next edit began here.
+      // The stamp tells a scan that judged the edit finished before this report that the next edit began here, from `repeatedFrom`.
       // It always moves on, even within one millisecond of the last, or that scan would read it as unchanged.
       let isStarted = false
       await updateGenerations($, modsDir, all => {
         const current = all[mod]
         isStarted = current === undefined
-        return { ...all, [mod]: current ? { ...current, repeatedAt: Math.max(now, (current.repeatedAt ?? 0) + 1) } : { since: now, fromVersion } }
+        return { ...all, [mod]: current ? { ...current, repeatedAt: Math.max(now, (current.repeatedAt ?? 0) + 1), repeatedFrom: baseline } : { since: now, ...baseline } }
       })
       if (isStarted) logEvent($, 'debug', 'store.set', keyOf(GENERATIONS_KEY, modsDir), { mod, edit: 'started' })
     }
