@@ -65,6 +65,7 @@ declare module 'claude-code' {
   /** The Grep tool's arguments, so `tool.call { tool: 'Grep' }` type-checks before a session has laid claude-code-tools beside the mod (0.3.0). */
   interface BuiltinToolInputs {
     Grep: { pattern: string; path?: string; glob?: string; output_mode?: string }
+    Glob: { pattern: string; path?: string }
   }
   interface PluginState {
     duet: {

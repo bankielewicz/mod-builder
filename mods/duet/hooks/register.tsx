@@ -1543,10 +1543,14 @@ export const register: Register = (on, raw) => {
     .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
   on('tool.call', { tool: 'Read' }, ($, e, next) => (namesKeyFile(String((e as unknown as { file_path?: unknown }).file_path ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
     .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
-  // A Grep over the key file, or over its folder, reads it too.
+  // A Grep over the key file, or over its folder, reads it too; a Glob there lists it.
   on('tool.call', { tool: 'Grep' }, ($, e, next) => {
     const g = e as unknown as { path?: unknown; glob?: unknown }
     return namesKeyFolder(String(g.path ?? '')) || namesKeyFolder(String(g.glob ?? '')) ? { deny: KEY_FILE_DENY } : next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+  on('tool.call', { tool: 'Glob' }, ($, e, next) => {
+    const g = e as unknown as { path?: unknown; pattern?: unknown }
+    return namesKeyFolder(String(g.path ?? '')) || namesKeyFolder(String(g.pattern ?? '')) ? { deny: KEY_FILE_DENY } : next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
 
   on('ui.render', { component: 'Pane', requestId: PROVIDERS_PANE }, async ($, e) => {

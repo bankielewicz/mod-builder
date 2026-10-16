@@ -49,8 +49,8 @@ export const PROVIDERS: ProviderDef[] = [
 ]
 
 /**
- * The key variables duet adds to `BLANKED_ENV` for Codex: every provider's, except `OPENAI_API_KEY`
- * (Codex's own) and `ANTHROPIC_API_KEY` (Claude Code's own, blanked there already).
+ * The key variables duet stores, except `OPENAI_API_KEY` (Codex's own) and `ANTHROPIC_API_KEY` (Claude Code's own).
+ * None is blanked for Codex: a stored key lives in the file, and one set in the shell is the person's credential for Codex too.
  */
 export const PROVIDER_KEY_NAMES: readonly string[] = PROVIDERS.map(p => p.keyName).filter((n): n is string => n !== null && n !== 'OPENAI_API_KEY' && n !== 'ANTHROPIC_API_KEY')
 

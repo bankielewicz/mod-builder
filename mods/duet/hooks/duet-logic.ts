@@ -5,7 +5,7 @@
  */
 
 import type { ClaudePending, CodexModel, Envelope, Provider, Sandbox, Task, TaskStatus } from '../types'
-import { PROVIDER_KEY_NAMES, isAllowedBaseUrl } from './duet-providers-logic'
+import { isAllowedBaseUrl } from './duet-providers-logic'
 
 export type { ClaudePending, CodexModel, Envelope, Sandbox, Task, TaskStatus }
 
@@ -870,9 +870,9 @@ export const BLANKED_ENV = [
   'AZURE_PASSWORD',
   // Azure managed identity (App Service, Functions): the token endpoint's secret header
   'IDENTITY_HEADER',
-  // The API provider keys duet stores (0.3.0): one provider never gets another's credential. OPENAI_API_KEY is Codex's own and stays.
-  ...PROVIDER_KEY_NAMES,
-]
+  // Not the API provider keys duet stores (0.3.0, the owner's decision at review): a key duet keeps lives in its file,
+  // which blanking a variable does nothing about, and one set in the shell is the person's own credential for Codex too.
+] as const
 export function childEnv(): Record<string, string> {
   return Object.fromEntries(BLANKED_ENV.map(k => [k, '']))
 }
