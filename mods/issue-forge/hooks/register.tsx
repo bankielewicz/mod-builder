@@ -1470,6 +1470,8 @@ async function newModStart($: EngineInterface, root: string, issue: number, ghRe
   } catch {
     return null
   }
+  // A pull request's number is preflight's to refuse, as a pull request (PR #103 /code-review).
+  if (isPullUrl(read.url ?? '')) return null
   const guidance = newModGuidance(read.body ?? '')
   return guidance ? newModReply({ issue, title: read.title ?? '', url: read.url ?? '', ...(ghRepo ? { ghRepo } : {}) }, guidance) : null
 }
