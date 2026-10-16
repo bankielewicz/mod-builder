@@ -675,47 +675,17 @@ function asksForModBuilder(line: string): boolean {
   const withAt = afterBuild.search(WITH)
   return withAt >= 0 && MOD_BUILDER.test(afterBuild.slice(withAt + 'with'.length))
 }
-const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s/
-const QUOTE_LINES = 12
-const QUOTE_CHARS = 1200
-
-/** At most 12 lines and 1,200 characters, the cut marked with `…`. */
-function capQuote(lines: readonly string[]): string[] {
-  const out: string[] = []
-  let used = 0
-  for (const [i, line] of lines.entries()) {
-    if (i === QUOTE_LINES) {
-      out[out.length - 1] += '…'
-      break
-    }
-    if (used + line.length > QUOTE_CHARS) {
-      out.push(`${line.slice(0, QUOTE_CHARS - used)}…`)
-      break
-    }
-    out.push(line)
-    used += line.length
-  }
-  return out
-}
+const LINE_CHARS = 1200
 
 /**
- * The issue's own words asking for its plugin to be built with mod-builder: the first line that says so, and the
- * lines after it up to a blank line, a heading or the next list item at its indent. Null when no line does.
+ * The line of the issue that asks for its plugin to be built with mod-builder, cut at 1,200 characters (marked `…`);
+ * null when no line does. Only that line is shown, as the reason, never the lines after it: issue text is anyone's to
+ * write (the owner's decision after PR #103's review).
  */
-export function newModGuidance(body: string): string[] | null {
-  const lines = body.replace(/\r\n?/g, '\n').split('\n')
-  const at = lines.findIndex(asksForModBuilder)
-  if (at < 0) return null
-  const first = lines[at]!
-  const indent = LIST_ITEM.exec(first)?.[1]!.length ?? -1
-  const quote = [first.trimEnd()]
-  for (const line of lines.slice(at + 1)) {
-    if (line.trim() === '' || /^\s{0,3}#{1,6}(\s|$)/.test(line)) break
-    const item = LIST_ITEM.exec(line)
-    if (item && indent >= 0 && item[1]!.length <= indent) break
-    quote.push(line.trimEnd())
-  }
-  return capQuote(quote)
+export function newModLine(body: string): string | null {
+  const line = body.replace(/\r\n?/g, '\n').split('\n').find(asksForModBuilder)?.trimEnd()
+  if (line === undefined) return null
+  return line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS)}…` : line
 }
 
 /** A Claude Code plugin's manifest: `plugin.json` in a `.claude-plugin` folder, at any depth, in any case (a case-insensitive drive opens it). */
@@ -761,12 +731,8 @@ export function newPluginRefusal(path: string): string {
 }
 
 export type StartIssue = { issue: number; title: string; url: string; ghRepo?: string }
-/** A start always has the issue's guidance (it is why the start was refused); a gate's run may not. */
-export type NewPluginCase = { kind: 'start'; issue: StartIssue; guidance: string[] } | { kind: 'gate'; run: Run; guidance: string[] | null }
-
-function guidanceStep(issue: number, guidance: readonly string[]): string {
-  return `Follow the issue's own guidance (quoted from #${issue} as its author wrote it):${guidance.map(line => `\n   > ${line}`).join('')}`
-}
+/** No case carries the issue's text: the start's reply shows its matched line apart, as the reason (owner, after PR #103's review). */
+export type NewPluginCase = { kind: 'start'; issue: StartIssue } | { kind: 'gate'; run: Run }
 
 /** The next steps, one item each, for a start the issue refused or a run a gate blocked; no repository-specific path. */
 export function newPluginSteps(c: NewPluginCase): string[] {
@@ -774,7 +740,6 @@ export function newPluginSteps(c: NewPluginCase): string[] {
     const { issue, title, url, ghRepo } = c.issue
     return [
       `Run /mod-builder:build and ask for the plugin #${issue} describes: "${title}" (${url}). Read it first with gh issue view ${issue}${ghRepo ? ` --repo ${ghRepo}` : ''}.`,
-      guidanceStep(issue, c.guidance),
       'Approve the SPEC mod-builder writes; it then scaffolds, tests and verifies the plugin.',
       `Open a pull request that closes #${issue}.`,
     ]
@@ -798,7 +763,6 @@ export function newPluginSteps(c: NewPluginCase): string[] {
     `Stop this run: /issue-forge stop ${run.issue}`,
     `Build the plugin with /mod-builder:build in a clean checkout of ${run.base} or a new worktree from it, not in this run's ${isWorktree ? 'worktree' : 'branch'}, whose files would be in the way (mod-builder's scaffold refuses a plugin folder that already holds files).`,
     ...(red ? [`Red's tests can serve the build's logic-first step as reference: git show ${red}`] : []),
-    ...(c.guidance ? [guidanceStep(run.issue, c.guidance)] : []),
     ...(cleanup ? [`When you no longer need this run's worktree, remove it from a plain shell: ${cleanup}`] : []),
     `Open a pull request that closes #${run.issue}.`,
   ]
@@ -809,20 +773,23 @@ export function numberedSteps(steps: readonly string[]): string {
   return steps.map((step, i) => `${i + 1}. ${step}`).join('\n')
 }
 
-/** The answer to a start whose issue asks for a new plugin: nothing was started. */
-export function newModReply(issue: StartIssue, guidance: string[]): string {
+/** The answer to a start whose issue asks for a new plugin: nothing was started; the matched line is the reason, in its author's words. */
+export function newModReply(issue: StartIssue, line: string): string {
   return [
     `#${issue.issue} asks for a new Claude Code plugin. issue-forge doesn't build new plugins: it takes an issue to a fix, test-first. New plugins are built with mod-builder, whose SPEC is the one approval. Nothing was started.`,
     '',
+    "It matched this line of the issue (the author's words; issue-forge hasn't checked them). If it doesn't ask for a new plugin, reword it and start again:",
+    `  > ${line}`,
+    '',
     'Next steps:',
-    numberedSteps(newPluginSteps({ kind: 'start', issue, guidance })),
+    numberedSteps(newPluginSteps({ kind: 'start', issue })),
   ].join('\n')
 }
 
 /** A gate found a new plugin: the run blocks final, with the steps, and is never retried. */
 function newPluginBlocked(run: Run, at: Step, np: NewPlugin): Run {
   const reason = `a phase agent ${np.isCreated ? 'created' : 'tried to create'} a new Claude Code plugin (${np.path}); issue-forge doesn't build new plugins`
-  const steps = newPluginSteps({ kind: 'gate', run: { ...run, step: at }, guidance: newModGuidance(run.body) })
+  const steps = newPluginSteps({ kind: 'gate', run: { ...run, step: at } })
   return blockedAt(run, at, reason, 'build it with /mod-builder:build', { steps, isFinal: true })
 }
 
