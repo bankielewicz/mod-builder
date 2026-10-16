@@ -1420,6 +1420,29 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(isLockError('')).toBe(false)
   })
 
+  test("lockPathOf (PR #88 review): the lock file git says it couldn't create, or null", () => {
+    // Read through the namespace so a missing export is an undefined result, not a link error.
+    const lockPathOf = (text: string): unknown => (logic as Record<string, any>).lockPathOf?.(text)
+    expect(lockPathOf("fatal: Unable to create '/w/.git/index.lock': File exists.\n\nAnother git process seems to be running")).toBe('/w/.git/index.lock')
+    // A ref's lock, in the wording of git's ref backend: `cannot lock ref '<ref>': ` before the same refusal.
+    expect(lockPathOf("fatal: cannot lock ref 'HEAD': Unable to create '/w/.git/refs/heads/x.lock': File exists.")).toBe('/w/.git/refs/heads/x.lock')
+    expect(lockPathOf("warning: x\nerror: cannot lock ref 'refs/stash': unable to create '/r/.git/refs/stash.lock': File exists.")).toBe('/r/.git/refs/stash.lock')
+    // A lock refusal that names no file to create, and anything else.
+    expect(lockPathOf("error: cannot lock ref 'refs/remotes/origin/main': is at 1a but expected 2b")).toBe(null)
+    expect(lockPathOf('error: could not lock config file .git/config: File exists')).toBe(null)
+    expect(lockPathOf('fatal: not a git repository')).toBe(null)
+    expect(lockPathOf('')).toBe(null)
+  })
+
+  // PR #88 (Codex 4290341987, 4290341993): git 2.53.0's texts, captured in a scratch repository whose path holds an
+  // apostrophe; a read-only .git gives the same refusal with another reason.
+  test("lockPathOf: only `File exists` is a held lock, and the path may hold an apostrophe", () => {
+    const lockPathOf = (text: string): unknown => (logic as Record<string, any>).lockPathOf?.(text)
+    expect(lockPathOf("fatal: cannot lock ref 'HEAD': Unable to create '/tmp/quo'te/.git/refs/heads/main.lock': File exists.")).toBe("/tmp/quo'te/.git/refs/heads/main.lock")
+    expect(lockPathOf("fatal: Unable to create '/tmp/quo'te/.git/index.lock': Permission denied")).toBe(null)
+    expect(lockPathOf("fatal: Unable to create '/w/.git/index.lock': No space left on device")).toBe(null)
+  })
+
   test('sharedLcovBlock: an absolute lcovPath is one file for every run, so it blocks while another run of the repository is driven (Codex 4278707573)', () => {
     const abs = profile()
     const working = at(44, 'green', foreign)
