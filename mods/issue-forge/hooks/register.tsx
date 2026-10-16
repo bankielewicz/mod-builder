@@ -1482,7 +1482,9 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   const now = await $.clock.now()
   const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
   if (isHere) $.ui.status(undefined)
-  return `stopped #${run.issue}. Its branch ${(stopped ?? run).branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
+  // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
+  if (!stopped) return `#${run.issue} moved on before it could be stopped; /issue-forge status ${run.issue} says where.`
+  return `stopped #${run.issue}. Its branch ${stopped.branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
 }
 
 /** Ends this session's drive and clears it as the driver, keeping the step: any session can resume the run. */
@@ -1531,7 +1533,6 @@ async function showStatus($: EngineInterface): Promise<void> {
 async function startDemo($: EngineInterface, state: DemoState | null): Promise<void> {
   await update($, nowAtom, () => 0)
   await update($, demoAtom, () => state ?? 'running')
-  await openOrFront($)
 }
 
 async function stepDemo($: EngineInterface): Promise<void> {
@@ -1746,6 +1747,8 @@ export const register: Register = (on, raw) => {
           return { text }
         }
         case 'demo':
+          // The open goes out before this hook returns, ahead of the demo's state: an open after that is unasked.
+          await openOrFront($).catch(() => undefined)
           void startDemo($, cmd.state).catch(() => undefined)
           return { text: `demo in the pane: [ Next state ] steps through ${DEMO_STATES.join(', ')}. Nothing real runs.` }
         default:

@@ -707,7 +707,6 @@ async function startDemo($: EngineInterface): Promise<void> {
   await update($, view, () => 'tasks')
   await update($, selected, () => 0)
   await ensureTicker($)
-  await openOrFront($)
 }
 
 // How many task rows the pane last drew; selection never goes past them.
@@ -908,6 +907,8 @@ export const register: Register = (on, raw) => {
       const [word = '', ...rest] = e.args.trim().split(/\s+/)
       const sub = word.toLowerCase()
       if (sub === 'demo') {
+        // The open goes out before this hook returns, ahead of the demo's state: an open after that is unasked.
+        await openOrFront($).catch(() => undefined)
         void startDemo($).catch(() => undefined)
         return { text: 'demo tasks (running, review, done, error, refused) are in the pane until this turn ends. Nothing runs.' }
       }

@@ -67,10 +67,9 @@ export const register: Register = on => {
   on('command.run', { command: '__NAME__' }, async ($, e) => {
     try {
       if (e.args.trim().toLowerCase() === 'demo') {
-        void (async () => {
-          await update($, items, () => DEMO_ITEMS)
-          await openOrFront($)
-        })().catch(() => undefined)
+        // The open goes out before this hook returns, ahead of the demo items: an open after that is unasked.
+        await openOrFront($).catch(() => undefined)
+        void update($, items, () => DEMO_ITEMS).catch(() => undefined)
         return { text: '__TITLE__: demo items are in the pane.' }
       }
       // Three states: not open, shown, or open as a tab behind another pane.
