@@ -2183,6 +2183,8 @@ describe('PR #103 review: manifest paths and quotes, at their edges (/code-revie
   test('the guard judges the path a write lands on: ./ and // forms are the manifest too', () => {
     expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/./plugin.json', agentId: 'a1' })).toEqual(X)
     expect(manifestOf({ tool: 'Write', file_path: 'mods/x/.claude-plugin//plugin.json', agentId: 'a1' })).toEqual(X)
+    // Outside the run's folder there is no relative path: the absolute one stands in.
+    expect(manifestOf({ tool: 'Write', file_path: '/elsewhere/.claude-plugin/plugin.json', agentId: 'a1' })).toEqual({ absolute: '/elsewhere/.claude-plugin/plugin.json', relative: '/elsewhere/.claude-plugin/plugin.json' })
   })
 
   test("a manifest is found in any case, as a case-insensitive drive opens it", () => {
