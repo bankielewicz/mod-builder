@@ -2174,3 +2174,25 @@ describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574
     expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/y/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, [], BASE)).toEqual({ absolute: '/w/wt/mods/y/.claude-plugin/plugin.json', relative: 'mods/y/.claude-plugin/plugin.json' })
   })
 })
+
+describe('PR #103 review: manifest paths and quotes, at their edges (/code-review)', () => {
+  const manifestOf = (e: Record<string, unknown>) =>
+    (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown) => { absolute: string; relative: string } | null }).manifestOf(e, { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' })
+  const X = { absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' }
+
+  test('the guard judges the path a write lands on: ./ and // forms are the manifest too', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/./plugin.json', agentId: 'a1' })).toEqual(X)
+    expect(manifestOf({ tool: 'Write', file_path: 'mods/x/.claude-plugin//plugin.json', agentId: 'a1' })).toEqual(X)
+  })
+
+  test("a manifest is found in any case, as a case-insensitive drive opens it", () => {
+    expect(logic.isPluginManifest('mods/x/.Claude-Plugin/Plugin.json')).toBe(true)
+    expect(logic.isPluginManifest('mods/x/.Claude-Plugin/marketplace.json')).toBe(false)
+  })
+
+  test('the quote ends at a heading, not at a line that only starts with #', () => {
+    expect(logic.newModGuidance('- Build it with /mod-builder:build\n  #19 asked the same\n')).toEqual(['- Build it with /mod-builder:build', '  #19 asked the same'])
+    expect(logic.newModGuidance('- Build it with /mod-builder:build\n## Next\n')).toEqual(['- Build it with /mod-builder:build'])
+    expect(logic.newModGuidance('- Build it with /mod-builder:build\n#\n')).toEqual(['- Build it with /mod-builder:build'])
+  })
+})
