@@ -54,6 +54,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     sets: [] as { key: string; value: unknown }[],
     sessionId: 's1-session',
     cwd: '/m' as string | null,
+    /** The session's project root (#92): undefined follows `cwd` (a `/cd` moves both); a string stays put (a Bash `cd` moves only `cwd`); null is refused. */
+    root: undefined as string | null | undefined,
+    /** Arm before start: each `session.root` read waits for `until`, unless made after `answerNow` is set. */
+    holdRoot: null as { until: Promise<void>; answerNow: boolean } | null,
+    /** How many times `session.root` was read. */
+    rootReads: 0,
     failReads: [] as string[],
     /** Every path `$.fs.exists` was asked about. */
     probed: [] as string[],
@@ -143,6 +149,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('ui.log', ($, e) => (seen.logs.push((e as { text: string }).text), { value: undefined }) as never)
   on('env.get', ($, e) => ({ value: (e as { name: string }).name === 'HOME' ? '/home/u' : undefined }) as never)
   on('session.cwd', () => (seen.cwd === null ? { deny: 'cwd unavailable' } : ({ value: seen.cwd } as never)))
+  on('session.root', async () => {
+    seen.rootReads++
+    if (seen.holdRoot && !seen.holdRoot.answerNow) await seen.holdRoot.until
+    const root = seen.root === undefined ? seen.cwd : seen.root
+    return root === null ? { deny: 'root unavailable' } : ({ value: root } as never)
+  })
   on('session.id', () => (seen.sessionId ? ({ value: seen.sessionId } as never) : { deny: 'no session id' }))
   on('session.end', ($, e) => ({ sessionId: (e as { sessionId: string }).sessionId }) as never)
   // Owners as seen live: the plugin name plus its install source.
@@ -1127,8 +1139,8 @@ describe('edit: Spec running arrives while another hook\'s scan is listing (#10)
   const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
   // Validate and Test passed in an earlier session: the files' mtime is 1000, the results are stamped 5000.
   const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate'), Test: ok('Test') } } }
-  const reportSpec = ($: Engine, status: string) =>
-    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+  const reportSpec = ($: Engine, status: string, path?: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status, ...(path ? { path } : {}) } as never)
 
   test('the edit is tracked: a state read after the scan the report waits for sees what that scan wrote', OPTIONS, async ($, on) => {
     const disk: Disk = {
@@ -1185,6 +1197,67 @@ describe('edit: Spec running arrives while another hook\'s scan is listing (#10)
     await reporting
     await clock.advance(1000)
     await reportSpec($, 'passed')
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked with path (#92): a state read after the scan the report waits for sees what that scan wrote', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    // git-branch, checked in an earlier session, appears on disk after the startup scan ended.
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan (its own hook), and the scan waits at the mods folder.
+    let release = () => {}
+    seen.holdList = { path: MODS, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: git-branch is in no list yet, so the report waits for that scan.
+    const reporting = reportSpec($, 'running', `${MODS}/git-branch`)
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed', `${MODS}/git-branch`)
+    await clock.advance(10)
+
+    const ui = await mountPane($)
+    expect(await ui.find({ type: 'Text', text: /^edit · update Spec for this change$/ })).toBeDefined()
+  })
+
+  test('the edit is tracked with path (#92) when the report lands after the scan has its facts but before it writes its rows', OPTIONS, async ($, on) => {
+    const disk: Disk = {
+      ...modFiles('inbox-zero'),
+      '/m/.claude-plugin/marketplace.json': JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: '0.1.0' }] }),
+    }
+    const { seen, clock } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.advance(10)
+    Object.assign(disk, modFiles('git-branch'), { [`${MODS}/git-branch/README.md`]: '# Git branch\n\n## What it reaches\n' })
+
+    // The end of a turn starts a scan; it has read every mod folder and waits at its first read after that.
+    let release = () => {}
+    seen.holdStoreGet = { key: `modlab:done:${MODS}`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    await $.turn.complete({ answer: 'created' } as never)
+    await clock.advance(10)
+    expect(seen.holdStoreGet.isReached).toBe(true)
+
+    // Spec running arrives meanwhile: the scan knows git-branch but hasn't written its rows.
+    const reporting = reportSpec($, 'running', `${MODS}/git-branch`)
+    await clock.advance(10)
+    release()
+    await reporting
+    await clock.advance(1000)
+    await reportSpec($, 'passed', `${MODS}/git-branch`)
     await clock.advance(10)
 
     const ui = await mountPane($)
@@ -2640,5 +2713,406 @@ describe('a repeated Spec running during an edit (#12)', () => {
     // No bump, so the one thing left for the edit is Share. The Spec stage is what the second report would break.
     const r = await scenario($, on, false)
     expect(r.row).toMatch(/ edit · bump the version and re-list it$/)
+  })
+})
+
+describe('a build names its folder, and the session keeps it (#92)', () => {
+  const MAIN = '/w/main'
+  const WT = '/w/main/scratch/wt'
+  const OTHER = '/w/other'
+  const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
+  // A git worktree of the main checkout's repository: its `.git` is a file naming the common git folder, and
+  // git's own record (`.git/worktrees/<name>/gitdir`) names that `.git` file back.
+  const worktreeOf = (folder: string, name: string): Disk => ({
+    [`${folder}/.git`]: `gitdir: ${MAIN}/.git/worktrees/${name}\n`,
+    [`${MAIN}/.git/worktrees/${name}/gitdir`]: `${folder}/.git\n`,
+  })
+  // alpha in the main checkout (a repository top), beta in a worktree under it, gamma in a third marketplace.
+  const disk = (): Disk => ({
+    ...marketplaceAt(MAIN),
+    [`${MAIN}/.git/HEAD`]: 'ref: refs/heads/main\n',
+    ...modFiles('alpha', `${MAIN}/mods`),
+    ...marketplaceAt(WT),
+    ...worktreeOf(WT, 'wt'),
+    ...modFiles('beta', `${WT}/mods`),
+    ...marketplaceAt(OTHER),
+    ...modFiles('gamma', `${OTHER}/mods`),
+  })
+  const report = ($: Engine, args: Record<string, unknown>) => $.tool.call({ tool: 'mcp__mod-builder__lab_report', ...args } as never)
+  const listed = async ($: Engine) => {
+    const ui = await mountPane($)
+    const names = []
+    for (const name of ['alpha', 'beta', 'gamma', 'kappa', 'sigma']) if (await ui.find({ type: 'Text', text: new RegExp(name) })) names.push(name)
+    return { ui, names }
+  }
+
+  test('a report with path lists that folder with the report running, and Validate runs there', async ($, on) => {
+    const { seen, clock } = world(on, disk(), { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', note: 'writing beta', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const { ui, names } = await listed($)
+    expect(names).toEqual(['beta'])
+    expect(await ui.find({ type: 'Text', text: /writing beta/ })).toBeDefined()
+    await ui.press({ key: 'validate' })
+    await clock.advance(1000)
+    expect(seen.argv).toContainEqual(['claude', 'plugin', 'validate', '--json', `${WT}/mods/beta`])
+  })
+
+  test('after a pin, a Bash cd to another marketplace and a report without path stay on the pinned folder', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    seen.root = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    seen.cwd = OTHER
+    await report($, { mod: 'beta', stage: 'Register', status: 'running', note: 'wiring beta' })
+    await command($, 'beta')
+    await clock.advance(10)
+    const { ui, names } = await listed($)
+    expect(names).toEqual(['beta'])
+    expect(await ui.find({ type: 'Text', text: /wiring beta/ })).toBeDefined()
+  })
+
+  test('a new root drops the pin, and the next scan follows the walk', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const before = await listed($)
+    expect(before.names).toEqual(['beta'])
+    await before.ui.unmount()
+    // A /cd: the root moves with the working directory.
+    seen.cwd = OTHER
+    await command($, 'gamma')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['gamma'])
+  })
+
+  test('a report while the root cannot be read pins nothing, and the walk follows the cwd', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    seen.root = null
+    await start($)
+    const { result } = (await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })) as { result: string }
+    expect(result).toContain('path ignored')
+    seen.cwd = OTHER
+    await command($, 'gamma')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['gamma'])
+  })
+
+  test('with no pin, a Bash cd into a worktree leaves the pane on the root\'s mods', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    seen.root = MAIN
+    await start($)
+    await clock.advance(10)
+    seen.cwd = WT
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('a pin a fresh module finds at session start is kept, as after a reload', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    const restored: Record<string, unknown> = { pinned: { modsDir: `${WT}/mods`, root: MAIN } }
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key in restored) return { value: { version: 1, value: restored[key] } } as never
+      return next(e)
+    })
+    await start($)
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
+  test('a drawing before the first scan leaves a dropped pin to the next read outside a render', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    // As after a reload and a /cd: state kept a pin from the root before, and the root is now another.
+    seen.cwd = OTHER
+    const restored: Record<string, unknown> = { pinned: { modsDir: `${WT}/mods`, root: MAIN } }
+    const written = new Set<string>()
+    const pinWrites: { value: unknown; isDrawing: boolean }[] = []
+    let isDrawing = false
+    on('state.set', (_, e, next) => {
+      const { plugin, key, value } = e as unknown as { plugin: string; key: string; value: unknown }
+      if (plugin === 'mod-builder') written.add(key)
+      if (plugin === 'mod-builder' && key === 'pinned') pinWrites.push({ value, isDrawing })
+      return next(e)
+    })
+    on('state.get', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key in restored && !written.has(key)) return { value: { version: 1, value: restored[key] } } as never
+      return next(e)
+    })
+    // The start-up log line and scan wait at their root read, so the pane draws before any scan wrote a folder.
+    let release = () => {}
+    seen.holdRoot = { until: new Promise<void>(resolve => (release = resolve)), answerNow: false }
+    await start($)
+    await clock.advance(10)
+    seen.holdRoot.answerNow = true
+    isDrawing = true
+    const ui = await mountPane($)
+    isDrawing = false
+    expect(pinWrites).toEqual([])
+    await ui.unmount()
+    release()
+    await clock.advance(10)
+    await clock.settle()
+    expect(pinWrites).toEqual([{ value: null, isDrawing: false }])
+    expect((await listed($)).names).toEqual(['gamma'])
+  })
+
+  test('overlapping reports with different paths each keep their own folder (PR #95, Codex P2)', async ($, on) => {
+    const WT2 = '/w/main/scratch/wt2'
+    const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(WT2), ...worktreeOf(WT2, 'wt2'), ...modFiles('delta', `${WT2}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    // The first report's write of the pin waits; a second report with another path lands meanwhile.
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    let isHeld = false
+    on('state.set', async (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key === 'pinned' && !isHeld) {
+        isHeld = true
+        await held
+      }
+      return next(e)
+    })
+    await start($)
+    await clock.advance(10)
+    const first = report($, { mod: 'beta', stage: 'Validate', status: 'passed', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    await report($, { mod: 'delta', stage: 'Logic', status: 'running', path: `${WT2}/mods/delta` })
+    release()
+    await first
+    await clock.advance(1000)
+    await clock.settle()
+    expect(seen.argv.filter(argv => argv.includes('validate')).map(argv => argv[4])).toEqual([`${WT}/mods/beta`])
+  })
+
+  test('a set modsDir wins over a report\'s path, which the reply says it ignored (PR #95 review)', { options: { modsDir: '/w/main/mods' } }, async ($, on) => {
+    const { seen, clock } = world(on, { ...disk(), ...modFiles('alpha', `${WT}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Validate', status: 'passed', path: `${WT}/mods/alpha` })) as { result: string }
+    await clock.advance(1000)
+    await clock.settle()
+    expect(result).toContain('path ignored')
+    expect(seen.argv.filter(argv => argv.includes('validate')).map(argv => argv[4])).toEqual([`${MAIN}/mods/alpha`])
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('/mod-builder config names a build\'s kept folder while modsDir is empty (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const { text } = (await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }
+    expect(text).toContain("a build's folder (…/wt/mods)")
+  })
+
+  test('a path outside the project root is ignored, and nothing runs there (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk(), { validate: { exitCode: 0, stdout: validateClean } })
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    const { result } = (await report($, { mod: 'gamma', stage: 'Validate', status: 'passed', path: `${OTHER}/mods/gamma` })) as { result: string }
+    await clock.advance(1000)
+    await clock.settle()
+    expect(result).toContain('path ignored')
+    expect(seen.argv.some(argv => argv.includes(`${OTHER}/mods/gamma`))).toBe(false)
+    expect((await listed($)).names).toContain('alpha')
+  })
+
+  test('a path whose folder holds no marketplace is ignored (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${MAIN}/scratch/plain/mods/beta` })) as { result: string }
+    await clock.advance(10)
+    expect(result).toContain('path ignored')
+    expect((await listed($)).names).toContain('alpha')
+  })
+
+  test('a malformed path leaves the report recorded (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Logic', status: 'running', note: 'writing alpha', path: 'mods/alpha' })) as { result: string }
+    await clock.advance(10)
+    expect(result).toContain('path ignored')
+    const { ui } = await listed($)
+    expect(await ui.find({ type: 'Text', text: /writing alpha/ })).toBeDefined()
+  })
+
+  test('a pin whose marketplace is gone drops, and the next scan follows the walk (PR #95 review)', async ($, on) => {
+    const files = disk()
+    const { seen, clock } = world(on, files)
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    const before = await listed($)
+    expect(before.names).toEqual(['beta'])
+    await before.ui.unmount()
+    // The worktree was removed after its PR merged.
+    for (const path of Object.keys(files)) if (path.startsWith(`${WT}/`)) delete files[path]
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('with no marketplace above the root, the walk starts from the working directory (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    // A session started in a parent folder; Claude cd'd into the worktree.
+    seen.root = '/home/u'
+    seen.cwd = WT
+    await start($)
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
+  test('a report made in a worktree does not light the same-named mod in the main folder (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, { ...disk(), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'alpha', stage: 'Logic', status: 'running', note: 'worktree alpha', path: `${WT}/mods/alpha` })
+    await clock.advance(10)
+    // The person's /cd moves the root, which drops the pin; the walk lands on the main folder's mods.
+    seen.cwd = `${MAIN}/plugins/x`
+    await command($, 'alpha')
+    await clock.advance(10)
+    const { ui, names } = await listed($)
+    expect(names).toEqual(['alpha'])
+    expect(await ui.find({ type: 'Text', text: /worktree alpha/ })).toBeUndefined()
+  })
+
+  test('two reports with the same path write the pin once (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    let pinWrites = 0
+    on('state.set', (_, e, next) => {
+      const { plugin, key } = e as unknown as { plugin: string; key: string }
+      if (plugin === 'mod-builder' && key === 'pinned') pinWrites++
+      return next(e)
+    })
+    await start($)
+    await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+    await report($, { mod: 'beta', stage: 'Logic', status: 'passed', path: `${WT}/mods/beta` })
+    await clock.advance(10)
+    expect(pinWrites).toBe(1)
+  })
+
+  test('with modsDir set, no project root is read (PR #95 review)', { options: { modsDir: '/w/main/mods' } }, async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'alpha', stage: 'Logic', status: 'running' })
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['alpha'])
+    expect(seen.rootReads).toBe(0)
+  })
+
+  // Folders under the root that are not this repository: a nested clone (tmp/'s community mods), a copy, another repository's worktree.
+  for (const [label, extra] of [
+    ['a nested clone with its own .git', { [`${MAIN}/tmp/other/.git/HEAD`]: 'ref: refs/heads/main\n' }],
+    ['a copy with no .git', {}],
+    ['a worktree of another repository', { [`${MAIN}/tmp/other/.git`]: 'gitdir: /x/elsewhere/.git/worktrees/other\n' }],
+  ] as const) {
+    test(`${label} under the root is not pinned, and nothing runs there (PR #95 review follow-up)`, async ($, on) => {
+      const OTHER_REPO = `${MAIN}/tmp/other`
+      const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(OTHER_REPO), ...extra, ...modFiles('sigma', `${OTHER_REPO}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+      seen.cwd = MAIN
+      await start($)
+      await clock.advance(10)
+      const { result } = (await report($, { mod: 'sigma', stage: 'Validate', status: 'passed', path: `${OTHER_REPO}/mods/sigma` })) as { result: string }
+      await clock.advance(1000)
+      await clock.settle()
+      expect(result).toContain('path ignored')
+      expect(seen.argv.some(argv => argv.includes(`${OTHER_REPO}/mods/sigma`))).toBe(false)
+      expect((await listed($)).names).toContain('alpha')
+    })
+  }
+
+  // A hand-written worktree pointer under the root: git has no record of it, or its record names another folder.
+  for (const [label, record] of [
+    ['with no record in git', {}],
+    ['whose record names another worktree', { [`${MAIN}/.git/worktrees/forged/gitdir`]: `${WT}/.git\n` }],
+  ] as const) {
+    test(`a hand-written worktree pointer ${label} is not pinned, and nothing runs there (PR #95 review follow-up)`, async ($, on) => {
+      const FORGED = `${MAIN}/tmp/forged`
+      const files = { ...disk(), ...marketplaceAt(FORGED), [`${FORGED}/.git`]: `gitdir: ${MAIN}/.git/worktrees/forged\n`, ...record, ...modFiles('sigma', `${FORGED}/mods`) }
+      const { seen, clock } = world(on, files, { validate: { exitCode: 0, stdout: validateClean } })
+      seen.cwd = MAIN
+      await start($)
+      await clock.advance(10)
+      const { result } = (await report($, { mod: 'sigma', stage: 'Validate', status: 'passed', path: `${FORGED}/mods/sigma` })) as { result: string }
+      await clock.advance(1000)
+      await clock.settle()
+      expect(result).toContain('path ignored')
+      expect(seen.argv.some(argv => argv.includes(`${FORGED}/mods/sigma`))).toBe(false)
+    })
+  }
+
+  test('from a session rooted in a worktree, the main folder\'s mods can be pinned (PR #95 review follow-up)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = WT
+    await start($)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Logic', status: 'running', path: `${MAIN}/mods/alpha` })) as { result: string }
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect(result).not.toContain('path ignored')
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('a sibling worktree outside the root can be pinned (PR #95 review follow-up)', async ($, on) => {
+    const SIB = '/w/sib'
+    const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(SIB), ...worktreeOf(SIB, 'sib'), ...modFiles('kappa', `${SIB}/mods`) })
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'kappa', stage: 'Logic', status: 'running', path: `${SIB}/mods/kappa` })) as { result: string }
+    await clock.advance(10)
+    expect(result).not.toContain('path ignored')
+    expect((await listed($)).names).toEqual(['kappa'])
+  })
+
+  test('guard: the root\'s own mods can be pinned (PR #95 review follow-up)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Logic', status: 'running', path: `${MAIN}/mods/alpha` })) as { result: string }
+    await clock.advance(10)
+    expect(result).not.toContain('path ignored')
+    const { text } = (await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }
+    expect(text).toContain("a build's folder (…/main/mods)")
+  })
+
+  test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    await clock.advance(10)
+    seen.cwd = WT
+    await command($, 'beta')
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
+  test('guard: a root that cannot be read leaves the walk on the working directory', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = WT
+    seen.root = null
+    await start($)
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
   })
 })
