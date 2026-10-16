@@ -12,7 +12,7 @@ import {
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
   KEY_FILE_NOTE, PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
-  redact, testOutcome, testText, upsertEnvLine,
+  redact, refusalReason, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
 import type { ProviderTest } from '../types'
@@ -998,8 +998,7 @@ async function fetchReply($: EngineInterface, r: { url: string; init: { method: 
     const res = await $.http.fetch(r.url, r.init)
     return { status: res.status, ok: res.ok, text: res.text, headers: res.headers }
   } catch (err) {
-    // The engine words a refusal as `duet: $.http.fetch: <reason>`; the reason alone is what the row shows.
-    return { refused: String((err as Error)?.message ?? err).split('\n')[0]!.replace(/^\S+: \$\.http\.fetch: /, '') }
+    return { refused: String((err as Error)?.message ?? err) }
   }
 }
 
@@ -1023,12 +1022,12 @@ async function providerReady($: EngineInterface, p: ProviderDef): Promise<{ why:
 async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<string> {
   const ready = await providerReady($, p)
   if (ready.why) return ready.why
-  await update($, provTests, t => ({ ...t, [p.id]: 'running' }))
+  await update($, provTests, t => ({ ...t, [p.id]: 'running' as const }))
   const started = Date.now()
   const models = model === '' ? modelsRequest(p, ready.key, ready.base) : null
   const step = models ? 'models' : 'probe'
   const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
-  const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys)
+  const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey)
   await storeProviderTest($, p.id, result)
   return `${p.id}: ${result.note}`
 }
@@ -1041,7 +1040,7 @@ async function listProviderModels($: EngineInterface, p: ProviderDef): Promise<{
   const req = modelsRequest(p, ready.key, ready.base)
   if (!req) return { ids: [], error: `${p.id} lists no models.` }
   const reply = await fetchReply($, req)
-  if ('refused' in reply) return { ids: [], error: `the host refused the request (${redact(reply.refused, ready.keys)})` }
+  if ('refused' in reply) return { ids: [], error: `not sent: ${redact(refusalReason(reply.refused), ready.keys)}` }
   if (!reply.ok) return { ids: [], error: `${reply.status}: ${redact(reply.text.trim().split('\n')[0] ?? '', ready.keys).slice(0, 120)}` }
   const parsed = parseModelsReply(reply.text)
   return 'ids' in parsed ? { ids: parsed.ids, error: '' } : { ids: [], error: parsed.error }

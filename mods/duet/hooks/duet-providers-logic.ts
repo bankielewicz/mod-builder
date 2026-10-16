@@ -22,10 +22,12 @@ export type ProviderDef = {
   modelsPath: string | null
   /** `bearer`: a key; `session`: Anthropic through the session's own sign-in unless a key is stored; `none`: no key; `cli`: Codex's own login. */
   auth: ProviderAuth
+  /** False where `/models` answers without a key (OpenRouter, probed 2026-10-16): the list then proves the URL, not the key. */
+  modelsNeedKey: boolean
 }
 
-const def = (id: string, name: string, baseUrl: string, keyName: string | null, defaultModel: string, auth: ProviderAuth = 'bearer', modelsPath: string | null = '/models'): ProviderDef =>
-  ({ id, name, baseUrl, keyName, defaultModel, modelsPath, auth })
+const def = (id: string, name: string, baseUrl: string, keyName: string | null, defaultModel: string, auth: ProviderAuth = 'bearer', modelsPath: string | null = '/models', modelsNeedKey = true): ProviderDef =>
+  ({ id, name, baseUrl, keyName, defaultModel, modelsPath, auth, modelsNeedKey })
 
 /** The provider table, in pane order. The provider is the company, the model is its product (anthropic / claude). */
 export const PROVIDERS: ProviderDef[] = [
@@ -39,7 +41,7 @@ export const PROVIDERS: ProviderDef[] = [
   def('groq', 'Groq', 'https://api.groq.com/openai/v1', 'GROQ_API_KEY', 'llama-3.3-70b-versatile'),
   def('together', 'Together AI', 'https://api.together.xyz/v1', 'TOGETHER_API_KEY', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'),
   def('fireworks', 'Fireworks AI', 'https://api.fireworks.ai/inference/v1', 'FIREWORKS_API_KEY', 'accounts/fireworks/models/llama-v3p3-70b-instruct'),
-  def('openrouter', 'OpenRouter (gateway)', 'https://openrouter.ai/api/v1', 'OPENROUTER_API_KEY', 'anthropic/claude-sonnet-5.5'),
+  def('openrouter', 'OpenRouter (gateway)', 'https://openrouter.ai/api/v1', 'OPENROUTER_API_KEY', 'anthropic/claude-sonnet-5.5', 'bearer', '/models', false),
   def('perplexity', 'Perplexity', 'https://api.perplexity.ai', 'PERPLEXITY_API_KEY', 'sonar-pro', 'bearer', null),
   def('cerebras', 'Cerebras', 'https://api.cerebras.ai/v1', 'CEREBRAS_API_KEY', 'llama-3.3-70b'),
   def('ollama', 'Ollama (local)', 'http://localhost:11434/v1', null, '', 'none'),
@@ -194,6 +196,14 @@ export function parseChatReply(text: string, keys: readonly string[] = []): { te
 }
 
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
+
+/**
+ * The reason inside the engine's wording of a `$.http.fetch` rejection: `duet: $.http.fetch: <reason>` for a policy
+ * refusal, `duet: $.http.fetch(<url>) failed: <reason>` for a connection that failed (2.1.301, probed). Other text is kept.
+ */
+export function refusalReason(message: string): string {
+  return message.split('\n')[0]!.replace(/^\S+: \$\.http\.fetch(?:\([^)]*\))?(?: failed)?: /, '').trim()
+}
 export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number }
 
 const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 405: 'not allowed', 429: 'rate limited' }
@@ -213,8 +223,8 @@ function errorDetail(r: { status: number; text: string; headers?: Record<string,
  * The probe (a one-token completion, billed by most providers) is a step of its own, taken only for a provider
  * the table says lists no models, or when the person names a model to test.
  */
-export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = []): TestResult {
-  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ the host refused the request (${redact(r.refused, keys)}); nothing was sent`, at }
+export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = [], modelsNeedKey = true): TestResult {
+  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${redact(refusalReason(r.refused), keys)}`, at }
   // A provider that should list models and answers 404/405 most likely has the wrong base URL: say so, and never spend a
   // token on the probe for it (the probe runs only where the table says the provider lists no models, or on request).
   if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at }
@@ -222,7 +232,8 @@ export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, 
     if (step === 'models') {
       const list = parseModelsReply(r.text)
       const count = 'ids' in list ? `${list.ids.length} models` : list.error
-      return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}`, at }
+      const caveat = modelsNeedKey ? '' : ' (the list needs no key; test <id> <model> checks the key)'
+      return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at }
     }
     const reply = parseChatReply(r.text, keys)
     if ('error' in reply) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${reply.error}`, at }

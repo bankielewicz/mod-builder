@@ -4,7 +4,7 @@
  * Agent result Claude reads, the run log and the pane's text.
  */
 
-import type { ClaudePending, CodexModel, Envelope, Sandbox, Task, TaskStatus } from '../types'
+import type { ClaudePending, CodexModel, Envelope, Provider, Sandbox, Task, TaskStatus } from '../types'
 import { PROVIDER_KEY_NAMES, isAllowedBaseUrl } from './duet-providers-logic'
 
 export type { ClaudePending, CodexModel, Envelope, Sandbox, Task, TaskStatus }
@@ -1163,7 +1163,7 @@ export function claudeTaskOf(p: ClaudePending, e: { usage?: Parameters<typeof us
 export type RunLine = {
   id: string
   at: number
-  provider: 'codex' | 'claude'
+  provider: Provider
   kind: 'agent' | 'review'
   type: string
   model: string

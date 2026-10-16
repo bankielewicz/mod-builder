@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, parseChatReply, parseEnvFile,
-  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, serializeEnv, testOutcome, testText, upsertEnvLine,
+  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -142,8 +142,21 @@ describe('requests and replies', () => {
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"sonar-pro","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}' }, 900, at)).toEqual({ ok: true, status: 200, ms: 900, model: 'sonar-pro', note: 'ok 900ms sonar-pro · 1 token', at })
     expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '30' } }, 20, at)).toEqual({ ok: false, status: 429, ms: 20, model: '', note: '✕ 429 rate limited (retry-after 30 s); not retried', at })
     expect(testOutcome('probe', { status: 500, ok: false, text: 'oops' }, 20, at).note).toBe('✕ 500 server error (oops)')
+    expect(testOutcome('probe', { status: 403, ok: false, text: '' }, 20, at).note).toBe('✕ 403 forbidden')
+    expect(testOutcome('probe', { status: 418, ok: false, text: '{"error":"teapot"}' }, 20, at).note).toBe('✕ 418 failed (teapot)')
+    expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[]}' }, 20, at).note).toBe('✕ 200 no reply text')
+    expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms (model not named) · 1 token')
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at).note).toBe('ok 20ms · no model list in the reply')
+    // OpenRouter's list answers without a key (probed 2026-10-16): the ok says so.
+    expect(providerOf('openrouter')!.modelsNeedKey).toBe(false)
+    expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}]}' }, 20, at, [], false).note).toBe('ok 20ms · 1 models (the list needs no key; test <id> <model> checks the key)')
+    expect(testOutcome('probe', { status: 429, ok: false, text: '' }, 20, at).note).toBe('✕ 429 rate limited (retry-after not given); not retried')
     // A refusal before any reply (the host refused the request).
-    expect(testOutcome('models', { refused: 'nonessential traffic is disabled' }, 0, at).note).toBe('✕ the host refused the request (nonessential traffic is disabled); nothing was sent')
+    expect(testOutcome('models', { refused: 'duet: $.http.fetch: nonessential traffic is disabled' }, 0, at).note).toBe('✕ not sent: nonessential traffic is disabled')
+    // Wordings seen on 2.1.301: a policy refusal, and a connection that failed (ollama not running).
+    expect(refusalReason('duet: $.http.fetch(http://localhost:11434/v1/models) failed: ECONNREFUSED: Unable to connect. Is the computer able to access the url?')).toBe('ECONNREFUSED: Unable to connect. Is the computer able to access the url?')
+    expect(refusalReason('duet: $.http.fetch: nonessential traffic is disabled')).toBe('nonessential traffic is disabled')
+    expect(refusalReason('something else\nmore')).toBe('something else')
   })
 })
 
@@ -157,6 +170,7 @@ describe('pane text', () => {
     expect(authTextOf(providerOf('ollama')!, { key: '', source: 'none' }, '')).toBe('localhost:11434')
     expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, '')).toBe('no URL set')
     expect(authTextOf(providerOf('custom')!, { key: KEY, source: 'file' }, 'https://gw.example.com/v1')).toBe('key …a1b2 · gw.example.com')
+    expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key')
     expect(testText(undefined)).toBe('untested')
     expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1 })).toBe('ok 412ms gemini-2.5-pro')
     expect(testText('running')).toBe('testing… GET /models')

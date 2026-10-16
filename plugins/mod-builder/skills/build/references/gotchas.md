@@ -230,6 +230,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   seed `$.store` (`mock.store`) at the step after it and resume from there. A test-side
   `$.prompt.submit` does carry the `origin` it is given, so a `peer` hand-back drop can be tested.
 
+- **[probe]** codex-cli 0.163.0's binary carries the string `"chat"\` is no longer supported` beside `wire_api`:
+  Codex speaks only OpenAI's Responses API, so a `model_providers` entry can't point it at a Chat
+  Completions endpoint (Anthropic's and Gemini's OpenAI-compatible layers are Chat Completions only,
+  `[field]`). A mod that wants other providers calls them itself with `$.http.fetch` (duet 0.3.0/0.4.0).
+
 ## Plugins and skills
 
 - **[probe]** A skill inside a plugin is namespaced `<plugin>:<skill>`, so `plugins/x/skills/build`
@@ -428,3 +433,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** A host security hook that greps written files for `exec(` blocks source that uses
   `RegExp.prototype.exec`. Write `str.match(re)` instead: same result, no false alarm.
 - **[field]** Run in-session tests that touch config with `CLAUDE_CONFIG_DIR=$(mktemp -d)`.
+- **[probe]** `$.ui.mount({ surface: 'mobile' })` resolves an element table **with** `Input` (2.1.301), though the
+  d.ts lists none for `mobile`, so a pane's "no `Input` on this surface" branch (`'Input' in els`) can't be
+  reached in `claude plugin test`. duet's config and providers panes have that branch; it is read, not run.
+- **[probe]** A `$.http.fetch` that can't connect rejects with `<plugin>: $.http.fetch(<url>) failed: <reason>`
+  (`ECONNREFUSED: Unable to connect. Is the computer able to access the url?`), and a policy refusal with
+  `<plugin>: $.http.fetch: <reason>` (2.1.301). In a test, `on('http.fetch', …)` answers `{ value: { status, ok,
+  headers, text } }` or `{ deny }`; the event is `{ url, init }`. The call resolves only once the body is read:
+  no streaming, no timeout or abort option [d.ts].

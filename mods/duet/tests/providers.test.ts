@@ -139,8 +139,8 @@ describe('/duet provider', () => {
     expect(await ui.find({ type: 'Text', text: /google\s+Google Gemini\s+key …a1b2\s+ok \d+ms · 2 models/ })).toBeDefined()
     await ui.unmount()
     const tests = seen.store.get('duet:providers:tests') as Record<string, { ok: boolean; status: number }>
-    expect(tests.google.ok).toBe(true)
-    expect(tests.google.status).toBe(200)
+    expect(tests.google!.ok).toBe(true)
+    expect(tests.google!.status).toBe(200)
     expect(everything(seen)).not.toContain(KEY)
     expect(await run($, 'provider list')).toContain('1 keys · 1 tested')
   })
@@ -180,7 +180,7 @@ describe('/duet provider', () => {
     expect(seen.fetches.length).toBe(3)
     expect(await run($, 'provider test groq')).toBe('groq: ✕ 429 rate limited (retry-after 30 s); not retried')
     expect(seen.fetches.length).toBe(4)
-    expect(await run($, 'provider test mistral')).toBe('mistral: ✕ the host refused the request (nonessential traffic is disabled); nothing was sent')
+    expect(await run($, 'provider test mistral')).toBe('mistral: ✕ not sent: nonessential traffic is disabled')
     expect(n).toBe(5)
     expect(everything(seen, xai)).not.toContain(XAI)
   })
@@ -288,9 +288,9 @@ describe('/duet provider', () => {
   })
 
   test('the custom endpoint: its URL must be https or local, and its row names the host', { options: { apiCustomUrl: 'https://gw.example.com/v1/', apiCustomModel: 'my-model' } }, async ($, on) => {
-    on('config.list', () => ({ value: ['apiCustomUrl', 'apiCustomModel'].map(f => ({ key: `duet.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'duet' }, isLocked: false })) }))
+    ;(on as any)('config.list', () => ({ value: ['apiCustomUrl', 'apiCustomModel'].map(f => ({ key: `duet.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'duet' }, isLocked: false })) }))
     const sets: unknown[] = []
-    on('config.set', ($: any, e: any) => (sets.push([e.key, e.value]), { value: e.value }))
+    ;(on as any)('config.set', ($: any, e: any) => (sets.push([e.key, e.value]), { value: e.value }))
     const seen = engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, fetch: () => PROBE })
     await start($)
     expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+key …cdef from env · gw.example.com/)
