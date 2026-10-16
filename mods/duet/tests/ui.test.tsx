@@ -239,6 +239,23 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
     expect(w.opens.map(open => open.focus)).toEqual([undefined])
   })
 
+  test('/duet demo asks for the pane before its hook returns, ahead of the demo state it writes (PR #96 review, Codex 4290452262)', async ($, on) => {
+    const w = world({ panes: HIDDEN })
+    const clock = engine(on, [], {}, w)
+    // Once set, every state write waits: an open that comes after the demo's writes has not gone out.
+    let writes: Promise<void> | null = null
+    let release: () => void = () => undefined
+    on('state.set', ($: any, e: any, next: any) => (writes ? writes.then(() => next(e)) : next(e)))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    writes = new Promise<void>(resolve => (release = resolve))
+    expect((await duet($, 'demo')).text).toMatch(/demo tasks/)
+    expect(w.opens.length).toBe(1)
+    expect(w.opens[0]).toMatchObject({ id: 'duet', focus: true })
+    release()
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.length).toBe(1)
+  })
+
   test('/duet demo with the pane hidden gets no toast once the pane came forward', async ($, on) => {
     const w = world({ panes: HIDDEN, showOnOpen: true })
     const clock = engine(on, [], {}, w)

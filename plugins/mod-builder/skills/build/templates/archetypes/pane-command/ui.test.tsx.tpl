@@ -114,6 +114,22 @@ describe('a bare command, by pane state', () => {
     expect(world.toasts).toEqual(['__TITLE__ is still behind another tab: ctrl+x tab, then again until it shows.'])
   })
 
+  test('demo asks for the pane before its hook returns, ahead of the demo items it writes', async ($, on) => {
+    const { world, clock } = engine(on, { panes: HIDDEN })
+    // Once set, every state write waits: an open that comes after the demo's writes has not gone out.
+    let writes: Promise<void> | null = null
+    let release: () => void = () => undefined
+    on('state.set', (($: unknown, e: unknown, next: (e: unknown) => unknown) => (writes ? writes.then(() => next(e)) : next(e))) as never)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    writes = new Promise<void>(resolve => (release = resolve))
+    expect((await command($, 'demo')).text).toBe('__TITLE__: demo items are in the pane.')
+    expect(world.opens.length).toBe(1)
+    expect(world.opens[0]).toMatchObject({ id: '__NAME__', focus: true })
+    release()
+    await clock.advance(1000)
+    expect(world.opens.length).toBe(1)
+  })
+
   test('demo with the pane behind another tab keeps its answer and brings the pane to the front', async ($, on) => {
     const { world, clock } = engine(on, { panes: HIDDEN, showOnOpen: true })
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })

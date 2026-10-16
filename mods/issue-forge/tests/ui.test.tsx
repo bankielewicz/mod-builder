@@ -2229,6 +2229,22 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
     expect(w.opens.map(open => open.focus)).toEqual([undefined])
   })
 
+  test('/issue-forge demo asks for the pane before its hook returns, ahead of the demo state it writes (PR #96 review, Codex 4290452262)', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN })
+    // Once set, every state write waits: an open that comes after the demo's writes has not gone out.
+    let writes: Promise<void> | null = null
+    let release: () => void = () => undefined
+    on('state.set', ($: any, e: any, next: any) => (writes ? writes.then(() => next(e)) : next(e)))
+    await start($)
+    writes = new Promise<void>(resolve => (release = resolve))
+    expect((await run($, 'demo')).text).toContain('demo in the pane')
+    expect(w.opens.length).toBe(1)
+    expect(w.opens[0]).toMatchObject({ id: 'issue-forge', focus: true })
+    release()
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.length).toBe(1)
+  })
+
   test('/issue-forge demo with the pane hidden gets no toast once the pane came forward', async ($, on) => {
     const w = engine(on, { panes: HIDDEN, showOnOpen: true })
     await start($)
@@ -2439,6 +2455,43 @@ describe('a pane press that changes a live run asks first (#31)', () => {
     await w.clock.advance(50)
     expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'pr').length).toBe(1)
     expect(w.argv.filter(a => a[0] === 'git' && a[1] === 'push').length).toBe(1)
+  })
+
+  test('a Stop press on a run that finished after the pane drew asks nothing and says there is nothing to stop (PR #96 review, Codex 4290452256)', async ($, on) => {
+    const store: Record<string, unknown> = { [key(16)]: { ...blockedRun(), repo: `${ROOT}/.git` } }
+    // storeHold makes the stubs read and write `store` itself, so the test can change a run as another session would.
+    const w = engine(on, { head: BRANCH, answer: 'Stop the run', storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    // The pane drew Stop for the blocked run; another session stopped it since.
+    store[key(16)] = { ...(store[key(16)] as any), step: 'stopped' }
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.includes('no active run here.'))
+    await ui.unmount()
+    expect(w.asked).toEqual([])
+    expect(w.toasts).toContain('no active run here.')
+  })
+
+  test('a Stop press whose run was replaced while its question was open stops nothing and says so (PR #96 review, Codex 4290452260)', async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const store: Record<string, unknown> = { [key(16)]: { ...blockedRun(), repo: `${ROOT}/.git` } }
+    const w = engine(on, { head: BRANCH, hold, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await until(w, () => w.asked.length === 1, 'the question')
+    // Another session stopped #16 and started it again: a new run under the same key.
+    store[key(16)] = { ...(store[key(16)] as any), id: '16-2' }
+    release('Stop the run')
+    await waitFor(w, () => w.toasts.some(t => t.includes('#16')))
+    await ui.unmount()
+    expect((store[key(16)] as any).id).toBe('16-2')
+    expect((store[key(16)] as any).step).toBe('blocked')
+    expect(w.toasts.some(t => t.startsWith('stopped #16'))).toBe(false)
+    expect(w.toasts).toContain('#16 moved on before it could be stopped; /issue-forge status 16 says where.')
   })
 
   test('Publish with nobody to answer pushes nothing', { options: { confirmPublish: false } }, async ($, on) => {
