@@ -544,7 +544,7 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         const [latest, read] = [remaining[view.name], generations[view.name]]
         if (isSameGeneration(latest, read)) delete remaining[view.name]
         else if (latest?.since === read?.since && latest?.repeatedAt !== undefined) {
-          // The repeat read the mod as it began; a record from before 0.2.20 has only this scan's facts.
+          // The repeat read the mod as it began; a record from 0.2.20 or earlier has only this scan's facts.
           const facts = found.get(view.name)
           remaining[view.name] = { since: latest.repeatedAt, ...(latest.repeatedFrom ?? { fromVersion: facts?.version ?? null, logicSig: facts?.logicSig }) }
         }

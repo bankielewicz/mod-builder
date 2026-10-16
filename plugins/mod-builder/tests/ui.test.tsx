@@ -1615,7 +1615,7 @@ describe('an edit that only deletes or renames a logic or test file (#75)', () =
     expect(await unlistedScenario($, on, 'edit')).toMatch(/ edit · update Logic for this change$/)
   })
 
-  test('a repeat a session before 0.2.20 wrote (no repeatedFrom) begins the next edit from the scan\'s facts (PR #97 review)', OPTIONS, async ($, on) => {
+  test('a repeat a session on 0.2.20 wrote (no repeatedFrom) begins the next edit from the scan\'s facts (PR #97 review)', OPTIONS, async ($, on) => {
     const mtime: Mtimes = { ms: Date.parse('2027-01-01T00:00:00Z'), byPath: {} }
     const disk: Disk = {
       ...modFiles('git-branch'),
@@ -1652,7 +1652,7 @@ describe('an edit that only deletes or renames a logic or test file (#75)', () =
     await $.turn.complete({ answer: 'edited' } as never)
     await adv(10)
     expect(seen.holdList.isReached).toBe(true)
-    // Meanwhile another session, on 0.2.19, records the repeat as it did: a stamp, and no baseline of its own.
+    // Meanwhile another session, on 0.2.20, records the repeat as it did: a stamp, and no baseline of its own.
     await adv(5000)
     const key = `modlab:generations:${MODS}`
     const generations = JSON.parse(stored.get(key)!) as Record<string, object>
