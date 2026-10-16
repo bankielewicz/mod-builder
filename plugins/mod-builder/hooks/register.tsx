@@ -202,7 +202,7 @@ const exists = ($: Engine, path: string): Promise<boolean> =>
     return false
   })
 
-/** The mods folder of the plugin's own marketplace: `modsDir`'s default when nothing is found from the working directory. */
+/** The mods folder of the plugin's own marketplace: `modsDir`'s default when the walk finds no marketplace above the root or the working directory. */
 const pluginModsDirOf = ($: Engine): string => `${$.plugin.root}/../../mods`
 
 /** The session's project root, which `/cd` and a worktree move change and a Bash `cd` doesn't (#92); null when it can't be read. */
@@ -271,10 +271,9 @@ async function currentModsDir($: Engine, isDrawing = false): Promise<string> {
   // A kept pin whose marketplace is gone (a worktree removed after its PR merged) is dropped too (PR #95 review).
   const kept = Lab.keptPinOf(held, root)
   const live = kept && (await exists($, Lab.marketplaceFileOf(kept.modsDir))) ? kept : null
-  const isWalked = !configuredDir && !live
-  const { cwd, existing } = isWalked ? await walkOf($, root) : { cwd: null, existing: [] }
-  const watched = Lab.watchedDirOf(live, root, configuredDir, cwd, existing, pluginModsDirOf($))
-  // A changed root dropped the pin, unless a report has pinned another folder meanwhile.
+  const { cwd, existing } = live ? { cwd: null, existing: [] } : await walkOf($, root)
+  const watched = Lab.watchedDirOf(live, root, '', cwd, existing, pluginModsDirOf($))
+  // A changed root or a gone marketplace dropped the pin, unless a report has pinned another folder meanwhile.
   if (held && !watched.pin && pin === held && !isDrawing) await setPin($, null)
   return watched.dir
 }
