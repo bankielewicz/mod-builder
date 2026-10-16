@@ -1853,11 +1853,6 @@ export function lockPathOf(text: string): string | null {
   return text.match(/unable to create '([^']*\.lock)'/i)?.[1] ?? null
 }
 
-/** git refusing because another process holds the index lock: add, commit, switch and merge say so on stderr (#28). */
-export function isIndexLockError(text: string): boolean {
-  return /Unable to create '[^']*index\.lock': File exists/.test(text)
-}
-
 /**
  * An absolute LCOV path is one file for every run, wherever it points (inside one run's folder it is still the other's
  * file too): refused while another run of the repository is driven. A relative one is per folder (Codex 4278707573).

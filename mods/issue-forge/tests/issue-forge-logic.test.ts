@@ -1434,23 +1434,6 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(lockPathOf('')).toBe(null)
   })
 
-  test("isIndexLockError (#28): the index.lock refusal of add, commit, switch and merge, and no other failure", () => {
-    // Read through the namespace so a missing export is an undefined result, not a link error.
-    const isIndexLockError = (text: string): unknown => (logic as Record<string, any>).isIndexLockError?.(text)
-    const hint = "\n\nAnother git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'. Please make sure all processes\nare terminated then try again. If it still fails, a git process\nmay have crashed in this repository earlier:\nremove the file manually to continue."
-    // git 2.43.0: add, commit and switch say `fatal:`, merge says `error:`.
-    expect(isIndexLockError(`fatal: Unable to create '/mnt/c/Projects/ClaudeMod/.git/index.lock': File exists.${hint}`)).toBe(true)
-    expect(isIndexLockError("error: Unable to create '/mnt/c/Projects/ClaudeMod/.git/index.lock': File exists.")).toBe(true)
-    // A linked worktree's index lives under the main .git folder.
-    expect(isIndexLockError("fatal: Unable to create '/r/.git/worktrees/wt/index.lock': File exists.")).toBe(true)
-    expect(isIndexLockError(`warning: x\nfatal: Unable to create '/w/.git/index.lock': File exists.${hint}`)).toBe(true)
-    // Other failures, and other locks, are not the index's.
-    expect(isIndexLockError('fatal: not a git repository')).toBe(false)
-    expect(isIndexLockError('fatal: empty ident name (for <u@h>) not allowed')).toBe(false)
-    expect(isIndexLockError("fatal: Unable to create '/r/.git/refs/heads/x.lock': File exists.")).toBe(false)
-    expect(isIndexLockError('')).toBe(false)
-  })
-
   test('sharedLcovBlock: an absolute lcovPath is one file for every run, so it blocks while another run of the repository is driven (Codex 4278707573)', () => {
     const abs = profile()
     const working = at(44, 'green', foreign)
