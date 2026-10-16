@@ -90,30 +90,189 @@ export function keyFileOf(home: string): string {
 
 export const NO_HOME = "no home folder (HOME or USERPROFILE); keys can't be stored"
 
-const KEY_FILE_RE = /duet-data[\\/]\.env(?![\w.-])/
+/** Words a command line splits into, with whether a quoted part of the word held whitespace (a message, not a path). */
+type Word = { value: string; spaced: boolean }
 
-/**
- * True when a shell command or a file path reaches the key file: a guard keeps it out of the conversation. A rooted path
- * (`~/…`, `/…`, `./…`, `$HOME/…`, `C:…`) to the file or to its folder counts wherever it stands: quoted, inside a `-c`
- * payload, with `//` or `/.` in it, as a wildcard, or as the folder itself (`cd` there, `ls`, `grep -r`). A heredoc body
- * and a `#` comment do not, nor does an unrooted mention (a grep pattern): this repo's docs name the path all the time.
- * A text match, not a check on what the command opens: a tripwire for the obvious case.
- */
-export function namesKeyFile(text: string): boolean {
-  const stripped = text
-    .replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '<<HEREDOC')   // heredoc bodies
-    .replace(/(^|\s)#[^\n]*/g, '$1')                                                    // comments
-    .replace(/\$\{HOME\}|\$HOME/g, '~')
-    .replace(/\\/g, '/')
-    .replace(/\/\.(?=\/)/g, '')
-    .replace(/\/{2,}/g, '/')
-  const tokens = stripped.match(/(?:~|\/|\.{1,2}\/|[A-Za-z]:)[^\s"'<>|;&()]*/g) ?? []
-  return tokens.some(t => /duet-data(?:\/|$)(?![\w.-])/.test(t) || KEY_FILE_RE.test(t))
+/** Commands that run what they are given: a heredoc body or a `-c`/`-e` payload fed to one is a command too. */
+const INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'python', 'python3', 'node', 'perl', 'ruby', 'php', 'pwsh', 'powershell', 'deno', 'bun', 'eval', 'source', '.', 'xargs'])
+const PREFIXES = new Set(['sudo', 'env', 'exec', 'command', 'nohup', 'time'])
+const PAYLOAD_FLAGS = new Set(['-c', '-e', '--eval', '-command', '-Command'])
+const GREP_LIKE = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack'])
+const baseName = (v: string) => v.replace(/^.*[\\/]/, '')
+
+/** One shell word from `i`: quotes, escapes (a backslash before a path character is a Windows separator), until a space or an operator. */
+function readWord(text: string, i: number): { word: Word; end: number } {
+  let value = ''
+  let spaced = false
+  while (i < text.length) {
+    const c = text[i]!
+    if (c === "'") {
+      const close = text.indexOf("'", i + 1)
+      const part = text.slice(i + 1, close < 0 ? text.length : close)
+      if (/\s/.test(part)) spaced = true
+      value += part
+      i = close < 0 ? text.length : close + 1
+    } else if (c === '"') {
+      let j = i + 1
+      let part = ''
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === '\\' && /["\\$`]/.test(text[j + 1] ?? '')) { part += text[j + 1]; j += 2 } else part += text[j++]
+      }
+      if (/\s/.test(part)) spaced = true
+      value += part
+      i = j + 1
+    } else if (c === '\\') {
+      const next = text[i + 1] ?? ''
+      if (/[\w.-]/.test(next)) { value += '\\'; i++ } else { value += next; i += 2 }
+    } else if (/[\s;|&()<>`]/.test(c)) break
+    else { value += c; i++ }
+  }
+  return { word: { value, spaced }, end: i }
 }
 
-/** True when a Grep's path or glob names the key file or its folder (a Grep over the folder reads the file). */
+/** A glob segment against a file name: `*`, `?`, `[…]` and one level of `{a,b}`, without case. */
+function globMatches(glob: string, name: string): boolean {
+  const brace = /^(.*)\{([^}]*)\}(.*)$/.exec(glob)
+  if (brace) return brace[2]!.split(',').some(alt => globMatches(brace[1]! + alt + brace[3]!, name))
+  if (!/[*?[]/.test(glob)) return glob.toLowerCase() === name
+  try {
+    return new RegExp(`^${glob.replace(/[.+^$()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.').replace(/\[!/g, '[^')}$`, 'i').test(name)
+  } catch {
+    return true
+  }
+}
+
+/** A path with `/` separators reaches the key file: `.claude/duet-data` itself, or a segment under it that matches `.env`. */
+function pathReaches(p: string): boolean {
+  const parts: string[] = []
+  for (const seg of p.split('/')) {
+    if (seg === '' && parts.length) continue
+    if (seg === '.') continue
+    const last = parts[parts.length - 1]
+    if (seg === '..' && last !== undefined && last !== '' && last !== '..' && last !== '~') { parts.pop(); continue }
+    parts.push(seg)
+  }
+  const at = parts.findIndex((seg, i) => /^\.claude$/i.test(seg) && /^duet-data$/i.test(parts[i + 1] ?? ''))
+  if (at < 0) return false
+  const next = parts[at + 2]
+  return next === undefined || next === '' || globMatches(next, '.env')
+}
+
+/** A path as a file tool gives it (`$HOME`, `~`, `\`, `//`, `/.`, `..` allowed) reaches the key file or its folder. */
+export function keyPathReaches(path: string): boolean {
+  return pathReaches(path.trim().replace(/\$\{HOME\}|\$HOME/g, '~').replace(/\\/g, '/'))
+}
+
+/** A shell word holds a rooted path (`~/`, `/`, `./`, `$HOME/`, `C:\`) that reaches the key file, at its start or after `=`, `:`, `,` or `(`. */
+function wordReaches(value: string): boolean {
+  const norm = value.replace(/\$\{HOME\}|\$HOME/g, '~').replace(/\\/g, '/')
+  for (const m of norm.matchAll(/(?:^|[=:,(])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)[^\s"'<>|;&()]*)/g)) if (pathReaches(m[1]!)) return true
+  return false
+}
+
+/** The command's own name, past `sudo`, `env` and `VAR=value` prefixes. */
+function commandName(cmd: Word[]): string {
+  const w = cmd.find(x => !PREFIXES.has(baseName(x.value)) && !/^[A-Za-z_]\w*=/.test(x.value))
+  return w ? baseName(w.value) : ''
+}
+
+function commandReaches(cmd: Word[], depth: number): boolean {
+  const name = commandName(cmd)
+  const nameAt = cmd.findIndex(x => baseName(x.value) === name)
+  const grepLike = GREP_LIKE.has(name) || (name === 'git' && cmd[nameAt + 1]?.value === 'grep')
+  const hasE = cmd.some(x => x.value === '-e' || x.value === '--regexp' || x.value.startsWith('--regexp='))
+  let patternSeen = hasE
+  for (let k = 0; k < cmd.length; k++) {
+    const w = cmd[k]!
+    const prev = cmd[k - 1]?.value ?? ''
+    if (grepLike && k > nameAt + (name === 'git' ? 1 : 0)) {
+      // A grep pattern names what is searched for, not a file: skip it (the first word that isn't an option, or -e's value).
+      if (prev === '-e' || prev === '--regexp' || w.value.startsWith('--regexp=')) continue
+      if (!patternSeen && !w.value.startsWith('-')) { patternSeen = true; continue }
+    }
+    if (!grepLike && PAYLOAD_FLAGS.has(prev)) {
+      if (reaches(w.value, depth + 1)) return true
+      continue
+    }
+    if (w.spaced) continue   // a quoted text with spaces is a message or a pattern
+    if (wordReaches(w.value)) return true
+  }
+  return false
+}
+
+/** Walks a command line: words, operators, `#` comments, and heredocs (whose body counts only when an interpreter reads it). */
+function reaches(text: string, depth: number): boolean {
+  if (depth > 3) return false
+  let cmd: Word[] = []
+  let heredocs: { delim: string; strip: boolean; interpreted: boolean }[] = []
+  const finish = () => {
+    const hit = commandReaches(cmd, depth)
+    cmd = []
+    return hit
+  }
+  let i = 0
+  while (i < text.length) {
+    const c = text[i]!
+    if (c === '\n') {
+      if (finish()) return true
+      i++
+      for (const h of heredocs) {
+        const body: string[] = []
+        while (i < text.length) {
+          const nl = text.indexOf('\n', i)
+          const line = text.slice(i, nl < 0 ? text.length : nl)
+          i = nl < 0 ? text.length : nl + 1
+          if ((h.strip ? line.replace(/^\t+/, '') : line).trimEnd() === h.delim) break
+          body.push(line)
+        }
+        if (h.interpreted && reaches(body.join('\n'), depth + 1)) return true
+      }
+      heredocs = []
+    } else if (c === ' ' || c === '\t' || c === '\r') i++
+    else if (/[;|&()`]/.test(c)) {
+      if (finish()) return true
+      i++
+    } else if (c === '#') {
+      while (i < text.length && text[i] !== '\n') i++
+    } else if (text.startsWith('<<<', i)) i += 3
+    else if (text.startsWith('<<', i)) {
+      let j = i + 2
+      const strip = text[j] === '-'
+      if (strip) j++
+      while (text[j] === ' ' || text[j] === '\t') j++
+      const w = readWord(text, j)
+      heredocs.push({ delim: w.word.value, strip, interpreted: INTERPRETERS.has(commandName(cmd)) })
+      i = w.end
+    } else if (c === '<' || c === '>') {
+      i++
+      if (text[i] === '>' || text[i] === '&') i++
+    } else {
+      const w = readWord(text, i)
+      if (w.end === i) i++
+      else {
+        cmd.push(w.word)
+        i = w.end
+      }
+    }
+  }
+  return finish()
+}
+
+/**
+ * True when a shell command reaches the key file: a rooted path (`~/…`, `/…`, `./…`, `$HOME/…`, `C:\…`) to
+ * `.claude/duet-data` or to a name under it that matches `.env`, as an argument, after `=`, inside a `-c` payload or in a
+ * heredoc an interpreter reads. A quoted text with spaces (a message), a grep pattern, a heredoc `cat` writes out and a
+ * `#` comment do not count, nor does another folder named `duet-data`. A text match, not a check on what the command
+ * opens: a tripwire for the obvious case.
+ */
+export function namesKeyFile(text: string): boolean {
+  return reaches(text, 0)
+}
+
+/** True when a Grep's or Glob's path, glob or pattern reaches the key file or its folder (a search over the folder reads the file). */
 export function namesKeyFolder(text: string): boolean {
-  return namesKeyFile(text) || KEY_FILE_RE.test(text) || /duet-data(?![\w.-])[\\/]?$/.test(text.trim())
+  const t = text.trim()
+  return t !== '' && (keyPathReaches(t) || /(?:^\*\*|\.claude)[\\/](?:.*[\\/])?duet-data[\\/]\.env$/i.test(t))
 }
 
 /**
@@ -195,9 +354,11 @@ export function keyFor(p: ProviderDef, env: Record<string, string | undefined>, 
 
 // ── Redaction ────────────────────────────────────────────────────────────
 
-/** Provider-controlled text made safe for a pane, a note or the store: no control characters or line breaks, bounded. */
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g
+
+/** Text with no control characters or line breaks, bounded. Provider text goes through `safeText`, which redacts before it cuts. */
 export function clean(text: string, max: number): string {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '').slice(0, max)
+  return text.replace(CONTROLS, '').slice(0, max)
 }
 
 /** `…a1b2`: the last four characters of a key long enough to keep them; `…` for a short one. */
@@ -206,14 +367,27 @@ export function maskKey(key: string): string {
   return key.length >= 12 ? `…${key.slice(-4)}` : '…'
 }
 
-/** Red skeleton: today's order (clean, which cuts, then redact). */
+/**
+ * Provider-controlled text made safe for a pane, a note, a command's answer or the store: control characters stripped
+ * first (a key split by one is still a key), then every stored key redacted, then cut. Cutting before redacting would
+ * leave the prefix of a key that straddles the cut (the third /code-review on PR #110).
+ */
 export function safeText(text: string, keys: readonly string[], max: number): string {
-  return redact(clean(text, max), keys)
+  return redact(text.replace(CONTROLS, ''), keys).slice(0, max)
 }
 
-/** Red skeleton: today's binding, the mask. */
+/**
+ * A short fingerprint of a whole key (FNV-1a, 32 bits): a stored test result vouches only for the key with the same
+ * fingerprint. The last four characters could not tell two short keys apart (Codex 4299537610). No key is `none`.
+ */
 export function keyId(key: string): string {
-  return maskKey(key)
+  if (key === '') return 'none'
+  let h = 0x811c9dc5
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return `f:${h.toString(16).padStart(8, '0')}`
 }
 
 /** Every stored key's value replaced with `[redacted]`, wherever it appears. Blank keys are ignored. */
@@ -262,14 +436,18 @@ function parseJson(text: string): unknown | undefined {
 }
 
 /** The ids (keys redacted, Codex 4298476186) and whether the list is paginated (`has_more`, Codex 4297836020). */
-export function parseModelsReply(text: string, keys: readonly string[] = []): { ids: string[]; hasMore: boolean } | { error: string } {
+/** The most model ids kept: a list of thousands would flood the pane, the store and a command's answer (Codex 4299537637). */
+export const MAX_MODEL_IDS = 200
+
+export function parseModelsReply(text: string, keys: readonly string[] = []): { ids: string[]; hasMore: boolean; cut?: number } | { error: string } {
   const j = parseJson(text) as { data?: unknown; has_more?: unknown } | unknown[] | null | undefined
   if (j === undefined || j === null) return { error: 'the reply is not JSON' }
   // `{ data: [...] }` (OpenAI's shape), or a top-level array (Together AI, [field]).
   const list = Array.isArray(j) ? j : typeof j === 'object' && Array.isArray(j.data) ? j.data : null
   if (!list) return { error: 'no model list in the reply' }
-  // Clean first, then redact (Codex 4299363023): a credential split by a control character would otherwise be reassembled.
-  return { ids: list.map(m => redact(clean(String((m as { id?: unknown })?.id ?? ''), 120), keys)).filter(Boolean), hasMore: !Array.isArray(j) && j.has_more === true }
+  const ids = list.map(m => safeText(String((m as { id?: unknown })?.id ?? ''), keys, 120)).filter(Boolean)
+  const cut = Math.max(0, ids.length - MAX_MODEL_IDS)
+  return { ids: ids.slice(0, MAX_MODEL_IDS), hasMore: !Array.isArray(j) && j.has_more === true, ...(cut ? { cut } : {}) }
 }
 
 type ChatReply = { model?: unknown; choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; error?: { message?: unknown } | string }
@@ -280,13 +458,13 @@ export function parseChatReply(text: string, keys: readonly string[] = []): { te
   if (j === undefined || j === null || typeof j !== 'object') return { error: 'the reply is not JSON' }
   if (j.error) {   // `"error": null` beside a reply is no error
     const msg = typeof j.error === 'string' ? j.error : String(j.error?.message ?? 'error')
-    return { error: redact(clean(msg, 80), keys) }   // provider text: cleaned, bounded, then redacted (Codex 4299363010)
+    return { error: safeText(msg, keys, 80) }   // provider text (Codex 4299363010)
   }
   // A choice with empty content is a reply too: a reasoning model spends a one-token budget thinking.
   if (!Array.isArray(j.choices) || j.choices.length === 0) return { error: 'no reply text' }
   const content = j.choices[0]?.message?.content
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: redact(clean(String(j.model ?? ''), 60), keys) }
+  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: safeText(String(j.model ?? ''), keys, 60) }
 }
 
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
@@ -304,11 +482,13 @@ const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthor
 
 function errorDetail(r: { status: number; text: string; headers?: Record<string, string> }, keys: readonly string[]): string {
   const parsed = parseChatReply(r.text, keys)
-  const msg = 'error' in parsed && parsed.error !== 'the reply is not JSON' && parsed.error !== 'no reply text' ? parsed.error : redact(clean(r.text.trim().split('\n')[0] ?? '', 80), keys)
+  const msg = 'error' in parsed && parsed.error !== 'the reply is not JSON' && parsed.error !== 'no reply text' ? parsed.error : safeText(r.text.trim().split('\n')[0] ?? '', keys, 80)
   if (r.status === 429) {
     // The body's message stays (an exhausted quota is not a transient limit); Retry-After is provider text too (Codex 4298989611).
     const after = r.headers?.['retry-after']
-    return `(${msg ? `${msg}; ` : ''}retry-after ${after ? `${redact(clean(after, 40), keys)} s` : 'not given'}); not retried`
+    // Seconds take the unit; an HTTP date (the header's other form) is shown as given.
+    const wait = after ? safeText(after, keys, 40) : ''
+    return `(${msg ? `${msg}; ` : ''}retry-after ${wait ? (/^\d+$/.test(wait.trim()) ? `${wait.trim()} s` : wait) : 'not given'}); not retried`
   }
   return msg ? `(${msg})` : ''
 }
@@ -319,7 +499,7 @@ function errorDetail(r: { status: number; text: string; headers?: Record<string,
  * the table says lists no models, or when the person names a model to test.
  */
 export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = [], modelsNeedKey = true, key = '', host = ''): TestResult {
-  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${redact(refusalReason(r.refused), keys)}`, at, key, host }
+  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${safeText(refusalReason(r.refused), keys, 120)}`, at, key, host }
   // A provider that should list models and answers 404/405 most likely has the wrong base URL: say so, and never spend a
   // token on the probe for it (the probe runs only where the table says the provider lists no models, or on request).
   if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at, key, host }
@@ -328,7 +508,7 @@ export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, 
       const list = parseModelsReply(r.text, keys)
       // A 2xx that is not a model list is a failed test, never a green ok (Codex 4297835969).
       if ('error' in list) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${list.error}`, at, key, host }
-      const count = `${list.ids.length}${list.hasMore ? '+' : ''} models${list.hasMore ? ' (first page)' : ''}`
+      const count = `${list.ids.length + (list.cut ?? 0)}${list.hasMore ? '+' : ''} models${list.hasMore ? ' (first page)' : ''}`
       const caveat = modelsNeedKey ? '' : ' (the list needs no key; test <id> <model> checks the key)'
       return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at, key, host }
     }

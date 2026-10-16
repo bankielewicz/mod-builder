@@ -11,7 +11,7 @@ export type ProviderTest = {
   model: string
   note: string
   at: number
-  /** The mask of the key the test used ('' for none), so a result never vouches for another key. */
+  /** A fingerprint of the key the test used (`none` for none), so a result never vouches for another key. */
   key: string
   /** The base URL the test reached ('' for none), so a custom endpoint that moved shows as untested. */
   host: string
@@ -64,11 +64,6 @@ export type Consent = 'unasked' | 'yes' | 'no'
 export type View = 'tasks' | 'stats'
 
 declare module 'claude-code' {
-  /** The Grep tool's arguments, so `tool.call { tool: 'Grep' }` type-checks before a session has laid claude-code-tools beside the mod (0.3.0). */
-  interface BuiltinToolInputs {
-    Grep: { pattern: string; path?: string; glob?: string; output_mode?: string }
-    Glob: { pattern: string; path?: string }
-  }
   interface PluginState {
     duet: {
       tasks: Task[]
@@ -115,6 +110,8 @@ declare module 'claude-code' {
       providerTests: Record<string, ProviderTest | 'running'>
       /** Why the key file is not usable ('' when it is): no home folder, or a file that is there but can't be read. */
       providerFileError: string
+      /** A fingerprint of each provider's current key (`none` for no key), to tell whether a stored result is still its. */
+      providerKeyIds: Record<string, string>
     }
   }
 }
