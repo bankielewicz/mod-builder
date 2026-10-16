@@ -576,7 +576,7 @@ async function originCheck($: EngineInterface, root: string, repo: string, read?
     const found = await remoteRepo($, root, url, repo, views)
     if (found === 'match') continue
     const label = found.other === null ? 'an unrecognised URL' : repoLabel(found.other)
-    const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)} (forks: #26)`
+    const next = found.other === null ? `give origin an https, http or ssh URL for ${repoLabel(repo)}` : `work from a clone whose origin is ${repoLabel(repo)}, or whose origin is your fork of ${repoLabel(repo)} with another remote for ${repoLabel(repo)}`
     return block(`origin ${isPush ? 'pushes to' : 'fetches from'} ${label}, but gh sends issues and pull requests to ${repoLabel(repo)}`, next)
   }
   return null
