@@ -335,6 +335,8 @@ async function start($: any, isInteractive = true) {
 }
 
 const run = ($: any, args: string) => $.command.run({ command: 'issue-forge', args, origin: COMPOSER, presentation: PRESENTATION })
+/** The start's own read of the issue (Change 0.5.0), before the start menu and preflight: a number start names no --repo. */
+const isStartRead = (a: string[]) => a[0] === 'gh' && a[1] === 'issue' && a[2] === 'view' && !a.includes('--repo')
 
 async function until(w: World, cond: () => boolean, label: string): Promise<void> {
   for (let i = 0; i < 400 && !cond(); i++) await w.clock.advance(5)
@@ -477,7 +479,7 @@ describe('starting a run', () => {
     const again = (await run($, '17')).text ?? ''
     expect(w.asked.at(-1)).toBe('#16 is active in this repository: blocked at preflight. What should this session do?')
     expect(again).toBe('cancelled; nothing started.')
-    expect(w.argv.some(a => a.includes('17'))).toBe(false)
+    expect(w.argv.some(a => a.includes('17') && !isStartRead(a))).toBe(false)
     expect((await run($, 'stop')).text).toContain('stopped #16')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
   })
@@ -1362,7 +1364,7 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(same).toContain('blocked at gateG')
     expect(w.asked).toEqual([])
     expect((await run($, '16')).text).toBe('cancelled; nothing started.')
-    expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
+    expect(w.argv.filter(a => a[0] === 'gh' && !isStartRead(a))).toEqual([])
     w.answer = 'Stop #44, then start #16'
     expect((await run($, '16')).text).toBe('stopped #44; starting #16; the pane shows progress. Nothing is pushed until you say yes.')
     expect((await run($, 'status 44')).text).toContain('stopped; the branch and its commits are kept')
@@ -1598,7 +1600,7 @@ describe('parallel runs (Change 0.3.0)', () => {
     await start($)
     expect((await run($, '16')).text).toBe('cancelled; nothing started.')
     expect(w.asked).toHaveLength(1)
-    expect(w.argv.some(a => a[0] === 'gh')).toBe(false)
+    expect(w.argv.filter(a => a[0] === 'gh' && !isStartRead(a))).toEqual([])
   })
 
   test('the session driving a run, under claude -p: no answer explains how to start the issue elsewhere', async ($, on) => {
@@ -1753,7 +1755,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     expect(status).toContain('blocked at preflight: could not tell which GitHub repository this checkout belongs to: no git remotes found')
     expect(status).toContain('next: give the checkout a GitHub remote named origin')
     expect(w.argv.some(a => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch'))).toBe(false)
-    expect(w.argv.some(a => a[0] === 'gh' && a[1] === 'issue')).toBe(false)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue' && !isStartRead(a))).toEqual([])
   })
 
   test("a number start where gh repo view prints something else blocks: could not read its output", async ($, on) => {
@@ -1883,7 +1885,8 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
   })
 
   test('a number start that blocks after origin passes is pinned to its repository, and resume keeps it (PR #68 review 2)', async ($, on) => {
-    const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
+    // An issue gh can't find blocks after origin passes and stays resumable (a pull request's block is final from 0.5.0).
+    const w = engine(on, { issueFails: 'GraphQL: Could not resolve to an issue' })
     await start($)
     const status = await blockedStatus($, w)
     expect(status).toStartWith('o/r#16\n')
@@ -1891,7 +1894,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await until(w, () => w.toasts.filter(t => t.includes('blocked')).length >= 2, 'the second block')
     // The repository is not asked again: a remote changed meanwhile can't move the run to another repository's #16.
     expect(w.argv.filter(a => a.join(' ') === REPO_VIEW.join(' '))).toHaveLength(1)
-    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue')).toEqual([ISSUE_VIEW, ISSUE_VIEW])
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'issue' && !isStartRead(a))).toEqual([ISSUE_VIEW, ISSUE_VIEW])
   })
 
   test('a number start that origin blocks stays unpinned, so fixing the remotes or gh repo set-default and resuming recovers it', async ($, on) => {
