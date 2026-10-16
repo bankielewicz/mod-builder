@@ -2132,6 +2132,17 @@ describe('PR #103 review', () => {
   })
 })
 
+describe('PR #103 review: the new-plugin rule reads an issue in linear time (/code-review)', () => {
+  test('a hostile body is judged at once: a 22 KB line of "build with " no longer backtracks for seconds', () => {
+    const newModGuidance = logic.newModGuidance
+    const line = 'build with '.repeat(2000)
+    const t = performance.now()
+    expect(newModGuidance(line)).toBeNull()
+    expect(newModGuidance(`${line}/mod-builder:build`)).toEqual([`${line}/mod-builder:build`.slice(0, 1200) + '…'])
+    expect(Math.round(performance.now() - t)).toBeLessThanOrEqual(200)
+  })
+})
+
 describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574826)', () => {
   const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs: readonly string[], baseManifests: readonly string[]) =>
     (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown, t: readonly string[], b: readonly string[]) => { absolute: string; relative: string } | null }).manifestOf(e, ctx, testGlobs, baseManifests)
