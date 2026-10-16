@@ -888,18 +888,20 @@ const MARKETPLACE_FILE = '/.claude-plugin/marketplace.json'
  * A relative `cwd` names no folder to walk, so it has none.
  */
 export function marketplaceCandidatesOf(cwd: string): string[] {
-  const path = normalizePath(cwd)
-  const root = rootOf(path)
+  return foldersUpFrom(cwd).map(folder => (folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE))
+}
+
+/** `path` and every folder above it, nearest first, down to its root; none for a relative path. */
+export function foldersUpFrom(path: string): string[] {
+  const normal = normalizePath(path)
+  const root = rootOf(normal)
   if (!root) return []
-  const parts = path.slice(root.length).split('/').filter(Boolean)
+  const parts = normal.slice(root.length).split('/').filter(Boolean)
   // A UNC path's server and share are its root folder; nothing sits above them.
   const top = root === '//' ? Math.min(UNC_ROOT_PARTS, parts.length) : 0
-  const candidates: string[] = []
-  for (let depth = parts.length; depth >= top; depth--) {
-    const folder = root + parts.slice(0, depth).join('/')
-    candidates.push(folder.endsWith('/') ? folder + MARKETPLACE_FILE.slice(1) : folder + MARKETPLACE_FILE)
-  }
-  return candidates
+  const folders: string[] = []
+  for (let depth = parts.length; depth >= top; depth--) folders.push(root + parts.slice(0, depth).join('/'))
+  return folders
 }
 
 /**
@@ -942,25 +944,52 @@ export function reportIn(report: Reported | undefined, dir: string): Reported | 
 
 /** The marketplace file a mods folder belongs to: `<marketplace>/mods` → `<marketplace>/.claude-plugin/marketplace.json`. */
 export function marketplaceFileOf(modsDir: string): string {
-  const dir = normalizePath(modsDir)
-  const cut = dir.lastIndexOf('/')
-  const parent = cut < rootOf(dir).length ? rootOf(dir) : dir.slice(0, cut)
+  const parent = parentOf(modsDir)
   return parent.endsWith('/') ? parent + MARKETPLACE_FILE.slice(1) : parent + MARKETPLACE_FILE
 }
 
+/** The folder above `path`, normalized; a root is its own parent. */
+export function parentOf(path: string): string {
+  const dir = normalizePath(path)
+  const cut = dir.lastIndexOf('/')
+  return cut < rootOf(dir).length ? rootOf(dir) : dir.slice(0, cut)
+}
+
+/** A folder's `.git` as the disk has it: a directory (a repository's top), a file (a worktree's or submodule's pointer), or none. */
+export type DotGit = { kind: 'dir' } | { kind: 'file'; text: string } | null
+
 /**
- * Whether a reported folder may be pinned (PR #95 review): a marketplace's `mods/` under the
- * session's project root, since Validate and Test then run there. The caller checks that the
- * marketplace file exists. Gives the marketplace file and the normalized root, or why not.
+ * The common git folder of the repository `folder` is the top of (PR #95 review follow-up): `<folder>/.git`
+ * for a repository top; for a `.git` file, its `gitdir:` (resolved against `folder`) without a trailing
+ * `/worktrees/<name>`. A submodule's `gitdir` names its own repository's folder. Null with no `.git`.
+ */
+export function gitCommonDirOf(folder: string, dotGit: DotGit): string | null {
+  if (!dotGit) return null
+  const top = normalizePath(folder).replace(/\/$/, '')
+  if (dotGit.kind === 'dir') return `${top}/.git`
+  const line = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(dotGit.text.replace(/\r/g, ''))
+  if (!line) return null
+  const named = line[1]!.replace(/\\/g, '/')
+  const gitDir = normalizePath(rootOf(named) ? named : `${top}/${named}`)
+  return /^(.*)\/worktrees\/[^/]+$/.exec(gitDir)?.[1] ?? gitDir
+}
+
+/** Whether two common git folders are one repository's (Windows roots without case); an unknown one never is. */
+export function isSameRepo(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && pathKey(a) === pathKey(b)
+}
+
+/**
+ * Whether a reported folder may be pinned, as far as its name and the root tell (PR #95 review): a
+ * readable root, and a folder named `mods`. The caller checks that its marketplace file exists and that
+ * the folder above it is the project's own repository or one of its worktrees (`isSameRepo`), since
+ * Validate and Test then run there. Gives the marketplace file and the normalized root, or why not.
  */
 export function pinCheckOf(dir: string, root: string | null): { marketplace: string; root: string } | { reason: string } {
   if (root === null) return { reason: "the project root can't be read" }
   const folder = normalizePath(dir)
-  const top = normalizePath(root)
-  const topKey = pathKey(top)
-  if (!pathKey(folder).startsWith(topKey.endsWith('/') ? topKey : `${topKey}/`)) return { reason: `${folder} is outside the project root` }
   if (folder.slice(folder.lastIndexOf('/') + 1) !== 'mods') return { reason: `${folder} isn't a marketplace's mods folder` }
-  return { marketplace: marketplaceFileOf(folder), root: top }
+  return { marketplace: marketplaceFileOf(folder), root: normalizePath(root) }
 }
 
 /** A pin as state kept it, or null when it isn't one (no root, or not a pin at all). */

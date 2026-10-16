@@ -73,6 +73,8 @@ let isQueuedAnnounced = false
 // lab_report hook sets it before its scan without a state read: a dispatch's first `get` fixes what all its
 // reads see (gotchas.md), and the #10 scan has to come first.
 let pin: Lab.Pin | null = null
+// The project root's repository (its common git folder), found once per root (PR #95 review follow-up).
+let rootRepo: { root: string; common: string | null } | null = null
 // Writes to the results and generations in $.store, in order (Change 0.2.8).
 let storeChain: Promise<void> = Promise.resolve()
 // What the last finished scan read; a scan swaps in its own once it has read every folder (Change 0.2.8).
@@ -216,13 +218,43 @@ async function setPin($: Engine, next: Lab.Pin | null): Promise<void> {
   await $.state.set({ plugin: 'mod-builder', key: 'pinned' }, next).catch((error: unknown) => logCaught($, 'state.set', error, 'normal', { key: 'pinned' }))
 }
 
-/** The pin a report's folder makes, or why it makes none: a set `modsDir`, or `Lab.pinCheckOf`'s reasons (PR #95 review). */
+/** A folder's `.git`: a file (a worktree's pointer) is read; a directory is known by its `HEAD`. */
+async function dotGitOf($: Engine, folder: string): Promise<Lab.DotGit> {
+  const path = `${Lab.normalizePath(folder).replace(/\/$/, '')}/.git`
+  const text = await readText($, path)
+  if (text !== null) return { kind: 'file', text }
+  return (await exists($, `${path}/HEAD`)) ? { kind: 'dir' } : null
+}
+
+/** The common git folder of the repository the project root is in: the first `.git` at or above it. */
+async function rootRepoOf($: Engine, root: string): Promise<string | null> {
+  if (rootRepo?.root === root) return rootRepo.common
+  let common: string | null = null
+  for (const folder of Lab.foldersUpFrom(root)) {
+    const dotGit = await dotGitOf($, folder)
+    if (!dotGit) continue
+    common = Lab.gitCommonDirOf(folder, dotGit)
+    break
+  }
+  rootRepo = { root, common }
+  return common
+}
+
+/**
+ * The pin a report's folder makes, or why it makes none (PR #95 review): a set `modsDir`, `Lab.pinCheckOf`'s
+ * reasons, no marketplace file, or a folder above `mods/` that isn't the project's own repository or one of
+ * its worktrees (a nested clone or copy, such as community mods kept in an ignored folder).
+ */
 async function pinFor($: Engine, dir: string): Promise<{ pin: Lab.Pin } | { reason: string }> {
   if (configuredDir) return { reason: 'the modsDir option is set' }
   const check = Lab.pinCheckOf(dir, await rootOf($))
   if ('reason' in check) return check
-  if (!(await exists($, check.marketplace))) return { reason: `no marketplace holds ${Lab.normalizePath(dir)}` }
-  return { pin: { modsDir: Lab.normalizePath(dir), root: check.root } }
+  const folder = Lab.normalizePath(dir)
+  if (!(await exists($, check.marketplace))) return { reason: `no marketplace holds ${folder}` }
+  const home = Lab.parentOf(folder)
+  const isOurs = Lab.isSameRepo(Lab.gitCommonDirOf(home, await dotGitOf($, home)), await rootRepoOf($, check.root))
+  if (!isOurs) return { reason: `${home} isn't the project's git repository or one of its worktrees` }
+  return { pin: { modsDir: folder, root: check.root } }
 }
 
 /**
