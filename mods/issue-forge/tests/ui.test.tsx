@@ -2245,6 +2245,19 @@ describe('a held git index lock (#28)', () => {
     expect(w.commits).toEqual([])
   })
 
+  test('gate F: a stash push that meets the refs/stash lock five times blocks naming that lock (PR #88 review)', async ($, on) => {
+    const noRetry = storedRun('gateF', { greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } })
+    const stored = { [`issue-forge:run:${ROOT}`]: { ...noRetry, profile: { ...noRetry.profile, attempts: { red: 2, green: 3, refactor: 0 } } } }
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], gitFails: { on: 'stash push', seq: Array.from({ length: 5 }, () => STASH_LOCKED) } }, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`another git process is using ${STASH_LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${STASH_LOCK_PATH} if none is running, then /issue-forge resume`)
+    expect(callsOf(w, 'stash push').length).toBe(5)
+  })
+
   test('gate R: git add -A that meets the lock is retried after a second, and gate R goes on', async ($, on) => {
     const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(1) } })
     const w = engine(on, world, stored)
