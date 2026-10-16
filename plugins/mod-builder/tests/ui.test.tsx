@@ -2721,8 +2721,12 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
   const WT = '/w/main/scratch/wt'
   const OTHER = '/w/other'
   const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
-  // A git worktree of the main checkout's repository: its `.git` is a file naming the common git folder.
-  const worktreeOf = (folder: string, name: string): Disk => ({ [`${folder}/.git`]: `gitdir: ${MAIN}/.git/worktrees/${name}\n` })
+  // A git worktree of the main checkout's repository: its `.git` is a file naming the common git folder, and
+  // git's own record (`.git/worktrees/<name>/gitdir`) names that `.git` file back.
+  const worktreeOf = (folder: string, name: string): Disk => ({
+    [`${folder}/.git`]: `gitdir: ${MAIN}/.git/worktrees/${name}\n`,
+    [`${MAIN}/.git/worktrees/${name}/gitdir`]: `${folder}/.git\n`,
+  })
   // alpha in the main checkout (a repository top), beta in a worktree under it, gamma in a third marketplace.
   const disk = (): Disk => ({
     ...marketplaceAt(MAIN),
