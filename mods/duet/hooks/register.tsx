@@ -998,14 +998,14 @@ async function storeProviderTestNow($: EngineInterface, id: string, result: Test
  * Writes the key file and sets it to mode 600 on POSIX (both saves and removals: Codex 4297835988); says how the chmod
  * went. A file that isn't there yet is created empty and chmodded first, so the key is never on disk under the umask.
  */
-async function writeKeyFile($: EngineInterface, path: string, text: string, secret: string): Promise<string> {
-  if (!(await $.fs.exists(path).catch(() => false))) {
-    await $.fs.write(path, '')
-    const mode = await chmod600($, path, secret)
-    if (mode !== 'chmod 600') return mode   // the mode could not be set: the key is not written into a file others may read
-    await $.fs.write(path, text)
-  } else await $.fs.write(path, text)
-  return chmod600($, path, secret)   // after the final write too: a host that writes through a temporary file would leave the umask's mode
+async function writeKeyFile($: EngineInterface, path: string, text: string, secret: string): Promise<{ mode: string; written: boolean }> {
+  // The mode is set before any secret is written, on a new file (created empty) and on an existing one (a retry after a failed
+  // chmod finds the empty file, Codex 4299362989); a mode that can't be set means no key goes into a file others may read.
+  if (!(await $.fs.exists(path).catch(() => false))) await $.fs.write(path, '')
+  const before = await chmod600($, path, secret)
+  if (before !== 'chmod 600') return { mode: before, written: false }
+  await $.fs.write(path, text)
+  return { mode: await chmod600($, path, secret), written: true }   // after the final write too: a host that writes through a temporary file would leave the umask's mode
 }
 
 async function chmod600($: EngineInterface, path: string, secret: string): Promise<string> {
@@ -1035,11 +1035,12 @@ async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Pr
   if (before === undefined) return { failed: `not saved: ${KEY_FILE_HOME} could not be read.` }
   let mode: string
   try {
-    mode = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, key), key)
+    const w = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, key), key)
+    if (!w.written) return { failed: `not saved: ${w.mode}` }
+    mode = w.mode
   } catch (err) {
     return { failed: `not saved: ${redact(fsReason(err), [key])}` }
   }
-  if (mode !== 'chmod 600' && !(await $.fs.exists(path).catch(() => true))) return { failed: `not saved: ${mode}` }
   bumpGen(p.id)
   await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
   await refreshProviderAuth($)
@@ -1062,7 +1063,9 @@ async function removeKeyNow($: EngineInterface, p: ProviderDef): Promise<string>
   if (held === undefined) return `${p.id}: no key stored in ${KEY_FILE_HOME} (a key in your environment stays).`
   let mode: string
   try {
-    mode = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, null), held)
+    const w = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, null), held)
+    if (!w.written) return `not changed: ${w.mode}`
+    mode = w.mode
   } catch (err) {
     return `not changed: ${redact(fsReason(err), [held])}`
   }
@@ -1123,8 +1126,20 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
  * The key test. `GET /models` is free; the one-token completion is billed by most providers, so it runs only where the
  * table says the provider lists no models, or when the person names a model. Nothing is retried.
  */
+/** Providers with a test under way in this session: the slot is claimed before any await, so a double start sends one request (Codex 4299426945). */
+const testing = new Set<string>()
+
 async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
-  if ((await read($, provTests))[p.id] === 'running') return { ran: false, text: `${p.id}: a test is already running.` }
+  if (testing.has(p.id)) return { ran: false, text: `${p.id}: a test is already running.` }
+  testing.add(p.id)
+  try {
+    return await testProviderNow($, p, model)
+  } finally {
+    testing.delete(p.id)
+  }
+}
+
+async function testProviderNow($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
   const models0 = model === '' && p.modelsPath !== null
   const ready = await providerReady($, p, models0 ? 'models' : 'probe')
   if (ready.why) return { ran: false, text: ready.why }
@@ -1142,13 +1157,13 @@ async function testProvider($: EngineInterface, p: ProviderDef, model: string): 
       recorded = true
       return { ran: false, text: `${p.id}: the key changed during the test; nothing recorded. Run it again.` }
     }
-    const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey, maskKey(ready.key))
+    const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey, maskKey(ready.key), ready.base)
     await storeProviderTest($, p.id, result)
     recorded = true
     return { ran: true, text: `${p.id}: ${result.note}` }
   } catch (err) {
     const note = `✕ internal error (${clean(redact(String((err as Error)?.message ?? err), ready.keys), 80)})`
-    await storeProviderTest($, p.id, { ok: false, status: 0, ms: 0, model: '', note, at: Date.now(), key: maskKey(ready.key) }).catch(() => undefined)
+    await storeProviderTest($, p.id, { ok: false, status: 0, ms: 0, model: '', note, at: Date.now(), key: maskKey(ready.key), host: ready.base }).catch(() => undefined)
     recorded = true
     return { ran: true, text: `${p.id}: ${note}` }
   } finally {
@@ -1166,7 +1181,7 @@ async function listProviderModels($: EngineInterface, p: ProviderDef): Promise<{
   if (!req) return { ids: [], error: `${p.id} lists no models.` }
   const reply = await fetchReply($, req)
   if ('refused' in reply) return { ids: [], error: `not sent: ${redact(refusalReason(reply.refused), ready.keys)}` }
-  if (!reply.ok) return { ids: [], error: `${reply.status}: ${redact(reply.text.trim().split('\n')[0] ?? '', ready.keys).slice(0, 120)}` }
+  if (!reply.ok) return { ids: [], error: `${reply.status}: ${redact(clean(reply.text.trim().split('\n')[0] ?? '', 120), ready.keys)}` }
   const parsed = parseModelsReply(reply.text, ready.keys)
   return 'ids' in parsed ? { ids: parsed.hasMore ? [...parsed.ids, '(first page; the provider lists more)'] : parsed.ids, error: '' } : { ids: [], error: parsed.error }
 }
@@ -1244,7 +1259,12 @@ async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; 
   const tests = await read($, provTests)
   // `used` marks a provider a route uses; routes arrive in 0.4.0 with the mark's legend, so no row is marked yet.
   // A stored result vouches only for the key it tested: its mask must be the one the sign-in column shows now (Codex 4298989626).
-  const current = (id: string, t: ProviderTest | 'running' | undefined) => (t === undefined || t === 'running' || !t.key || (auth[id] ?? '').includes(t.key) ? t : undefined)
+  const current = (id: string, t: ProviderTest | 'running' | undefined) => {
+    if (t === undefined || t === 'running') return t
+    if (t.key && !(auth[id] ?? '').includes(t.key)) return undefined
+    if (id === 'custom' && (t.host ?? '') !== baseUrlOf(providerOf('custom')!, { customUrl: options.customUrl })) return undefined   // the endpoint moved (Codex 4299362999)
+    return t
+  }
   const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
   const keys = rows.filter(r => r.auth.startsWith('key ')).length
   const tested = Object.values(tests).filter(t => t !== 'running').length

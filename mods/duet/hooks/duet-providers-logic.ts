@@ -258,7 +258,8 @@ export function parseModelsReply(text: string, keys: readonly string[] = []): { 
   // `{ data: [...] }` (OpenAI's shape), or a top-level array (Together AI, [field]).
   const list = Array.isArray(j) ? j : typeof j === 'object' && Array.isArray(j.data) ? j.data : null
   if (!list) return { error: 'no model list in the reply' }
-  return { ids: list.map(m => clean(redact(String((m as { id?: unknown })?.id ?? ''), keys), 120)).filter(Boolean), hasMore: !Array.isArray(j) && j.has_more === true }
+  // Clean first, then redact (Codex 4299363023): a credential split by a control character would otherwise be reassembled.
+  return { ids: list.map(m => redact(clean(String((m as { id?: unknown })?.id ?? ''), 120), keys)).filter(Boolean), hasMore: !Array.isArray(j) && j.has_more === true }
 }
 
 type ChatReply = { model?: unknown; choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; error?: { message?: unknown } | string }
@@ -269,13 +270,13 @@ export function parseChatReply(text: string, keys: readonly string[] = []): { te
   if (j === undefined || j === null || typeof j !== 'object') return { error: 'the reply is not JSON' }
   if (j.error) {   // `"error": null` beside a reply is no error
     const msg = typeof j.error === 'string' ? j.error : String(j.error?.message ?? 'error')
-    return { error: redact(msg, keys) }
+    return { error: redact(clean(msg, 80), keys) }   // provider text: cleaned, bounded, then redacted (Codex 4299363010)
   }
   // A choice with empty content is a reply too: a reasoning model spends a one-token budget thinking.
   if (!Array.isArray(j.choices) || j.choices.length === 0) return { error: 'no reply text' }
   const content = j.choices[0]?.message?.content
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: clean(redact(String(j.model ?? ''), keys), 60) }
+  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: redact(clean(String(j.model ?? ''), 60), keys) }
 }
 
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
@@ -287,17 +288,17 @@ export type HttpReply = { status: number; ok: boolean; text: string; headers?: R
 export function refusalReason(message: string): string {
   return message.split('\n')[0]!.replace(/^\S+: \$\.http\.fetch(?:\([^)]*\))?(?: failed)?: /, '').trim()
 }
-export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number; key: string }
+export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number; key: string; host: string }
 
 const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 405: 'not allowed', 429: 'rate limited' }
 
 function errorDetail(r: { status: number; text: string; headers?: Record<string, string> }, keys: readonly string[]): string {
   const parsed = parseChatReply(r.text, keys)
-  const msg = clean('error' in parsed && parsed.error !== 'the reply is not JSON' && parsed.error !== 'no reply text' ? parsed.error : redact(r.text.trim().split('\n')[0] ?? '', keys), 80)
+  const msg = 'error' in parsed && parsed.error !== 'the reply is not JSON' && parsed.error !== 'no reply text' ? parsed.error : redact(clean(r.text.trim().split('\n')[0] ?? '', 80), keys)
   if (r.status === 429) {
     // The body's message stays (an exhausted quota is not a transient limit); Retry-After is provider text too (Codex 4298989611).
     const after = r.headers?.['retry-after']
-    return `(${msg ? `${msg}; ` : ''}retry-after ${after ? `${clean(redact(after, keys), 40)} s` : 'not given'}); not retried`
+    return `(${msg ? `${msg}; ` : ''}retry-after ${after ? `${redact(clean(after, 40), keys)} s` : 'not given'}); not retried`
   }
   return msg ? `(${msg})` : ''
 }
@@ -307,27 +308,27 @@ function errorDetail(r: { status: number; text: string; headers?: Record<string,
  * The probe (a one-token completion, billed by most providers) is a step of its own, taken only for a provider
  * the table says lists no models, or when the person names a model to test.
  */
-export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = [], modelsNeedKey = true, key = ''): TestResult {
-  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${redact(refusalReason(r.refused), keys)}`, at, key }
+export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = [], modelsNeedKey = true, key = '', host = ''): TestResult {
+  if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ not sent: ${redact(refusalReason(r.refused), keys)}`, at, key, host }
   // A provider that should list models and answers 404/405 most likely has the wrong base URL: say so, and never spend a
   // token on the probe for it (the probe runs only where the table says the provider lists no models, or on request).
-  if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at, key }
+  if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at, key, host }
   if (r.ok) {
     if (step === 'models') {
       const list = parseModelsReply(r.text, keys)
       // A 2xx that is not a model list is a failed test, never a green ok (Codex 4297835969).
-      if ('error' in list) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${list.error}`, at, key }
+      if ('error' in list) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${list.error}`, at, key, host }
       const count = `${list.ids.length}${list.hasMore ? '+' : ''} models${list.hasMore ? ' (first page)' : ''}`
       const caveat = modelsNeedKey ? '' : ' (the list needs no key; test <id> <model> checks the key)'
-      return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at, key }
+      return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at, key, host }
     }
     const reply = parseChatReply(r.text, keys)
-    if ('error' in reply) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${reply.error}`, at, key }
-    return { ok: true, status: r.status, ms, model: reply.model, note: `ok ${ms}ms ${reply.model || '(model not named)'} · 1 token`, at, key }
+    if ('error' in reply) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${reply.error}`, at, key, host }
+    return { ok: true, status: r.status, ms, model: reply.model, note: `ok ${ms}ms ${reply.model || '(model not named)'} · 1 token`, at, key, host }
   }
   const word = STATUS_WORD[r.status] ?? (r.status >= 500 ? 'server error' : 'failed')
   const detail = errorDetail(r, keys)
-  return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${word}${detail ? ` ${detail}` : ''}`, at, key }
+  return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${word}${detail ? ` ${detail}` : ''}`, at, key, host }
 }
 
 // ── Pane text ────────────────────────────────────────────────────────────
