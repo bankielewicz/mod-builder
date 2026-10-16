@@ -24,14 +24,23 @@ and probes in this repo agree (each in
 [gotchas.md](../plugins/mod-builder/skills/build/references/gotchas.md#testing-and-checking)):
 
 - On 2.1.296, test code found no `process`, `require`, `fetch` or `Bun`, and a test file that
-  imports `node:fs` or uses `import()` didn't load.
+  imports `node:fs` or uses `import()` didn't load. Re-probed on 2.1.296 and 2.1.301 (#98): none of
+  the eight globals gotchas.md lists, such a file is reported `(fail) the file did not load`, and
+  code from strings (eval, the `Function` constructor) is refused.
 - On 2.1.300, neither command started a `SessionStart` command hook in `hooks/hooks.json` or a
   `.mcp.json` server, the two shapes probed. A live `claude --plugin-dir` session started both.
 - On 2.1.300, neither command ran shell in a command or skill body (`` !`…` ``) or started an
   agent's `mcpServers`. No live control was run for these three, so it isn't shown that they would
   run in a session.
 
-Those are the builds checked; Claude Code changes between builds. Mod Lab only re-runs mods you
+Those are the builds checked; Claude Code changes between builds. A canary test in mod-builder's own
+suite, `plugins/mod-builder/tests/sandbox.test.ts`, asserts the globals and code from strings, so a
+build where either changes turns the suite red. It runs only when CI runs, on the pinned build (so
+bumping the pin checks the new one), or when you run `claude plugin test plugins/mod-builder`. It
+doesn't re-check your installed build after a Claude Code update by itself (#107). It doesn't cover
+the loader's refusal of `import()` and `node:fs` either, since a test can't check that its own file
+didn't load. If a later build starts loading such files, the canary's code-from-strings checks are
+the only signal at run time. Mod Lab only re-runs mods you
 have already validated or tested in this install. To turn it off, set `autoRerun` to off in
 `/config`. Separately, when a skill's `lab_report` says a Validate or Test stage finished, Mod Lab
 runs that check on the mod the report names.

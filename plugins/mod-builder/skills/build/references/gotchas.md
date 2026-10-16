@@ -346,9 +346,18 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `mcpServers` path.
 - **[d.ts] [probe]** The d.ts header (2.1.296, unchanged on 2.1.299 and 2.1.300) says `claude plugin
   test` runs test files "in an environment like the one a plugin's hooks run in (no fs, network or
-  process)". Issue #9's audit run probed it on 2.1.296 (not re-run since): in test code, `process`,
+  process)". Issue #9's audit run probed it on 2.1.296: in test code, `process`,
   `Bun`, `Deno`, `require`, `fetch`, `WebSocket`, `XMLHttpRequest` and `Worker` are `undefined`,
   and a test file holding `import()` or `import … from 'node:fs'` doesn't load.
+- **[probe]** Re-probed on 2.1.296 and 2.1.301 (#98, 2026-10-16; a throwaway plugin, one test file per
+  case), the same on both. The eight globals above are `undefined`. A test file holding `import()`,
+  or a top-level `import … from 'node:fs'`, is reported `(fail) the file did not load` ("a dynamic
+  import(); …" and `cannot import "node:fs" …`), which counts as a failure: the run exits 1. Code from
+  strings is off: the global eval exists (`typeof` is `function`), but it and the `Function`
+  constructor, given a string, throw `Code generation from strings disallowed for this context`.
+  `plugins/mod-builder/tests/sandbox.test.ts` (the canary) asserts the eight globals and code from
+  strings, so the suite turns red on a build where either changes; change its list with this one. The
+  loader's refusal can't be asserted from a test, which can't check that its own file didn't load.
 - **[field]** `claude plugin test` only collects `*.test.ts(x)`. Other spec files are ignored.
 - **[probe]** In a test, nothing sits beneath the mod. Every `$` call it makes needs an answer from
   `on(...)`, `session.start` included (`on('session.start', ($, e) => ({ cwd: e.cwd }))`). One stub
