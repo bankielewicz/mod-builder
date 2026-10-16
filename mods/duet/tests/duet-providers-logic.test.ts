@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, parseChatReply, parseEnvFile,
-  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, serializeEnv, testOutcome, testText, upsertEnvLine,
+  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -161,6 +161,14 @@ describe('requests and replies', () => {
 })
 
 describe('pane text', () => {
+  test('the row window keeps the highlighted row in view and never shrinks under 3 rows (seen live: a 14-row pane scrolled the header out)', () => {
+    expect(rowWindow(0, 15, 40, 8)).toEqual({ start: 0, room: 15 })
+    expect(rowWindow(3, 15, 14, 8)).toEqual({ start: 0, room: 6 })
+    expect(rowWindow(8, 15, 14, 8)).toEqual({ start: 5, room: 6 })
+    expect(rowWindow(14, 15, 14, 8)).toEqual({ start: 9, room: 6 })
+    expect(rowWindow(14, 15, 5, 8)).toEqual({ start: 12, room: 3 })
+  })
+
   test('auth and test columns', () => {
     expect(authTextOf(providerOf('anthropic')!, { key: '', source: 'none' }, '')).toBe('signed-in')
     expect(authTextOf(providerOf('anthropic')!, { key: KEY, source: 'file' }, '')).toBe('key …a1b2')

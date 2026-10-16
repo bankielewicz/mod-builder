@@ -11,8 +11,8 @@ import {
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
-  KEY_FILE_NOTE, PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
-  redact, refusalReason, testOutcome, testText, upsertEnvLine,
+  PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  redact, refusalReason, rowWindow, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
 import type { ProviderTest } from '../types'
@@ -1428,6 +1428,14 @@ export const register: Register = (on, raw) => {
     const note = await read($, provNote)
     const width = Math.max(20, e.props.bodyColumns - 2)
     const focused = e.props.isFocused
+    // The pane is a window: rows besides the providers (header, rules, routes, the field, a note, buttons, the hint, the two
+    // "more" marks) are counted, and the providers scroll in what is left, the highlighted one always in view (seen live).
+    const shown = listing ? Math.min(models.length, 12) + (models.length > 12 ? 1 : 0) + (modelsState !== 'idle' ? 1 : 0) : 0
+    const fixed = 8 + (keys === 0 ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? 1 : 0) + shown
+    const win = rowWindow(at, rows.length, e.props.scroll.bodyRows, fixed)
+    const visible = rows.slice(win.start, win.start + win.room)
+    const above = win.start
+    const below = rows.length - win.start - win.room
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
@@ -1436,7 +1444,8 @@ export const register: Register = (on, raw) => {
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
         {keys === 0 && <Text dimColor>no provider keys yet · e on a row enters one · codex signs in with codex login</Text>}
-        {rows.map((r, i) => (
+        {above > 0 && <Text dimColor>{`  ↑ ${above} more (k)`}</Text>}
+        {visible.map((r, j) => { const i = win.start + j; return (
           <Box key={`prov-row-${r.p.id}`} flexDirection="column">
             <Text inverse={focused && i === at} color={r.test.startsWith('✕') ? COLORS.error : r.test.startsWith('ok') ? COLORS.success : undefined}>
               {`${i === at ? '▸' : ' '} ${providerRowText(r, width - 2)}`}
@@ -1450,15 +1459,15 @@ export const register: Register = (on, raw) => {
               </Box>
             )}
           </Box>
-        ))}
+        ) })}
+        {below > 0 && <Text dimColor>{`  ↓ ${below} more (j)`}</Text>}
         <Text dimColor>{'─'.repeat(width)}</Text>
         <Text dimColor wrap="truncate">{`routes  advisor, reviewer, review, implementer, routed types → codex (apiRoutes arrive in 0.4.0)`}</Text>
         {editing && (
           <Box flexDirection="column">
-            <Text>{`${sel.keyName} for ${sel.name}`}</Text>
-            <Input key="prov-key" label={`${sel.keyName}: `} value="" submitLabel="save" autoFocus placeholder="paste the key"
+            <Input key="prov-key" label={`${sel.keyName} (${sel.name})`} value="" submitLabel="save" autoFocus placeholder="paste the key"
               onSubmit={(v: string) => void finishKeyEntry($, v).catch(() => undefined)} />
-            <Text dimColor>typing is visible until Enter · Enter saves · Esc cancels</Text>
+            <Text dimColor>{`${sel.keyName}: typing is visible until Enter · Enter saves · Esc cancels`}</Text>
           </Box>
         )}
         {note !== '' && <Text color={note.startsWith('saved') || note.endsWith('removed from ' + KEY_FILE_HOME + '.') ? COLORS.success : COLORS.warn}>{note.slice(0, width)}</Text>}
@@ -1471,8 +1480,7 @@ export const register: Register = (on, raw) => {
           <Button key="prov-prev" label="Up" hotkey="k" plain onPress={() => void moveProvider($, -1).catch(() => undefined)} />
           <Button key="prov-close" label="Close" hotkey="c" plain onPress={() => void $.ui.close({ id: PROVIDERS_PANE }).catch(() => undefined)} />
         </Box>
-        <Text dimColor wrap="truncate">{KEY_FILE_NOTE}</Text>
-        <Text dimColor wrap="truncate">e enter key  t test  m models  x remove  j/k  c close</Text>
+        <Text dimColor wrap="truncate">{`e enter key  t test  m models  x remove  j/k  c close  ·  ${KEY_FILE_HOME} (600)`}</Text>
       </Box>
     )
   })

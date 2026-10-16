@@ -275,3 +275,14 @@ export function providerRowText(r: ProviderRow, width: number): string {
 export function providersText(rows: ProviderRow[], keys: number, tested: number): string {
   return [`duet providers · ${keys} keys · ${tested} tested`, ...rows.map(r => providerRowText(r, 120)), KEY_FILE_NOTE, 'Commands: /duet provider [list | key <id> | test <id> [model] | models <id> | remove <id>]'].join('\n')
 }
+
+/**
+ * The rows that fit: the pane's body rows less the lines drawn besides the rows, at least 3, and the window's first
+ * row, chosen so the highlighted row is in it (a short list shows whole).
+ */
+export function rowWindow(at: number, total: number, bodyRows: number, fixedLines: number): { start: number; room: number } {
+  const room = Math.max(3, Math.min(total, bodyRows - fixedLines))
+  const start = Math.max(0, Math.min(at - Math.floor(room / 2), total - room))
+  return { start, room }
+}
+
