@@ -986,16 +986,18 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       const gate: Step = phase === 'red' ? 'gateR' : phase === 'green' ? 'gateG' : 'gateF'
       // Green reads red's answer as notes: a turn that errored, was refused or interrupted left none (PR #89 review).
       const answer = ev.reason === undefined || ev.reason === 'answer' ? ev.answer : ''
-      const redAnswer = phase !== 'red' ? run.redAnswer : run.behaviourFor ? `${run.redAnswer ?? ''}\n\n${answer}`.trim() : answer
-      return { ...run, step: gate, redAnswer }
+      // A detour's answer waits for its gate R, so an attempt that fails it never reaches green (PR #89 review).
+      if (phase === 'red' && run.behaviourFor) return { ...run, step: gate, behaviourAnswer: answer }
+      return { ...run, step: gate, redAnswer: phase === 'red' ? answer : run.redAnswer }
     }
     case 'gateR': {
       if (ev.type !== 'gated') return run
       const gated = { ...run, lastGate: ev.gate, gates: { ...run.gates, R: ev.gate }, lastTestTail: ev.testTail }
       if (ev.gate.passed) {
         if (run.behaviourFor) {
-          const { behaviourFor: _, ...rest } = gated
-          const done: Run = { ...rest, redCommit: ev.commit ?? run.redCommit, isBehaviourDone: true, step: 'gateG' }
+          const { behaviourFor: _, behaviourAnswer: held, ...rest } = gated
+          const redAnswer = `${run.redAnswer ?? ''}\n\n${held ?? ''}`.trim()
+          const done: Run = { ...rest, ...(redAnswer ? { redAnswer } : {}), redCommit: ev.commit ?? run.redCommit, isBehaviourDone: true, step: 'gateG' }
           // The behaviour test is committed; if green's work couldn't be restored, block where resume picks up: gate G.
           return ev.blockAfter ? blockedAt(done, 'gateG', ev.blockAfter.reason, ev.blockAfter.next) : done
         }
