@@ -2163,6 +2163,51 @@ describe('a held git index lock (#28)', () => {
     expect(w.commits.length).toBe(0)
   })
 
+  // PR #88 review (Codex P2): 0.3.0 retried commit and stash on any git lock; a ref's lock is retried as the index's is.
+  // The refusals are in the wording of git's ref backend (`cannot lock ref '<ref>': ` and the same `Unable to create`).
+  const REF_LOCK_PATH = `${ROOT}/.git/refs/heads/${BRANCH}.lock`
+  const refLocked = (n: number): GitFail[] => locked(n, `fatal: cannot lock ref 'HEAD': Unable to create '${REF_LOCK_PATH}': File exists.\n`).map(f => ({ ...f, isLocked: false }))
+
+  test("gate R: a commit that meets a held branch ref lock waits a second and tries again; the run goes on (PR #88 review)", async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: refLocked(1) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const commits = callsOf(w, 'commit')
+    expect(commits.length).toBe(2)
+    expect(gaps(commits).every(g => g >= 1000)).toBe(true)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
+  test('gate R: a commit that meets a ref lock five times blocks naming that lock, not the index (PR #88 review)', async ($, on) => {
+    const { world, stored } = atGateR({ gitFails: { on: 'commit', seq: refLocked(5) } })
+    const w = engine(on, world, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => isBlocked(w))
+    const status = (await run($, 'status')).text
+    expect(status).toContain(`blocked at gateR: another git process is using ${REF_LOCK_PATH} (5 attempts over 4 s)`)
+    expect(status).toContain(`next: wait for the other git process to finish, or delete ${REF_LOCK_PATH} if none is running, then /issue-forge resume`)
+    expect(callsOf(w, 'commit').length).toBe(5)
+  })
+
+  test("gate F: a stash push that meets the shared refs/stash lock waits a second and tries again; the rejected refactor is stashed (PR #88 review)", async ($, on) => {
+    const stashLock = `error: cannot lock ref 'refs/stash': Unable to create '${ROOT}/.git/refs/stash.lock': File exists.\n`
+    // Resume gives the phase its attempts again, so a profile with no refactor retry is what sends a failed gate F to the stash.
+    const noRetry = storedRun('gateF', { greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } })
+    const stored = { [`issue-forge:run:${ROOT}`]: { ...noRetry, profile: { ...noRetry.profile, attempts: { red: 2, green: 3, refactor: 0 } } } }
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], gitFails: { on: 'stash push', seq: [{ stderr: stashLock, code: 1, isLocked: false }] } }, stored)
+    await start($)
+    await run($, 'resume')
+    await pump(w, () => callsOf(w, 'stash list').length > 0 || isBlocked(w))
+    const pushes = callsOf(w, 'stash push')
+    expect(pushes.length).toBe(2)
+    expect(gaps(pushes).every(g => g >= 1000)).toBe(true)
+    expect((await run($, 'status')).text).not.toContain('git stash failed')
+  })
+
   test('gate R: git add -A that meets the lock is retried after a second, and gate R goes on', async ($, on) => {
     const { world, stored } = atGateR({ gitFails: { on: 'add', seq: locked(1) } })
     const w = engine(on, world, stored)

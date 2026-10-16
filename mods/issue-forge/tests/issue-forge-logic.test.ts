@@ -1420,6 +1420,20 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(isLockError('')).toBe(false)
   })
 
+  test("lockPathOf (PR #88 review): the lock file git says it couldn't create, or null", () => {
+    // Read through the namespace so a missing export is an undefined result, not a link error.
+    const lockPathOf = (text: string): unknown => (logic as Record<string, any>).lockPathOf?.(text)
+    expect(lockPathOf("fatal: Unable to create '/w/.git/index.lock': File exists.\n\nAnother git process seems to be running")).toBe('/w/.git/index.lock')
+    // A ref's lock, in the wording of git's ref backend: `cannot lock ref '<ref>': ` before the same refusal.
+    expect(lockPathOf("fatal: cannot lock ref 'HEAD': Unable to create '/w/.git/refs/heads/x.lock': File exists.")).toBe('/w/.git/refs/heads/x.lock')
+    expect(lockPathOf("warning: x\nerror: cannot lock ref 'refs/stash': unable to create '/r/.git/refs/stash.lock': File exists.")).toBe('/r/.git/refs/stash.lock')
+    // A lock refusal that names no file to create, and anything else.
+    expect(lockPathOf("error: cannot lock ref 'refs/remotes/origin/main': is at 1a but expected 2b")).toBe(null)
+    expect(lockPathOf('error: could not lock config file .git/config: File exists')).toBe(null)
+    expect(lockPathOf('fatal: not a git repository')).toBe(null)
+    expect(lockPathOf('')).toBe(null)
+  })
+
   test("isIndexLockError (#28): the index.lock refusal of add, commit, switch and merge, and no other failure", () => {
     // Read through the namespace so a missing export is an undefined result, not a link error.
     const isIndexLockError = (text: string): unknown => (logic as Record<string, any>).isIndexLockError?.(text)
