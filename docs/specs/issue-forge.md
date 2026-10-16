@@ -282,7 +282,7 @@ once the agent starts, and the agent's answer arrives as the `turn.complete` tha
 
 | Agent | Tools | Default model (`userConfig`) | Prompt rules (verbatim in the registered `prompt`) |
 |---|---|---|---|
-| red | Read, Grep, Glob, Edit, Write, Bash | `opus` | Write tests from the issue only. Touch only paths matching the test globs given. Every new test must fail now, by an assertion (never by a load, import or syntax error: the green phase can't edit tests to fix that), and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails. |
+| red | Read, Grep, Glob, Edit, Write, Bash | `opus` | Write tests from the issue only. Touch only paths matching the test globs given. Every new test must fail now, by an assertion (never by a load, import or syntax error: the green phase can't edit tests to fix that), and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails, then what the green phase should know about the fix: an approach that breaks other tests, a dead end, a constraint. |
 | green | Read, Grep, Glob, Edit, Write, Bash | `sonnet` | Make the failing tests pass. Never edit a path matching the test globs; edited tests fail the gate. Follow the profile notes. End with the changed files. |
 | refactor | Read, Grep, Glob, Edit, Write, Bash | `opus` | Improve the changed code without changing behaviour. Never edit tests. Keep every test passing. End with what changed and why. |
 
