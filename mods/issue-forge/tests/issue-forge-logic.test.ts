@@ -1846,3 +1846,24 @@ describe('new plugins are built with mod-builder, not issue-forge (Change 0.5.0)
     }
   })
 })
+
+describe('the guard and new plugins (Change 0.5.0)', () => {
+  const manifestOf = (e: Record<string, unknown>, ctx: { liveAgent: string | null; known: Set<string>; workRoot: string | null; root: string | null }) =>
+    (logic as unknown as { manifestOf?: (e: Record<string, unknown>, ctx: unknown) => { absolute: string; relative: string } | null }).manifestOf?.(e, ctx)
+  const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
+
+  test('manifestOf: the live agent writing a plugin manifest, absolute or relative to its folder', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
+    expect(manifestOf({ tool: 'Edit', file_path: 'mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
+    expect(manifestOf({ tool: 'NotebookEdit', notebook_path: '/w/wt/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toEqual({ absolute: '/w/wt/.claude-plugin/plugin.json', relative: '.claude-plugin/plugin.json' })
+  })
+
+  test('manifestOf: anything else is not the guard\'s new-plugin case', () => {
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/plugin.json', agentId: 'a1' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/.claude-plugin/marketplace.json', agentId: 'a1' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Read', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'someone-else' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json' }, ctx)).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, { ...ctx, workRoot: null })).toBeNull()
+  })
+})

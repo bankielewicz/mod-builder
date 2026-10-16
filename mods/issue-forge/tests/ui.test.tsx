@@ -113,6 +113,8 @@ type World = {
   issueUrl?: string
   /** `gh issue view` exits 1 with this on stderr (#25). */
   issueFails?: string
+  /** `git diff --cached --name-only --diff-filter=A -z <merge base>`: paths a phase added (Change 0.5.0). */
+  added?: string[]
   /** What $.command.register was given. */
   registered: { name: string; argumentHint?: string }[]
   /** Every process.run with the folder it ran in. */
@@ -220,7 +222,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (e.path === LCOV_PATH) return { value: LCOV.replace(`SF:${ROOT}/`, `SF:${world.lcovRoot ?? ROOT}/`) }
     return { deny: 'ENOENT' }
   })
-  on('fs.stat', ($: any, e: any) => (e.path === LCOV_PATH ? { value: { kind: 'file', size: LCOV.length, mtimeMs: world.clock.now(), isLink: false } } : { deny: 'ENOENT' }))
+  on('fs.stat', ($: any, e: any) => {
+    if (e.path === LCOV_PATH) return { value: { kind: 'file', size: LCOV.length, mtimeMs: world.clock.now(), isLink: false } }
+    return e.path in world.files ? { value: { kind: 'file', size: world.files[e.path]!.length, mtimeMs: 0, isLink: false } } : { deny: 'ENOENT' }
+  })
   on('fs.write', ($: any, e: any) => ((world.files[e.path] = e.text), { value: undefined }))
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
@@ -314,6 +319,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
+    if (s === 'diff --cached --name-only --diff-filter=A -z base0') return ok((world.added ?? []).join('\0'))
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
     if (a[0] === 'diff' && a[1] === '--cached' && a[2] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--name-only') return ok(world.redPaths.join('\0'))
@@ -2050,5 +2056,83 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await run($, 'status')
     const ui = await pane($)
     expect(await ui.find({ type: 'Text', text: /^\/issue-forge <issue number or URL> starts another\.$/ })).toBeDefined()
+  })
+})
+
+describe('new plugins are mod-builder\'s (Change 0.5.0)', () => {
+  // As #18 asked: the build-with line, and the lines that belong to it.
+  const NEW_MOD_BODY = '## Before you start\n\n- **Build it with `/mod-builder:build`** (SPEC first, one approval), from\n  the `guard` archetype.\n- Read the SPEC template.\n'
+  // As #19 named it: the skill in passing, in a fix.
+  const FIX_BODY = 'While `/mod-builder:build` was on its Spec stage the band showed the new mod, but the list did not.'
+  const MANIFEST = 'mods/x/.claude-plugin/plugin.json'
+
+  test('an issue that asks for a new plugin is answered with next steps, and nothing starts', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { issueBody: NEW_MOD_BODY }, store)
+    await start($)
+    const { text } = (await run($, '16')) as { text: string }
+    expect(text).toStartWith('#16 asks for a new Claude Code plugin.')
+    expect(text).toContain('Nothing was started.')
+    expect(text).toContain('1. Run /mod-builder:build and ask for the plugin #16 describes: "Fix the thing" (https://github.com/o/r/issues/16).')
+    expect(text).toContain('   > - **Build it with `/mod-builder:build`** (SPEC first, one approval), from')
+    expect(text).toContain('Open a pull request that closes #16.')
+    await w.clock.settle()
+    expect(Object.keys(store).filter(k => k.startsWith('issue-forge:repo-run:'))).toEqual([])
+    expect(w.argv.filter(a => a[0] === 'git' && a[1] !== 'rev-parse')).toEqual([])
+    expect(w.spawned).toEqual([])
+    expect(w.opened).toEqual([])
+  })
+
+  test('an issue that names /mod-builder:build in passing starts as before', async ($, on) => {
+    const w = engine(on, { issueBody: FIX_BODY })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.spawned.length === 1, 'red')
+  })
+
+  test('a start whose issue read fails still starts, and preflight blocks as before', async ($, on) => {
+    const w = engine(on, { issueFails: 'GraphQL: Could not resolve to an issue' })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('issue #16 not found: GraphQL: Could not resolve to an issue')
+  })
+
+  test('a green that adds a plugin manifest blocks final at gate G: Stop and Status, no Resume, no retry; resume refuses', async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts', MANIFEST], sinceRed: ['src/a.ts', MANIFEST], redPaths: ['tests/a.test.ts'], added: ['src/a.ts', MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.spawned).toEqual([])
+    expect(w.commits).toEqual([])
+    expect(w.argv.some(a => a[0] === 't')).toBe(false)
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /a phase agent created a new Claude Code plugin/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /then \/issue-forge stop 16/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^steps: \/issue-forge status$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', label: 'Resume' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', label: 'Stop' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', label: 'Status' })).toBeDefined()
+    expect((await run($, 'resume')).text).toStartWith("#16 can't be resumed: a phase agent created a new Claude Code plugin (mods/x/.claude-plugin/plugin.json)")
+    expect((await run($, 'status')).text).toContain("1. Nothing past red's commit was committed, and nothing was pushed.")
+  })
+
+  test('a pull request\'s number blocks final: resume refuses it', async ($, on) => {
+    const w = engine(on, { issueUrl: 'https://github.com/o/r/pull/16' })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'resume')).text).toBe("#16 can't be resumed: #16 is a pull request, not an issue. /issue-forge stop 16 ends it.")
+  })
+
+  // The guard's own decision is logic (manifestOf): a test can't make a live phase agent, since only core sets a spawn's agentId (d.ts).
+  test('a manifest the guard refused, with nothing added, still blocks final at the gate', async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG', { newPlugin: MANIFEST }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain(`a phase agent tried to create a new Claude Code plugin (${MANIFEST})`)
+    expect(w.commits).toEqual([])
+    expect(w.spawned).toEqual([])
   })
 })
