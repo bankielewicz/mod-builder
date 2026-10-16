@@ -201,11 +201,6 @@ function refsOf(run: Run | null): string[] {
 /** git takes no optional locks, so the run's own `git status` doesn't refresh the index while an agent's or the user's git needs it (#28). */
 const GIT_ENV = { GIT_OPTIONAL_LOCKS: '0' }
 
-/** The env a command runs with: git's, for git; the profile's commands run as the user wrote them (PR #88 review). */
-function envOf(argv: string[]): { env?: Record<string, string> } {
-  return argv[0] === 'git' ? { env: GIT_ENV } : {}
-}
-
 async function git($: EngineInterface, root: string, args: string[], stdin?: string) {
   return $.process.run(['git', ...args], { cwd: root, timeoutMs: GIT_TIMEOUT, env: GIT_ENV, ...(stdin === undefined ? {} : { stdin }) })
 }
@@ -427,12 +422,12 @@ async function setActivity($: EngineInterface, label: string | null): Promise<vo
  * timeout by ending its stream (C0 P3). Where spawn can't start (always under `claude plugin
  * test`), the same command runs through `$.process.run`, capped at ten minutes.
  */
-async function runLong($: EngineInterface, argv: string[], root: string, minutes: number): Promise<CommandResult> {
+async function runLong($: EngineInterface, argv: string[], root: string, minutes: number, env?: Record<string, string>): Promise<CommandResult> {
   let text = ''
   let isTimedOut = false
   let isStopped = false
   let hasStarted = false
-  const stream = $.process.spawn({ argv, cwd: root, ...envOf(argv) })
+  const stream = $.process.spawn({ argv, cwd: root, ...(env ? { env } : {}) })
   const end = () => void stream.return(undefined as never).catch(() => undefined)
   const timer = $.clock.after(minutes * 60_000, () => {
     isTimedOut = true
@@ -452,7 +447,7 @@ async function runLong($: EngineInterface, argv: string[], root: string, minutes
       if (isTimedOut || isStopped) result = { exit: null, isTimedOut, tail: tailLines(text) }
       else result = { exit: (await stream.result).code, isTimedOut: false, tail: tailLines(text) }
     } catch (err) {
-      result = hasStarted || isTimedOut || isStopped ? { exit: null, isTimedOut, tail: tailLines(text) } : await runShort($, argv, root, minutes, err)
+      result = hasStarted || isTimedOut || isStopped ? { exit: null, isTimedOut, tail: tailLines(text) } : await runShort($, argv, root, minutes, err, env)
     }
     if (isStopped) throw new Stopped()
     return result
@@ -514,9 +509,9 @@ async function offBranch($: EngineInterface, run: Run): Promise<Blocked | null> 
   return head === run.branch ? null : block(`HEAD is on ${head}, not ${run.branch}`, `git switch ${run.branch}`)
 }
 
-async function runShort($: EngineInterface, argv: string[], root: string, minutes: number, why: unknown): Promise<CommandResult> {
+async function runShort($: EngineInterface, argv: string[], root: string, minutes: number, why: unknown, env?: Record<string, string>): Promise<CommandResult> {
   try {
-    const r = await $.process.run(argv, { cwd: root, timeoutMs: Math.min(minutes * 60_000, 600_000), ...envOf(argv) })
+    const r = await $.process.run(argv, { cwd: root, timeoutMs: Math.min(minutes * 60_000, 600_000), ...(env ? { env } : {}) })
     return { exit: r.exitCode, isTimedOut: false, tail: tailLines(`${r.stdout}\n${r.stderr}`) }
   } catch (err) {
     return { exit: null, isTimedOut: /time/i.test(String(err)), tail: `could not run ${argv.join(' ')}: ${String(err)} (spawn: ${String(why)})` }
@@ -727,7 +722,7 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string): Prom
   const made = { branch, workRoot, base }
   let added: CommandResult
   try {
-    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes)
+    added = await runLong($, ['git', 'worktree', 'add', '--no-track', '-b', branch, workRoot, `origin/${base}`], root, where.minutes, GIT_ENV)
   } catch (err) {
     // A Stop during the add: the branch git already made is kept on the stopped run, like one made before it.
     if (err instanceof Stopped && (await hasBranch($, root, branch))) await recordMade($, run, made)
@@ -788,7 +783,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
       await git($, run.root, ['worktree', 'remove', made.workRoot])
       await setActivity($, `git worktree add ${made.workRoot}`)
       const minutes = run.profile?.commandTimeoutMinutes ?? DEFAULT_COMMAND_MINUTES
-      const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes)
+      const again = await runLong($, ['git', 'worktree', 'add', made.workRoot, made.branch], run.root, minutes, GIT_ENV)
       if (again.exit !== 0) return { ...block(worktreeAddFailure(again, minutes), `check ${made.workRoot}`), keep: made }
     }
     // A kept worktree's own config can give origin other URLs (extensions.worktreeConfig): it is checked where it fetches.
