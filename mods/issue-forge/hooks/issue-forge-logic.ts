@@ -1270,9 +1270,13 @@ function profileLines(p: Profile): string[] {
   ]
 }
 
-/** Issue text (or the red agent's notes) with a backslash after the `<` of any `<issue`, `</issue`, `<red-notes` or `</red-notes` (`<\issue`), so it can't end or open the block it sits in. */
+/** The blocks a prompt fences text in. */
+const FENCED_TAGS = ['issue', 'red-notes']
+const FENCE = new RegExp(`<(\\/?(?:${FENCED_TAGS.join('|')}))(?=[\\s>/]|$)`, 'gi')
+
+/** Issue text (or the red agent's notes) with a backslash after the `<` of any whole `<issue`, `</issue`, `<red-notes` or `</red-notes` tag (`<\issue`, `<\/issue`), so it can't end or open the block it sits in; `Map<IssueKey>` stays as written. */
 export function fenced(text: string): string {
-  return text.replace(/<(\/?(?:issue|red-notes))/gi, '<\\$1')
+  return text.replace(FENCE, '<\\$1')
 }
 
 /** The task each spawn gets: the rules (again, for agent types that aren't the mod's), the issue, the profile, the red agent's notes (green only), and retry details. */
