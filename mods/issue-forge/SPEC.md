@@ -1738,7 +1738,7 @@ from this worktree prints the next steps, and `git worktree list` and the branch
 
 ## Review: PR #103 (2026-10-16)
 
-The review was `/code-review` at xhigh effort on `cd151a9`, with Codex's five threads checked against the code. Each
+The review was `/code-review` at xhigh effort on `cd151a9`, with Codex's five threads checked against the code, then Codex's second pass on `cd151a9` (four threads, three of them already fixed here: renames, a pull request's number, normalized paths). Each
 fix is test-first (red → green) and pushed on its own. None changes a decision above. The rule from item 2 is unchanged,
 and so are the final block at gate F and the quoted guidance; those wait for the owner (see "Open" below).
 
@@ -1747,6 +1747,7 @@ and so are the final block at gate F and the quoted guidance; those wait for the
 | High | The new-plugin rule's two lazy `.*?` backtracked cubically on issue text anyone can write, at the start, before anything is stored: one 22 KB line of `build with ` took 4.8 s, 8x per doubling. | Each word is found after the one before it (`asksForModBuilder`), in linear time. The same lines match: still only #18 of this repository's 61 issues. Red `dc2d420`, green `a673e98`. |
 | Medium | `git diff`'s rename detection reported a moved and edited manifest as `R`, which `--diff-filter=A` dropped (probed: `git mv mods/a mods/b` plus an edit printed nothing). | R4 and G8 read with `--no-renames`. The UI harness first learned to answer the read by its filter (`a4326d2`). Red `f85ac18`, green `6d37cc0`. |
 | Medium | A final block's steps judged what was committed by the gate: at gate F they hid green's commit, and at gate R after G6's detour they said nothing was committed and hid the stash holding green's work (Codex 4290574818). | The steps come from `redCommit`, `greenCommit` and, during the detour, `greenStash`. Red `d92a262`, green `beb65c5`. |
+| Medium | A drive's write was computed from an earlier read (`phase()` reads the run, then awaits `rememberAgents`, then saves `spawned`), so a refusal the guard stored in between was overwritten, and the gate saw neither the file (denied) nor the refusal (Codex 4290653342, P1, from Codex's second pass on `cd151a9`). | `saveRun` keeps a stored `newPlugin` (`withRefusal`, logic); nothing clears it. Red `1451dd3`, green `0ddf27a`. |
 | Medium-Low | The guard treated a manifest at the merge base that a phase had removed as new, so writing it back final-blocked a fix to an existing plugin (Codex 4290574826). | Each phase lists the merge base's manifests (`git ls-tree`) before its agent starts, and `manifestOf` skips them. That is the promise's own test: new means not at the base. Red `79a0efc`, green `edccc6a`. |
 | Medium-Low | `recordNewPlugin` checked only the run's id, so a taken-over session's stale agent could record `newPlugin` on the run the other session drives (Codex 4290574833). | `newPluginRecord` (logic) writes nothing onto a taken-over, stopped or other run, as `recordMade` doesn't. Red `501983c`, green `87a19c1`. |
 | Low | A pull request's number whose body matched got the new-plugin reply, not preflight's `is a pull request` (PR #103's own body matches). | The start read leaves a pull request's URL to preflight. Red `f8240e9`, green `2f5c2fa`. |
