@@ -139,7 +139,8 @@ export function lightsOf(
   }
   const fileLight = (isDone: boolean, savedMs?: number): Light =>
     !isDone ? 'pending' : savedMs !== undefined && isOld(savedMs) ? 'stale' : 'passed'
-  // A delete or a rename saves no file, so a logic or test file changed since the edit began counts too.
+  // A delete or a rename saves no file, so a logic or test file changed since the edit began counts too:
+  // Logic is then judged with no mtime, which is never old.
   const isLogicChanged = fromLogicSig !== null && fromLogicSig !== facts.logicSig
   // During an edit, Share needs a new version (not the one the edit started from) that the marketplace lists.
   const isReShared =
@@ -987,6 +988,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
   // Named by folder, so a file moved between folders without a new mtime still changes the signature.
   const inFolder = (folder: string, entries: readonly Entry[]): Entry[] =>
     entries.filter(entry => entry.kind === 'file').map(entry => ({ ...entry, name: `${folder}/${entry.name}` }))
+  const sigOf = (entries: readonly Entry[]): string => signatureOf(entries.map(entry => `${entry.name}@${entry.mtimeMs}`))
   // The one file at the top that validate reads; the SPEC and README are read by neither validate nor test.
   const mcp = read.top.filter(entry => entry.kind === 'file' && entry.name === '.mcp.json')
   const nested = read.nested ?? []
@@ -1011,7 +1013,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     ...inFolder('tests', read.tests.filter(entry => isTestFile(entry.name))),
     ...nested.filter(entry => entry.kind === 'file' && isNestedLogicOrTest(entry.name)),
   ]
-  const codeSig = signatureOf(code.map(entry => `${entry.name}@${entry.mtimeMs}`))
+  const codeSig = sigOf(code)
   const readmeEntry = read.top.find(entry => entry.name === 'README.md')
   return {
     ...manifestOf(read.manifest),
@@ -1031,7 +1033,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     specMtimeMs: read.top.find(entry => entry.name === 'SPEC.md')?.mtimeMs ?? 0,
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
-    logicSig: signatureOf(logic.map(entry => `${entry.name}@${entry.mtimeMs}`)),
+    logicSig: sigOf(logic),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,

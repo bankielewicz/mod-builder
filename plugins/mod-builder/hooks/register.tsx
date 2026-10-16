@@ -436,11 +436,8 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
         const [latest, read] = [remaining[view.name], generations[view.name]]
         if (isSameGeneration(latest, read)) delete remaining[view.name]
         else if (latest?.since === read?.since && latest?.repeatedAt !== undefined) {
-          remaining[view.name] = {
-            since: latest.repeatedAt,
-            fromVersion: found.get(view.name)?.version ?? null,
-            logicSig: found.get(view.name)?.logicSig,
-          }
+          const facts = found.get(view.name)
+          remaining[view.name] = { since: latest.repeatedAt, fromVersion: facts?.version ?? null, logicSig: facts?.logicSig }
         }
       }
       return remaining
@@ -1028,6 +1025,7 @@ export const register: Register = (on, options) => {
       const manifest = await readText($, `${modsDir}/${mod}/.claude-plugin/plugin.json`)
       const fromVersion = Lab.manifestOf(manifest).version ?? factsByMod.get(mod)?.version ?? null
       // A generation ends only when the mod is all green, so a repeat during the edit keeps its start and baseline.
+      // A new one takes its logic and test files from the last scan: the skill reports the edit before it changes any.
       // The stamp tells a scan that judged the edit finished before this report that the next edit began here.
       // It always moves on, even within one millisecond of the last, or that scan would read it as unchanged.
       let isStarted = false
