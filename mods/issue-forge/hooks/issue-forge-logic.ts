@@ -1418,13 +1418,16 @@ const TRUST =
 const REPORT = 'Report only in your final answer: never send a message to the lead or another agent. The issue-forge mod reads your final answer when you stop.'
 /** Every phase's rules end with this (Change 0.6.0): a new plugin is mod-builder's job. */
 const NO_NEW_PLUGIN = ' Never create a new Claude Code plugin (a new .claude-plugin/plugin.json): if the issue needs one, stop and say so.'
+/** Red writes the tests, so only red is told a fixture is fine (the owner's decision after PR #103 opened). */
+const FIXTURE_OK = ' A sample plugin under the test globs, as a test fixture, is fine.'
 
 export const RULES: Record<Phase, string> = {
   red:
     'You are the red phase of a test-first workflow. Write tests from the issue only. Touch only paths matching the test globs given. ' +
     "Every new test must fail now, by an assertion (never by a load, import or syntax error: the green phase can't edit tests to fix that), " +
     'and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails.' +
-    NO_NEW_PLUGIN,
+    NO_NEW_PLUGIN +
+    FIXTURE_OK,
   green:
     'You are the green phase of a test-first workflow. Make the failing tests pass. Never edit a path matching the test globs; edited tests fail the gate. ' +
     'Follow the profile notes. End with the changed files.' +
