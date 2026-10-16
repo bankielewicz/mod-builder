@@ -106,6 +106,16 @@ const modsDirFor = (configured: string, cwd: string | null, existing: readonly s
     fallback,
   )
 
+/** The placeholder rules (#19), read the same way: a missing rule fails its assertion, not the import. */
+type ReportedByMod = Parameters<typeof liveReports>[0]
+const placeholderFacts = (name: string): FileFacts | undefined =>
+  (Logic as unknown as { placeholderFacts?: (name: string) => FileFacts }).placeholderFacts?.(name)
+type BuildingByDir = Record<string, ReportedByMod>
+const withBuilding = (all: BuildingByDir, dir: string, mod: string, report: ReportedByMod[string], now: number): BuildingByDir | undefined =>
+  (Logic as unknown as { withBuilding?: (all: BuildingByDir, dir: string, mod: string, report: ReportedByMod[string], now: number) => BuildingByDir }).withBuilding?.(all, dir, mod, report, now)
+const placeholderNames = (reports: ReportedByMod, factsNames: readonly string[], dir?: string): string[] | undefined =>
+  (Logic as unknown as { placeholderNames?: (reports: ReportedByMod, factsNames: readonly string[], dir?: string) => string[] }).placeholderNames?.(reports, factsNames, dir)
+
 const EMPTY: FileFacts = {
   name: 'git-branch',
   hasSpec: false,
@@ -209,6 +219,58 @@ describe('mod-builder-logic', () => {
     expect(isTestFile('pure.spec.ts')).toBe(false)
     expect(manifestOf('{"version":"1.2.0","description":"x"}')).toEqual({ version: '1.2.0', description: 'x' })
     expect(manifestOf(null)).toEqual({ version: null, description: null })
+  })
+
+  test('hasPlaceholder: a code span may wrap onto the next line, so <word> inside it is not a placeholder (#20)', () => {
+    // The span starts on one line and ends on the next; CommonMark allows line endings in a span.
+    expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep the work.\n')).toBe(false)
+    // The `<word>` is on the first line of the wrapped span.
+    expect(hasPlaceholder('# x\nRun `git stash <message>\nand then pop` here.\n')).toBe(false)
+    // A real placeholder outside the span is still found, before or after it.
+    expect(hasPlaceholder('# x\nSave it with `it is in\nstash "<message>"` to keep <files>.\n')).toBe(true)
+    expect(hasPlaceholder('# x\nStage <files> with `git add\n-A` first.\n')).toBe(true)
+    // Unwrapped notation is unchanged: `<files>` in plain prose is a placeholder.
+    expect(hasPlaceholder('# x\nStage <files> first.\n')).toBe(true)
+    // A span does not cross a paragraph: an unclosed backtick before a blank line leaves the next paragraph's
+    // placeholder visible, even when a later backtick pair exists.
+    expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged.\n')).toBe(true)
+    expect(hasPlaceholder('# x\nan unclosed ` tick\n\n<files> are staged with `git add`.\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: a code span may hold several line endings, as long as no blank line falls inside it (#20)', () => {
+    // Shaped like mods/issue-forge/SPEC.md: a quoted message that wraps twice.
+    expect(hasPlaceholder('# x\n- preflight blocks with `lcovPath <path> is shared by every\n  run and #44 is running; make it relative to the repository, as\n  coverage/issue-forge.lcov`.\n')).toBe(false)
+    // A placeholder after that span is still found.
+    expect(hasPlaceholder('# x\nRun `cat\nlist\n| sort` on <files>.\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: a span over two line endings leaves no backtick unpaired for the rest of the paragraph (#20)', () => {
+    // If the first span is not removed, its opening backtick pairs with the next one and every later
+    // pair in the paragraph shifts, so `<c>` reads as prose.
+    expect(hasPlaceholder('# x\nsay `one\ntwo\nthree` and `a`\nthen `b` and `<c>`\n')).toBe(false)
+  })
+
+  test('hasPlaceholder: a code span ends at the start of another block, so an unclosed backtick hides nothing there (#20)', () => {
+    // A heading or list item starts a new block even without a blank line before it, and CommonMark pairs
+    // backticks within one block only.
+    expect(hasPlaceholder('# x\nAn unmatched `\n# Fill <files> with `git add`\n')).toBe(true)
+    expect(hasPlaceholder('# x\n- an unmatched ` tick\n- stage <files> with `git add`\n')).toBe(true)
+  })
+
+  test('hasPlaceholder: an escaped backtick opens no code span (#20)', () => {
+    // CommonMark reads \` as a literal backtick, so it can't pair with the opener of `git add`.
+    expect(hasPlaceholder('# x\nliteral \\`\n<files> and then `git add`\n')).toBe(true)
+    // An escaped backslash leaves the backtick after it free to open a span.
+    expect(hasPlaceholder('# x\npath \\\\`cmd\n<arg>` ok\n')).toBe(false)
+  })
+
+  test('hasPlaceholder: a heading or quote indented four spaces is paragraph text, so it ends no span (#20)', () => {
+    // CommonMark allows at most three spaces before `#` or `>`; the span runs to `end`, and <files> after it is prose.
+    expect(hasPlaceholder('# x\nText `cmd\n    # foo\nend` <files>\nthen `x`\n')).toBe(true)
+    expect(hasPlaceholder('# x\nText `cmd\n    > foo\nend` <files>\nthen `x`\n')).toBe(true)
+    // Three spaces still start a heading; a nested list item ends a span at any indent.
+    expect(hasPlaceholder('# x\nAn unmatched `\n   # Fill <files> with `git add`\n')).toBe(true)
+    expect(hasPlaceholder('# x\n- a\n  - b\n    - c with ` tick\n    - stage <files> with `git add`\n')).toBe(true)
   })
 
   test('validate: a clean report from real output', () => {
@@ -786,6 +848,94 @@ describe('logicMtimeMs sees nested logic and test files (#15)', () => {
     const facts = factsOf({ ...read, nested: [counted, ...ignored] })!
     expect(facts.logicMtimeMs).toBe(500)
     expect(facts.codeMtimeMs).toBe(900)
+  })
+})
+
+describe('a mod is listed as soon as a build reports it, before its folder exists (#19)', () => {
+  const running = (stage: 'Spec' | 'Logic', since = 0): ReportedByMod[string] => ({ stage, status: 'running', since })
+  const finished = (status: 'passed' | 'failed'): ReportedByMod[string] => ({ stage: 'Spec', status, since: 0 })
+
+  test('placeholderNames: a name with a running report and no facts gets a row; one with facts does not', () => {
+    expect(placeholderNames({ 'new-mod': running('Spec') }, ['git-branch'])).toEqual(['new-mod'])
+    expect(placeholderNames({ 'new-mod': running('Spec') }, [])).toEqual(['new-mod'])
+    expect(placeholderNames({ 'git-branch': running('Logic'), 'new-mod': running('Spec') }, ['git-branch'])).toEqual(['new-mod'])
+    expect(placeholderNames({ a: running('Spec'), b: running('Logic') }, ['git-branch'])?.slice().sort()).toEqual(['a', 'b'])
+    expect(placeholderNames({}, ['git-branch'])).toEqual([])
+  })
+
+  test('placeholderNames: a passed or failed report for a missing folder gets no row, so a typo in an old report never lingers', () => {
+    expect(placeholderNames({ typo: finished('passed') }, ['git-branch'])).toEqual([])
+    expect(placeholderNames({ typo: finished('failed') }, ['git-branch'])).toEqual([])
+    expect(placeholderNames({ typo: finished('passed'), 'new-mod': running('Spec') }, [])).toEqual(['new-mod'])
+  })
+
+  test('placeholderNames: a running report older than REPORT_TTL_MS gets no row, once liveReports has dropped it', () => {
+    const reports = { 'new-mod': running('Spec', 0) }
+    expect(placeholderNames(liveReports(reports, REPORT_TTL_MS - 1), [])).toEqual(['new-mod'])
+    expect(placeholderNames(liveReports(reports, REPORT_TTL_MS), [])).toEqual([])
+  })
+
+  test('placeholderNames: given a mods folder, only reports made in that folder get a row (Codex P2, PR #80)', () => {
+    const inOne = { ...running('Spec'), dir: '/w/one/mods' }
+    expect(placeholderNames({ 'new-mod': inOne }, [], '/w/one/mods')).toEqual(['new-mod'])
+    expect(placeholderNames({ 'new-mod': inOne }, [], '/w/two/mods')).toEqual([])
+    expect(placeholderNames({ 'new-mod': running('Spec') }, [], '/w/two/mods')).toEqual([])
+  })
+
+  test('withBuilding: running reports are kept per mods folder and name, so a same-named build elsewhere leaves this one (Codex P2, PR #80 round 4)', () => {
+    const one = withBuilding({}, '/w/one/mods', 'new-mod', running('Spec', 100), 100)
+    expect(one).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) } })
+    const both = withBuilding(one ?? {}, '/w/two/mods', 'new-mod', running('Spec', 200), 200)
+    expect(both).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) }, '/w/two/mods': { 'new-mod': running('Spec', 200) } })
+    // A finished report ends only its own folder's build.
+    expect(withBuilding(both ?? {}, '/w/two/mods', 'new-mod', { ...finished('passed'), since: 300 }, 300)).toEqual({ '/w/one/mods': { 'new-mod': running('Spec', 100) } })
+    // Expired running entries are dropped on the way in, with any folder left empty.
+    expect(withBuilding(both ?? {}, '/w/two/mods', 'other', running('Logic', 100 + REPORT_TTL_MS), 100 + REPORT_TTL_MS)).toEqual({ '/w/two/mods': { 'new-mod': running('Spec', 200), other: running('Logic', 100 + REPORT_TTL_MS) } })
+  })
+
+  test('placeholderFacts: the facts of a folder with nothing in it, under the reported name', () => {
+    const facts = placeholderFacts('new-mod')
+    expect(facts).toBeDefined()
+    expect(facts?.name).toBe('new-mod')
+    const flags = Object.entries(facts ?? {}).filter(([key]) => /^has[A-Z]/.test(key))
+    expect(flags.map(([key]) => key).sort()).toEqual(Object.keys(EMPTY).filter(key => /^has[A-Z]/.test(key)).sort())
+    expect(flags.filter(([, value]) => value !== false)).toEqual([])
+    expect(facts).toMatchObject({
+      specHasPlaceholder: false,
+      readmeHasReaches: false,
+      isListed: false,
+      isReadmeStale: false,
+      codeMtimeMs: 0,
+      firstMtimeMs: 0,
+      lastMtimeMs: 0,
+      specMtimeMs: 0,
+      logicMtimeMs: 0,
+      readmeMtimeMs: 0,
+      archetype: null,
+      builtOn: null,
+      version: null,
+      description: null,
+      listedVersion: null,
+    })
+  })
+
+  test('a placeholder view lights the reported stage running and leaves the rest pending', () => {
+    const facts = placeholderFacts('new-mod')
+    expect(facts?.name).toBe('new-mod')
+    const spec = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
+    expect(spec.name).toBe('new-mod')
+    expect(spec.lights).toEqual(STAGES.map(stage => (stage === 'Spec' ? 'running' : 'pending')))
+    const logic = viewOf(facts!, {}, [], running('Logic'), false, null, null, 'mods/new-mod')
+    expect(logic.lights).toEqual(STAGES.map(stage => (stage === 'Logic' ? 'running' : 'pending')))
+  })
+
+  test('countsOf counts a placeholder as building', () => {
+    const facts = placeholderFacts('new-mod')
+    expect(facts?.name).toBe('new-mod')
+    const placeholder = viewOf(facts!, {}, [], running('Spec'), false, null, null, 'mods/new-mod')
+    const green = viewOf(FULL, GREEN, [], null, false, null, null, 'mods/git-branch')
+    expect(countsOf([green, placeholder])).toEqual({ mods: 2, green: 1, building: 1, failing: 0, stale: 0 })
+    expect(summaryOf(countsOf([green, placeholder]))).toBe('2 mods · 1 green · 1 building')
   })
 })
 
