@@ -77,11 +77,13 @@ describe('key file', () => {
       'cat "~/.claude/duet-data/.env"', "cat '/home/u/.claude/duet-data/.env'", 'cat ~/.claude/duet-data/../duet-data/.env',
       'cat "$HOME/.claude/duet-data/.env"', 'cat "${HOME}/.claude/duet-data/.env"', 'bash -c "cat ~/.claude/duet-data/.env"', "sh -c 'cat ~/.claude/duet-data/.env'",
       "python3 -c \"open('/home/u/.claude/duet-data/.env').read()\"", 'cat ~/.claude/duet-data//.env', 'cat ~/.claude/duet-data/./.env', 'cat ~/.claude/duet-data/*',
-      'grep -r API_KEY ~/.claude/duet-data', 'ls ~/.claude/duet-data', 'cd ~/.claude/duet-data && cat .env', 'git commit -m "docs: ~/.claude/duet-data/.env"',
+      'grep -r API_KEY ~/.claude/duet-data', 'ls ~/.claude/duet-data', 'cd ~/.claude/duet-data && cat .env',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     for (const text of [
       'grep -n "duet-data/.env" README.md', 'grep -n duet-data/.env README.md', "cat > README.md <<'EOF'\nkeys live in ~/.claude/duet-data/.env (600)\nEOF", 'echo hi # ~/.claude/duet-data/.env',
       'cat <<EOF > SPEC.md\n- the file ~/.claude/duet-data/.env\nEOF\nls', 'ls ~/.claude/duet-data-old', 'ls ~/.claude',
+      // A message that names the path is text, not a read: this repo's commits and PR comments name it all the time.
+      'git commit -m "docs: ~/.claude/duet-data/.env"',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
     // A Grep's path or glob: the file, or its folder.
     for (const text of ['/home/u/.claude/duet-data', '~/.claude/duet-data/', '**/duet-data/.env', 'C:\\Users\\u\\.claude\\duet-data']) expect([text, namesKeyFolder(text)]).toEqual([text, true])
