@@ -179,7 +179,7 @@ let drives = 0
 let driving: Drive | null = null
 /** The driven run as last written: the status line's badge. */
 let drivenLast: Run | null = null
-/** The run whose drive has its publish question open; a Publish press then asks no second one (PR #96 review). */
+/** The run whose drive has its publish question open; a Publish or Stop press then asks no second one (PR #96 review). */
 let publishAsking: string | null = null
 /** Ends the long command running now (a stop, or its timeout). */
 let stopCommand: (() => void) | null = null
@@ -1635,6 +1635,8 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   // Another session's drive notices the stop within 5 s and ends itself (watch).
   const isElsewhere = drivingNow()?.runId !== run.id && isDrivenElsewhere(run, sessionId)
   if (byPress) {
+    // The drive's own publish question is open: a Stop question would stack on it.
+    if (publishAsking === run.id) return `#${run.issue}'s publish question is open; answer it first, then press Stop.`
     const refused = await refusedPress($, 'stop', run, isElsewhere)
     if (refused) return refused
   } else if (isElsewhere && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
