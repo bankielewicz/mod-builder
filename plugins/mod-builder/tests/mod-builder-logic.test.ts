@@ -1260,6 +1260,17 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(reportIn(undefined, '/w/main/mods')).toBeNull()
   })
 
+  test('roots on a drive or UNC share compare without case; POSIX roots with it (PR #95 review, Codex P2)', () => {
+    const drive = { modsDir: 'C:/Users/Me/repo/scratch/wt/mods', root: 'C:/Users/Me/repo' }
+    expect(watchedDirOf(drive, 'C:/users/me/repo', '', null, [], '/p/mods')).toEqual({ dir: drive.modsDir, pin: drive })
+    const share = { modsDir: '//Server/Share/repo/wt/mods', root: '//Server/Share/repo' }
+    expect(watchedDirOf(share, '//server/share/REPO', '', null, [], '/p/mods')).toEqual({ dir: share.modsDir, pin: share })
+    const posix = { modsDir: '/w/Main/scratch/wt/mods', root: '/w/Main' }
+    expect(watchedDirOf(posix, '/w/main', '', null, [], '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+    expect(pinCheckOf('C:/users/me/repo/wt/mods', 'C:/Users/Me/repo')).toEqual({ marketplace: 'C:/users/me/repo/wt/.claude-plugin/marketplace.json', root: 'C:/Users/Me/repo' })
+    expect(pinCheckOf('/w/main/wt/mods', '/w/Main')).toEqual({ reason: '/w/main/wt/mods is outside the project root' })
+  })
+
   test('pinCheckOf: a marketplace\'s mods folder under the project root can be pinned (PR #95 review)', () => {
     expect(pinCheckOf('/w/main/scratch/wt/mods', '/w/main')).toEqual({ marketplace: '/w/main/scratch/wt/.claude-plugin/marketplace.json', root: '/w/main' })
     expect(pinCheckOf('/w/main/mods', '/w/main/')).toEqual({ marketplace: '/w/main/.claude-plugin/marketplace.json', root: '/w/main' })
