@@ -1180,6 +1180,21 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
   return { kind: 'pass' }
 }
 
+/**
+ * The live agent's edit of a Claude Code plugin manifest (Change 0.5.0): its path, absolute and relative to the
+ * run's folder. The guard refuses it when no such file exists yet: editing one that exists (a version bump) passes.
+ */
+export function manifestOf(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext): { absolute: string; relative: string } | null {
+  const work = ctx.workRoot
+  if (!e.agentId || e.agentId !== ctx.liveAgent || !work) return null
+  const key = EDIT_PATHS[e.tool]
+  const target = key ? e[key] : undefined
+  if (typeof target !== 'string' || !isPluginManifest(target)) return null
+  const absolute = normalizePath(isAbsolutePath(target) ? target : `${work}/${target}`)
+  const prefix = `${normalizePath(work).replace(/\/$/, '')}/`
+  return { absolute, relative: absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute }
+}
+
 export function branchLine(run: Run): string {
   return `${run.branch} → ${run.base}${isWorktreeRun(run) ? ' · worktree' : ''}`
 }
