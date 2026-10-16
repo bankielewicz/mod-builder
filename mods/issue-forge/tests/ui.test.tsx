@@ -2315,12 +2315,13 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     expect(w.argv.some(isGitWrite)).toBe(false)
   })
 
-  test('start: an origin that fetches from the project and pushes to the fork is a fork clone', async ($, on) => {
+  test("start: an origin that fetches from the project and pushes to the fork is no fork clone: ls-remote origin couldn't see the fork's branches", async ($, on) => {
     const w = engine(on, { ...FORK, originUrl: 'https://github.com/o/r.git', pushUrl: 'https://github.com/me/r.git' })
     await start($)
-    await started($, w)
-    expect(w.spawned).toHaveLength(1)
-    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin pushes to me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv).not.toContainEqual(FORK_VIEW)
+    expect(w.argv.some(isGitWrite)).toBe(false)
   })
 
   test("start: preflight reads origin's push URLs once and asks gh about the fork's name once", async ($, on) => {
