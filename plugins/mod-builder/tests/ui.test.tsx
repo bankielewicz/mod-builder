@@ -2969,6 +2969,21 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect((await listed($)).names).toEqual(['beta'])
   })
 
+  test('a report made in a worktree does not light the same-named mod in the main folder (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, { ...disk(), ...modFiles('alpha', `${WT}/mods`) })
+    seen.cwd = MAIN
+    await start($)
+    await report($, { mod: 'alpha', stage: 'Logic', status: 'running', note: 'worktree alpha', path: `${WT}/mods/alpha` })
+    await clock.advance(10)
+    // The person's /cd moves the root, which drops the pin; the walk lands on the main folder's mods.
+    seen.cwd = `${MAIN}/plugins/x`
+    await command($, 'alpha')
+    await clock.advance(10)
+    const { ui, names } = await listed($)
+    expect(names).toEqual(['alpha'])
+    expect(await ui.find({ type: 'Text', text: /worktree alpha/ })).toBeUndefined()
+  })
+
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN

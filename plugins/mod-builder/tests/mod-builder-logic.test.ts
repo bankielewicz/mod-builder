@@ -126,6 +126,10 @@ const pinCheckOf = (dir: string, root: string | null): PinCheck | undefined =>
   (Logic as unknown as { pinCheckOf?: (dir: string, root: string | null) => PinCheck }).pinCheckOf?.(dir, root)
 const pinOf = (value: unknown): Pin | null | undefined => (Logic as unknown as { pinOf?: (value: unknown) => Pin | null }).pinOf?.(value)
 
+/** A row's report (PR #95 review), read the same way. */
+const reportIn = (report: Parameters<typeof liveReports>[0][string] | undefined, dir: string) =>
+  (Logic as unknown as { reportIn?: (report: unknown, dir: string) => unknown }).reportIn?.(report, dir)
+
 /** The placeholder rules (#19), read the same way: a missing rule fails its assertion, not the import. */
 type ReportedByMod = Parameters<typeof liveReports>[0]
 const placeholderFacts = (name: string): FileFacts | undefined =>
@@ -1246,6 +1250,14 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     // A session started in a parent folder, and Claude cd'd into a worktree.
     expect(watchedDirOf(null, '/home/u', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
     expect(watchedDirOf(null, '/home/u', '', '/elsewhere', both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+
+  test('reportIn: a row takes a report made in its own folder, or one with no folder (PR #95 review)', () => {
+    const report = { stage: 'Logic' as const, status: 'running' as const, since: 1 }
+    expect(reportIn({ ...report, dir: '/w/main/mods' }, '/w/main/mods')).toEqual({ ...report, dir: '/w/main/mods' })
+    expect(reportIn({ ...report, dir: '/w/main/scratch/wt/mods' }, '/w/main/mods')).toBeNull()
+    expect(reportIn(report, '/w/main/mods')).toEqual(report)
+    expect(reportIn(undefined, '/w/main/mods')).toBeNull()
   })
 
   test('pinCheckOf: a marketplace\'s mods folder under the project root can be pinned (PR #95 review)', () => {
