@@ -2198,3 +2198,26 @@ describe('PR #103 review: manifest paths and quotes, at their edges (/code-revie
     expect(logic.newModGuidance('- Build it with /mod-builder:build\n#\n')).toEqual(['- Build it with /mod-builder:build'])
   })
 })
+
+describe('PR #103 review: the guard refusal outlives a drive write computed before it (Codex 4290653342)', () => {
+  /** A helper this review adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  const P = 'mods/x/.claude-plugin/plugin.json'
+
+  test("a drive's write keeps a refusal the guard stored after the drive read the run, so the gate still blocks on it", () => {
+    const withRefusal = helper<[Run | null, Run], Run & { newPlugin?: string }>('withRefusal')
+    const read = run({ step: 'green' })
+    const stored = { ...read, newPlugin: P } as Run
+    const spawned = advance(read, { type: 'spawned', agent: { id: 'g1', phase: 'green' } }, 5)
+    expect(withRefusal(stored, spawned).newPlugin).toBe(P)
+    expect(withRefusal(stored, spawned).agents.map(a => a.id)).toEqual(['g1'])
+    expect(withRefusal(read, spawned)).toEqual(spawned)
+    expect(withRefusal(null, spawned)).toEqual(spawned)
+    const other = { ...spawned, newPlugin: 'mods/y/.claude-plugin/plugin.json' } as Run
+    expect(withRefusal(stored, other).newPlugin).toBe('mods/y/.claude-plugin/plugin.json')
+  })
+})
