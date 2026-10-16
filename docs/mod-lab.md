@@ -60,6 +60,15 @@ tool count, Bash included. With `autoRerun` on (the default), it then re-runs wh
 stale Validate runs again, followed by Test if Validate passes and Test has run before; a stale
 Test alone runs again if Validate passed. Nothing runs mid-turn or on a timer.
 
+**The pane follows Claude's edits mid-turn.** After each batch of Claude's tools, Mod Lab reads again the
+mods an Edit, Write or NotebookEdit changed in the folder it watches (a worktree a build reported
+included). After a Bash command, whose paths it can't read, it lists each mod's folder, `hooks/`,
+`tests/` and `.claude-plugin/` and reads only the mods whose `SPEC.md`, `README.md`, manifest or
+files there changed. A Bash change deeper down, or in `types/`, `agents/`, `commands/` or `skills/`,
+shows at the next report, command or turn end. This only redraws the pane: no check runs from it.
+Where an organization manages Claude Code, plugins you install don't get this event, and the pane
+refreshes as before.
+
 ## Edits
 
 `/mod-builder:edit` starts a **build generation** with its first report. Every stage that passed

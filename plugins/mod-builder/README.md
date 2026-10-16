@@ -91,6 +91,15 @@ tool count, Bash included. With `autoRerun` on (the default), it then re-runs wh
 stale Validate runs again, followed by Test if Validate passes and Test has run before; a stale
 Test alone runs again if Validate passed. Nothing runs mid-turn or on a timer.
 
+**The pane follows Claude's edits mid-turn.** After each batch of Claude's tools, Mod Lab reads again the
+mods an Edit, Write or NotebookEdit changed in the folder it watches (a worktree a build reported
+included). After a Bash command, whose paths it can't read, it lists each mod's folder, `hooks/`,
+`tests/` and `.claude-plugin/` and reads only the mods whose `SPEC.md`, `README.md`, manifest or
+files there changed. A Bash change deeper down, or in `types/`, `agents/`, `commands/` or `skills/`,
+shows at the next report, command or turn end. This only redraws the pane: no check runs from it.
+Where an organization manages Claude Code, plugins you install don't get this event, and the pane
+refreshes as before.
+
 ## Try it
 
 ```
@@ -170,7 +179,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `command.run{mod-builder:build}` and `command.run{mod-builder:edit}` (gating, with `.catch`: open the pane, then run the skill), `tool.call{mcp__mod-builder__lab_report}`, `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
+| Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command), `command.run{mod-builder:build}` and `command.run{mod-builder:edit}` (gating, with `.catch`: open the pane, then run the skill), `tool.call{mcp__mod-builder__lab_report}`, `classic.PostToolBatch` (gating, with `.catch`: starts the mid-turn rescan and returns; validate notes it doesn't run for an installed plugin where an organization manages Claude Code), `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
 | Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (its child is killed) and shown as timed out. |
 | Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. When a build reports a folder, checks its marketplace file and reads `.git` in the folder above it and at or above the project root, to tell whether it is the project's own repository or a worktree of it. With `modsDir` empty and no build's folder kept, checks whether `.claude-plugin/marketplace.json` exists in the project root (the working directory when the root can't be read) and then each folder above it, stopping at the first found, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Prompt box | `$.prompt.fill` puts `/mod-builder:build ` (N, or `/modlab new <idea>`) or a fix request (F) in the prompt box; it never submits |
@@ -182,7 +191,7 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
 | Tools it adds | `lab_report`, which records progress (with `path`, the folder being built in) and runs nothing beyond the Validate and Test above |
-| Gating hooks | 5, all with `.catch`: `/mod-builder` (command), `/mod-builder:build` and `/mod-builder:edit` (they open the pane and always run the skill), `lab_report`, `ui.close` |
+| Gating hooks | 6, all with `.catch`: `/mod-builder` (command), `/mod-builder:build` and `/mod-builder:edit` (they open the pane and always run the skill), `lab_report`, `classic.PostToolBatch` (passes every batch on), `ui.close` |
 
 ## Development
 

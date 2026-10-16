@@ -147,6 +147,20 @@ Re-check [field] items against the d.ts after a Claude Code update.
   fires it needs `on('session.end', ($, e) => ({ sessionId: e.sessionId }))`, as `session.start` needs
   its stub.
 
+- **[probe]** `classic.PostToolBatch` reaches a hooks module for the main loop's tools: once per batch,
+  after that batch's `classic.PostToolUse` events, with `e.tool_calls` (`tool_name`, `tool_input`,
+  `tool_use_id`, `tool_response?`). Probed on 2.1.301 (#100) with a throwaway mod that logged each event,
+  run headless with `claude -p --plugin-dir`: two parallel Bash calls gave two `PostToolUse` then one
+  `PostToolBatch` `["Bash","Bash"]`; a Write in the next message gave its own `PostToolBatch` `["Write"]`,
+  though the headless classifier refused it (no `PostToolUse` for it). The hook fires before the next model
+  request, so disk work in it is detached (`void … .catch`), as Mod Lab's rescan does. `claude plugin
+  validate` warns that `classic.*` hooks "do not run in a plugin a person installs where an organization
+  manages Claude Code: there, these events pass over the plugins you install, and only a plugin the
+  organization lists in managed settings runs them".
+- **[probe]** On `/mnt/c` (WSL drvfs, 2026-10-16), rewriting a file in place moves its mtime and not its
+  folder's; writing a temp file and renaming it over moves the folder's. So a folder's mtime doesn't tell
+  whether a file in it was edited (#100). Which of the two Claude's Write and Edit tools do is not probed.
+
 ## Subagents a mod spawns
 
 - **[probe]** A mod's `$.agent.spawn` reaches other plugins as a `tool.call` of `Agent` (with
@@ -355,6 +369,10 @@ Re-check [field] items against the d.ts after a Claude Code update.
   per event per test, and a second throws. Answers are `{ value }` for `$` nouns, but the event's
   own shape where one exists (`prompt.fill` → `{ isFilled, text, cursor }`). Pass options as
   `test(name, { options: {...} }, async ($, on) => …)`. `$.ui.mount` again needs `ui.unmount()` first.
+- **[probe]** A test raises a classic event with `$.classic.<Event>({ … })`, for example
+  `$.classic.PostToolBatch({ tool_calls })`, and needs an answer for it, as for any `$` call:
+  `on('classic.PostToolBatch', () => ({}))`. Without one it throws "nothing beneath the plugins answers
+  classic.PostToolBatch". With it the mod's hook runs, and `next(e)` resolves to that answer (2.1.301, #100).
 - **[probe]** `$.ui.ask` isn't an event of its own. It's a `tool.call` of `AskUserQuestion`, so a
   test answers it with `on('tool.call', { tool: 'AskUserQuestion' }, …)` returning
   `{ result: { questions, answers: { [question]: label } } }`. A `$.ui.ask` question must end in `?`.
