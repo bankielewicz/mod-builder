@@ -2090,3 +2090,25 @@ describe('a plugin fixture under the test globs is test data (Change 0.6.0, owne
     expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, ['tests/**'])).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
   })
 })
+
+describe('PR #103 review', () => {
+  /** A helper this review adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  const P = 'mods/x/.claude-plugin/plugin.json'
+
+  test("the guard's refusal lands only on the run this session still drives: never on one another session took over (Codex 4290574833)", () => {
+    const record = helper<[Run | null, string, string, string, number], (Run & { newPlugin?: string }) | null>('newPluginRecord')
+    const mine = run({ step: 'green', driver: { session: 'me', since: 1 } })
+    expect(record(mine, mine.id, 'me', P, 5)?.newPlugin).toBe(P)
+    expect(record(run({ step: 'green' }), mine.id, 'me', P, 5)?.newPlugin).toBe(P)
+    // Nothing is written at all, so the other session's run isn't rewritten from this session's read.
+    expect(record(run({ step: 'green', driver: { session: 'other', since: 2 } }), mine.id, 'me', P, 5)).toBeNull()
+    expect(record(run({ step: 'stopped', driver: { session: 'me', since: 1 } }), mine.id, 'me', P, 5)).toBeNull()
+    expect(record(mine, 'another-run', 'me', P, 5)).toBeNull()
+    expect(record(null, mine.id, 'me', P, 5)).toBeNull()
+  })
+})
