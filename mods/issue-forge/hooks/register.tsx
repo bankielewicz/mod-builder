@@ -60,6 +60,7 @@ import {
   isLockError,
   isOwnHandback,
   isOwnMailboxHandback,
+  isPluginManifest,
   isPrunable,
   isPullUrl,
   isSameRepo,
@@ -182,7 +183,7 @@ let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
 let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
-let liveWork: { root: string; workRoot: string; testGlobs: readonly string[] } | null = null
+let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; baseManifests: readonly string[] } | null = null
 /**
  * Every agent id and name a run of this repository has started, in memory for the tool.call guard
  * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
@@ -1042,6 +1043,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   if (name) knownRefs.add(name)
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
+  const baseManifests = await manifestsAt($, workOf(run), run.mergeBase)
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
   const agentId = spawned.agentId
   // An agent another plugin answered in-line (duet's Codex) has no loop and no turn.complete (C0).
@@ -1052,7 +1054,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   // Steer the agent from its first tool call: set before any other await, like the waiter.
   if (agentId) {
     liveAgent = agentId
-    liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [] }
+    liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [], baseManifests }
   }
   // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
   const latest = await loadRun($, keyOf(run))
@@ -1095,6 +1097,12 @@ async function recordNewPlugin($: EngineInterface, path: string): Promise<void> 
   if (!d) return
   const now = await $.clock.now()
   await updateRun($, d.key, stored => newPluginRecord(stored, d.runId, sessionId, path, now))
+}
+
+/** The plugin manifests at the merge base: the guard lets a phase write one back (Codex 4290574826). None when git can't list them. */
+async function manifestsAt($: EngineInterface, root: string, mergeBase: string): Promise<string[]> {
+  const listed = await git($, root, ['ls-tree', '-r', '--name-only', '-z', mergeBase]).catch(() => null)
+  return listed?.exitCode === 0 ? splitZ(listed.stdout).filter(isPluginManifest) : []
 }
 
 /** R4 and G8 (Change 0.6.0): a manifest added since the merge base, or the one the guard refused. Checked before any test runs. */
@@ -1855,7 +1863,7 @@ export const register: Register = (on, raw) => {
     if (action.kind === 'deny') return { deny: action.reason }
     const call = action.kind === 'rewrite' ? ({ ...e, ...action.patch } as typeof e) : e
     // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.6.0).
-    const manifest = manifestOf(call, ctx, liveWork?.testGlobs ?? [])
+    const manifest = manifestOf(call, ctx, liveWork?.testGlobs ?? [], liveWork?.baseManifests ?? [])
     if (manifest && !(await $.fs.stat(manifest.absolute).then(() => true, () => false))) {
       await recordNewPlugin($, manifest.relative)
       return { deny: newPluginRefusal(manifest.relative) }

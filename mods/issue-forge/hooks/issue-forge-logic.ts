@@ -1318,8 +1318,9 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
 /**
  * The live agent's edit of a Claude Code plugin manifest (Change 0.6.0): its path, absolute and relative to the
  * run's folder. The guard refuses it when no such file exists yet: editing one that exists (a version bump) passes.
+ * One at the merge base (`baseManifests`) isn't new, even while a phase has it removed (Codex 4290574826).
  */
-export function manifestOf(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext, testGlobs: readonly string[] = []): { absolute: string; relative: string } | null {
+export function manifestOf(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext, testGlobs: readonly string[] = [], baseManifests: readonly string[] = []): { absolute: string; relative: string } | null {
   const work = ctx.workRoot
   if (!e.agentId || e.agentId !== ctx.liveAgent || !work) return null
   const key = EDIT_PATHS[e.tool]
@@ -1329,7 +1330,7 @@ export function manifestOf(e: { tool: string; agentId?: string; [key: string]: u
   const prefix = `${normalizePath(work).replace(/\/$/, '')}/`
   const relative = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
   // A fixture under the test globs is test data, not a new plugin.
-  return matchesAny(relative, testGlobs) ? null : { absolute, relative }
+  return matchesAny(relative, testGlobs) || baseManifests.includes(relative) ? null : { absolute, relative }
 }
 
 export function branchLine(run: Run): string {
