@@ -61,6 +61,7 @@ import {
   toastOfRun,
   trackOf,
   viewOf,
+  type Entry,
   type FileFacts,
   type ModView,
   type Results,
@@ -853,8 +854,9 @@ describe('logicMtimeMs sees nested logic and test files (#15)', () => {
 })
 
 describe('factsOf: logicSig names the logic and test files, so a delete or rename shows (#75)', () => {
-  const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, mtimeMs })
-  const dir = (name: string, mtimeMs: number) => ({ name, kind: 'dir' as const, mtimeMs })
+  // Typed as Entry, so a listing can mix files and folders (the typecheck read `read`'s lists as files only).
+  const file = (name: string, mtimeMs: number): Entry => ({ name, kind: 'file', mtimeMs })
+  const dir = (name: string, mtimeMs: number): Entry => ({ name, kind: 'dir', mtimeMs })
   const read = {
     name: 'x',
     top: [file('SPEC.md', 100)],
