@@ -1395,5 +1395,18 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
   - `lockPathOf` in the logic tests.
 
   The 5-attempt test now counts `rev-parse --git-path index.lock`, changed in its own commit (cf78eb9).
-- **QA** (review 11) is in the PR body. The live check (an interactive session, a lock held while a run commits,
-  then `resume`) is still the merge gate.
+- **QA** (review 11) is in the PR body.
+- **Live check** (2026-10-16, Claude Code 2.1.301, git 2.53.0, head 59b2fe4) [probe]. Throwaway issue #99 ran in
+  a fresh clone in a private tmux (agent teams, in-process; the installed claudemod plugins off), and a `git`
+  wrapper on PATH logged each call's `GIT_OPTIONAL_LOCKS`:
+  - every git call the mod made carried `GIT_OPTIONAL_LOCKS=0`, `rev-parse --show-toplevel` and `worktree add`
+    (through spawn) included. `rev-parse --git-path index.lock` ran once, before the first write;
+  - `.git/worktrees/<branch>/index.lock`, made by hand while gate R's tests ran, met the red commit: five
+    `commit` attempts, then `blocked at gateR: another git process is using <that path> (5 attempts over 4 s)`,
+    the same in the pane and in `/issue-forge status`;
+  - `/issue-forge resume` with the lock still held: `add -A` failed twice, 1.05 s and 1.01 s apart. The lock
+    was released between attempts 2 and 3, and attempt 3 went through. Gate R then committed red (05abddc) and
+    green started. The run was stopped there; nothing was pushed, and #99 is closed;
+  - the engine adds its own `-c` options to every git call a mod runs, `core.hooksPath=/dev/null` among them,
+    so the run's commits skip the repository's git hooks. A repository that checks through hooks needs those
+    checks in the profile's `checks`.
