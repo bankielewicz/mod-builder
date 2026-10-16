@@ -2949,7 +2949,9 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     await start($)
     await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
     await clock.advance(10)
-    expect((await listed($)).names).toEqual(['beta'])
+    const before = await listed($)
+    expect(before.names).toEqual(['beta'])
+    await before.ui.unmount()
     // The worktree was removed after its PR merged.
     for (const path of Object.keys(files)) if (path.startsWith(`${WT}/`)) delete files[path]
     await command($, 'alpha')
