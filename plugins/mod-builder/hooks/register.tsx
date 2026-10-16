@@ -73,7 +73,8 @@ let runLimit = Lab.runLimitMsOf(undefined)
 let clock: Timer | null = null
 let lastTickMs = 0
 let scanning: Promise<void> | null = null
-let isScanQueued = false
+// What the next pass reads, merged from the requests made during a scan (Change 0.2.24).
+let queuedScan: Lab.ScanRequest | null = null
 let isQueuedAnnounced = false
 // The folder a build reported with `path`, and the root it was reported under (#92). Module state, so the
 // lab_report hook sets it before its scan without a state read: a dispatch's first `get` fixes what all its
@@ -87,6 +88,8 @@ let storeChain: Promise<void> = Promise.resolve()
 let factsByMod = new Map<string, Lab.FileFacts>()
 /** The folder and mods of the last scan that wrote its rows (`judged`): set with no await after that write. */
 let published: { modsDir: string; names: ReadonlySet<string> } | null = null
+/** The folder the last scan listed and its mod folders, in order: a pass reads only some mods while they match (Change 0.2.24). */
+let scannedFolders: { modsDir: string; names: readonly string[] } | null = null
 // Logging (Change 0.2.2): the level, this session's lines, its file once known, and writes in order.
 let logLevel: Lab.LogLevel = 'normal'
 let logBuffer: Lab.LogBuffer = Lab.EMPTY_LOG
@@ -461,37 +464,66 @@ function updateGenerations($: Engine, modsDir: string, change: (current: Record<
 
 // ── Scanning ──────────────────────────────────────────────────────────────
 
+/** Every mod read again: what every scan did before 0.2.24, and still does unless a tool batch asks for less. */
+const FULL_SCAN: Lab.ScanRequest = { isFull: true, isQuick: false, mods: [] }
+
 /**
- * Reads every mod folder, judges it and redraws. Single-flight: a call during
- * a scan queues one more pass, and every caller waits until the passes end,
+ * Reads the mod folders `request` names (every one, by default), judges them and redraws. Single-flight: a
+ * call during a scan merges its request into one more pass, and every caller waits until the passes end,
  * so what it reads afterwards reflects the disk as of its call.
  */
-function scan($: Engine, isAnnounced: boolean): Promise<void> {
+function scan($: Engine, isAnnounced: boolean, request: Lab.ScanRequest = FULL_SCAN): Promise<void> {
   if (scanning) {
-    isScanQueued = true
+    queuedScan = Lab.mergeScanRequests(queuedScan, request)
     isQueuedAnnounced ||= isAnnounced
     return scanning
   }
-  scanning = scanPasses($, isAnnounced).finally(() => {
+  scanning = scanPasses($, isAnnounced, request).finally(() => {
     scanning = null
   })
   return scanning
 }
 
-async function scanPasses($: Engine, isAnnounced: boolean): Promise<void> {
+async function scanPasses($: Engine, isAnnounced: boolean, request: Lab.ScanRequest): Promise<void> {
   let announce = isAnnounced
-  do {
-    isScanQueued = false
-    await scanOnce($, announce)
+  let next: Lab.ScanRequest | null = request
+  while (next) {
+    queuedScan = null
+    await scanOnce($, announce, next)
     announce = isQueuedAnnounced
     isQueuedAnnounced = false
-  } while (isScanQueued)
+    next = queuedScan
+  }
 }
 
-async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
+/**
+ * The mods of the last scan whose quick signature moved since it read them (Change 0.2.24): four listings
+ * each, no file read and no nested walk. A listing that fails counts as moved: can't tell isn't unchanged.
+ */
+async function movedMods($: Engine, modsDir: string, names: readonly string[]): Promise<string[]> {
+  const moved: string[] = []
+  for (const name of names) {
+    const at = `${modsDir}/${name}`
+    const unlisted: string[] = []
+    const top = await list($, at, unlisted)
+    const listIf = (folder: string): Promise<Lab.Entry[]> => (top.some(one => one.name === folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([]))
+    const [manifestDir, hooks, tests] = await Promise.all([listIf('.claude-plugin'), listIf('hooks'), listIf('tests')])
+    if (unlisted.length || Lab.quickSigOf({ top, manifestDir, hooks, tests }) !== factsByMod.get(name)?.quickSig) moved.push(name)
+  }
+  return moved
+}
+
+async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanRequest = FULL_SCAN): Promise<void> {
   const scanStartedAt = Date.now()
   const dir = await currentModsDir($)
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
+  const names = folders.map(folder => folder.name)
+  // Only some mods are read while the last scan listed the same folder and the same mods, and knows each one named.
+  const last = scannedFolders?.modsDir === dir ? scannedFolders.names : null
+  const isFull = request.isFull || last === null || last.join('\n') !== names.join('\n') || request.mods.some(name => !factsByMod.has(name))
+  const toRead = new Set(isFull ? names : [...request.mods, ...(request.isQuick ? await movedMods($, dir, [...factsByMod.keys()]) : [])])
+  // A pass for some mods where nothing moved: no file is read and nothing is judged again.
+  if (!isFull && toRead.size === 0) return
   const marketplace = await marketplaceOf($, dir)
   const results = await resultsOf($, dir)
   const generations = await generationsOf($, dir)
@@ -499,11 +531,13 @@ async function scanOnce($: Engine, isAnnounced: boolean): Promise<void> {
   const inFlight = await liveRunsOf($)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
   const found = new Map<string, Lab.FileFacts>()
-  for (const folder of folders) {
-    const facts = await modFactsOf($, dir, folder.name, marketplace)
+  // In the folder's order, so a pass that reads only some mods keeps the rows where they were.
+  for (const name of names) {
+    const facts = toRead.has(name) ? await modFactsOf($, dir, name, marketplace) : (factsByMod.get(name) ?? null)
     if (facts) found.set(facts.name, facts)
   }
   factsByMod = found
+  scannedFolders = { modsDir: dir, names }
   // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
   const freshIdOf = (name: string): string => `${dir}/${name}`
   // A build that reported a mod before writing its folder gets a row of its own until the folder is found (#19).
@@ -604,6 +638,14 @@ async function shownViews($: Engine): Promise<ModView[]> {
   if (started === null) return all
   const { now } = await read($, frame)
   return [Lab.demoViewAt(Math.max(0, now - started)), ...all]
+}
+
+/** After a tool batch: read again the mods it changed in the watched folder, or after shell the ones whose stats moved (Change 0.2.24). */
+async function rescanAfter($: Engine, calls: readonly Lab.BatchCall[]): Promise<void> {
+  const touch = Lab.batchTouch(calls, await currentModsDir($))
+  if (touch.mods.length === 0 && !touch.isShell) return
+  // Announced, as a report's and the tick's scans are: announceGreen stamps a mod done before it checks the flag.
+  await scan($, true, { isFull: false, isQuick: touch.isShell, mods: touch.mods })
 }
 
 async function refreshStatus($: Engine): Promise<void> {
@@ -1213,6 +1255,13 @@ export const register: Register = (on, options) => {
     logEvent($, 'normal', 'lab_report', 'hook failed', { error: next.error })
     return { result: 'Mod Lab: noted (the lab could not update just now).' }
   })
+
+  // After a batch of Claude's tools, the pane follows what they changed in the watched folder (Change 0.2.24, #100).
+  // The work is detached: the next model request waits on this hook. It starts no Validate or Test run.
+  on('classic.PostToolBatch', async ($, e, next) => {
+    void rescanAfter($, e.tool_calls).catch((error: unknown) => logCaught($, 'batch.rescan', error))
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId) {
