@@ -1241,6 +1241,91 @@ describe('nested logic edit during a generation (#15, Codex 4254194992)', () => 
   })
 })
 
+describe('an edit that only deletes or renames a logic or test file (#75)', () => {
+  const manifest = (v: string) => `{ "name": "git-branch", "version": "${v}", "description": "The git-branch mod." }`
+  const market = (v: string) => JSON.stringify({ plugins: [{ name: 'git-branch', source: './mods/git-branch', version: v }] })
+  const at = (path: string) => `${MODS}/git-branch/${path}`
+  const report = ($: Engine, status: string) =>
+    $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'git-branch', stage: 'Spec', status } as never)
+
+  /**
+   * A green git-branch with the `extra` files is edited. SPEC, README and the manifest are saved (0.1.0 to
+   * 0.1.1, listed), the `remove` files are deleted and the `add` files appear. No logic or test file is saved:
+   * every one left on disk keeps its old mtime, as a rename leaves it. `repeat` sends the Spec report a second
+   * time once the files have changed. Returns the mod's row after the turn that redoes Validate and Test.
+   */
+  async function scenario($: Engine, on: On, change: { extra: string[]; remove: string[]; add?: string[]; repeat?: boolean }) {
+    const mtime: Mtimes = { ms: 1000 }
+    const disk: Disk = {
+      ...modFiles('git-branch'),
+      ...Object.fromEntries(change.extra.map(path => [at(path), ''])),
+      [at('README.md')]: '# Git branch\n\n## What it reaches\n',
+      '/m/.claude-plugin/marketplace.json': market('0.1.0'),
+    }
+    const { clock } = world(on, disk, { validate: { exitCode: 0, stdout: validateClean }, test: { exitCode: 0, stdout: testPass } }, true, undefined, mtime)
+    let t = Date.parse('2026-10-12T10:00:00Z')
+    const adv = async (ms: number) => { t += ms; await clock.advance(ms) }
+    await start($)
+    await adv(10)
+    let ui = await mountPane($)
+    await ui.press({ key: 'validate' })
+    await adv(500)
+    await ui.press({ key: 'test' })
+    await adv(500)
+    await ui.unmount()
+    await adv(5000)
+    await report($, 'running')
+    await adv(10)
+    await report($, 'passed')
+
+    // The edit: files deleted or renamed, SPEC, README and the manifest saved, the version bumped and listed.
+    for (const path of change.remove) delete disk[at(path)]
+    for (const path of change.add ?? []) disk[at(path)] = ''
+    disk[at('.claude-plugin/plugin.json')] = manifest('0.1.1')
+    disk['/m/.claude-plugin/marketplace.json'] = market('0.1.1')
+    mtime.ms = t + 100
+    mtime.byPath = Object.fromEntries(Object.keys(disk).filter(path => path.startsWith(at('hooks/')) || path.startsWith(at('tests/'))).map(path => [path, 1000]))
+    await adv(200)
+    if (change.repeat) {
+      await report($, 'running')
+      await adv(10)
+      await report($, 'passed')
+      await adv(10)
+    }
+    await $.turn.complete({ answer: 'one' } as never)
+    await adv(3000)
+    ui = await mountPane($)
+    const row = (await ui.find({ key: 'row-git-branch' }))?.text
+    await ui.unmount()
+    return { row }
+  }
+
+  test('deleting only hooks/lib/parser.ts (plus SPEC, README and the manifest bump) reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/lib/parser.ts'], remove: ['hooks/lib/parser.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('deleting only a top-level tests/*.test.ts while another test file remains reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['tests/extra.test.ts'], remove: ['tests/extra.test.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('deleting only a top-level logic module while another remains reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/old-logic.ts'], remove: ['hooks/old-logic.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('renaming a nested logic file, which keeps its mtime, reaches ready to share', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/lib/parser.ts'], remove: ['hooks/lib/parser.ts'], add: ['hooks/lib/lexer.ts'] })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+
+  test('a second Spec running after the file is gone keeps the baseline the edit began with', OPTIONS, async ($, on) => {
+    const r = await scenario($, on, { extra: ['hooks/lib/parser.ts'], remove: ['hooks/lib/parser.ts'], repeat: true })
+    expect(r.row).toMatch(/ ready to share$/)
+  })
+})
+
 describe('edit failures', () => {
   async function greenThenEdit($: Engine, on: On, outputs: { validate?: Output; test?: Output }) {
     const disk = {

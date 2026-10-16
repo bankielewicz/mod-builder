@@ -139,6 +139,7 @@ const EMPTY: FileFacts = {
   isReadmeStale: false,
   specMtimeMs: 0,
   logicMtimeMs: 0,
+  logicSig: 'logic-a',
   readmeMtimeMs: 0,
   listedVersion: null,
 }
@@ -848,6 +849,138 @@ describe('logicMtimeMs sees nested logic and test files (#15)', () => {
     const facts = factsOf({ ...read, nested: [counted, ...ignored] })!
     expect(facts.logicMtimeMs).toBe(500)
     expect(facts.codeMtimeMs).toBe(900)
+  })
+})
+
+describe('factsOf: logicSig names the logic and test files, so a delete or rename shows (#75)', () => {
+  const file = (name: string, mtimeMs: number) => ({ name, kind: 'file' as const, mtimeMs })
+  const dir = (name: string, mtimeMs: number) => ({ name, kind: 'dir' as const, mtimeMs })
+  const read = {
+    name: 'x',
+    top: [file('SPEC.md', 100)],
+    manifestDir: [file('plugin.json', 100)],
+    hooks: [file('hooks.json', 100), file('register.tsx', 100), file('x-logic.ts', 200), dir('lib', 100)],
+    tests: [file('x-logic.test.ts', 300), file('y.test.ts', 300)],
+    types: [file('index.d.ts', 100)],
+    nested: [file('hooks/lib/parser.ts', 100), file('tests/unit/parser.test.ts', 100)],
+    spec: '# x',
+    readme: null,
+    manifest: null,
+    marketplace: '',
+  }
+  const sigOf = (change: Partial<typeof read> = {}) => factsOf({ ...read, ...change })!.logicSig
+
+  test('the signature is a string, the same for the same files', () => {
+    expect(typeof sigOf()).toBe('string')
+    expect(sigOf({ ...read })).toBe(sigOf())
+  })
+
+  test('a removed, renamed or added top-level logic module or test file changes it', () => {
+    const before = sigOf()
+    expect(typeof before).toBe('string')
+    const hooks = read.hooks.filter(entry => entry.name !== 'x-logic.ts')
+    const removedLogic = sigOf({ hooks })
+    const removedTest = sigOf({ tests: [file('x-logic.test.ts', 300)] })
+    // A rename keeps the file's mtime.
+    const renamedLogic = sigOf({ hooks: [...hooks, file('z-logic.ts', 200)] })
+    const renamedTest = sigOf({ tests: [file('x-logic.test.ts', 300), file('z.test.ts', 300)] })
+    const addedLogic = sigOf({ hooks: [...read.hooks, file('w-logic.ts', 50)] })
+    const addedTest = sigOf({ tests: [...read.tests, file('w.test.ts', 50)] })
+    const all = [before, removedLogic, removedTest, renamedLogic, renamedTest, addedLogic, addedTest]
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  test('a removed, renamed, moved or added nested logic or test file changes it', () => {
+    const before = sigOf()
+    expect(typeof before).toBe('string')
+    const unit = file('tests/unit/parser.test.ts', 100)
+    const parser = file('hooks/lib/parser.ts', 100)
+    const removedLogic = sigOf({ nested: [unit] })
+    const removedTest = sigOf({ nested: [parser] })
+    const renamedLogic = sigOf({ nested: [file('hooks/lib/lexer.ts', 100), unit] })
+    const movedLogic = sigOf({ nested: [file('hooks/util/parser.ts', 100), unit] })
+    const addedLogic = sigOf({ nested: [...read.nested, file('hooks/lib/deep/more.ts', 100)] })
+    const addedTest = sigOf({ nested: [...read.nested, file('tests/unit/lexer.test.tsx', 100)] })
+    const all = [before, removedLogic, removedTest, renamedLogic, movedLogic, addedLogic, addedTest]
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  test('register.*, .d.ts, data files, types/, helpers under tests/ and folders leave it alone', () => {
+    const before = sigOf()
+    expect(typeof before).toBe('string')
+    const ignored = [
+      file('hooks/lib/register.ts', 900),
+      file('hooks/lib/register.tsx', 900),
+      file('hooks/lib/types.d.ts', 900),
+      file('hooks/lib/data.json', 900),
+      file('hooks/lib/README.md', 900),
+      file('types/lib/api.ts', 900),
+      file('types/lib/api.d.ts', 900),
+      file('tests/fixtures/helper.ts', 900),
+      file('tests/fixtures/data.json', 900),
+      file('tests/fixtures/x-logic.ts', 900),
+      dir('hooks/lib/deeper', 900),
+    ]
+    expect(sigOf({ nested: [...read.nested, ...ignored] })).toBe(before)
+    expect(sigOf({ hooks: read.hooks.filter(entry => entry.name !== 'register.tsx') })).toBe(before)
+    expect(sigOf({ hooks: [...read.hooks, file('register.ts', 900), file('types.d.ts', 900), file('data.json', 900), dir('more', 900)] })).toBe(before)
+    expect(sigOf({ types: [] })).toBe(before)
+    expect(sigOf({ types: [file('index.d.ts', 100), file('extra.d.ts', 100)] })).toBe(before)
+    expect(sigOf({ top: [file('SPEC.md', 900), file('README.md', 900), file('.mcp.json', 900)] })).toBe(before)
+    expect(sigOf({ tests: [...read.tests, dir('fixtures', 900), file('helper.ts', 900)] })).toBe(before)
+  })
+})
+
+describe('lightsOf: a changed set of logic and test files redoes the Logic stage during an edit (#75)', () => {
+  // The edit began at 1000. Every logic and test file is older (300), as after a delete or a rename, and the rest is redone.
+  const after: FileFacts = {
+    ...FULL,
+    version: '0.2.0',
+    listedVersion: '0.2.0',
+    specMtimeMs: 1100,
+    logicMtimeMs: 300,
+    readmeMtimeMs: 1300,
+    codeMtimeMs: 1200,
+    codeSig: 'sig-b',
+    logicSig: 'after',
+  }
+  const rerun: Results = {
+    Validate: { kind: 'Validate', ok: true, stampMs: 1200, atMs: 1400, codeSig: 'sig-b', summary: 'clean', errors: [] },
+    Test: { kind: 'Test', ok: true, stampMs: 1200, atMs: 1450, codeSig: 'sig-b', summary: 'ok', errors: [], tests: { passed: 3, failed: 0 } },
+  }
+  const PASSED = STAGES.map(() => 'passed')
+  const STALE_LOGIC = STAGES.map(stage => (stage === 'Logic' ? 'stale' : 'passed'))
+
+  test('a generation logicSig that differs from the current one gives Logic passed', () => {
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(PASSED)
+    expect(isGreen(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before'))).toBe(true)
+  })
+
+  test('the same logicSig, none stored, or none passed keeps today\'s rule: Logic stale', () => {
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'after')).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', null)).toEqual(STALE_LOGIC)
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0')).toEqual(STALE_LOGIC)
+  })
+
+  test('a logic file saved after the edit began is redone with the same logicSig, as before', () => {
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
+    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, 1000, '0.1.0', 'after')).toEqual(PASSED)
+    expect(lightsOf({ ...after, logicMtimeMs: 1200 }, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(PASSED)
+  })
+
+  test('a differing logicSig only matters during an edit, and never makes a missing stage pass', () => {
+    expect(lightsOf(after, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('passed')
+    // Outside an edit nothing is stale for being old.
+    expect(lightsOf({ ...after, logicSig: 'after' }, rerun, [], null, null, null, 'before')).toEqual(PASSED)
+    // If the edit removed the last test file or the last logic module, Logic is still not done.
+    expect(lightsOf({ ...after, hasTests: false }, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('pending')
+    expect(lightsOf({ ...after, hasLogic: false }, rerun, [], null, 1000, '0.1.0', 'before')[2]).toBe('pending')
+  })
+
+  test('a differing logicSig leaves the other stages as they were', () => {
+    const stale: FileFacts = { ...after, specMtimeMs: 100, readmeMtimeMs: 100 }
+    expect(lightsOf(stale, rerun, [], null, 1000, '0.1.0', 'before')).toEqual(STAGES.map(stage => (stage === 'Spec' || stage === 'README' ? 'stale' : 'passed')))
   })
 })
 
