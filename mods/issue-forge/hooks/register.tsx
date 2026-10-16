@@ -42,6 +42,7 @@ import {
   isActive,
   isDrivenElsewhere,
   isIndexLockError,
+  lockPathOf,
   isLockError,
   isOwnHandback,
   isOwnMailboxHandback,
@@ -242,8 +243,9 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
     if (r.exitCode === 0) return r
     // A linked worktree's lock is under the main .git folder: git says where, once.
     lockPath ??= (await git($, root, ['rev-parse', '--path-format=absolute', '--git-path', 'index.lock'])).stdout.trim() || 'index.lock'
-    if (!isIndexLockError(r.stderr) && !(await $.fs.exists(lockPath))) return r
-    if (attempt === INDEX_ATTEMPTS) throw new IndexLocked(lockPath)
+    const text = `${r.stderr}\n${r.stdout}`
+    if (!isLockError(text) && !(await $.fs.exists(lockPath))) return r
+    if (attempt === INDEX_ATTEMPTS) throw new IndexLocked(lockPathOf(text) ?? lockPath)
     await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
     stillDriving(run)
   }

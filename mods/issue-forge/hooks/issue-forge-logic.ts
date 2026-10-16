@@ -1848,6 +1848,11 @@ export function isLockError(text: string): boolean {
   return /cannot lock ref|unable to create '[^']*\.lock'|could not lock|\.lock': file exists/i.test(text)
 }
 
+/** The lock file git says it couldn't create (`Unable to create '<path>.lock': File exists`), the index's or a ref's; else null. */
+export function lockPathOf(text: string): string | null {
+  return text.match(/unable to create '([^']*\.lock)'/i)?.[1] ?? null
+}
+
 /** git refusing because another process holds the index lock: add, commit, switch and merge say so on stderr (#28). */
 export function isIndexLockError(text: string): boolean {
   return /Unable to create '[^']*index\.lock': File exists/.test(text)
