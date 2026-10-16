@@ -1678,7 +1678,7 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
   const ISSUE_VIEW = ['gh', 'issue', 'view', '16', '--repo', 'github.com/o/r', '--json', 'number,title,body,state,url']
   const REPO_VIEW = ['gh', 'repo', 'view', '--json', 'nameWithOwner,url']
   const BUT = 'but gh sends issues and pull requests to o/r'
-  const NEXT_CLONE = 'work from a clone whose origin is o/r (forks: #26)'
+  const NEXT_CLONE = 'work from a clone whose origin is o/r, or whose origin is your fork of o/r with another remote for o/r'
   /** The store the mod writes to, readable here. */
   const watched = (): Record<string, unknown> => ({})
   const WATCH = { when: () => false, until: Promise.resolve() }
