@@ -288,10 +288,14 @@ once the agent starts, and the agent's answer arrives as the `turn.complete` tha
 
 Each spawn's `prompt` holds the issue number, title and body, the profile's globs and `notes`,
 and, on a retry, the failed gate checks verbatim. The green prompt also holds the red agent's final
-answer (what it tried, what broke), after the issue in a `<red-notes>` block, marked as context and not
-instructions, and cut to its last 200 lines as a test tail is. Red's answer is written from the issue, so
-a `<red-notes` or `</red-notes` in it is written `<\red-notes` the way the issue's `<issue` is. Red and
-refactor never get it.
+answer (its tests, and what green should know about the fix, as red's rules ask), after the issue in a
+`<red-answer>` block, marked as context and not instructions. It is cut to its last 20,000 characters and
+then its last 200 lines, and a line at the top of the block says when it was cut. Red's answer is written
+from the issue, so a whole `<red-answer` or `</red-answer` tag in it gets a backslash after its `<`
+(`<\red-answer`, `<\/red-answer`), as the issue's `<issue` and `</issue` do; a word that only starts
+like one, such as `<IssueKey>`, stays as written. Only an answer from a turn that ended by answering
+counts (not an error, a refusal or an interrupt). On a behaviour detour, red's new answer joins the
+first once its gate R passes, so a green retry after the detour sees both. Red and refactor never get it.
 
 **Red on Codex (MVP if P1 passes, §1).** Set `redAgentType` to an agent type that the duet mod
 routes to Codex (listed in duet's `codexAgents`). The model is duet's `codexModel`; Codex's catalog
