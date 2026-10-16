@@ -702,6 +702,13 @@ describe('prompts, commits, stashes, hand-backs', () => {
     }
   })
 
+  // Green gets red's answer to skip red's dead ends, so red is asked to name them (PR #89 review).
+  test('red is told to end with what the green phase should know about the fix', () => {
+    expect(agentPrompt('red')).toContain(
+      'End with a list of the new test names and one line on why each fails, then what the green phase should know about the fix: an approach that breaks other tests, a dead end, a constraint.',
+    )
+  })
+
   // A pasted test log can't take a quarter of green's context: the answer keeps its end (the test list and what red learned), and says it was cut (PR #89 review).
   test("a red answer is cut to its last 20,000 characters and 200 lines, and the block says when it was", () => {
     const huge = phasePrompt('green', run({ redAnswer: `${'x'.repeat(1_000_000)}END-OF-ANSWER` }))
