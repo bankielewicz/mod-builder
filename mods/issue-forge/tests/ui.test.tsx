@@ -2519,4 +2519,29 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
     expect(w.files['/home/u/.claude/issue-forge-data/16-1/pr.md']).toContain("the merge check couldn't run: upstream no longer fetches from o/r")
   })
+
+  // Codex on PR #87 (round 3): a branch kept by a preflight block was named for the fork origin pushed to then.
+  test('start: a fork run that blocks after making its branch keeps the fork and the base remote with it', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { ...FORK, baseProfile: { ...PROFILE, workspace: 'worktree' }, worktreeAddFails: true, storeHold: WATCH }, store)
+    await start($)
+    expect(await started($, w)).toContain('blocked at preflight')
+    const stored = Object.entries(store).find(([k]) => k.startsWith('issue-forge:repo-run:') && k.endsWith('#16'))?.[1] as Record<string, unknown> | undefined
+    expect(stored?.branch).toBe(BRANCH)
+    expect(stored?.headRepo).toBe('github.com/me/r')
+    expect(stored?.baseRemote).toBe('upstream')
+  })
+
+  test("resume at preflight of a fork run's kept branch blocks when origin now pushes to another fork: the name was checked on the first", async ($, on) => {
+    const atPreflight = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'preflight', reason: 'r', next: 'n' }, ...ZERO })
+    const w = engine(on, { ...FORK, originUrl: 'https://github.com/you/r.git', head: BRANCH }, { [`issue-forge:run:${ROOT}`]: atPreflight })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain("blocked at preflight: origin now pushes to you/r, not me/r, where the run's branch was named")
+    expect(status).toContain('next: point origin back at me/r, or start a new run')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
 })

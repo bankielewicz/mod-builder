@@ -1841,4 +1841,16 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
     expect(prBody(clean)).toContain('At publish time this merged cleanly with upstream/main.')
     expect(prBody(conflict)).toContain('At publish time this conflicted with upstream/main in: a.ts.')
   })
+  // Codex on PR #87 (round 3): a kept branch's name was checked where origin pushed when it was made.
+  test('keptForkBlock: a kept branch is reused only while origin pushes where its name was checked', () => {
+    const keptForkBlock = helper<[string | undefined, string | undefined, string], unknown>('keptForkBlock')
+    const PIN = 'github.com/o/r'
+    expect(keptForkBlock('github.com/me/r', 'github.com/me/r', PIN)).toBe(null)
+    expect(keptForkBlock('github.com/me/r', 'github.com/Me/R', PIN)).toBe(null)
+    expect(keptForkBlock(undefined, undefined, PIN)).toBe(null)
+    expect(keptForkBlock('github.com/me/r', 'github.com/you/r', PIN)).toEqual({ reason: "origin now pushes to you/r, not me/r, where the run's branch was named", next: 'point origin back at me/r, or start a new run' })
+    // A branch made without a fork was named on the project, and one made for a fork on that fork.
+    expect(keptForkBlock(undefined, 'github.com/you/r', PIN)).toEqual({ reason: "origin now pushes to you/r, not o/r, where the run's branch was named", next: 'point origin back at o/r, or start a new run' })
+    expect(keptForkBlock('github.com/me/r', undefined, PIN)).toEqual({ reason: "origin now pushes to o/r, not me/r, where the run's branch was named", next: 'point origin back at me/r, or start a new run' })
+  })
 })
