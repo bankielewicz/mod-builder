@@ -3044,6 +3044,15 @@ describe('new plugins are mod-builder\'s (Change 0.6.0)', () => {
     expect((await run($, 'status')).text).toContain("1. Nothing past red's commit was committed, and nothing was pushed.")
   })
 
+  test("a pull request's number is refused as a pull request, even when its body reads as a new plugin (PR #103 /code-review)", async ($, on) => {
+    const w = engine(on, { issueBody: NEW_MOD_BODY, issueUrl: 'https://github.com/o/r/pull/16' })
+    await start($)
+    const { text } = (await run($, '16')) as { text: string }
+    expect(text.startsWith('#16 asks for a new Claude Code plugin.')).toBe(false)
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at preflight: #16 is a pull request, not an issue')
+  })
+
   test('the gates read added paths with rename detection off, so a moved manifest counts as added (PR #103 /code-review)', async ($, on) => {
     const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', MANIFEST], sinceRed: [MANIFEST], redPaths: ['tests/a.test.ts'], added: [MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
     await start($)
