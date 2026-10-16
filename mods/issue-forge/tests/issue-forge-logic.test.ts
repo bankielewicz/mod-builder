@@ -83,6 +83,7 @@ import {
   repoAgentsKeys,
   profileProblems,
   profileStatusText,
+  publishAsk,
   publishQuestion,
   ranges,
   readdWorktreeCommand,
@@ -1811,5 +1812,22 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
     expect(forkRemoteVerdict('https://github.com/O/R.git', PIN)).toEqual({ kind: 'match' })
     expect(forkRemoteVerdict('https://gitlab.com/o/r.git', PIN)).toEqual({ kind: 'other', repo: 'gitlab.com/o/r' })
     expect(forkRemoteVerdict('/srv/r.git', PIN)).toEqual({ kind: 'unrecognised' })
+  })
+
+  // PR #87 review: what a fork run says names the remotes it uses.
+  test("workspacePlan: a busy checkout's block names the ref the profile is read from, the project remote's in a fork clone", () => {
+    const busy = { isBusy: true, why: 'uncommitted changes' }
+    expect(workspacePlan('here', busy, 'main', 'upstream/main')).toEqual({
+      kind: 'block',
+      reason: 'the checkout is busy (uncommitted changes)',
+      next: "set \"workspace\" to \"worktree\" or \"ask\" in .issue-forge.json on main (the run reads upstream/main's copy), or clean the checkout",
+    })
+  })
+
+  test('publishAsk: a fork run names the fork the branch is pushed to, beside the project the pull request opens on', () => {
+    const fork = run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r' })
+    expect(publishAsk(fork)).toBe('Push issue-16-fix-it to me/r and open a pull request on o/r against main?')
+    expect(publishAsk({ ...fork, headRepo: 'ghe.example.com/me/r' })).toBe('Push issue-16-fix-it to ghe.example.com/me/r and open a pull request on o/r against main?')
+    expect(publishAsk(run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r' }))).toBe('Push issue-16-fix-it and open a pull request on o/r against main?')
   })
 })
