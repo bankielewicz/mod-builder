@@ -46,13 +46,23 @@ and measures every run so you route by evidence rather than by assumption.
 /duet demo
 ```
 
-- `/duet`: opens or closes the pane (`ctrl+x tab` gives it the keyboard: r review, s stats, j/k move, c close)
+- `/duet`: opens the pane, or closes it when it is shown. When it is open as a tab behind another pane, it comes to the front with the keyboard instead of closing; `Esc` returns the keyboard to the prompt. Keys once the pane has the keyboard (`ctrl+x tab`, again for the next tab): r review, s stats, j/k move, c close
 - `/duet demo`: one task in each state until the turn ends; nothing runs
 - `/duet review [--base <branch> | --commit <sha>]`: an independent read-only Codex review (default: uncommitted changes)
 - `/duet show <id>`: a review's full text
 - `/duet stats`: runs, success rate, median time and tokens per provider and subagent type
 - `/duet routes`: what goes where, what stays on Claude, each role's wait/background mode, and the sandbox
 - `/duet config`: opens a config pane listing every option with its value. `j`/`k` move the highlight, `e` changes the highlighted option (sandbox, consent and scope step to their next choice; the others open a text box, Enter sets it), `s` saves, `u` reverts unsaved edits, `c` closes. Edited rows are marked `•` until saved; after `s` the pane stays open (or comes back after duet reloads with the new settings) on the same row. On the `model` row, `e` opens Codex's live model list (`codex debug models`): `1`–`9` pick a model, `0` clears it back to Codex's default, and either closes the list; `t` types a name instead, `r` refreshes, and a name Codex doesn't list gets a "did you mean" warning. `/duet config list` prints the options as text, `/duet config models` lists the models Codex offers, and `/duet config <field> <value>` changes one directly (aliases `agents`, `sandbox`, `model`, `max`, `timeout`, `consent`, `mode`, `scope`, `paths`; `""` clears a text field). Use this when `/plugin` no longer shows options that already have a value
+
+Reaching the pane when other panes are open: `ctrl+x tab` shows the first tab and gives it the keyboard,
+each press after moves one tab right, and after the last tab the keyboard goes back to the prompt. `Esc` hands
+it back from any tab. A letter that is one of the pane's keys acts at once. To cycle without going through the
+first tab, bind `pane:next` and `pane:previous` (no default key) in `~/.claude/keybindings.json`; it works while a
+pane holds the keyboard:
+
+```json
+{"bindings":[{"context":"Pane","bindings":{"ctrl+x n":"pane:next","ctrl+x p":"pane:previous"}}]}
+```
 
 ## Install
 

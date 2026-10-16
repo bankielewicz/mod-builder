@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { DEMO_ITEMS, moved, rowsThatFit, summaryOf, toggled } from './__NAME__-logic'
+import { DEMO_ITEMS, moved, paneAction, rowsThatFit, summaryOf, toggled } from './__NAME__-logic'
 
 /**
  * __TITLE__: a pane beside the transcript, opened by /__NAME__.
@@ -10,17 +10,40 @@ import { DEMO_ITEMS, moved, rowsThatFit, summaryOf, toggled } from './__NAME__-l
  */
 
 const PANE = '__NAME__'
+/** The pane as every open asks for it; bringing it to the front adds only `focus`. */
+const PANE_ARGS = { id: PANE, title: '__TITLE__', columns: 60 }
+/** How long after asking for the front the pane is read again. */
+const FRONT_CHECK_MS = 500
 
 const items = atom({ plugin: '__NAME__', key: 'items' } as const, [])
 const selected = atom({ plugin: '__NAME__', key: 'selected' } as const, 0)
 
 async function openPane($: EngineInterface): Promise<void> {
-  const opened = await $.ui.open({ id: PANE, title: '__TITLE__', columns: 60 })
+  const opened = await $.ui.open(PANE_ARGS)
   if (!opened.isPlaced) $.ui.toast('__TITLE__ needs a wider window. Widen it to see the pane.')
 }
 
-async function isOpen($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE)
+async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneAction>> {
+  return paneAction(await $.ui.panes(), PANE)
+}
+
+/**
+ * Asks for a pane that is a tab behind another to the front, with the keyboard. Only for a person who asked to see the
+ * pane: a start or a background open never takes the keyboard. A pane still behind another afterwards is named in a toast.
+ */
+async function bringToFront($: EngineInterface): Promise<void> {
+  await $.ui.open({ ...PANE_ARGS, focus: true })
+  $.clock.after(FRONT_CHECK_MS, () => void warnIfBehind($).catch(() => undefined))
+}
+
+async function warnIfBehind($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') $.ui.toast('__TITLE__ is still behind another tab: ctrl+x tab, then again until it shows.')
+}
+
+/** A command that names the pane: a tab behind another comes to the front, any other pane is opened as before. */
+async function openOrFront($: EngineInterface): Promise<void> {
+  if ((await paneActionOf($)) === 'show') void bringToFront($).catch(() => undefined)
+  else await openPane($)
 }
 
 async function move($: EngineInterface, by: number): Promise<void> {
@@ -44,15 +67,19 @@ export const register: Register = on => {
   on('command.run', { command: '__NAME__' }, async ($, e) => {
     try {
       if (e.args.trim().toLowerCase() === 'demo') {
-        void (async () => {
-          await update($, items, () => DEMO_ITEMS)
-          await openPane($)
-        })().catch(() => undefined)
+        // The open goes out before this hook returns, ahead of the demo items: an open after that is unasked.
+        await openOrFront($).catch(() => undefined)
+        void update($, items, () => DEMO_ITEMS).catch(() => undefined)
         return { text: '__TITLE__: demo items are in the pane.' }
       }
-      const wasOpen = await isOpen($)
-      void (wasOpen ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
-      return { text: wasOpen ? '__TITLE__ closed. /__NAME__ to reopen.' : '__TITLE__ opened.' }
+      // Three states: not open, shown, or open as a tab behind another pane.
+      const action = await paneActionOf($)
+      if (action === 'show') {
+        void bringToFront($).catch(() => undefined)
+        return { text: 'Bringing __TITLE__ to the front; it takes the keyboard if your prompt is empty (Esc gives it back).' }
+      }
+      void (action === 'close' ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
+      return { text: action === 'close' ? '__TITLE__ closed. /__NAME__ to reopen.' : '__TITLE__ opened.' }
     } catch {
       return { text: '__TITLE__: something went wrong; see claude --debug.' }
     }

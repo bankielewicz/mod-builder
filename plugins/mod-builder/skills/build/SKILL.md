@@ -152,6 +152,10 @@ those results stale: run Verify again (and report Validate and Test again) befor
 3. **Hand off** in plain words:
    - how to load it the first time (`/plugin install <name>@<marketplace>`, or `claude --plugin-dir`)
    - how to open it (`/<name>`) and see the demo
+   - how to reach its pane when other panes are open: `ctrl+x tab` shows the first tab and gives it the
+     keys, each press after moves one tab right, and after the last tab the keys go back to the prompt;
+     `Esc` returns the keys from any tab; a click on a tab shows it where the terminal passes clicks
+     (`[d.ts]`, not observed)
    - how to configure it (the config menu for `userConfig`)
    - that `/reload-plugins` picks up later edits
    - `/modlab` to see its pipeline, if Mod Lab is installed

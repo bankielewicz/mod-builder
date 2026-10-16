@@ -163,8 +163,18 @@ type World = {
   commits: string[]
   spawned: { subagentType: string; name?: string; model?: string; prompt: string; cwd?: string }[]
   asked: string[]
+  /** The labels each question offered, in the order asked (#31). */
+  choices: string[][]
   toasts: string[]
   opened: string[]
+  /** Every `$.ui.open`, whole: `focus` included (#31). */
+  opens: { id: string; title?: string; columns?: number; focus?: boolean }[]
+  /** Every id `$.ui.close` was asked to close (#31). */
+  closed: string[]
+  /** What `$.ui.panes()` lists (#31): `isShown: false` is a tab behind another pane, `isPlaced: false` one waiting undrawn (placed unless it says so). Absent, none is open. */
+  panes?: { id: string; isShown: boolean; isPlaced?: boolean }[]
+  /** A listed pane comes to the front once it was opened (#31). */
+  showOnOpen?: boolean
   files: Record<string, string>
   beneath: string[]
   clock: any
@@ -207,8 +217,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     commits: [],
     spawned: [],
     asked: [],
+    choices: [],
     toasts: [],
     opened: [],
+    opens: [],
+    closed: [],
     files: {},
     beneath: [],
     clock: null,
@@ -233,9 +246,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
   on('command.register', ($: any, e: any) => (world.registered.push(e), { value: undefined }))
   on('agent.register', ($: any, e: any) => ({ value: { agent: `issue-forge:${e.name}` } }))
-  on('ui.open', ($: any, e: any) => (world.opened.push(e.id), { value: { isPlaced: world.isPlaced } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
+  on('ui.open', ($: any, e: any) => (world.opened.push(e.id), world.opens.push({ ...e }), { value: { isPlaced: world.isPlaced } }))
+  on('ui.panes', () => ({
+    value: (world.panes ?? []).map(pane => ({ id: pane.id, title: 'Issue Forge', isFocused: false, isPlaced: pane.isPlaced ?? true, isShown: pane.isShown || (world.showOnOpen === true && world.opened.includes(pane.id)) })),
+  }))
+  on('ui.close', ($: any, e: any) => (world.closed.push(e.id), { value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', ($: any, e: any) => (world.toasts.push(e.text ?? String(e)), { value: undefined }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
@@ -245,6 +260,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('tool.call', { tool: 'AskUserQuestion' }, ($: any, e: any) => {
     const q = e.questions[0].question
     world.asked.push(q)
+    world.choices.push((e.questions[0].options ?? []).map((option: any) => option.label))
     if (world.hold) return world.hold.then(label => ({ result: { questions: e.questions, answers: { [q]: label } } }))
     if (world.answer === null) return { deny: 'nobody to ask' }
     return { result: { questions: e.questions, answers: { [q]: world.answer } } }
@@ -421,6 +437,11 @@ const run = ($: any, args: string) => $.command.run({ command: 'issue-forge', ar
 async function until(w: World, cond: () => boolean, label: string): Promise<void> {
   for (let i = 0; i < 400 && !cond(); i++) await w.clock.advance(5)
   if (!cond()) throw new Error(`timed out waiting for ${label}`)
+}
+
+/** Like `until`, but a miss is left to the test's own assertion: the test then fails by it, not by a timeout. */
+async function waitFor(w: World, cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 400 && !cond(); i++) await w.clock.advance(5)
 }
 
 const turn = (agentId: string, answer: string) => ({ answer, durationMs: 1000, isAborted: false, turnId: `t-${agentId}`, agentId, reason: 'answer' })
@@ -1512,6 +1533,45 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(w.asked).toEqual([])
   })
 
+  test('a Stop press on a run another session drives asks one question that says so: Keep it running leaves it, Stop the run stops it (PR #96 review)', async ($, on) => {
+    const store: Record<string, unknown> = { [key(40)]: elsewhere40() }
+    const w = engine(on, { head: 'issue-40-x', answer: 'Keep it running', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'status 40')
+    const ask = '#40 is driven by another session (for 2m05s). Stop run #40? Its branch and commits are kept.'
+    let ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('left #40')))
+    await ui.unmount()
+    expect(w.asked).toEqual([ask])
+    expect((store[key(40)] as any).step).toBe('green')
+    w.answer = 'Stop the run'
+    ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('stopped #40')))
+    await ui.unmount()
+    expect(w.asked).toEqual([ask, ask])
+    expect((store[key(40)] as any).step).toBe('stopped')
+  })
+
+  test('a Publish press on a ready run while this session drives another refuses before asking (PR #96 review)', async ($, on) => {
+    const ready44 = storedRun('ready', { id: '44-1', issue: 44, branch: 'issue-44-duet', repo: `${ROOT}/.git`, greenCommit: 'c2', gatedHead: 'c0' })
+    const w = engine(on, { answer: START16, baseProfile: WORKTREE, spawnHold: held() }, { [key(44)]: ready44 })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    await run($, 'status 44')
+    const asked = w.asked.length
+    w.answer = 'Publish'
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('this session is driving #16')))
+    await ui.unmount()
+    expect(w.asked.length).toBe(asked)
+    expect(w.toasts.some(t => t.startsWith('this session is driving #16'))).toBe(true)
+    expect(w.argv.some(a => a[1] === 'push')).toBe(false)
+  })
+
   test('a run another session drives: Cancel or no answer refuses and writes nothing; Take over resumes it here', async ($, on) => {
     const store: Record<string, unknown> = { [key(40)]: elsewhere40() }
     const w = engine(on, { head: 'issue-40-x', answer: 'Cancel', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
@@ -2147,6 +2207,377 @@ describe('an issue URL, and a run pinned to one repository (#25)', () => {
     await run($, 'status')
     const ui = await pane($)
     expect(await ui.find({ type: 'Text', text: /^\/issue-forge <issue number or URL> starts another\.$/ })).toBeDefined()
+  })
+})
+
+describe('a pane behind another tab is brought to the front, not closed (#31)', () => {
+  const SHOW = 'bringing the pane to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
+  const STILL_BEHIND = 'Issue Forge is still behind another tab: ctrl+x tab, then again until it shows.'
+  const HIDDEN = [{ id: 'issue-forge', isShown: false }]
+  /** Open but waiting undrawn: an unasked open on a narrow terminal, or any open with no surface to draw it (d.ts `UiPane.isPlaced`). */
+  const WAITING = [{ id: 'issue-forge', isShown: false, isPlaced: false }]
+  // The read after the open may come at once or after 500 ms (the probe of #31 decides), so each test lets 1 s pass.
+  const SETTLED_MS = 1000
+  const BEHIND = '(ctrl+x tab, then again until it shows)'
+
+  test('a bare /issue-forge answers at once, opens the hidden pane with the keyboard, and closes nothing', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN })
+    await start($)
+    expect((await run($, '')).text).toBe(SHOW)
+    await w.clock.advance(SETTLED_MS)
+    expect(w.closed).toEqual([])
+    expect(w.opens.at(-1)).toMatchObject({ id: 'issue-forge', title: 'Issue Forge', columns: 76, focus: true })
+  })
+
+  test('a bare /issue-forge by pane state: not listed opens without the keyboard, shown closes, hidden is brought to the front', async ($, on) => {
+    const w = engine(on)
+    await start($)
+    expect((await run($, '')).text).toMatch(/^opened\. /)
+    await w.clock.advance(10)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    w.opens.length = 0
+    w.panes = [{ id: 'issue-forge', isShown: true }]
+    expect((await run($, '')).text).toBe('closed. /issue-forge to reopen.')
+    await w.clock.advance(10)
+    expect(w.closed).toEqual(['issue-forge'])
+    expect(w.opens).toEqual([])
+    w.closed.length = 0
+    w.panes = HIDDEN
+    expect((await run($, '')).text).toBe(SHOW)
+    await w.clock.advance(SETTLED_MS)
+    expect(w.closed).toEqual([])
+    expect(w.opens.at(-1)).toMatchObject({ id: 'issue-forge', focus: true })
+  })
+
+  test('a pane still behind another tab after the open is named in a toast', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN })
+    await start($)
+    await run($, '')
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'issue-forge', focus: true })
+    expect(w.toasts).toContain(STILL_BEHIND)
+  })
+
+  test('a pane that came forward after the open gets no toast', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN, showOnOpen: true })
+    await start($)
+    expect((await run($, '')).text).toBe(SHOW)
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'issue-forge', focus: true })
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/issue-forge demo with the pane hidden keeps its answer and brings the pane forward with the keyboard; with none listed it opens plain', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN })
+    await start($)
+    expect((await run($, 'demo')).text).toContain('demo in the pane: [ Next state ] steps through')
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'issue-forge', title: 'Issue Forge', columns: 76, focus: true })
+    expect(w.closed).toEqual([])
+    expect(w.toasts).toContain(STILL_BEHIND)
+    w.opens.length = 0
+    w.panes = []
+    await run($, 'demo')
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+  })
+
+  test('/issue-forge demo asks for the pane before its hook returns, ahead of the demo state it writes (PR #96 review, Codex 4290452262)', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN })
+    // Once set, every state write waits: an open that comes after the demo's writes has not gone out.
+    let writes: Promise<void> | null = null
+    let release: () => void = () => undefined
+    on('state.set', ($: any, e: any, next: any) => (writes ? writes.then(() => next(e)) : next(e)))
+    await start($)
+    writes = new Promise<void>(resolve => (release = resolve))
+    expect((await run($, 'demo')).text).toContain('demo in the pane')
+    expect(w.opens.length).toBe(1)
+    expect(w.opens[0]).toMatchObject({ id: 'issue-forge', focus: true })
+    release()
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.length).toBe(1)
+  })
+
+  test('/issue-forge demo with the pane hidden gets no toast once the pane came forward', async ($, on) => {
+    const w = engine(on, { panes: HIDDEN, showOnOpen: true })
+    await start($)
+    await run($, 'demo')
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.at(-1)).toMatchObject({ id: 'issue-forge', focus: true })
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('a start with its pane behind another tab says so, and opens it without the keyboard', async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' }, panes: HIDDEN })
+    await start($)
+    expect((await run($, '16')).text).toBe(`starting #16; its pane is behind another tab ${BEHIND}. Nothing is pushed until you say yes.`)
+    await until(w, () => w.opens.length > 0, 'the open')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    expect(w.opens.every(open => !open.focus)).toBe(true)
+    expect(w.closed).toEqual([])
+  })
+
+  test('a resume with its pane behind another tab says so, and opens it without the keyboard', async ($, on) => {
+    const blocked = storedRun('blocked', { blocked: { at: 'green', reason: 'gate G failed after 3 attempts: tests fail (exit 1)', next: 'fix it by hand on the branch' }, used: { red: 1, green: 3, refactor: 0 } })
+    const w = engine(on, { head: BRANCH, panes: HIDDEN }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'resume')).text).toBe(`resuming #16 at green; its pane is behind another tab ${BEHIND}.`)
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(w.opens.length).toBeGreaterThan(0)
+    expect(w.opens.every(open => !open.focus)).toBe(true)
+  })
+
+  test('a pane waiting undrawn is no tab behind another: a bare /issue-forge opens it as before, with the narrow-window toast and no "behind" one (PR #96 review, Codex P2)', async ($, on) => {
+    const w = engine(on, { panes: WAITING, isPlaced: false })
+    await start($)
+    expect((await run($, '')).text).toMatch(/^opened\. /)
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    expect(w.closed).toEqual([])
+    expect(w.toasts).toContain('Issue Forge needs a wider window. Widen it to see the pane, or watch the status line.')
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/issue-forge demo with its pane waiting undrawn opens it without the keyboard or a "behind" toast (PR #96 review, Codex P2)', async ($, on) => {
+    const w = engine(on, { panes: WAITING })
+    await start($)
+    await run($, 'demo')
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('a start with its pane waiting undrawn gives the usual answer, not "behind another tab" (PR #96 review)', async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' }, panes: WAITING })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+  })
+
+  test('a resume with its pane waiting undrawn gives the usual answer, not "behind another tab" (PR #96 review)', async ($, on) => {
+    const blocked = storedRun('blocked', { blocked: { at: 'green', reason: 'gate G failed after 3 attempts: tests fail (exit 1)', next: 'fix it by hand on the branch' }, used: { red: 1, green: 3, refactor: 0 } })
+    const w = engine(on, { head: BRANCH, panes: WAITING }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, 'green')
+  })
+
+  test('the pane hint holds for any tab', async ($, on) => {
+    engine(on)
+    await start($)
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /^ctrl\+x tab: keys, again: next tab$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /focuses the pane/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('the hint stays last in the list, so a narrow pane cuts the action keys last', async ($, on) => {
+    engine(on, {}, { [`issue-forge:run:${ROOT}`]: storedRun('blocked', { blocked: { at: 'green', reason: 'r', next: 'n' }, used: { red: 1, green: 3, refactor: 0 } }) })
+    await start($)
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /^r resume · s stop · t status · ctrl\+x tab: keys, again: next tab$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /focuses the pane/ })).toBeUndefined()
+    await ui.unmount()
+  })
+})
+
+describe('a pane press that changes a live run asks first (#31)', () => {
+  const STOP_ASK = 'Stop run #16? Its branch and commits are kept.'
+  const PUBLISH_ASK = `Push ${BRANCH} and open a pull request against main?`
+  const blockedRun = () => storedRun('blocked', { blocked: { at: 'green', reason: 'gate G failed after 3 attempts: tests fail (exit 1)', next: 'fix it by hand on the branch' }, used: { red: 1, green: 3, refactor: 0 } })
+  const asked = (w: World, count: number) => waitFor(w, () => w.asked.length >= count)
+
+  test('Stop asks: Keep it running leaves the run, Stop the run stops it; the demo\'s Stop ends the demo without asking', async ($, on) => {
+    const w = engine(on, { head: BRANCH, answer: 'Keep it running' }, { [`issue-forge:run:${ROOT}`]: blockedRun() })
+    await start($)
+    await run($, 'status')
+    await run($, 'demo ready')
+    await w.clock.settle()
+    let ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await w.clock.settle()
+    await ui.unmount()
+    expect(w.asked).toEqual([])
+    ui = await pane($)
+    expect(await ui.find({ type: 'Text', text: /demo ·/ })).toBeUndefined()
+    await ui.unmount()
+
+    ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await asked(w, 1)
+    await w.clock.settle()
+    await ui.unmount()
+    expect(w.asked).toEqual([STOP_ASK])
+    expect([...(w.choices[0] ?? [])].sort()).toEqual(['Keep it running', 'Stop the run'])
+    expect(w.toasts.some(t => t.startsWith('stopped #16'))).toBe(false)
+    expect((await run($, 'status')).text).not.toContain('stopped')
+
+    w.answer = 'Stop the run'
+    ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('stopped #16')))
+    await ui.unmount()
+    expect(w.asked).toEqual([STOP_ASK, STOP_ASK])
+    expect(w.toasts.some(t => t.startsWith('stopped #16'))).toBe(true)
+    expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
+  })
+
+  test('Stop with nobody to answer leaves the run as it is', async ($, on) => {
+    const w = engine(on, { head: BRANCH, answer: null }, { [`issue-forge:run:${ROOT}`]: blockedRun() })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await asked(w, 1)
+    await w.clock.settle()
+    await ui.unmount()
+    expect(w.asked).toEqual([STOP_ASK])
+    expect(w.toasts.some(t => t.startsWith('stopped #16'))).toBe(false)
+    expect((await run($, 'status')).text).not.toContain('stopped')
+  })
+
+  test('Publish asks whatever confirmPublish says: Not now pushes nothing, Publish pushes', { options: { confirmPublish: false } }, async ($, on) => {
+    const w = engine(on, { head: BRANCH, answer: 'Not now' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'status')
+    let ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await asked(w, 1)
+    await w.clock.settle()
+    await ui.unmount()
+    expect(w.asked).toEqual([PUBLISH_ASK])
+    expect([...(w.choices[0] ?? [])].sort()).toEqual(['Not now', 'Publish'])
+    expect(w.argv.some(a => a[1] === 'push' || a[1] === 'pr')).toBe(false)
+
+    w.answer = 'Publish'
+    ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('PR opened')))
+    await ui.unmount()
+    expect(w.asked).toEqual([PUBLISH_ASK, PUBLISH_ASK])
+    expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
+  })
+
+  test('a Stop press answered no, or with nobody to answer, says the run was left and how to stop it (PR #96 review)', async ($, on) => {
+    const kept = 'left #16 as it is; /issue-forge stop 16 stops it.'
+    const w = engine(on, { head: BRANCH, answer: 'Keep it running' }, { [`issue-forge:run:${ROOT}`]: blockedRun() })
+    await start($)
+    await run($, 'status')
+    let ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.includes(kept))
+    await ui.unmount()
+    expect(w.toasts).toContain(kept)
+    w.answer = null
+    ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.filter(t => t === kept).length === 2)
+    await ui.unmount()
+    expect(w.toasts.filter(t => t === kept).length).toBe(2)
+    expect((await run($, 'status')).text).not.toContain('stopped')
+  })
+
+  test('a Publish press answered Not now says the run was left unpublished and how to publish it (PR #96 review)', { options: { confirmPublish: false } }, async ($, on) => {
+    const kept = 'left #16 unpublished; /issue-forge publish 16 publishes it.'
+    const w = engine(on, { head: BRANCH, answer: 'Not now' }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.includes(kept))
+    await ui.unmount()
+    expect(w.toasts).toContain(kept)
+    expect(w.argv.some(a => a[1] === 'push' || a[1] === 'pr')).toBe(false)
+  })
+
+  test("a Publish press while the drive's own publish question is open asks nothing more: one question, one push, one PR (PR #96 review)", async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('PR opened')))
+    await ui.unmount()
+    expect(w.asked.length).toBe(1)
+    expect(w.toasts.some(t => t.startsWith('PR opened'))).toBe(true)
+    release('Publish')
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect(w.argv.filter(a => a[0] === 'gh' && a[1] === 'pr').length).toBe(1)
+    expect(w.argv.filter(a => a[0] === 'git' && a[1] === 'push').length).toBe(1)
+  })
+
+  test("a Stop press while the drive's own publish question is open asks nothing more and says to answer it first (PR #96, Codex 4290573669)", async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.includes('publish question is open')))
+    await ui.unmount()
+    expect(w.asked.length).toBe(1)
+    expect(w.toasts).toContain("#16's publish question is open; answer it first, then press Stop.")
+    release('Not now')
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect((await run($, 'status')).text).not.toContain('stopped')
+    expect(w.argv.some(a => a[1] === 'push')).toBe(false)
+  })
+
+  test('a Stop press on a run that finished after the pane drew asks nothing and says there is nothing to stop (PR #96 review, Codex 4290452256)', async ($, on) => {
+    const store: Record<string, unknown> = { [key(16)]: { ...blockedRun(), repo: `${ROOT}/.git` } }
+    // storeHold makes the stubs read and write `store` itself, so the test can change a run as another session would.
+    const w = engine(on, { head: BRANCH, answer: 'Stop the run', storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    // The pane drew Stop for the blocked run; another session stopped it since.
+    store[key(16)] = { ...(store[key(16)] as any), step: 'stopped' }
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.includes('no active run here.'))
+    await ui.unmount()
+    expect(w.asked).toEqual([])
+    expect(w.toasts).toContain('no active run here.')
+  })
+
+  test('a Stop press whose run was replaced while its question was open stops nothing and says so (PR #96 review, Codex 4290452260)', async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const store: Record<string, unknown> = { [key(16)]: { ...blockedRun(), repo: `${ROOT}/.git` } }
+    const w = engine(on, { head: BRANCH, hold, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await until(w, () => w.asked.length === 1, 'the question')
+    // Another session stopped #16 and started it again: a new run under the same key.
+    store[key(16)] = { ...(store[key(16)] as any), id: '16-2' }
+    release('Stop the run')
+    await waitFor(w, () => w.toasts.some(t => t.includes('#16')))
+    await ui.unmount()
+    expect((store[key(16)] as any).id).toBe('16-2')
+    expect((store[key(16)] as any).step).toBe('blocked')
+    expect(w.toasts.some(t => t.startsWith('stopped #16'))).toBe(false)
+    expect(w.toasts).toContain('#16 moved on before it could be stopped; /issue-forge status 16 says where.')
+  })
+
+  test('Publish with nobody to answer pushes nothing', { options: { confirmPublish: false } }, async ($, on) => {
+    const w = engine(on, { head: BRANCH, answer: null }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'status')
+    const ui = await pane($)
+    await ui.press({ key: 'publish' })
+    await asked(w, 1)
+    await w.clock.settle()
+    await ui.unmount()
+    expect(w.asked).toEqual([PUBLISH_ASK])
+    expect(w.argv.some(a => a[1] === 'push' || a[1] === 'pr')).toBe(false)
   })
 })
 
