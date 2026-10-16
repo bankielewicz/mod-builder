@@ -1893,9 +1893,11 @@ export function releasesOnEnd(reason: string): boolean {
 
 /**
  * What a bare pane command does (#31): `open` a pane that is not listed, `close` one the surface shows, `show` one that is
- * a tab behind another pane. Callers pass what `$.ui.panes()` answers.
+ * a tab behind another pane. Callers pass what `$.ui.panes()` answers, whole: a pane waiting undrawn
+ * (`isPlaced: false`, an unasked open on a narrow terminal) is no tab behind another, so it counts as not listed and the
+ * command's open seats it.
  */
-export function paneAction(panes: readonly { id: string; isShown: boolean }[], id: string): 'open' | 'close' | 'show' {
-  const pane = panes.find(p => p.id === id)
+export function paneAction(panes: readonly { id: string; isShown: boolean; isPlaced: boolean }[], id: string): 'open' | 'close' | 'show' {
+  const pane = panes.find(p => p.id === id && p.isPlaced)
   return !pane ? 'open' : pane.isShown ? 'close' : 'show'
 }
