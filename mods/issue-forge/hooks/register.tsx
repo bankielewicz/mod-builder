@@ -473,9 +473,12 @@ async function authCheck($: EngineInterface, run: Run): Promise<Blocked | null> 
   return !auth || auth.exitCode !== 0 ? block('gh is not signed in', 'run gh auth login') : null
 }
 
+/** `gh issue view` of an issue, in `repo` when one is named, else in the repository gh resolves. */
+const issueViewArgv = (issue: number, repo: string | null | undefined): string[] => ['gh', 'issue', 'view', String(issue), ...(repo ? ['--repo', repo] : []), '--json', 'number,title,body,state,url']
+
 /** The issue as gh reads it from `repo` (the run's pinned repository, or gh's own choice for a run stored before #25). */
 async function issueCheck($: EngineInterface, run: Run, repo: string | null): Promise<Blocked | { title: string; body: string; url: string }> {
-  const view = await $.process.run(['gh', 'issue', 'view', String(run.issue), ...(repo ? ['--repo', repo] : []), '--json', 'number,title,body,state,url'], { cwd: run.root, timeoutMs: GIT_TIMEOUT })
+  const view = await $.process.run(issueViewArgv(run.issue, repo), { cwd: run.root, timeoutMs: GIT_TIMEOUT })
   if (view.exitCode !== 0) return block(`issue #${run.issue} not found: ${firstLine(view.stderr)}`, 'check the issue number or URL')
   const issue = JSON.parse(view.stdout) as { title: string; body: string; state: string; url: string }
   // gh issue view answers for a pull request's number too.
@@ -1191,7 +1194,7 @@ async function confirmTakeOver($: EngineInterface, run: Run): Promise<boolean> {
  * the answer is the next steps, and nothing is stored. A failed read starts as before; preflight reports the cause.
  */
 async function newModStart($: EngineInterface, root: string, issue: number, ghRepo?: string): Promise<string | null> {
-  const view = await $.process.run(['gh', 'issue', 'view', String(issue), ...(ghRepo ? ['--repo', ghRepo] : []), '--json', 'number,title,body,state,url'], { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
+  const view = await $.process.run(issueViewArgv(issue, ghRepo), { cwd: root, timeoutMs: GIT_TIMEOUT }).catch(() => null)
   if (!view || view.exitCode !== 0) return null
   let read: { title?: string; body?: string; url?: string }
   try {
@@ -1653,6 +1656,8 @@ export const register: Register = (on, raw) => {
     const live = demo ? demoRun(demo, now) : await liveView($)
     const run = live.run
     const view = viewOf(run, live.isDriving, live.me)
+    // A final block is one resume can't clear (Change 0.5.0): no Resume button and no r in the hint.
+    const canResume = (view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere'
     const others = live.others
     const canHandOff = live.isDriving && (view === 'running' || view === 'ready')
     const cols = Math.max(20, e.props.bodyColumns - 2)
@@ -1714,7 +1719,7 @@ export const register: Register = (on, raw) => {
         {others.length > 0 && layout !== 'compact' && <Text dimColor>{truncate(layout === 'full' ? `also       ${othersLine(others)}` : `also: ${othersLine(others)}`, cols)}</Text>}
         <Box gap={2} marginTop={1}>
           {view === 'ready' && <Button key="publish" label="Publish" hotkey="p" variant="primary" onPress={() => void press($, 'publish').catch(() => undefined)} />}
-          {((view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere') && <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={() => void press($, 'resume').catch(() => undefined)} />}
+          {canResume && <Button key="resume" label="Resume" hotkey="r" variant="primary" onPress={() => void press($, 'resume').catch(() => undefined)} />}
           {canHandOff && <Button key="handoff" label="Hand off" hotkey="h" plain onPress={() => void press($, 'handoff').catch(() => undefined)} />}
           {(view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready') && <Button key="stop" label="Stop" hotkey="s" plain onPress={() => void press($, 'stop').catch(() => undefined)} />}
           {view !== 'empty' && <Button key="status" label="Status" hotkey="t" plain onPress={() => void showStatus($).catch(() => undefined)} />}
@@ -1724,7 +1729,7 @@ export const register: Register = (on, raw) => {
         {layout !== 'compact' && (
           <Text dimColor>
             {truncate(
-              [view === 'ready' ? 'p publish' : '', (view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere' ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab focuses the pane']
+              [view === 'ready' ? 'p publish' : '', canResume ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab focuses the pane']
                 .filter(Boolean)
                 .join(' · '),
               cols,
