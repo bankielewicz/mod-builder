@@ -165,7 +165,7 @@ let stopCommand: (() => void) | null = null
 /** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
 let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
-let liveWork: { root: string; workRoot: string } | null = null
+let liveWork: { root: string; workRoot: string; testGlobs: readonly string[] } | null = null
 /**
  * Every agent id and name a run of this repository has started, in memory for the tool.call guard
  * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
@@ -803,7 +803,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   // Steer the agent from its first tool call: set before any other await, like the waiter.
   if (agentId) {
     liveAgent = agentId
-    liveWork = { root: run.root, workRoot: workOf(run) }
+    liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [] }
   }
   // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
   const latest = await loadRun($, keyOf(run))
@@ -850,7 +850,7 @@ async function recordNewPlugin($: EngineInterface, path: string): Promise<void> 
 
 /** R4 and G8 (Change 0.5.0): a manifest added since the merge base, or the one the guard refused. Checked before any test runs. */
 async function newPluginAt($: EngineInterface, run: Run, root: string) {
-  return newPluginOf(splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z', run.mergeBase])), run.newPlugin)
+  return newPluginOf(splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z', run.mergeBase])), run.newPlugin, run.profile?.testGlobs ?? [])
 }
 
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
@@ -1595,7 +1595,7 @@ export const register: Register = (on, raw) => {
     if (action.kind === 'deny') return { deny: action.reason }
     const call = action.kind === 'rewrite' ? ({ ...e, ...action.patch } as typeof e) : e
     // The live agent may edit a plugin manifest that exists (a version bump), never create one (Change 0.5.0).
-    const manifest = manifestOf(call, ctx)
+    const manifest = manifestOf(call, ctx, liveWork?.testGlobs ?? [])
     if (manifest && !(await $.fs.stat(manifest.absolute).then(() => true, () => false))) {
       await recordNewPlugin($, manifest.relative)
       return { deny: newPluginRefusal(manifest.relative) }

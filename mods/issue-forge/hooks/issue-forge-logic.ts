@@ -709,9 +709,12 @@ export function isPluginManifest(path: string): boolean {
   return /(^|\/)\.claude-plugin\/plugin\.json$/.test(path.replace(/\\/g, '/'))
 }
 
-/** The new plugin a phase made: the first manifest added since the merge base, else the one the guard refused. */
-export function newPluginOf(added: readonly string[], refused?: string): NewPlugin | null {
-  const path = added.find(isPluginManifest)
+/**
+ * The new plugin a phase made: the first manifest added since the merge base, else the one the guard refused. A manifest
+ * under the test globs is a fixture (test data), not a new plugin.
+ */
+export function newPluginOf(added: readonly string[], refused?: string, testGlobs: readonly string[] = []): NewPlugin | null {
+  const path = added.find(p => isPluginManifest(p) && !matchesAny(p, testGlobs))
   if (path) return { path, isCreated: true }
   return refused ? { path: refused, isCreated: false } : null
 }
@@ -1184,7 +1187,7 @@ export function guardAction(e: { tool: string; agentId?: string; [key: string]: 
  * The live agent's edit of a Claude Code plugin manifest (Change 0.5.0): its path, absolute and relative to the
  * run's folder. The guard refuses it when no such file exists yet: editing one that exists (a version bump) passes.
  */
-export function manifestOf(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext): { absolute: string; relative: string } | null {
+export function manifestOf(e: { tool: string; agentId?: string; [key: string]: unknown }, ctx: GuardContext, testGlobs: readonly string[] = []): { absolute: string; relative: string } | null {
   const work = ctx.workRoot
   if (!e.agentId || e.agentId !== ctx.liveAgent || !work) return null
   const key = EDIT_PATHS[e.tool]
@@ -1192,7 +1195,9 @@ export function manifestOf(e: { tool: string; agentId?: string; [key: string]: u
   if (typeof target !== 'string' || !isPluginManifest(target)) return null
   const absolute = normalizePath(isAbsolutePath(target) ? target : `${work}/${target}`)
   const prefix = `${normalizePath(work).replace(/\/$/, '')}/`
-  return { absolute, relative: absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute }
+  const relative = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
+  // A fixture under the test globs is test data, not a new plugin.
+  return matchesAny(relative, testGlobs) ? null : { absolute, relative }
 }
 
 export function branchLine(run: Run): string {
