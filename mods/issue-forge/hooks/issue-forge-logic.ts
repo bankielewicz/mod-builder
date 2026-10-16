@@ -695,12 +695,13 @@ export function isPluginManifest(path: string): boolean {
 
 /**
  * The new plugin a phase made: the first manifest added since the merge base, else the one the guard refused. A manifest
- * under the test globs is a fixture (test data), not a new plugin.
+ * under the test globs is a fixture (test data), not a new plugin; one on the base branch's tip (`onBase`) is someone
+ * else's, merged in (the owner's decision after PR #103's review).
  */
-export function newPluginOf(added: readonly string[], refused?: string, testGlobs: readonly string[] = []): NewPlugin | null {
-  const path = added.find(p => isPluginManifest(p) && !matchesAny(p, testGlobs))
+export function newPluginOf(added: readonly string[], refused?: string, testGlobs: readonly string[] = [], onBase: readonly string[] = []): NewPlugin | null {
+  const path = added.find(p => isPluginManifest(p) && !matchesAny(p, testGlobs) && !onBase.includes(p))
   if (path) return { path, isCreated: true }
-  return refused ? { path: refused, isCreated: false } : null
+  return refused && !onBase.includes(refused) ? { path: refused, isCreated: false } : null
 }
 
 /** R4 (gate R) or G8 (gates G and F), checked first: a new plugin fails the gate before any test runs. */

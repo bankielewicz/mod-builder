@@ -1045,7 +1045,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   if (name) knownRefs.add(name)
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
-  const baseManifests = await manifestsAt($, workOf(run), run.mergeBase)
+  const baseManifests = [...(await manifestsAt($, workOf(run), run.mergeBase)), ...(await manifestsAt($, workOf(run), baseRefOf(run)))]
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
   const agentId = spawned.agentId
   // An agent another plugin answered in-line (duet's Codex) has no loop and no turn.complete (C0).
@@ -1101,15 +1101,19 @@ async function recordNewPlugin($: EngineInterface, path: string): Promise<void> 
   await updateRun($, d.key, stored => newPluginRecord(stored, d.runId, sessionId, path, now))
 }
 
-/** The plugin manifests at the merge base: the guard lets a phase write one back (Codex 4290574826). None when git can't list them. */
-async function manifestsAt($: EngineInterface, root: string, mergeBase: string): Promise<string[]> {
-  const listed = await git($, root, ['ls-tree', '-r', '--name-only', '-z', mergeBase]).catch(() => null)
+/** The plugin manifests at a commit (the merge base, or the base branch's tip): none is new (Codex 4290574826; owner). None when git can't list them. */
+async function manifestsAt($: EngineInterface, root: string, ref: string): Promise<string[]> {
+  const listed = await git($, root, ['ls-tree', '-r', '--name-only', '-z', ref]).catch(() => null)
   return listed?.exitCode === 0 ? splitZ(listed.stdout).filter(isPluginManifest) : []
 }
 
-/** R4 and G8 (Change 0.6.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard refused. Checked before any test runs. */
+/**
+ * R4 and G8 (Change 0.6.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard
+ * refused, unless the base branch's tip has it. Checked before any test runs.
+ */
 async function newPluginAt($: EngineInterface, run: Run, root: string) {
-  return newPluginOf(splitZ(await gitOut($, root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase])), run.newPlugin, run.profile?.testGlobs ?? [])
+  const added = splitZ(await gitOut($, root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase]))
+  return newPluginOf(added, run.newPlugin, run.profile?.testGlobs ?? [], await manifestsAt($, root, baseRefOf(run)))
 }
 
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
