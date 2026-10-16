@@ -796,3 +796,4 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - `docs/safety.md` fixes the verbless bullet and gives the checks their own paragraph: the loader is checked in CI on the pinned build only;
     - CLAUDE.md says a `.test.ts` not named `*-logic.test.ts` runs only under `claude plugin test`.
 - **Not taken:** pinning the code-from-strings message. The error class (`EvalError`) is pinned instead: the message is the engine's wording, the class is the claim.
+- **Codex round 2 (on `ca8315f`):** the `import()` fixture imported `node:fs` by name, so a loader that allowed `import()` but refused that name would still have read as refused. It now builds its specifier at run time (Codex 4296355708). A run cut short by an error or a signal, or one that exited 0, could still have passed on partial output; `runVerdict` fails it (Codex 4296355718). Red `8d8bb18`, green `7713be0`.
