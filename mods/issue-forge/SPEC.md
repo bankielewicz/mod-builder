@@ -1339,3 +1339,57 @@ times; a commit that fails for another reason after a retry; `add -A` at gates R
 without the lock file; `switch` five times at preflight; `merge --ff-only` once at the catch-up; the env on every git
 call. The live check (an interactive session in a worktree, a lock held while red works, then through `resume`) is
 run before the PR merges.
+
+### PR #88 review round 1 (2026-10-15)
+
+Codex's three findings (a P1 and two P2s) and the owner's `/code-review` (11 findings), each checked against the
+code. git's lock texts below were captured with git 2.53.0 in a scratch repository, the lock files made by hand
+[probe]. This round supersedes items 1, 2, 3 and 5 above where they differ.
+
+- **Version** (review 3): PR #86 merged 0.4.1 (#27), so this change is **0.4.2** (merge cb763ac). Open PR #89 also
+  takes 0.4.2, and #87 takes 0.5.0: whichever merges second re-bumps plugin.json, marketplace.json and this heading
+  (the owner's merge-time rule).
+- **Any git lock, as 0.3.0 retried** (Codex P2; reviews 1 and 8). `gitWrite` judges a failure with `isLockError`
+  over stderr and stdout, so commit's branch ref lock and the shared `refs/stash` lock wait and retry as the index's
+  does. `isIndexLockError` is gone; its test pinned a ref's lock as "not a lock". `lockPathOf` (logic module) reads
+  the lock file git names (`Unable to create '<path>.lock'`) for the block. A lock git doesn't name falls back to the
+  lock file found, then to the index lock. `IndexLocked` is now `Locked`.
+- **git's own texts** [probe, git 2.53.0]:
+  - `commit` with `refs/heads/main.lock` held: `fatal: cannot lock ref 'HEAD': Unable to create
+    '…/refs/heads/main.lock': File exists.` and git's hint, exit 128;
+  - `stash push` with `refs/stash.lock` held: only `Cannot save the current status` on stderr, exit 1. The tree is
+    left as it was, and a dangling stash commit remains;
+  - `stash push` and `stash apply` with `index.lock` held: `error: Unable to create '…/index.lock': File exists.`,
+    the hint, then `error: could not write index`, exit 1. Issue #28 recorded both as silent on git 2.43.0, so the
+    file check stays.
+
+  So `stash push` also looks for `refs/stash.lock`. The first test of it used a refusal written from git's usual
+  wording, not one git prints, and passed on it; 0d29829 replaced it with the captured text.
+- **The lock's path** (Codex P2; reviews 4 and 5). `rev-parse --git-path index.lock` (and `--git-path
+  refs/stash.lock` before a stash push), without `--path-format=absolute`: git before 2.31 prints that option back
+  with exit 0 instead of resolving it. A relative answer (the main checkout's `.git/index.lock`; a linked worktree's
+  is absolute) is joined to the folder. The path is asked before the first attempt, once per folder, so only the
+  `fs.exists` call sits between a silent failure and its check. A lock let go in that moment is still missed.
+- **Ownership** (Codex P1; review 2). `stillOwned`, which reads the stored run, runs after each wait, so a takeover
+  or Stop from another session ends the retries before git writes again. The 5 s watch was too slow for 4 s of waits.
+- **Gate R's restore** (review 6). A lock that outlasts the behaviour pass's `stash apply` blocks after the commit,
+  as any failed restore does: reason `<the lock reason>; green's work is in stash <sha7> "<message>"`, next
+  `restore green's work by hand (git stash apply <sha7>)`.
+- **The wait** (review 7). `lockWait` sets `stopCommand`, as `runLong` does, so a Stop, hand-off or takeover
+  cancels the timer, and the drive ends and releases at once. **Not covered:** a refused `clock.after` with nobody
+  stopping the run still waits; `/issue-forge stop` ends it, and resume starts a new drive. `runLong`'s timer has the
+  same gap.
+- **Env** (review 9). `rev-parse --show-toplevel` and `runLong`'s git (`worktree add`, through spawn and its
+  `process.run` fallback) carry `GIT_OPTIONAL_LOCKS=0` too. The profile's commands keep the session's env.
+- **Tests** (review 10), in `ui.test.tsx` unless named:
+  - a ref lock on commit, met once and five times;
+  - the `refs/stash` lock on stash push, met once and five times;
+  - a takeover during the wait, and a Stop during the wait;
+  - git before 2.31, and a lock let go during the lookup;
+  - a lock that outlasts gate R's apply;
+  - the env in a worktree run;
+  - `lockPathOf` in the logic tests.
+
+  The 5-attempt test now counts `rev-parse --git-path index.lock`, changed in its own commit (cf78eb9).
+- **QA** (review 11) is in the PR body. The live check (an interactive session, a lock held while a run commits,
+  then `resume`) is still the merge gate.
