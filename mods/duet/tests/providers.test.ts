@@ -545,7 +545,7 @@ describe('/duet provider', () => {
     expect(bash.deny).toBeUndefined()
   })
 
-  test('a new key file is created empty and chmodded before the key is written; an existing one is rewritten then chmodded', async ($, on) => {
+  test('a new key file is created empty and chmodded before the key is written; an existing one is chmodded, rewritten and chmodded again', async ($, on) => {
     const seen = engine(on)
     await start($)
     await run($, 'provider key google')
@@ -558,7 +558,7 @@ describe('/duet provider', () => {
     seen.events.length = 0
     seen.files[KEY_FILE] = `GEMINI_API_KEY=${KEY}\nXAI_API_KEY=${XAI}\n`
     await run($, 'provider remove google')
-    expect(seen.events).toEqual(['write content', 'chmod'])
+    expect(seen.events).toEqual(['chmod', 'write content', 'chmod'])   // Codex 4299362989: the mode is set before any write, on an existing file too
     expect(seen.files[KEY_FILE]).toBe(`XAI_API_KEY=${XAI}\n`)
   })
 
