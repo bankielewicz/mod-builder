@@ -513,7 +513,7 @@ async function movedMods($: Engine, modsDir: string, names: readonly string[]): 
   return moved
 }
 
-async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanRequest = FULL_SCAN): Promise<void> {
+async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanRequest): Promise<void> {
   const scanStartedAt = Date.now()
   const dir = await currentModsDir($)
   const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
