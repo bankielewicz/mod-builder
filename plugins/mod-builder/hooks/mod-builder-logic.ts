@@ -965,13 +965,36 @@ export type DotGit = { kind: 'dir' } | { kind: 'file'; text: string } | null
  */
 export function gitCommonDirOf(folder: string, dotGit: DotGit): string | null {
   if (!dotGit) return null
-  const top = normalizePath(folder).replace(/\/$/, '')
-  if (dotGit.kind === 'dir') return `${top}/.git`
-  const line = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(dotGit.text.replace(/\r/g, ''))
+  if (dotGit.kind === 'dir') return `${normalizePath(folder).replace(/\/$/, '')}/.git`
+  const gitDir = gitDirNamedIn(folder, dotGit.text)
+  if (gitDir === null) return null
+  return /^(.*)\/worktrees\/[^/]+$/.exec(gitDir)?.[1] ?? gitDir
+}
+
+/** The git folder a `.git` file's `gitdir:` line names, resolved against `folder`; null without one. */
+function gitDirNamedIn(folder: string, text: string): string | null {
+  const line = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text.replace(/\r/g, ''))
   if (!line) return null
   const named = line[1]!.replace(/\\/g, '/')
-  const gitDir = normalizePath(rootOf(named) ? named : `${top}/${named}`)
-  return /^(.*)\/worktrees\/[^/]+$/.exec(gitDir)?.[1] ?? gitDir
+  return normalizePath(rootOf(named) ? named : `${normalizePath(folder).replace(/\/$/, '')}/${named}`)
+}
+
+/**
+ * Git's own record of the worktree whose `.git` file this is: `<gitdir>/gitdir`, when the gitdir is
+ * `…/worktrees/<name>` (PR #95 review follow-up). Null for a repository top, a submodule or no `.git`.
+ */
+export function worktreeLinkOf(folder: string, dotGit: DotGit): { record: string } | null {
+  if (dotGit?.kind !== 'file') return null
+  const gitDir = gitDirNamedIn(folder, dotGit.text)
+  return gitDir !== null && /\/worktrees\/[^/]+$/.test(gitDir) ? { record: `${gitDir}/gitdir` } : null
+}
+
+/** Whether git's record (`record`, holding `text`) names `folder`'s `.git` back: absolute, or relative to the record's folder. */
+export function isBackLinkTo(folder: string, record: string, text: string): boolean {
+  const named = text.replace(/\r/g, '').trim().replace(/\\/g, '/')
+  if (!named) return false
+  const resolved = normalizePath(rootOf(named) ? named : `${parentOf(record)}/${named}`)
+  return pathKey(resolved) === pathKey(`${normalizePath(folder).replace(/\/$/, '')}/.git`)
 }
 
 /** Whether two common git folders are one repository's (Windows roots without case); an unknown one never is. */

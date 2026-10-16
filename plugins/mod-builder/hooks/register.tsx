@@ -226,14 +226,25 @@ async function dotGitOf($: Engine, folder: string): Promise<Lab.DotGit> {
   return (await exists($, `${path}/HEAD`)) ? { kind: 'dir' } : null
 }
 
-/** The common git folder of the repository the project root is in: the first `.git` at or above it. */
+/**
+ * Whether a folder's `.git` is git's own: a worktree pointer must be named back by git's record of it
+ * (`.git/worktrees/<name>/gitdir`), so a hand-written pointer doesn't count (PR #95 review follow-up).
+ */
+async function isRecordedByGit($: Engine, folder: string, dotGit: Lab.DotGit): Promise<boolean> {
+  const link = Lab.worktreeLinkOf(folder, dotGit)
+  if (!link) return true
+  const text = await readText($, link.record)
+  return text !== null && Lab.isBackLinkTo(folder, link.record, text)
+}
+
+/** The common git folder of the repository the project root is in: the first `.git` at or above it, if git records it. */
 async function rootRepoOf($: Engine, root: string): Promise<string | null> {
   if (rootRepo?.root === root) return rootRepo.common
   let common: string | null = null
   for (const folder of Lab.foldersUpFrom(root)) {
     const dotGit = await dotGitOf($, folder)
     if (!dotGit) continue
-    common = Lab.gitCommonDirOf(folder, dotGit)
+    common = (await isRecordedByGit($, folder, dotGit)) ? Lab.gitCommonDirOf(folder, dotGit) : null
     break
   }
   rootRepo = { root, common }
@@ -252,7 +263,9 @@ async function pinFor($: Engine, dir: string): Promise<{ pin: Lab.Pin } | { reas
   const folder = Lab.normalizePath(dir)
   if (!(await exists($, check.marketplace))) return { reason: `no marketplace holds ${folder}` }
   const home = Lab.parentOf(folder)
-  const isOurs = Lab.isSameRepo(Lab.gitCommonDirOf(home, await dotGitOf($, home)), await rootRepoOf($, check.root))
+  const dotGit = await dotGitOf($, home)
+  if (!(await isRecordedByGit($, home, dotGit))) return { reason: `${home} has a worktree pointer git has no record of` }
+  const isOurs = Lab.isSameRepo(Lab.gitCommonDirOf(home, dotGit), await rootRepoOf($, check.root))
   if (!isOurs) return { reason: `${home} isn't the project's git repository or one of its worktrees` }
   return { pin: { modsDir: folder, root: check.root } }
 }
