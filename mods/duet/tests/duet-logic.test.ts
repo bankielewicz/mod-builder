@@ -1068,28 +1068,28 @@ describe('PR #67 review: summarize stays linear, since /duet stats now reads eve
 
 describe('paneAction: one rule for a bare pane command (#31)', () => {
   // Read off the namespace, so a rule that is not there yet fails its assertion, not the import.
-  type PaneRow = { id: string; isShown: boolean }
+  type PaneRow = { id: string; isShown: boolean; isPlaced: boolean }
   const paneAction = (panes: readonly PaneRow[], id: string): string | undefined =>
     (logic as unknown as { paneAction?: (panes: readonly PaneRow[], id: string) => string }).paneAction?.(panes, id)
 
   test('a pane that is not listed opens, whatever other panes are', () => {
     expect(paneAction([], 'x')).toBe('open')
-    expect(paneAction([{ id: 'y', isShown: true }], 'x')).toBe('open')
-    expect(paneAction([{ id: 'y', isShown: false }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: false, isPlaced: true }], 'x')).toBe('open')
   })
 
   test('a listed pane the surface shows closes', () => {
-    expect(paneAction([{ id: 'x', isShown: true }], 'x')).toBe('close')
+    expect(paneAction([{ id: 'x', isShown: true, isPlaced: true }], 'x')).toBe('close')
   })
 
   test('a listed pane that is a tab behind another shows, rather than closing', () => {
-    expect(paneAction([{ id: 'x', isShown: false }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
   })
 
   test('only the entry with the id decides: another pane shown or hidden changes nothing', () => {
-    expect(paneAction([{ id: 'y', isShown: true }, { id: 'x', isShown: false }], 'x')).toBe('show')
-    expect(paneAction([{ id: 'y', isShown: false }, { id: 'x', isShown: true }], 'x')).toBe('close')
-    expect(paneAction([{ id: 'x', isShown: false }, { id: 'y', isShown: true }], 'y')).toBe('close')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }, { id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'y', isShown: false, isPlaced: true }, { id: 'x', isShown: true, isPlaced: true }], 'x')).toBe('close')
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }, { id: 'y', isShown: true, isPlaced: true }], 'y')).toBe('close')
   })
 
   test('it takes what $.ui.panes() answers, whole entries included', () => {

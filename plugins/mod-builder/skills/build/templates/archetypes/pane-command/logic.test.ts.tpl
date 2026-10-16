@@ -25,9 +25,9 @@ describe('__NAME__-logic', () => {
 
   test('a pane command opens a pane that is not listed, closes one that is shown, and shows one behind another tab', () => {
     expect(paneAction([], 'x')).toBe('open')
-    expect(paneAction([{ id: 'y', isShown: true }], 'x')).toBe('open')
-    expect(paneAction([{ id: 'x', isShown: true }], 'x')).toBe('close')
-    expect(paneAction([{ id: 'x', isShown: false }], 'x')).toBe('show')
-    expect(paneAction([{ id: 'y', isShown: true }, { id: 'x', isShown: false }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'x', isShown: true, isPlaced: true }], 'x')).toBe('close')
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }, { id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
   })
 })

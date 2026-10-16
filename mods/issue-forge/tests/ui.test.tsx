@@ -131,8 +131,8 @@ type World = {
   opens: { id: string; title?: string; columns?: number; focus?: boolean }[]
   /** Every id `$.ui.close` was asked to close (#31). */
   closed: string[]
-  /** What `$.ui.panes()` lists (#31): `isShown: false` is a tab behind another pane. Absent, none is open. */
-  panes?: { id: string; isShown: boolean }[]
+  /** What `$.ui.panes()` lists (#31): `isShown: false` is a tab behind another pane, `isPlaced: false` one waiting undrawn (placed unless it says so). Absent, none is open. */
+  panes?: { id: string; isShown: boolean; isPlaced?: boolean }[]
   /** A listed pane comes to the front once it was opened (#31). */
   showOnOpen?: boolean
   files: Record<string, string>
@@ -202,7 +202,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('agent.register', ($: any, e: any) => ({ value: { agent: `issue-forge:${e.name}` } }))
   on('ui.open', ($: any, e: any) => (world.opened.push(e.id), world.opens.push({ ...e }), { value: { isPlaced: world.isPlaced } }))
   on('ui.panes', () => ({
-    value: (world.panes ?? []).map(pane => ({ id: pane.id, title: 'Issue Forge', isFocused: false, isPlaced: true, isShown: pane.isShown || (world.showOnOpen === true && world.opened.includes(pane.id)) })),
+    value: (world.panes ?? []).map(pane => ({ id: pane.id, title: 'Issue Forge', isFocused: false, isPlaced: pane.isPlaced ?? true, isShown: pane.isShown || (world.showOnOpen === true && world.opened.includes(pane.id)) })),
   }))
   on('ui.close', ($: any, e: any) => (world.closed.push(e.id), { value: undefined }))
   on('ui.status', () => ({ value: undefined }))

@@ -6,10 +6,11 @@ const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 120 } as const
 
 /**
- * What the stubs list and record. `panes` is what `$.ui.panes()` answers: `isShown: false` is a tab behind another pane.
+ * What the stubs list and record. `panes` is what `$.ui.panes()` answers: `isShown: false` is a tab behind another pane,
+ * `isPlaced: false` one waiting undrawn (a row is placed unless it says so).
  * A listed pane comes to the front once it was opened while `showOnOpen` is set.
  */
-type World = { panes: { id: string; isShown: boolean }[]; showOnOpen: boolean; opens: { id: string; focus?: boolean }[]; closed: string[]; toasts: string[] }
+type World = { panes: { id: string; isShown: boolean; isPlaced?: boolean }[]; showOnOpen: boolean; opens: { id: string; focus?: boolean }[]; closed: string[]; toasts: string[] }
 
 function engine(on: On, w: Partial<World> = {}) {
   const world: World = { panes: [], showOnOpen: false, opens: [], closed: [], toasts: [], ...w }
@@ -18,7 +19,7 @@ function engine(on: On, w: Partial<World> = {}) {
   on('command.register', () => ({ value: undefined }) as never)
   on('ui.open', ($, e) => (world.opens.push({ ...e }), { value: { isPlaced: true } }) as never)
   on('ui.panes', () => ({
-    value: world.panes.map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: true, isShown: pane.isShown || (world.showOnOpen && world.opens.some(open => open.id === pane.id)) })),
+    value: world.panes.map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: pane.isPlaced ?? true, isShown: pane.isShown || (world.showOnOpen && world.opens.some(open => open.id === pane.id)) })),
   }) as never)
   on('ui.close', ($, e) => (world.closed.push(e.id), { value: undefined }) as never)
   on('ui.toast', ($, e) => (world.toasts.push(e.text), { value: undefined }) as never)

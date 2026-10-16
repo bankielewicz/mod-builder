@@ -11,10 +11,10 @@ const RUN = (provider: 'codex' | 'claude', type: string) => JSON.stringify({ id:
 
 /**
  * What the pane stubs list and record (#31). `panes` is what `$.ui.panes()` answers (`isShown: false` is a tab behind another
- * pane); a listed pane comes to the front once it was opened while `showOnOpen` is set. `opens` takes every `$.ui.open`
+ * pane, `isPlaced: false` one waiting undrawn; a row is placed unless it says so); a listed pane comes to the front once it was opened while `showOnOpen` is set. `opens` takes every `$.ui.open`
  * whole, `focus` included; `closed` every `$.ui.close`; `toasts` every `$.ui.toast`.
  */
-type PaneWorld = { panes?: { id: string; isShown: boolean }[]; showOnOpen?: boolean; opens?: any[]; closed?: string[]; toasts?: string[] }
+type PaneWorld = { panes?: { id: string; isShown: boolean; isPlaced?: boolean }[]; showOnOpen?: boolean; opens?: any[]; closed?: string[]; toasts?: string[] }
 
 /** `sessions`: each session folder's runs.jsonl, by folder name; the legacy log holds one codex Explore run. Returns the test's clock. */
 function engine(on: any, opened: string[], sessions: Record<string, string> = {}, world: PaneWorld = {}) {
@@ -23,7 +23,7 @@ function engine(on: any, opened: string[], sessions: Record<string, string> = {}
   on('command.register', () => ({ value: undefined }))
   on('ui.open', ($: any, e: any) => (opened.push(e.id), world.opens?.push({ ...e }), { value: { isPlaced: true } }))
   on('ui.panes', () => ({
-    value: (world.panes ?? []).map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: true, isShown: pane.isShown || (world.showOnOpen === true && opened.includes(pane.id)) })),
+    value: (world.panes ?? []).map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: pane.isPlaced ?? true, isShown: pane.isShown || (world.showOnOpen === true && opened.includes(pane.id)) })),
   }))
   on('ui.close', ($: any, e: any) => (world.closed?.push(e.id), { value: undefined }))
   on('ui.toast', ($: any, e: any) => (world.toasts?.push(e.text), { value: undefined }))
