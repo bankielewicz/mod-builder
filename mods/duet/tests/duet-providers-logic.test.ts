@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, parseChatReply, parseEnvFile,
-  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, serializeEnv, testOutcome, testText, upsertEnvLine,
+  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -161,6 +161,12 @@ describe('requests and replies', () => {
 })
 
 describe('pane text', () => {
+  test('the saved note warns that Codex can read the key file under codexFsScope anything, and not under project', () => {
+    expect(savedNote('chmod 600', 'anything')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it', 'Codex can read this file under codexFsScope: anything; project hides it.'])
+    expect(savedNote('chmod 600', 'project')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it'])
+    expect(savedNote('chmod 600 failed: EPERM; set the file\'s permissions yourself', 'project')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600 failed: EPERM; set the file\'s permissions yourself) · t tests it'])
+  })
+
   test('the row window keeps the highlighted row in view and never shrinks under 3 rows (seen live: a 14-row pane scrolled the header out)', () => {
     expect(rowWindow(0, 15, 40, 8)).toEqual({ start: 0, room: 15 })
     expect(rowWindow(3, 15, 14, 8)).toEqual({ start: 0, room: 6 })

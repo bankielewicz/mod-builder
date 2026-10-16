@@ -22,11 +22,11 @@ const logOf = (session: string) => `${DATA}/sessions/${session}/runs.jsonl`
 const runLine = (provider: 'codex' | 'claude', type: string, id = 'x') =>
   JSON.stringify({ id, at: 0, provider, kind: 'agent', type, model: '', ms: 1000, tokens: 100, ok: true }) + '\n'
 
-type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
+type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; questions: string[]; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
 function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; logGate?: Promise<void> } = {}): Seen {
-  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
+  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, questions: [], toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
   on('prompt.submit', ($: any, e: any) => (seen.submitted.push(e.text), { text: e.text }))
@@ -123,6 +123,7 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     seen.asked++
     if (o.noAsk) throw new Error('no tool named "AskUserQuestion" in this session')
     const q = e.questions[0].question
+    seen.questions.push(q)
     const answer = o.askDeny ? { deny: o.askDeny } : { result: { questions: e.questions, answers: { [q]: o.answer ?? 'Yes, send to Codex' } } }
     return o.askHold ? o.askHold.then(() => answer) : answer
   })
@@ -1424,3 +1425,22 @@ describe('issue 8: run-log appends within a session are serialized', () => {
     expect(rows.every(r => r.provider === 'codex')).toBe(true)
   })
 })
+
+describe('0.3.0: the consent question names the provider key file where Codex can read it', () => {
+  test('under codexFsScope anything (the default) the question names ~/.claude/duet-data/.env', { options: { codexAgents: 'general-purpose' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await $.tool.call(call() as never)
+    expect(seen.questions.length).toBe(1)
+    expect(seen.questions[0]).toContain('your provider key file ~/.claude/duet-data/.env')
+  })
+
+  test('under codexFsScope project the key file is hidden, so the question does not name it', { options: { codexAgents: 'general-purpose', codexFsScope: 'project' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await $.tool.call(call() as never)
+    expect(seen.questions.length).toBe(1)
+    expect(seen.questions[0]).not.toContain('key file')
+  })
+})
+

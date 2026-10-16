@@ -451,6 +451,9 @@ describe('third review round: tool lists in any YAML form', () => {
 
 describe('fourth review round: what the consent says Codex can reach', () => {
   test('both sandboxes say Codex can read beyond the project; only workspace-write mentions writes', () => {
+    // 0.3.0: under codexFsScope anything the question names the provider key file, which Codex can read like any file.
+    expect(consentText('/w/proj', 'read-only', '~/.claude/duet-data/.env')).toContain('your provider key file ~/.claude/duet-data/.env')
+    expect(consentText('/w/proj', 'read-only')).not.toContain('key file')
     const ro = consentText('/w/proj', 'read-only')
     expect(ro).toContain('any file your user account can read, not only /w/proj')
     expect(ro).toContain('sends what it reads to OpenAI')

@@ -605,12 +605,14 @@ export function specVersion(text: string): string {
  * Linux (SPEC, Change 0.2.4): both sandboxes read any file the user can read;
  * read-only writes nothing; workspace-write writes in the project and /tmp.
  */
-export function consentText(cwd: string, sandbox: Sandbox): string {
+export function consentText(cwd: string, sandbox: Sandbox, keyFile?: string): string {
   const writes =
     sandbox === 'workspace-write'
       ? `Agents that edit can write inside ${cwd} and in temporary folders such as /tmp.`
       : 'It runs read-only and writes nothing.'
-  return `Send this task to Codex (OpenAI)? Codex can read any file your user account can read, not only ${cwd}, and sends what it reads to OpenAI under your Codex sign-in. ${writes} Allow for the rest of this session?`
+  // 0.3.0: under codexFsScope anything the provider key file is readable too; under project it is hidden, so it is not named.
+  const keys = keyFile ? `, your provider key file ${keyFile} included` : ''
+  return `Send this task to Codex (OpenAI)? Codex can read any file your user account can read, not only ${cwd}${keys}, and sends what it reads to OpenAI under your Codex sign-in. ${writes} Allow for the rest of this session?`
 }
 
 /**

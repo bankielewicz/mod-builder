@@ -286,3 +286,13 @@ export function rowWindow(at: number, total: number, bodyRows: number, fixedLine
   return { start, room }
 }
 
+/**
+ * The note after a key is saved: where it went and how to test it; under `codexFsScope: anything` a second line,
+ * since Codex can then read the file like any other (SPEC, Change 0.3.0, part C; the owner's note at review).
+ */
+export function savedNote(mode: string, fsScope: 'anything' | 'project'): string[] {
+  const lines = [`saved to ~/.claude/duet-data/.env (${mode}) · t tests it`]
+  if (fsScope === 'anything') lines.push('Codex can read this file under codexFsScope: anything; project hides it.')
+  return lines
+}
+

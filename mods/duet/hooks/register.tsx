@@ -12,7 +12,7 @@ import {
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
   PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
-  redact, refusalReason, rowWindow, testOutcome, testText, upsertEnvLine,
+  redact, refusalReason, rowWindow, savedNote, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
 import type { ProviderTest } from '../types'
@@ -488,7 +488,7 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
   try {
-    answer = await $.ui.ask(consentText(cwd, options.sandbox), [YES, NO])
+    answer = await $.ui.ask(consentText(cwd, options.sandbox, options.fsScope === 'anything' ? KEY_FILE_HOME : undefined), [YES, NO])
   } catch (err) {
     return consentRefusal(err)
   }
@@ -968,7 +968,7 @@ async function saveKey($: EngineInterface, p: ProviderDef, value: string): Promi
     mode = `chmod 600 failed: ${redact(String((err as Error)?.message ?? err).split('\n')[0]!, [key])}; set the file's permissions yourself`
   }
   await refreshProviderAuth($)
-  return `saved to ${KEY_FILE_HOME} (${mode}) · t tests it`
+  return savedNote(mode, options.fsScope).join('\n')
 }
 
 /** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
@@ -1116,7 +1116,8 @@ async function openProvidersPane($: EngineInterface, rowId = '', edit = false): 
 async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; keys: number; tested: number }> {
   const auth = await read($, provAuth)
   const tests = await read($, provTests)
-  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(tests[p.id]), used: p.id === 'codex' }))
+  // `used` marks a provider a route uses; routes arrive in 0.4.0 with the mark's legend, so no row is marked yet.
+  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(tests[p.id]), used: false }))
   const keys = rows.filter(r => r.auth.startsWith('key ')).length
   const tested = Object.values(tests).filter(t => t !== 'running').length
   return { rows, keys, tested }
@@ -1431,7 +1432,7 @@ export const register: Register = (on, raw) => {
     // The pane is a window: rows besides the providers (header, rules, routes, the field, a note, buttons, the hint, the two
     // "more" marks) are counted, and the providers scroll in what is left, the highlighted one always in view (seen live).
     const shown = listing ? Math.min(models.length, 12) + (models.length > 12 ? 1 : 0) + (modelsState !== 'idle' ? 1 : 0) : 0
-    const fixed = 8 + (keys === 0 ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? 1 : 0) + shown
+    const fixed = 8 + (keys === 0 ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? note.split('\n').length : 0) + shown
     const win = rowWindow(at, rows.length, e.props.scroll.bodyRows, fixed)
     const visible = rows.slice(win.start, win.start + win.room)
     const above = win.start
@@ -1470,7 +1471,9 @@ export const register: Register = (on, raw) => {
             <Text dimColor>{`${sel.keyName}: typing is visible until Enter · Enter saves · Esc cancels`}</Text>
           </Box>
         )}
-        {note !== '' && <Text color={note.startsWith('saved') || note.endsWith('removed from ' + KEY_FILE_HOME + '.') ? COLORS.success : COLORS.warn}>{note.slice(0, width)}</Text>}
+        {note !== '' && note.split('\n').map((line, i) => (
+          <Text key={`prov-note-${i}`} color={i > 0 ? COLORS.warn : note.startsWith('saved') || note.endsWith('removed from ' + KEY_FILE_HOME + '.') ? COLORS.success : COLORS.warn}>{line.slice(0, width)}</Text>
+        ))}
         <Box gap={2}>
           <Button key="prov-enter" label="Enter key" hotkey="e" variant="primary" onPress={() => void startKeyEntry($).catch(() => undefined)} />
           <Button key="prov-test" label="Test" hotkey="t" plain onPress={() => void testHighlighted($).catch(() => undefined)} />

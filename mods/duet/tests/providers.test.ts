@@ -114,6 +114,30 @@ describe('/duet provider', () => {
     expect(everything(seen)).not.toContain(KEY)
   })
 
+  test('under codexFsScope anything the saved note warns that Codex can read the key file; under project it does not', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: '' } })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /saved to ~\/.claude\/duet-data\/.env \(chmod 600\) · t tests it/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Codex can read this file under codexFsScope: anything; project hides it\./ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('under codexFsScope project the saved note has no Codex warning', { options: { codexFsScope: 'project' } }, async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: '' } })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /saved to ~\/.claude\/duet-data\/.env/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Codex can read this file/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
   test('an empty Enter changes nothing and says so', async ($, on) => {
     const seen = engine(on, { files: { [KEY_FILE]: 'OTHER=1\n' } })
     await start($)
