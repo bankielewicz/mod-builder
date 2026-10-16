@@ -255,7 +255,11 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
     const text = `${r.stderr}\n${r.stdout}`
     const held = lockPathOf(text) ?? (await heldOf($, files))
     if (!held && !isLockError(text)) return r
-    if (attempt === LOCK_ATTEMPTS) throw new Locked(held ?? files[0]!)
+    // A lock refusal that no lock file explains (a broken ref) comes back as git said it once the attempts are spent.
+    if (attempt === LOCK_ATTEMPTS) {
+      if (!held) return r
+      throw new Locked(held)
+    }
     await lockWait($)
     // The 5 s watch is too slow for a takeover during the waits: the stored run is read before each attempt.
     await stillOwned($, run)
