@@ -1347,7 +1347,7 @@ the run's worktree (or the checkout, for a `here` run). issue-forge deletes noth
    pane offers Stop and Status, not Resume; `/issue-forge resume <N>` answers `#<N> can't be resumed: <reason>.
    /issue-forge stop <N> ends it.` and changes nothing. `/issue-forge status` lists the steps under the `next:`
    line; the pane shows `steps: /issue-forge status` when there are any. The pull-request block (`#N is a pull
-   request, not an issue`) and the closed-issue block become final too: resume could never clear them, and
+   request, not an issue`) and the closed-issue block become final too (superseded for the closed-issue block: see "Decision at build" below): resume could never clear them, and
    0.4.1's suffix told the person to try.
 7. **The next steps** (one pure function, `newPluginSteps`, for both cases; plain words, no repository-specific
    path). Shown here for the two cases.
