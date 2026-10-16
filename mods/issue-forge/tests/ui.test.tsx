@@ -2106,6 +2106,8 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
   const FORK = { originUrl: 'https://github.com/me/r.git', remotes: { upstream: 'https://github.com/o/r.git' } }
   const WATCH = { when: () => false, until: Promise.resolve() }
   const FORK_VIEW = ['gh', 'repo', 'view', 'github.com/me/r', '--json', 'isFork,parent']
+  /** The project remote, pointed elsewhere after preflight read it (Codex on PR #87). */
+  const MOVED = { upstream: 'https://github.com/evil/r.git' }
   const forkRun = (extra: Record<string, unknown> = {}) => storedRun('ready', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', greenCommit: 'c2', gatedHead: 'c0', ...extra })
   const isGitWrite = (a: string[]) => a[0] === 'git' && (a[1] === 'fetch' || a[1] === 'switch' || a[1] === 'worktree')
   const isPublished = (w: World) => w.argv.some(a => (a[0] === 'git' && a[1] === 'push') || (a[0] === 'gh' && a[1] === 'pr'))
@@ -2468,8 +2470,21 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     expect(w.spawned).toHaveLength(1)
   })
 
+  test('start: a project remote repointed while the base question is open is read again before the first fetch (Codex on PR #87)', async ($, on) => {
+    let answer = (_label: string) => {}
+    const hold = new Promise<string>(resolve => (answer = resolve))
+    const w = engine(on, { ...FORK, issueBody: 'Make it work.\nBase branch: dev', hold })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.asked.length === 1, 'the base question')
+    w.remotes = MOVED
+    answer('Use dev')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain('blocked at preflight: upstream no longer fetches from o/r')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
+  })
+
   // PR #87 review (Codex): the stored base remote is a name; what it fetches from is read again where it is fetched.
-  const MOVED = { upstream: 'https://github.com/evil/r.git' }
   const ZERO = { redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } }
 
   test('resume at the baseline blocks when the project remote now fetches from another repository: nothing is fetched or spawned', async ($, on) => {
