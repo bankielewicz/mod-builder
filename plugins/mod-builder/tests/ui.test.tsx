@@ -2738,7 +2738,7 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
   const listed = async ($: Engine) => {
     const ui = await mountPane($)
     const names = []
-    for (const name of ['alpha', 'beta', 'gamma']) if (await ui.find({ type: 'Text', text: new RegExp(name) })) names.push(name)
+    for (const name of ['alpha', 'beta', 'gamma', 'kappa', 'sigma']) if (await ui.find({ type: 'Text', text: new RegExp(name) })) names.push(name)
     return { ui, names }
   }
 
@@ -3016,6 +3016,60 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     await clock.advance(10)
     expect((await listed($)).names).toEqual(['alpha'])
     expect(seen.rootReads).toBe(0)
+  })
+
+  // Folders under the root that are not this repository: a nested clone (tmp/'s community mods), a copy, another repository's worktree.
+  for (const [label, extra] of [
+    ['a nested clone with its own .git', { [`${MAIN}/tmp/other/.git/HEAD`]: 'ref: refs/heads/main\n' }],
+    ['a copy with no .git', {}],
+    ['a worktree of another repository', { [`${MAIN}/tmp/other/.git`]: 'gitdir: /x/elsewhere/.git/worktrees/other\n' }],
+  ] as const) {
+    test(`${label} under the root is not pinned, and nothing runs there (PR #95 review follow-up)`, async ($, on) => {
+      const OTHER_REPO = `${MAIN}/tmp/other`
+      const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(OTHER_REPO), ...extra, ...modFiles('sigma', `${OTHER_REPO}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+      seen.cwd = MAIN
+      await start($)
+      await clock.advance(10)
+      const { result } = (await report($, { mod: 'sigma', stage: 'Validate', status: 'passed', path: `${OTHER_REPO}/mods/sigma` })) as { result: string }
+      await clock.advance(1000)
+      await clock.settle()
+      expect(result).toContain('path ignored')
+      expect(seen.argv.some(argv => argv.includes(`${OTHER_REPO}/mods/sigma`))).toBe(false)
+      expect((await listed($)).names).toContain('alpha')
+    })
+  }
+
+  test('from a session rooted in a worktree, the main folder\'s mods can be pinned (PR #95 review follow-up)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = WT
+    await start($)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Logic', status: 'running', path: `${MAIN}/mods/alpha` })) as { result: string }
+    await command($, 'alpha')
+    await clock.advance(10)
+    expect(result).not.toContain('path ignored')
+    expect((await listed($)).names).toEqual(['alpha'])
+  })
+
+  test('a sibling worktree outside the root can be pinned (PR #95 review follow-up)', async ($, on) => {
+    const SIB = '/w/sib'
+    const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(SIB), ...worktreeOf(SIB, 'sib'), ...modFiles('kappa', `${SIB}/mods`) })
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'kappa', stage: 'Logic', status: 'running', path: `${SIB}/mods/kappa` })) as { result: string }
+    await clock.advance(10)
+    expect(result).not.toContain('path ignored')
+    expect((await listed($)).names).toEqual(['kappa'])
+  })
+
+  test('guard: the root\'s own mods can be pinned (PR #95 review follow-up)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    seen.cwd = MAIN
+    await start($)
+    const { result } = (await report($, { mod: 'alpha', stage: 'Logic', status: 'running', path: `${MAIN}/mods/alpha` })) as { result: string }
+    await clock.advance(10)
+    expect(result).not.toContain('path ignored')
+    const { text } = (await $.command.run({ command: 'mod-builder', args: 'config', origin: COMPOSER, presentation: PRESENTATION })) as { text?: string }
+    expect(text).toContain("a build's folder (…/main/mods)")
   })
 
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {

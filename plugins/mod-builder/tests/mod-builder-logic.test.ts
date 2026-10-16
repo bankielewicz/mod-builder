@@ -126,6 +126,13 @@ const pinCheckOf = (dir: string, root: string | null): PinCheck | undefined =>
   (Logic as unknown as { pinCheckOf?: (dir: string, root: string | null) => PinCheck }).pinCheckOf?.(dir, root)
 const pinOf = (value: unknown): Pin | null | undefined => (Logic as unknown as { pinOf?: (value: unknown) => Pin | null }).pinOf?.(value)
 
+/** The repository rule (PR #95 review follow-up), read the same way. */
+type DotGit = { kind: 'dir' } | { kind: 'file'; text: string } | null
+const gitCommonDirOf = (folder: string, dotGit: DotGit): string | null | undefined =>
+  (Logic as unknown as { gitCommonDirOf?: (folder: string, dotGit: DotGit) => string | null }).gitCommonDirOf?.(folder, dotGit)
+const isSameRepo = (a: string | null, b: string | null): boolean | undefined =>
+  (Logic as unknown as { isSameRepo?: (a: string | null, b: string | null) => boolean }).isSameRepo?.(a, b)
+
 /** A row's report (PR #95 review), read the same way. */
 const reportIn = (report: Parameters<typeof liveReports>[0][string] | undefined, dir: string) =>
   (Logic as unknown as { reportIn?: (report: unknown, dir: string) => unknown }).reportIn?.(report, dir)
@@ -1280,6 +1287,26 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(pinCheckOf('/w/main/scratch/wt/mods', null)).toEqual({ reason: "the project root can't be read" })
     expect(pinCheckOf('/w/sib/mods', '/w/main')).toEqual({ marketplace: '/w/sib/.claude-plugin/marketplace.json', root: '/w/main' })
     expect(pinCheckOf('/w/main/scratch/wt/plugins', '/w/main')).toEqual({ reason: "/w/main/scratch/wt/plugins isn't a marketplace's mods folder" })
+  })
+
+  test('gitCommonDirOf: a repository top, a worktree (absolute or relative gitdir), a submodule; nothing else (PR #95 review follow-up)', () => {
+    expect(gitCommonDirOf('/w/main', { kind: 'dir' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/wt\n' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/sib', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/sib\r\n' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: ../../.git/worktrees/wt' })).toBe('/w/main/.git')
+    // A submodule's git folder is its own repository's.
+    expect(gitCommonDirOf('/w/main/sub', { kind: 'file', text: 'gitdir: ../.git/modules/sub\n' })).toBe('/w/main/.git/modules/sub')
+    expect(gitCommonDirOf('/w/main/tmp/copy', null)).toBeNull()
+    expect(gitCommonDirOf('/w/x', { kind: 'file', text: 'not a gitdir line' })).toBeNull()
+  })
+
+  test('isSameRepo: one common git folder, without case on a drive or UNC share; unknown is never the same (PR #95 review follow-up)', () => {
+    expect(isSameRepo('/w/main/.git', '/w/main/.git/')).toBe(true)
+    expect(isSameRepo('C:/Users/Me/repo/.git', 'C:/users/me/repo/.git')).toBe(true)
+    expect(isSameRepo('/w/Main/.git', '/w/main/.git')).toBe(false)
+    expect(isSameRepo('/w/main/tmp/clone/.git', '/w/main/.git')).toBe(false)
+    expect(isSameRepo(null, '/w/main/.git')).toBe(false)
+    expect(isSameRepo(null, null)).toBe(false)
   })
 
   test('pinOf: a stored pin needs a folder and a root (PR #95 review)', () => {
