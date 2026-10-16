@@ -2501,6 +2501,26 @@ describe('a pane press that changes a live run asks first (#31)', () => {
     expect(w.argv.filter(a => a[0] === 'git' && a[1] === 'push').length).toBe(1)
   })
 
+  test("a Stop press while the drive's own publish question is open asks nothing more and says to answer it first (PR #96, Codex 4290573669)", async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const w = engine(on, { head: BRANCH, hold }, { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length === 1, 'the question')
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.includes('publish question is open')))
+    await ui.unmount()
+    expect(w.asked.length).toBe(1)
+    expect(w.toasts).toContain("#16's publish question is open; answer it first, then press Stop.")
+    release('Not now')
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect((await run($, 'status')).text).not.toContain('stopped')
+    expect(w.argv.some(a => a[1] === 'push')).toBe(false)
+  })
+
   test('a Stop press on a run that finished after the pane drew asks nothing and says there is nothing to stop (PR #96 review, Codex 4290452256)', async ($, on) => {
     const store: Record<string, unknown> = { [key(16)]: { ...blockedRun(), repo: `${ROOT}/.git` } }
     // storeHold makes the stubs read and write `store` itself, so the test can change a run as another session would.
