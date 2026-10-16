@@ -114,7 +114,7 @@ the remotes are fixed and it resumes.
   base (`upstream/main`), pushes the branch to your fork, and opens the pull request on the project with your
   fork's owner as the head (`gh pr create --repo <project> --head <you>:<branch>`). Before anything is
   fetched, preflight checks that exactly one remote besides `origin` names the project (two block, naming
-  both), that every push URL of `origin` is one fork and its fetch URL that fork or the project, that
+  both), that `origin` fetches from and pushes to one fork, that
   `gh repo view` calls it a fork of the project, and that its owner is a user: `gh pr create` can't name an
   organization's fork as the head ([cli/cli#10093](https://github.com/cli/cli/issues/10093)), so that blocks.
   An ssh host nickname from `~/.ssh/config` (`git@gh-personal:me/r.git`) counts as the host `ssh -G` says it

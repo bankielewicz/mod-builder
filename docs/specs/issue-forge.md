@@ -82,7 +82,7 @@ the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own c
    before its fetch, and publish checks origin in the run's folder before it pushes (a worktree's own config can
    differ). A number start is pinned to the repository as soon as origin agrees with it.
    A fork clone (SPEC change 0.5.0) is the exception to "`origin` is that repository": when every push URL of
-   `origin` names one other repository on the same host, its fetch URL is that fork or the pinned one, and
+   `origin` names one other repository on the same host, its fetch URL is that fork too, and
    exactly one other remote's fetch URL names the pinned one (`git remote`, `git remote get-url <name>`), that
    remote is the run's base remote. Two block (`remotes a and b both point at o/r`). For these remotes an ssh
    host other than the pinned one counts as `ssh -G <host>` resolves it (never assumed to be a nickname).

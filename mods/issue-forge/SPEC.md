@@ -1305,10 +1305,10 @@ host.
    fork clone, so a clone whose origin is the project runs exactly as in 0.4.0. Preflight reads origin's fetch URL and
    every push URL once (`originUrls`) and hands them to both checks. `forkOf` resolves each distinct URL with
    `forkRemoteRepo` (item 8), all at once, and `forkOfOrigin` (logic) decides: a fork clone when every push URL names the
-   same one repository other than the project, on the project's host, and the fetch URL is that fork or the project
-   (PR #87 review: `git ls-remote origin` then lists a repository that was checked). Anything else (no origin, an
-   unrecognised URL, a fetch URL that is a third repository, a push URL that is the project, two different
-   repositories, another host) returns `originCheck`'s own block.
+   same one repository other than the project, on the project's host, and the fetch URL is that fork too (PR #87
+   review: `git ls-remote origin` reads the fetch URL, so the taken-name check sees the fork's branches). Anything else
+   (no origin, an unrecognised URL, a fetch URL that is the project or a third repository, a push URL that is the
+   project, two different repositories, another host) returns `originCheck`'s own block.
 2. **Base remote.** `git remote`, then `git remote get-url <name>` for each remote besides `origin`, looked up together
    and each resolved with `forkRemoteRepo` against the project, so a mirror with the project's owner/repo on another
    host is not the project (item 8). `baseRemoteOf` (logic) classifies the matching names: none returns the origin
@@ -1323,8 +1323,8 @@ host.
    user or an organization`. Both gh checks come before any fetch.
 5. **The remote the base comes from.** `fetchBase`, `catchUp`, `whereToWork`, `makeBranch`, the merge base, the profile
    read, the baseline and the publish merge check take the remote as an argument (`baseRemote`, else `origin`), and their
-   activity labels and block reasons name it. Before each fetch from it (a kept worktree at preflight, the baseline, the
-   publish merge check), `baseRemoteCheck` reads `git remote get-url <baseRemote>` in that folder again and requires it
+   activity labels and block reasons name it. Before each fetch from it (the first one, since the base question can
+   wait on the person; a kept worktree at preflight; the baseline; the publish merge check), `baseRemoteCheck` reads `git remote get-url <baseRemote>` in that folder again and requires it
    to be the project (`<remote> no longer fetches from o/r`, next `point <remote> back at o/r, or start a new run`; the
    merge check reports it as why it couldn't run). The branch name is checked against `ls-remote --heads` on `origin` and on
    the base remote. The merge line, the publish question and the PR body name `baseRefOf(run)` (`upstream/main`).
@@ -1394,5 +1394,14 @@ Codex's two inline comments on 9430f83 and the owner's `/code-review` (9 more). 
 | 10 | The publish question didn't name the fork | it does (item 7) |
 | 11 | A mirror with the project's owner/repo on another host counted as the project and could become the base | item 8 |
 
-Not done: one `gh repo view --json nameWithOwner,url,isFork,parent` in place of two calls (the canonical name and the
+### PR #87 review round 2 (2026-10-15)
+
+Codex on 008f39f, two inline comments.
+
+| Finding | Fix |
+| --- | --- |
+| (P1 4290274553) Round 1 let origin fetch from the project and push to the fork, but `git ls-remote origin` reads the fetch URL, so the fork's branches were never seen and the name could collide there | the fetch URL must be the fork too (item 1); the two tests that allowed it were corrected in their own commit |
+| (P2 4290274549) The first fetch skipped `baseRemoteCheck`, but the base question can wait on the person after `forkCheck` read the remote | `makeBranch` passes the pinned repository to `fetchBase` |
+
+Not done (round 1): one `gh repo view --json nameWithOwner,url,isFork,parent` in place of two calls (the canonical name and the
 fork check are separate questions, and the memo already removes the repeat).
