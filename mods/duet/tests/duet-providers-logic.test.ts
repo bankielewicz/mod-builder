@@ -323,6 +323,29 @@ describe('provider text: cleaned, redacted, then cut', () => {
       'cat ~/.claude/duet-data/sessions/s1/d1.out.md', 'cat ~/.claude/duet-data/*.md', 'cat <<EOF\n~/.claude/duet-data/.env\nEOF',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
     expect(namesKeyFolder('/work/duet-data')).toBe(false)
+    // A payload that reaches nothing passes; a glob that is not a valid class counts, to be safe.
+    expect(namesKeyFile('bash -c "echo hi"')).toBe(false)
+    expect(namesKeyFile('cat ~/.claude/duet-data/[')).toBe(true)
+  })
+
+  test('the guard: a here-string an interpreter reads counts, and a payload nested past four levels is refused rather than let through', () => {
+    expect(namesKeyFile('bash <<< "cat ~/.claude/duet-data/.env"')).toBe(true)
+    expect(namesKeyFile('cat <<< "keys live in ~/.claude/duet-data/.env"')).toBe(false)
+    const nest = (cmd: string, n: number): string => (n === 0 ? cmd : nest(`bash -c "${cmd.replace(/[\\"]/g, m => '\\' + m)}"`, n - 1))
+    expect(namesKeyFile(nest('cat ~/.claude/duet-data/.env', 3))).toBe(true)
+    expect(namesKeyFile(nest('echo hi', 6))).toBe(true)
+    expect(namesKeyFile(nest('echo hi', 2))).toBe(false)
+  })
+
+  test('the guard\'s tokenizer: unclosed quotes, escapes, -e patterns, git grep, operators, <<- heredocs, redirections, odd whitespace', () => {
+    for (const text of [
+      "cat '~/.claude/duet-data/.env", 'echo "a \\"b\\" c"; cat ~/.claude/duet-data/.env', 'cat \\~/.claude/duet-data/.env', 'git grep KEY ~/.claude/duet-data',
+      'cat ~/.claude/duet-data/.env; ls', 'bash <<-EOF\n\tcat ~/.claude/duet-data/.env\n\tEOF', 'cat ~/.claude/duet-data/.env >> /tmp/x', 'ls\f~/.claude/duet-data',
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    for (const text of ["grep -e '~/.claude/duet-data/.env' README.md", 'grep --regexp=~/.claude/duet-data/.env README.md', 'echo hi >&2', 'ls \\']) expect([text, namesKeyFile(text)]).toEqual([text, false])
+    expect(parseModelsReply('{"data":[{"name":"x"},{"id":"y"}]}')).toEqual({ ids: ['y'], hasMore: false })
+    expect(parseChatReply('{"error":"plain words"}')).toEqual({ error: 'plain words' })
+    expect(testOutcome('probe', { status: 404, ok: false, text: '' }, 1, 1).note).toBe('✕ 404 not found')
   })
 })
 
