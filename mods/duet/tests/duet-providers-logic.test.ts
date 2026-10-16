@@ -228,7 +228,7 @@ describe('requests and replies', () => {
     expect(long.startsWith('✕ 200 bad[2Jmsgxxx')).toBe(true)
     expect(long.length).toBeLessThanOrEqual(90)
     // Codex 4299426954 (the list's failure text) and the 429 header both go through clean before redact.
-    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': 'sec\u001bret' } }, 20, at, ['secret']).note).toBe('✕ 429 rate limited (retry-after [redacted] s); not retried')
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': 'sec\u001bret' } }, 20, at, ['secret']).note).toBe('✕ 429 rate limited (retry-after [redacted]); not retried')
     // Codex 4299362999: a result remembers the base URL it tested, so a custom endpoint that moved shows as untested.
     expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}]}' }, 20, at, [], true, '', 'https://gw.example.com/v1').host).toBe('https://gw.example.com/v1')
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"gpt-5","choices":[{"message":{"content":""}}]}' }, 20, at).note).toBe('ok 20ms gpt-5 · 1 token')
@@ -245,8 +245,8 @@ describe('requests and replies', () => {
     expect(testOutcome('probe', { status: 429, ok: false, text: '' }, 20, at).note).toBe('✕ 429 rate limited (retry-after not given); not retried')
     // A 429 keeps the body's message (an exhausted quota is not a transient limit), and Retry-After is redacted and cleaned (Codex 4298989611).
     expect(testOutcome('probe', { status: 429, ok: false, text: '{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}' }, 20, at).note).toBe('✕ 429 rate limited (You exceeded your current quota; retry-after not given); not retried')
-    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': KEY } }, 20, at, [KEY]).note).toBe('✕ 429 rate limited (retry-after [redacted] s); not retried')
-    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '3\u001b[2J0\n' } }, 20, at).note).toBe('✕ 429 rate limited (retry-after 3[2J0 s); not retried')
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': KEY } }, 20, at, [KEY]).note).toBe('✕ 429 rate limited (retry-after [redacted]); not retried')
+    expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '3\u001b[2J0\n' } }, 20, at).note).toBe('✕ 429 rate limited (retry-after 3[2J0); not retried')
     // Codex 4298989618: a `null` body never throws, at any status and step.
     expect(testOutcome('probe', { status: 200, ok: true, text: 'null' }, 20, at).note).toBe('✕ 200 the reply is not JSON')
     expect(testOutcome('probe', { status: 500, ok: false, text: 'null' }, 20, at).note).toBe('✕ 500 server error (null)')
@@ -271,7 +271,7 @@ describe('provider text: cleaned, redacted, then cut', () => {
   const leaks = (text: string) => [8, 12, 20].some(n => text.includes(LONG.slice(0, n)))
 
   test('safeText strips controls, then redacts, then cuts, so a key that straddles the cut is never partly shown', () => {
-    expect(LONG.length).toBe(63)
+    expect(LONG.length).toBe(64)
     expect(safeText('x'.repeat(48) + LONG, [LONG], 60)).toBe('x'.repeat(48) + '[redacted]')
     expect(safeText('sec\u001bret', ['secret'], 60)).toBe('[redacted]')
     expect(safeText('a\nb', [], 10)).toBe('ab')
