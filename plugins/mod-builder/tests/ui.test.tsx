@@ -2721,11 +2721,15 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
   const WT = '/w/main/scratch/wt'
   const OTHER = '/w/other'
   const marketplaceAt = (folder: string): Disk => ({ [`${folder}/.claude-plugin/marketplace.json`]: '{ "plugins": [] }' })
-  // alpha in the main checkout, beta in a worktree under it, gamma in a third marketplace.
+  // A git worktree of the main checkout's repository: its `.git` is a file naming the common git folder.
+  const worktreeOf = (folder: string, name: string): Disk => ({ [`${folder}/.git`]: `gitdir: ${MAIN}/.git/worktrees/${name}\n` })
+  // alpha in the main checkout (a repository top), beta in a worktree under it, gamma in a third marketplace.
   const disk = (): Disk => ({
     ...marketplaceAt(MAIN),
+    [`${MAIN}/.git/HEAD`]: 'ref: refs/heads/main\n',
     ...modFiles('alpha', `${MAIN}/mods`),
     ...marketplaceAt(WT),
+    ...worktreeOf(WT, 'wt'),
     ...modFiles('beta', `${WT}/mods`),
     ...marketplaceAt(OTHER),
     ...modFiles('gamma', `${OTHER}/mods`),
@@ -2862,7 +2866,7 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
 
   test('overlapping reports with different paths each keep their own folder (PR #95, Codex P2)', async ($, on) => {
     const WT2 = '/w/main/scratch/wt2'
-    const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(WT2), ...modFiles('delta', `${WT2}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
+    const { seen, clock } = world(on, { ...disk(), ...marketplaceAt(WT2), ...worktreeOf(WT2, 'wt2'), ...modFiles('delta', `${WT2}/mods`) }, { validate: { exitCode: 0, stdout: validateClean } })
     seen.cwd = MAIN
     // The first report's write of the pin waits; a second report with another path lands meanwhile.
     let release = () => {}
