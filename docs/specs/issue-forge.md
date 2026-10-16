@@ -47,7 +47,7 @@ without a coverage tool (the gate can't be measured, so the run refuses to start
 - **Run**: one attempt to take issue *N* from open to a pull request, with its state saved (§7.4).
 - **Base**: the branch the pull request targets: the profile's `baseBranch`, unless a line of the
   issue body matches `^Base branch: (\S+)$`. Then the first such line's branch is used.
-- **Merge base**: `git merge-base HEAD origin/<base>`, computed once when the run's branch is created.
+- **Merge base**: `git merge-base HEAD <remote>/<base>` (`<remote>` is `origin`, or the project's remote in a fork clone), computed once when the run's branch is created.
 - **Test files**: paths matching the profile's `testGlobs`.
 - **Source files**: paths matching `sourceGlobs` and not matching `testGlobs` or `excludeGlobs`.
 - **Measured source**: source files that the coverage tool instruments. **Unmeasured source**: source
@@ -81,22 +81,32 @@ the run's worktree; SPEC change 0.2.0), with no shell unless the profile's own c
    `gh repo view` (a rename); `gh` is never asked about another host. A kept worktree is checked there too,
    before its fetch, and publish checks origin in the run's folder before it pushes (a worktree's own config can
    differ). A number start is pinned to the repository as soon as origin agrees with it.
+   A fork clone (SPEC change 0.5.0) is the exception to "`origin` is that repository": when every push URL of
+   `origin` names one other repository on the same host, its fetch URL is that fork too, and
+   exactly one other remote's fetch URL names the pinned one (`git remote`, `git remote get-url <name>`), that
+   remote is the run's base remote. Two block (`remotes a and b both point at o/r`). For these remotes an ssh
+   host other than the pinned one counts as `ssh -G <host>` resolves it (never assumed to be a nickname).
+   `gh repo view <fork> --json isFork,parent` must show a fork of the pinned repository (owner login and name,
+   any case), or the run blocks (`origin me/r isn't a fork of o/r`). `gh api --hostname <host> users/<owner>
+   --jq .type` must not print `Organization` (`gh pr create --head` can't name one: cli/cli#10093). The run
+   stores `baseRemote` and `headRepo`; below, `<remote>` is `baseRemote`, else `origin`, and before each fetch
+   from a `baseRemote` its URL is read again in that folder and must still name the pinned repository.
    `gh issue view <N> --repo <host/owner/repo> --json number,title,body,state,url` shows `state: OPEN`
    and a url that isn't a pull request's.
 2. The profile exists and validates (§4.2).
-3. `git fetch origin <base>` succeeds.
-4. Where the run works (`workspace`, read from `git show origin/<base>:.issue-forge.json`): a
+3. `git fetch <remote> <base>` succeeds.
+4. Where the run works (`workspace`, read from `git show <remote>/<base>:.issue-forge.json`): a
    checkout is *busy* when `git status --porcelain` isn't empty or HEAD isn't `<base>`. `here`
    blocks a busy checkout; `ask` offers a new worktree for one (no answer blocks); `worktree` always
    makes one. A worktree needs `worktreeDir` ignored by git, and a red type the mod spawns itself.
 5. No other run for this repository is active (§7.4).
 
-**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> origin/<base>` in the checkout, or
-`git worktree add --no-track -b issue-<N>-<slug> <worktreeDir>/<branch> origin/<base>`. A preflight
+**Step 2: branch.** `git switch --no-track -c issue-<N>-<slug> <remote>/<base>` in the checkout, or
+`git worktree add --no-track -b issue-<N>-<slug> <worktreeDir>/<branch> <remote>/<base>`. A preflight
 that blocks after this keeps the branch and folder, and resuming it reuses them. `<slug>` is the
 issue title in lowercase, each run of non-alphanumeric characters replaced with one `-`, leading
 and trailing `-` removed, cut to 40 characters (then a trailing `-` removed again). If that branch
-name exists locally or on `origin`, append `-2`, `-3`, … until it doesn't.
+name exists locally, on `origin` or on `<remote>`, append `-2`, `-3`, … until it doesn't.
 `--no-track` keeps git from writing tracking config. Record the merge base.
 
 **Step 3: baseline.** Run `testCommand`; it must exit 0, or the run stops in `blocked`: "tests
@@ -139,8 +149,10 @@ a rejected refactor doesn't block the pull request.
 
 **Step 7: confirm and publish.** Show the summary (§7.3, state `ready`) and ask: "Push
 `issue-<N>-<slug>` and open a pull request against `<base>`?" (`on <owner>/<repo>` before `against`). Then:
-- On yes: check `origin` again, then `git push origin issue-<N>-<slug>`, without `-u`, so it writes no tracking config. Then
-  `gh pr create --base <base> --head issue-<N>-<slug> --title "<title> (#<N>)" --body-file <data dir>/<run>/pr.md --repo <host/owner/repo>`.
+- On yes: check `origin` again (a fork run: every push URL of `origin` still names the fork), then `git push origin issue-<N>-<slug>`,
+  without `-u`, so it writes no tracking config. Then
+  `gh pr create --base <base> --head issue-<N>-<slug> --title "<title> (#<N>)" --body-file <data dir>/<run>/pr.md --repo <host/owner/repo>`
+  (a fork run: `--head <fork owner>:issue-<N>-<slug>`).
   The body holds the gate results, the coverage numbers and `Closes #<N>`. State `done`.
 - On no, or no answer possible (`claude -p`): state `ready`, with nothing pushed. `/issue-forge publish` resumes from here.
 

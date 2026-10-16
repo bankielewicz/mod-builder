@@ -1424,6 +1424,131 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
     so the run's commits skip the repository's git hooks. A repository that checks through hooks needs those
     checks in the profile's `checks`.
 
+## Change 0.5.0 (2026-10-15)
+
+> issue-forge: support fork clones, where origin is the contributor's fork and the project is another remote (#26)
+
+**Why.** 0.4.0 blocks a clone whose `origin` isn't the repository `gh` names, which is every fork clone with an
+`upstream` remote. The evidence (`gh` 2.102.0, Claude Code 2.1.296) is in issue #26: with no default set, `gh` resolves
+`upstream` silently, while fetch and push go to `origin`; `gh pr create --head` takes `<user>:<branch>` but not an
+organization as `<user>` (cli/cli#10093); `parent` from `gh repo view --json parent` has an owner login and a name, no
+host.
+
+**What changes.**
+1. **When it applies.** Preflight still runs `originCheck` first. Only when that blocks does `forkCheck` look for a
+   fork clone, so a clone whose origin is the project runs exactly as in 0.4.0. Preflight reads origin's fetch URL and
+   every push URL once (`originUrls`) and hands them to both checks. `forkOf` resolves each distinct URL with
+   `forkRemoteRepo` (item 8), all at once, and `forkOfOrigin` (logic) decides: a fork clone when every push URL names the
+   same one repository other than the project, on the project's host, and the fetch URL is that fork too (PR #87
+   review: `git ls-remote origin` reads the fetch URL, so the taken-name check sees the fork's branches). Anything else
+   (no origin, an unrecognised URL, a fetch URL that is the project or a third repository, a push URL that is the
+   project, two different repositories, another host) returns `originCheck`'s own block.
+2. **Base remote.** `git remote`, then `git remote get-url <name>` for each remote besides `origin`, looked up together
+   and each resolved with `forkRemoteRepo` against the project, so a mirror with the project's owner/repo on another
+   host is not the project (item 8). `baseRemoteOf` (logic) classifies the matching names: none returns the origin
+   block, one is the base remote, several block with `remotes a and b both point at o/r` and next `remove one of them`
+   (three or more read `a, b and c`).
+3. **Fork check.** `gh repo view <fork> --json isFork,parent`; `isForkOf` (logic) passes when `isFork` is true and the
+   parent's owner login and name are the project's, in any case, without comparing a host. Otherwise `origin me/r isn't a
+   fork of o/r`. A `gh` failure blocks with its own text (`could not read me/r from gh: …`) rather than claiming it
+   isn't a fork.
+4. **Organization.** `gh api --hostname <fork's host> users/<owner> --jq .type` printing `Organization` blocks with `gh pr create can't name an
+   organization's fork as the head (cli/cli#10093)`. A `gh api` failure blocks with `could not tell whether <owner> is a
+   user or an organization`. Both gh checks come before any fetch.
+5. **The remote the base comes from.** `fetchBase`, `catchUp`, `whereToWork`, `makeBranch`, the merge base, the profile
+   read, the baseline and the publish merge check take the remote as an argument (`baseRemote`, else `origin`), and their
+   activity labels and block reasons name it. Before each fetch from it (the first one, since the base question can
+   wait on the person; a kept worktree at preflight; the baseline; the publish merge check), `baseRemoteCheck` reads `git remote get-url <baseRemote>` in that folder again and requires it
+   to be the project (`<remote> no longer fetches from o/r`, next `point <remote> back at o/r, or start a new run`; the
+   merge check reports it as why it couldn't run). The branch name is checked against `ls-remote --heads` on `origin` and on
+   the base remote. The merge line, the publish question and the PR body name `baseRefOf(run)` (`upstream/main`).
+6. **Store.** The `preflighted` event carries `baseRemote` and `headRepo` (the fork, `host/owner/repo`, from the
+   canonical form `remoteRepo` gives, so a URL with a token never reaches a command line or a text). `advance` stores
+   them when present; a block and a resume keep them with the rest of the run. `Run.baseRemote?` and `Run.headRepo?`
+   in `types/index.d.ts`. A run without them (0.4.0's shape) fetches from and pushes to `origin`, runs `originCheck` at
+   publish and names the branch alone as the head.
+7. **Publish.** A run with `headRepo` runs `forkPushCheck` instead of `originCheck`: every push URL of origin must still
+   resolve to the fork (`forkRemoteRepo` against `headRepo`), else `origin no longer pushes to me/r`, next `point origin back
+   at it, or start a new run`. The push is still `git push origin <sha>:refs/heads/<branch>`; the pull request is
+   `gh pr create --base <base> --head <fork owner>:<branch> --title … --body-file … --repo <project>` (`headArg`, logic).
+   A kept worktree resumed through preflight gets the same push check in its own folder. The publish question names
+   both: `Push <branch> to me/r and open a pull request on o/r against main?`.
+8. **ssh host nicknames** (PR #87 review, the owner's choice). For the fork, the base remote, `baseRemoteCheck` and
+   `forkPushCheck`, an ssh URL whose host isn't the project's is read through `ssh -G <host>` (`sshHostOf`): ssh applies
+   `~/.ssh/config` and prints the `hostname` it would reach, without connecting (probed with OpenSSH 10.2: an alias
+   prints its `HostName`, lowercased; an unknown name prints itself). `forkRemoteVerdict` (logic) then reads the URL on
+   that host, with GitHub's ssh-over-443 host `ssh.github.com` taken for `github.com`, and never assumes another host
+   is a nickname. ssh failing is no match. So `git@gh-personal:me/r.git` with `HostName github.com` is the fork
+   `github.com/me/r`, and `git@gitlab.com:o/r.git` is `gitlab.com/o/r`, not the project. Origin's own check
+   (`originCheck`, `remoteVerdict`) keeps #25's rule, under which the same owner/repo over ssh on any host is the
+   project (#71). `ssh -G` reads ssh's default configuration; a `core.sshCommand` or `GIT_SSH_COMMAND` with its own
+   `-F` isn't followed.
+
+**Differences from the issue's proposal.** (a) The version is 0.5.0: 0.4.0 shipped #25. (b) `remoteRepo` in this repo
+takes a URL, not a remote name and a push flag, so the remotes' URLs are read in `originUrls`, `baseRemoteFor` and
+`forkPushCheck`. (c) The fork must be on the project's host (`hostOf`; an ssh host as `ssh -G` resolves it, item 8), else
+`originCheck`'s block stands, since `isForkOf` compares no host. (d) Logic-side texts (the merge line, the publish question, the PR body) name the base remote too.
+
+**What gets touched.** Processes, all in a fork clone only: `git remote`, `git remote get-url <name>`, `git ls-remote
+--heads <base remote>`, `gh repo view <fork> --json isFork,parent`, `gh api --hostname <host> users/<owner> --jq .type`,
+`ssh -G <host>` for an ssh URL on another host than the project's (local, never connects); fetch, switch and merge use
+the base remote. No new files, store keys or hooks. The push and the pull request still wait for a yes.
+
+**Not changed:** gates, coverage rules, phases, the guard, `.issue-forge.json`, the store keys. The start menu's `from
+origin/<base>` label still says origin: it is drawn before preflight knows any remote. The busy-checkout block names the
+ref the profile was read from (`upstream/<base>` in a fork clone; PR #87 review).
+
+**Unverified (#102, the fork pull request probe; it was #26's).** Whether `gh pr create --repo <project> --head <fork owner>:<branch>` opens the pull
+request, with a renamed fork too, and what 0.4.0's bare `--head` does from a fork clone, need a throwaway repository and a
+second personal GitHub account. No pull request from a fork has been opened by this change; the UI tests assert the
+command line, not gh's answer.
+
+**Tests** (`issue-forge-logic.test.ts`, `ui.test.tsx`): `baseRemoteOf`, `isForkOf`, `headArg` and `advance` with and
+without the fork; in the UI file, start (fetch, switch and worktree add from `upstream`, the profile and merge base read
+there, both remotes asked for a taken branch name, the stored run, the check order and a token in a URL), the blocks (an
+organization, two project remotes, not a fork, a fork of another repository), a failed fetch naming `upstream`, resume at
+the baseline, and publish (push, `--head me:<branch>`, `--repo`, the merge check on `upstream/main`, origin moved to another
+repository, one of two push URLs elsewhere).
+
+### PR #87 review round 1 (2026-10-15)
+
+Codex's two inline comments on 9430f83 and the owner's `/code-review` (9 more). Each fix went red → green.
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| 1 | (Codex) The stored base remote was trusted by name: a resume at the baseline, a kept worktree's own config and the publish merge check fetched whatever it pointed at | `baseRemoteCheck` before each of those fetches (item 5) |
+| 2 | (Codex) `gh api users/<owner>` had no `--hostname`, so GitHub Enterprise asked github.com | `--hostname <fork's host>` (item 4); the old exact-argv assertions were corrected in their own commit |
+| 3 | Merge conflict with main (#86 took 0.4.1) | main merged in; this stays 0.5.0 |
+| 4 | An ssh-nickname fork was refused, with a hint pointing at #26 | item 8; the hint now names both supported setups |
+| 5 | The busy-checkout block said `origin/<base>` in a fork run | `workspacePlan` takes the ref |
+| 6 | No QA or live check in the PR body | added to the PR body |
+| 7 | Origin's push URLs read twice, gh asked twice about the fork, remotes looked up one at a time | one read (`originUrls`), gh's names memoized per check, remotes looked up together |
+| 8 | Untested paths in `register.tsx` | tests for the gh failures, no project remote, push URLs unreadable or empty, a kept worktree, the fork wording |
+| 9 | `ls-remote origin` used a fetch URL nothing checked | the fetch URL is part of the fork check (item 1) |
+| 10 | The publish question didn't name the fork | it does (item 7) |
+| 11 | A mirror with the project's owner/repo on another host counted as the project and could become the base | item 8 |
+
+### PR #87 review round 2 (2026-10-15)
+
+Codex on 008f39f, two inline comments.
+
+| Finding | Fix |
+| --- | --- |
+| (P1 4290274553) Round 1 let origin fetch from the project and push to the fork, but `git ls-remote origin` reads the fetch URL, so the fork's branches were never seen and the name could collide there | the fetch URL must be the fork too (item 1); the two tests that allowed it were corrected in their own commit |
+| (P2 4290274549) The first fetch skipped `baseRemoteCheck`, but the base question can wait on the person after `forkCheck` read the remote | `makeBranch` passes the pinned repository to `fetchBase` |
+
+### PR #87 review round 3 (2026-10-15)
+
+Codex on 54aaa27 (P2 4290457132): a fork preflight that blocked after making its branch kept only the branch, folder and
+base, so a resume with origin pointed at another personal fork accepted it, skipped the taken-name check for the kept branch
+and could publish over a same-named branch there. `Kept` now carries `baseRemote` and `headRepo`, `makeBranch` records them
+with the branch, and the kept-branch path of a resume blocks through `keptForkBlock` (logic) unless origin still pushes
+where the name was checked: `origin now pushes to you/r, not me/r, where the run's branch was named`, next `point origin
+back at me/r, or start a new run`.
+
+Not done (round 1): one `gh repo view --json nameWithOwner,url,isFork,parent` in place of two calls (the canonical name and the
+fork check are separate questions, and the memo already removes the repeat).
+
 ## Change 0.6.0 (2026-10-15)
 
 > Issue #31 (with mod-builder 0.2.22 and duet 0.2.13, one PR): a bare `/issue-forge` closed its pane when the pane was open as a tab behind another pane; a stray pane key could stop a run or publish it.
@@ -1438,7 +1563,7 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
 
 **Not verified.** `$.ui.ask` from a pane press: C0 verified it from a detached promise (above), not from `onPress`; the issue's live step 5 settles it. `isShown` on surfaces other than the terminal's inline layout. (An open but unplaced pane, `isPlaced: false`, was listed here as treated as `show`; PR #96 review round 1 below makes it `open`.)
 
-**Version:** 0.6.0 in `plugin.json` and the marketplace entry: a minor bump, since a pane key now asks where it acted at once. 0.4.2 went to #28 (PR #88), which merged first, and 0.5.0 is held by #26 (PR #87), so this is the next free minor. Merged from `main` after #88: only the version, this SPEC and `tests/ui.test.tsx` (both new describe blocks kept) conflicted.
+**Version:** 0.6.0 in `plugin.json` and the marketplace entry: a minor bump, since a pane key now asks where it acted at once. 0.4.2 went to #28 (PR #88) and 0.5.0 to #26 (PR #87), which merged first, so this is the next free minor. Merged from `main` after each: only the version, this SPEC and the test files (both sides' new describe blocks kept) conflicted.
 - **PR #96 review round 1 (2026-10-15):**
   - **An unplaced pane is no tab behind another (Codex P2, 4290113920):** `$.ui.panes()` lists a pane whose open was not placed (an unasked open on a narrow terminal, or every row while an open answers `no-surface`) with `isPlaced: false` and `isShown: false`, and `paneAction` took it for `show`. A bare command then asked for the front (the `focus` path and a false "still behind" toast) and skipped `openPane`'s narrow-window toast; `/issue-forge demo` did the same, and a start or a resume answered that the pane was behind another tab. `paneAction` now takes `isPlaced`, as every `UiPane` row has it, and finds only a placed row, so an unplaced pane is `open`. Commits: fixture `13b354d` (rows carry `isPlaced`), red `bd96ec8`, green `3d2b3ed`.
   - **A press asks after the command's refusals, on the run it picked, once:** `confirmPress` asked before `publishRun` and `stopRun`, then the command picked the run again. A press could ask and then be refused (`this session is driving #N`), ask "Stop run?" and then "take it over?" for a run another session drives (and the take-over wording read as resuming the run here, on a button labelled Stop), or open a second question on top of the drive's own publish question; a no said nothing. Now `press` passes `byPress` to the command, which asks (`refusedPress`, with the pure `pressQuestion`) after its refusals, about the run it picked. A run another session drives is named in the one question: `#N is driven by another session (for 2m05s). Stop run #N? Its branch and commits are kept.` (Publish likewise, ahead of the publish question). While this session's drive has its publish question open (`publishAsking`), a Publish press asks nothing more and publishes, as a typed `/issue-forge publish` does. A no, a dismissal or no one to answer toasts `left #N as it is; /issue-forge stop N stops it.` or `left #N unpublished; /issue-forge publish N publishes it.`; the typed command is the way out if `$.ui.ask` misbehaves from `onPress`, which is still unverified. Typed `/issue-forge stop` and `publish` are unchanged. Commits: red `37bc21f`, green `4882405`. A Stop press while the drive's publish question is open still asks its own question on top (a mouse press only: the dialog holds the keys).

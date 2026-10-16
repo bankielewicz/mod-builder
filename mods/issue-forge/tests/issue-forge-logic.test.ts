@@ -83,6 +83,7 @@ import {
   repoAgentsKeys,
   profileProblems,
   profileStatusText,
+  publishAsk,
   publishQuestion,
   ranges,
   readdWorktreeCommand,
@@ -1767,5 +1768,183 @@ describe('pressQuestion: what a Stop or Publish press asks, and says when nothin
     const elsewhere = ready({ step: 'green', driver: { session: 's-other', since: 0 } })
     expect(pressQuestion('stop', elsewhere, 125_000, true)?.question).toBe('#16 is driven by another session (for 2m05s). Stop run #16? Its branch and commits are kept.')
     expect(pressQuestion('publish', ready({ driver: { session: 's-other', since: 0 } }), 125_000, true)?.question).toBe('#16 is driven by another session (for 2m05s). Push issue-16-fix-it and open a pull request against main?')
+  })
+})
+
+// Issue #26: a fork clone, where origin is the contributor's fork and another remote is the project. A run keeps the
+// remote it fetches the base from (`baseRemote`) and the fork it pushes to (`headRepo`, `host/owner/repo`).
+describe('a fork clone: the base remote, the fork check and the pull request head (#26)', () => {
+  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
+  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
+    const fn = (logic as Record<string, unknown>)[name]
+    expect(typeof fn).toBe('function')
+    return fn as (...args: A) => R
+  }
+  /** `gh repo view <fork> --json isFork,parent`, as gh prints it: the parent has an owner login and a name, no nameWithOwner. */
+  const view = (isFork: boolean, parent: { owner: string; name: string } | null) =>
+    JSON.stringify({ isFork, parent: parent === null ? null : { id: 'R_1', name: parent.name, owner: { id: 'U_1', login: parent.owner } } })
+  const PREFLIGHTED = { type: 'preflighted' as const, title: 'Fix it', body: 'b', url: 'u', base: 'main', branch: 'issue-16-fix-it', mergeBase: 'm', profile: profile(), repo: 'github.com/o/r' }
+
+  test('baseRemoteOf: the remotes whose fetch URL names the project are none, one (the base remote) or several (a block)', () => {
+    const baseRemoteOf = helper<[string[]], unknown>('baseRemoteOf')
+    expect(baseRemoteOf([])).toEqual({ kind: 'none' })
+    expect(baseRemoteOf(['upstream'])).toEqual({ kind: 'one', remote: 'upstream' })
+    expect(baseRemoteOf(['project', 'upstream'])).toEqual({ kind: 'several', remotes: ['project', 'upstream'] })
+    expect(baseRemoteOf(['a', 'b', 'c'])).toEqual({ kind: 'several', remotes: ['a', 'b', 'c'] })
+  })
+
+  test('isForkOf: a fork whose parent owner and name are the repository, in any case; every other answer is false', () => {
+    const isForkOf = helper<[string, string], boolean>('isForkOf')
+    const PIN = 'github.com/o/r'
+    expect(isForkOf(view(true, { owner: 'o', name: 'r' }), PIN)).toBe(true)
+    expect(isForkOf(view(true, { owner: 'O', name: 'R' }), PIN)).toBe(true)
+    expect(isForkOf(view(true, { owner: 'o', name: 'r' }), 'github.com/O/R')).toBe(true)
+    expect(isForkOf(`${view(true, { owner: 'o', name: 'r' })}\n`, PIN)).toBe(true)
+    // The host is the same by construction: gh prints none for the parent, so it is not compared.
+    expect(isForkOf(view(true, { owner: 'o', name: 'r' }), 'ghe.example.com/o/r')).toBe(true)
+    // Another owner or another name is another parent: a fork of o/x is no fork of o/r.
+    expect(isForkOf(view(true, { owner: 'x', name: 'r' }), PIN)).toBe(false)
+    expect(isForkOf(view(true, { owner: 'o', name: 'x' }), PIN)).toBe(false)
+    expect(isForkOf(view(false, null), PIN)).toBe(false)
+    expect(isForkOf(view(false, { owner: 'o', name: 'r' }), PIN)).toBe(false)
+    for (const stdout of ['', 'not json', '{}', '{"isFork":true}', '{"isFork":true,"parent":null}', '{"isFork":true,"parent":{"name":"r"}}', '{"isFork":true,"parent":{"name":"r","owner":null}}']) {
+      expect(isForkOf(stdout, PIN)).toBe(false)
+    }
+  })
+
+  test("headArg: a run with a fork names its owner as the head, `<owner>:<branch>`; a run without one names the branch alone", () => {
+    const headArg = helper<[string, string | undefined], string>('headArg')
+    expect(headArg('issue-16-fix-it', 'github.com/me/r')).toBe('me:issue-16-fix-it')
+    // A renamed fork is still the owner's.
+    expect(headArg('issue-16-fix-it', 'github.com/me/r-fork')).toBe('me:issue-16-fix-it')
+    expect(headArg('issue-16-fix-it', 'github.com/Me/r')).toBe('Me:issue-16-fix-it')
+    expect(headArg('issue-16-fix-it', 'ghe.example.com/me/r')).toBe('me:issue-16-fix-it')
+    expect(headArg('issue-16-fix-it', undefined)).toBe('issue-16-fix-it')
+  })
+
+  test("advance: 'preflighted' records the base remote and the fork, a block and a resume keep them, and a run preflighted without them has neither", () => {
+    type Forked = Run & { baseRemote?: string; headRepo?: string }
+    const event = { ...PREFLIGHTED, baseRemote: 'upstream', headRepo: 'github.com/me/r' }
+    const preflighted = advance(run(), event, 1) as Forked
+    expect(preflighted.baseRemote).toBe('upstream')
+    expect(preflighted.headRepo).toBe('github.com/me/r')
+    expect(preflighted.ghRepo).toBe('github.com/o/r')
+    expect(preflighted.step).toBe('baseline')
+    const blocked = advance(preflighted, { type: 'block', reason: 'r', next: 'n' }, 2) as Forked
+    expect(blocked.step).toBe('blocked')
+    expect(blocked.baseRemote).toBe('upstream')
+    expect(blocked.headRepo).toBe('github.com/me/r')
+    const resumed = advance(blocked, { type: 'resume' }, 3) as Forked
+    expect(resumed.baseRemote).toBe('upstream')
+    expect(resumed.headRepo).toBe('github.com/me/r')
+    // A run preflighted by 0.1.0's shape or #25's keeps neither: it fetches from and pushes to origin.
+    const plain = advance(run(), PREFLIGHTED, 1) as Forked
+    expect(plain.ghRepo).toBe('github.com/o/r')
+    expect(plain.baseRemote).toBeUndefined()
+    expect(plain.headRepo).toBeUndefined()
+  })
+  // PR #87 review: what origin's fetch URL and each push URL name, as resolved, decide the fork (the URLs are never kept).
+  test('forkOfOrigin: every push URL names one repository on the project\'s host that isn\'t the project, and the fetch URL is that fork', () => {
+    const forkOfOrigin = helper<[unknown, unknown[], string], string | null>('forkOfOrigin')
+    const PIN = 'github.com/o/r'
+    const FORK = 'github.com/me/r'
+    const other = (repo: string | null) => ({ other: repo })
+    expect(forkOfOrigin(other(FORK), [other(FORK)], PIN)).toBe(FORK)
+    // Fetching from the project and pushing to the fork is no fork clone: ls-remote origin would list the project, not the
+    // fork the branch is pushed to (Codex P1 on PR #87).
+    expect(forkOfOrigin('match', [other(FORK)], PIN)).toBe(null)
+    // The same fork in another case is one fork; the first spelling is kept.
+    expect(forkOfOrigin(other(FORK), [other(FORK), other('github.com/Me/R')], PIN)).toBe(FORK)
+    // A fetch URL that is a third repository, or one that can't be read: ls-remote origin would ask what nothing checked.
+    expect(forkOfOrigin(other('github.com/x/r'), [other(FORK)], PIN)).toBe(null)
+    expect(forkOfOrigin(other(null), [other(FORK)], PIN)).toBe(null)
+    // A push URL that is the project, can't be read, is on another host, or is a second repository: no fork.
+    expect(forkOfOrigin(other(FORK), [other(FORK), 'match'], PIN)).toBe(null)
+    expect(forkOfOrigin(other(FORK), [other(FORK), other(null)], PIN)).toBe(null)
+    expect(forkOfOrigin(other('gitlab.com/me/r'), [other('gitlab.com/me/r')], PIN)).toBe(null)
+    expect(forkOfOrigin(other(FORK), [other(FORK), other('github.com/you/r')], PIN)).toBe(null)
+    expect(forkOfOrigin(other(FORK), [], PIN)).toBe(null)
+  })
+
+  // PR #87 review, the owner's choice: a fork clone's ssh host nickname is resolved with `ssh -G`, never assumed.
+  test('sshHostname: the hostname line of ssh -G, lowercased; none is null', () => {
+    const sshHostname = helper<[string], string | null>('sshHostname')
+    expect(sshHostname('user git\nhostname github.com\nport 22\n')).toBe('github.com')
+    expect(sshHostname('hostname GitHub.COM\r\nport 22\r\n')).toBe('github.com')
+    expect(sshHostname('hostname  ghe.example.com  \n')).toBe('ghe.example.com')
+    expect(sshHostname('user git\nhostkeyalias x\nport 22\n')).toBe(null)
+    expect(sshHostname('')).toBe(null)
+  })
+
+  test("sshHostToResolve: an ssh URL's host when it isn't the project's; anything else needs no ssh", () => {
+    const sshHostToResolve = helper<[string, string], string | null>('sshHostToResolve')
+    const PIN = 'github.com/o/r'
+    expect(sshHostToResolve('git@gh-personal:me/r.git', PIN)).toBe('gh-personal')
+    expect(sshHostToResolve('ssh://git@ssh.github.com:443/me/r.git', PIN)).toBe('ssh.github.com')
+    expect(sshHostToResolve('git@GitLab.com:o/r.git', PIN)).toBe('gitlab.com')
+    expect(sshHostToResolve('git@github.com:me/r.git', PIN)).toBe(null)
+    expect(sshHostToResolve('https://gitlab.com/o/r.git', PIN)).toBe(null)
+    expect(sshHostToResolve('/srv/r.git', PIN)).toBe(null)
+  })
+
+  test('forkRemoteVerdict: an ssh host that is not the project\'s counts only as ssh resolves it; the same owner/repo elsewhere is another repository', () => {
+    const forkRemoteVerdict = helper<[string, string, (string | null)?], unknown>('forkRemoteVerdict')
+    const PIN = 'github.com/o/r'
+    // A nickname for the project's host: the fork on that host (gh then says what it is), or the project itself.
+    expect(forkRemoteVerdict('git@gh-personal:me/r.git', PIN, 'github.com')).toEqual({ kind: 'ask', repo: 'github.com/me/r' })
+    expect(forkRemoteVerdict('git@gh-work:o/r.git', PIN, 'github.com')).toEqual({ kind: 'match' })
+    // GitHub's ssh-over-443 host is github.com.
+    expect(forkRemoteVerdict('ssh://git@ssh.github.com:443/me/r.git', PIN, 'ssh.github.com')).toEqual({ kind: 'ask', repo: 'github.com/me/r' })
+    expect(forkRemoteVerdict('git@gh443:o/r.git', PIN, 'ssh.github.com')).toEqual({ kind: 'match' })
+    // Another real host: a mirror of o/r is not o/r (remoteVerdict, origin's #25 rule, still says match: #71).
+    expect(forkRemoteVerdict('git@gitlab.com:o/r.git', PIN, 'gitlab.com')).toEqual({ kind: 'other', repo: 'gitlab.com/o/r' })
+    expect(forkRemoteVerdict('git@gl:me/r.git', PIN, 'gitlab.com')).toEqual({ kind: 'other', repo: 'gitlab.com/me/r' })
+    // ssh couldn't say, or wasn't asked: nothing is assumed.
+    expect(forkRemoteVerdict('git@gh-personal:me/r.git', PIN, null)).toEqual({ kind: 'unrecognised' })
+    expect(forkRemoteVerdict('git@gh-personal:me/r.git', PIN)).toEqual({ kind: 'unrecognised' })
+    // On the project's host, or over https, it reads as remoteVerdict does.
+    expect(forkRemoteVerdict('git@github.com:me/r.git', PIN)).toEqual({ kind: 'ask', repo: 'github.com/me/r' })
+    expect(forkRemoteVerdict('https://github.com/O/R.git', PIN)).toEqual({ kind: 'match' })
+    expect(forkRemoteVerdict('https://gitlab.com/o/r.git', PIN)).toEqual({ kind: 'other', repo: 'gitlab.com/o/r' })
+    expect(forkRemoteVerdict('/srv/r.git', PIN)).toEqual({ kind: 'unrecognised' })
+  })
+
+  // PR #87 review: what a fork run says names the remotes it uses.
+  test("workspacePlan: a busy checkout's block names the ref the profile is read from, the project remote's in a fork clone", () => {
+    const busy = { isBusy: true, why: 'uncommitted changes' }
+    expect(workspacePlan('here', busy, 'main', 'upstream/main')).toEqual({
+      kind: 'block',
+      reason: 'the checkout is busy (uncommitted changes)',
+      next: "set \"workspace\" to \"worktree\" or \"ask\" in .issue-forge.json on main (the run reads upstream/main's copy), or clean the checkout",
+    })
+  })
+
+  test('publishAsk: a fork run names the fork the branch is pushed to, beside the project the pull request opens on', () => {
+    const fork = run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r' })
+    expect(publishAsk(fork)).toBe('Push issue-16-fix-it to me/r and open a pull request on o/r against main?')
+    expect(publishAsk({ ...fork, headRepo: 'ghe.example.com/me/r' })).toBe('Push issue-16-fix-it to ghe.example.com/me/r and open a pull request on o/r against main?')
+    expect(publishAsk(run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r' }))).toBe('Push issue-16-fix-it and open a pull request on o/r against main?')
+  })
+  test("mergeLine, publishQuestion and prBody: a fork run's merge check is against the project remote's base", () => {
+    const fork = run({ branch: 'issue-16-fix-it', base: 'main', ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r' })
+    const clean = { ...fork, merge: { isClean: true, files: [] } }
+    const conflict = { ...fork, merge: { isClean: false, files: ['a.ts'] } }
+    expect(mergeLine(clean)).toBe('merges cleanly with upstream/main')
+    expect(mergeLine(conflict)).toBe('conflicts with upstream/main: a.ts')
+    expect(publishQuestion(conflict)).toBe('Push issue-16-fix-it to me/r and open a pull request on o/r against main? It conflicts with upstream/main in: a.ts.')
+    expect(prBody(clean)).toContain('At publish time this merged cleanly with upstream/main.')
+    expect(prBody(conflict)).toContain('At publish time this conflicted with upstream/main in: a.ts.')
+  })
+  // Codex on PR #87 (round 3): a kept branch's name was checked where origin pushed when it was made.
+  test('keptForkBlock: a kept branch is reused only while origin pushes where its name was checked', () => {
+    const keptForkBlock = helper<[string | undefined, string | undefined, string], unknown>('keptForkBlock')
+    const PIN = 'github.com/o/r'
+    expect(keptForkBlock('github.com/me/r', 'github.com/me/r', PIN)).toBe(null)
+    expect(keptForkBlock('github.com/me/r', 'github.com/Me/R', PIN)).toBe(null)
+    expect(keptForkBlock(undefined, undefined, PIN)).toBe(null)
+    expect(keptForkBlock('github.com/me/r', 'github.com/you/r', PIN)).toEqual({ reason: "origin now pushes to you/r, not me/r, where the run's branch was named", next: 'point origin back at me/r, or start a new run' })
+    // A branch made without a fork was named on the project, and one made for a fork on that fork.
+    expect(keptForkBlock(undefined, 'github.com/you/r', PIN)).toEqual({ reason: "origin now pushes to you/r, not o/r, where the run's branch was named", next: 'point origin back at o/r, or start a new run' })
+    expect(keptForkBlock('github.com/me/r', undefined, PIN)).toEqual({ reason: "origin now pushes to o/r, not me/r, where the run's branch was named", next: 'point origin back at me/r, or start a new run' })
   })
 })
