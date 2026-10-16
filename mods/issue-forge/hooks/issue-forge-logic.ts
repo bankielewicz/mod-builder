@@ -1848,9 +1848,13 @@ export function isLockError(text: string): boolean {
   return /cannot lock ref|unable to create '[^']*\.lock'|could not lock|\.lock': file exists/i.test(text)
 }
 
-/** The lock file git says it couldn't create (`Unable to create '<path>.lock': File exists`), the index's or a ref's; else null. */
+/**
+ * The lock file another process holds, as git names it (`Unable to create '<path>.lock': File exists`), the index's or a
+ * ref's; else null. Another reason (`Permission denied`, a full disk) is no other process's lock. The path runs up to
+ * `.lock': File exists`, so it may hold an apostrophe (PR #88).
+ */
 export function lockPathOf(text: string): string | null {
-  return text.match(/unable to create '([^']*\.lock)'/i)?.[1] ?? null
+  return text.match(/unable to create '(.*?\.lock)': file exists/i)?.[1] ?? null
 }
 
 /**
