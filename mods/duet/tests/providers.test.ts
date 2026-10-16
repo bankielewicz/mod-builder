@@ -60,7 +60,7 @@ async function run($: any, args: string): Promise<string> {
 }
 
 const start = ($: any) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
-const mount = ($: any, surface: 'terminal' | 'desktop' | 'mobile' = 'terminal', props: object = PANE) =>
+const mount = ($: any, surface: 'terminal' | 'desktop' = 'terminal', props: object = PANE) =>
   $.ui.mount({ plugin: 'duet', surface, component: 'Pane', requestId: 'duet-providers', props, viewport: { columns: 120, rows: 40 } })
 
 /** Every text the test can see: command answers, toasts, files duet wrote, the store. Never holds a key. */
@@ -156,7 +156,7 @@ describe('/duet provider', () => {
     expect(JSON.parse(seen.fetches[1]!.init.body).model).toBe('sonar')
   })
 
-  test('404 on /models falls to the probe once; 401 does not; a rate limit is not retried; the host refusing is named', async ($, on) => {
+  test('404 on /models names a likely wrong URL and spends no token; 401 is unauthorized; a rate limit is not retried; the host refusing is named', async ($, on) => {
     let n = 0
     const seen = engine(on, {
       files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\nXAI_API_KEY=${XAI}\nGROQ_API_KEY=gsk-test-0123456789abcdef\nMISTRAL_API_KEY=m-test-0123456789abcdef\n` },
@@ -169,15 +169,19 @@ describe('/duet provider', () => {
       },
     })
     await start($)
-    expect(await run($, 'provider test google')).toMatch(/google: ok \d+ms sonar-pro · 1 token/)
+    expect(await run($, 'provider test google')).toBe('google: ✕ 404 not found on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)')
+    expect(seen.fetches.length).toBe(1)
+    // Naming a model asks for the one-token completion, and the answer says a token was spent.
+    expect(await run($, 'provider test google gemini-2.5-pro')).toMatch(/google: ok \d+ms sonar-pro · 1 token/)
     expect(seen.fetches.length).toBe(2)
+    expect(seen.fetches[1]!.url).toBe('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions')
     const xai = await run($, 'provider test xai')
     expect(xai).toBe('xai: ✕ 401 unauthorized (Incorrect API key provided: [redacted])')
     expect(seen.fetches.length).toBe(3)
     expect(await run($, 'provider test groq')).toBe('groq: ✕ 429 rate limited (retry-after 30 s); not retried')
     expect(seen.fetches.length).toBe(4)
     expect(await run($, 'provider test mistral')).toBe('mistral: ✕ the host refused the request (nonessential traffic is disabled); nothing was sent')
-    expect(n).toBe(4)
+    expect(n).toBe(5)
     expect(everything(seen, xai)).not.toContain(XAI)
   })
 
@@ -237,7 +241,9 @@ describe('/duet provider', () => {
     await ui.unmount()
   })
 
-  test('pane states: empty copy, narrow drops the names, a surface without Input prints the rows as text', async ($, on) => {
+  // The d.ts lists no Input on the mobile surface, but `$.ui.mount` on `mobile` resolves a table with one (2.1.301), so the
+  // text-only branch can't be reached here; it is read, not run (gotchas.md).
+  test('pane states: empty copy, narrow drops the names', async ($, on) => {
     engine(on)
     await start($)
     await run($, 'provider')
@@ -254,10 +260,6 @@ describe('/duet provider', () => {
     expect(await narrow.find({ type: 'Text', text: /google\s+no key/ })).toBeDefined()
     expect(await narrow.find({ type: 'Text', text: /Google Gemini/ })).toBeUndefined()
     await narrow.unmount()
-    const mobile = await mount($, 'mobile')
-    expect(await mobile.find({ type: 'Text', text: /duet providers · 0 keys/ })).toBeDefined()
-    expect(await mobile.find({ type: 'Text', text: /enter keys with \/duet provider key <id> from a terminal, or edit ~\/.claude\/duet-data\/.env/ })).toBeDefined()
-    await mobile.unmount()
   })
 
   test('j/k move the highlight; c closes; the bare command toggles the pane', async ($, on) => {
@@ -277,6 +279,7 @@ describe('/duet provider', () => {
 
   test('@-mentioning the key file is denied', async ($, on) => {
     engine(on)
+    on('prompt.mention', () => ({ type: null }))
     await start($)
     const r = await $.prompt.mention({ mention: '~/.claude/duet-data/.env', path: '/home/u/.claude/duet-data/.env' })
     expect(r.deny).toMatch(/duet: that file holds API keys/)
@@ -295,7 +298,7 @@ describe('/duet provider', () => {
     expect(seen.fetches[0]!.url).toBe('https://gw.example.com/v1/models')
     expect(await run($, 'config customurl http://evil.example.com/v1')).toContain('apiCustomUrl takes an https:// URL, or http:// to localhost')
     expect(sets).toEqual([])
-    expect(await run($, 'config custommodel llama3:8b')).toContain('Set apiCustomModel')
+    expect(await run($, 'config custommodel llama3:8b')).toContain('apiCustomModel = llama3:8b')
     expect(await run($, 'config list')).toContain('customurl')
   })
 })

@@ -133,11 +133,11 @@ describe('requests and replies', () => {
     expect(parseChatReply('nope')).toEqual({ error: 'the reply is not JSON' })
   })
 
-  test('test outcome: /models 200 → ok; 404/405 → fall to the probe; 401 → unauthorized, no fallback; the probe records the model', () => {
+  test('test outcome: /models 200 → ok; 404/405 → a likely wrong base URL, no billed fallback; 401 → unauthorized; the probe records the model', () => {
     const at = 1_000
     expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"},{"id":"b"}]}' }, 412, at)).toEqual({ ok: true, status: 200, ms: 412, model: '', note: 'ok 412ms · 2 models', at })
-    expect(testOutcome('models', { status: 404, ok: false, text: '' }, 50, at)).toEqual({ fallback: true })
-    expect(testOutcome('models', { status: 405, ok: false, text: '' }, 50, at)).toEqual({ fallback: true })
+    expect(testOutcome('models', { status: 404, ok: false, text: '' }, 50, at)).toEqual({ ok: false, status: 404, ms: 50, model: '', note: '✕ 404 not found on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)', at })
+    expect(testOutcome('models', { status: 405, ok: false, text: '' }, 50, at).note).toContain('✕ 405 not allowed on /models: is the base URL right?')
     expect(testOutcome('models', { status: 401, ok: false, text: '{"error":{"message":"invalid x-api-key"}}' }, 80, at)).toEqual({ ok: false, status: 401, ms: 80, model: '', note: '✕ 401 unauthorized (invalid x-api-key)', at })
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"sonar-pro","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}' }, 900, at)).toEqual({ ok: true, status: 200, ms: 900, model: 'sonar-pro', note: 'ok 900ms sonar-pro · 1 token', at })
     expect(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': '30' } }, 20, at)).toEqual({ ok: false, status: 429, ms: 20, model: '', note: '✕ 429 rate limited (retry-after 30 s); not retried', at })

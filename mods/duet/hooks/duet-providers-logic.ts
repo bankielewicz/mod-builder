@@ -196,7 +196,7 @@ export function parseChatReply(text: string, keys: readonly string[] = []): { te
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
 export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number }
 
-const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 429: 'rate limited' }
+const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 405: 'not allowed', 429: 'rate limited' }
 
 function errorDetail(r: { status: number; text: string; headers?: Record<string, string> }, keys: readonly string[]): string {
   const parsed = parseChatReply(r.text, keys)
@@ -209,12 +209,15 @@ function errorDetail(r: { status: number; text: string; headers?: Record<string,
 }
 
 /**
- * What a key test step answers: `/models` 200 → ok; 404 or 405 there → fall to the one-token probe;
- * any other failure → the result, worded by status, never retried.
+ * What a key test step answers: `/models` 200 → ok; any failure → the result, worded by status, never retried.
+ * The probe (a one-token completion, billed by most providers) is a step of its own, taken only for a provider
+ * the table says lists no models, or when the person names a model to test.
  */
-export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = []): TestResult | { fallback: true } {
+export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, at: number, keys: readonly string[] = []): TestResult {
   if ('refused' in r) return { ok: false, status: 0, ms, model: '', note: `✕ the host refused the request (${redact(r.refused, keys)}); nothing was sent`, at }
-  if (step === 'models' && (r.status === 404 || r.status === 405)) return { fallback: true }
+  // A provider that should list models and answers 404/405 most likely has the wrong base URL: say so, and never spend a
+  // token on the probe for it (the probe runs only where the table says the provider lists no models, or on request).
+  if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at }
   if (r.ok) {
     if (step === 'models') {
       const list = parseModelsReply(r.text)
