@@ -27,7 +27,9 @@ claude --plugin-dir plugins/mod-builder                              # interacti
 ```
 
 One logic test file, or one test by name, runs under node through the coverage kit's loader. UI tests
-(`*.test.tsx`) only run under `claude plugin test`.
+(`*.test.tsx`) only run under `claude plugin test`, and so does any `*.test.ts` whose name doesn't end in
+`-logic.test.ts`: `plugins/mod-builder/tests/sandbox.test.ts` (the sandbox canary, #98) fails under node by
+design, since node has the file system it checks is absent.
 
 ```sh
 node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test mods/duet/tests/duet-logic.test.ts
@@ -42,7 +44,8 @@ replace `__TYPES__` and `__MOD__`, then `npx -y -p typescript@5.6 tsc -p <copy>`
 interactive session loads the mod (gitignored).
 
 CI (`.github/workflows/ci.yml`) runs validate + test for every `:(glob)plugins/*` and `:(glob)mods/*`
-plugin and the archetype check. It is a byte-for-byte copy of the build skill's template
+plugin, the archetype check, and the sandbox check (`node plugins/mod-builder/skills/build/scripts/check-sandbox.mjs`:
+the loader still refuses `import()` and `node:fs` test files, and the canary's list matches `gotchas.md`'s). It is a byte-for-byte copy of the build skill's template
 `plugins/mod-builder/skills/build/ci/ci.yml`, so change both together, the version pin included.
 
 ## Changing files: a worktree, then a PR
