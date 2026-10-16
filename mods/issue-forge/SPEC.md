@@ -1403,5 +1403,14 @@ Codex on 008f39f, two inline comments.
 | (P1 4290274553) Round 1 let origin fetch from the project and push to the fork, but `git ls-remote origin` reads the fetch URL, so the fork's branches were never seen and the name could collide there | the fetch URL must be the fork too (item 1); the two tests that allowed it were corrected in their own commit |
 | (P2 4290274549) The first fetch skipped `baseRemoteCheck`, but the base question can wait on the person after `forkCheck` read the remote | `makeBranch` passes the pinned repository to `fetchBase` |
 
+### PR #87 review round 3 (2026-10-15)
+
+Codex on 54aaa27 (P2 4290457132): a fork preflight that blocked after making its branch kept only the branch, folder and
+base, so a resume with origin pointed at another personal fork accepted it, skipped the taken-name check for the kept branch
+and could publish over a same-named branch there. `Kept` now carries `baseRemote` and `headRepo`, `makeBranch` records them
+with the branch, and the kept-branch path of a resume blocks through `keptForkBlock` (logic) unless origin still pushes
+where the name was checked: `origin now pushes to you/r, not me/r, where the run's branch was named`, next `point origin
+back at me/r, or start a new run`.
+
 Not done (round 1): one `gh repo view --json nameWithOwner,url,isFork,parent` in place of two calls (the canonical name and the
 fork check are separate questions, and the memo already removes the repeat).
