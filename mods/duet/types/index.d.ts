@@ -11,6 +11,8 @@ export type ProviderTest = {
   model: string
   note: string
   at: number
+  /** The mask of the key the test used ('' for none), so a result never vouches for another key. */
+  key: string
 }
 export type TaskStatus = 'running' | 'done' | 'error' | 'refused'
 export type Sandbox = 'read-only' | 'workspace-write'

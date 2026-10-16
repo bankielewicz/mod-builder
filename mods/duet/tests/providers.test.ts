@@ -435,6 +435,49 @@ describe('/duet provider', () => {
     await ui.unmount()
   })
 
+  test('Codex 4298989618: a JSON null reply fails the test and leaves nothing stuck on testing…', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => 'null' })
+    await start($)
+    expect(await run($, 'provider test google')).toBe('google: ✕ 200 the reply is not JSON')
+    expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key …a1b2\s+✕ 200 the reply is not JSON/)
+    expect((seen.store.get('duet:providers:tests') as Record<string, { ok: boolean }>).google!.ok).toBe(false)
+  })
+
+  test('Codex 4298989626: a test result is bound to the key it tested: a reply that lands after the key changed is dropped, a stored result for another key shows as untested, and t while running sends nothing', async ($, on) => {
+    let release: (r: Reply) => void = () => undefined
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => new Promise<Reply>(res => { release = res }) })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })
+    await ui.press({ key: 'prov-test' })
+    await ui.press({ key: 'prov-test' })
+    await seen.clock.advance(1)
+    expect(seen.fetches.length).toBe(1)
+    await ui.press({ key: 'prov-enter' })
+    await ui.input({ key: 'prov-key', text: 'AIza-replacement-0123456789abcdef', kind: 'submit' })
+    await seen.clock.settle()
+    release(MODELS)
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /google\s+Google Gemini\s+key …cdef\s+untested/ })).toBeDefined()
+    expect((seen.store.get('duet:providers:tests') as Record<string, unknown>).google).toBeUndefined()
+    await ui.unmount()
+    // A result stored for another key (another session, or the file changed by hand) does not vouch for this one.
+    seen.store.set('duet:providers:tests', { google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' } })
+    expect(await run($, 'provider list')).toMatch(/google\s+Google Gemini\s+key …cdef\s+untested/)
+  })
+
+  test('t on a provider that cannot be tested shows the reason even when an old result is stored', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, unreadable: 'EACCES: permission denied', store: { 'duet:providers:tests': { google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' } } } })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })
+    await ui.press({ key: 'prov-test' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /could not be read \(EACCES: permission denied\); fix the file, or set GEMINI_API_KEY/ })).toBeDefined()
+    expect(seen.fetches).toEqual([])
+    await ui.unmount()
+  })
+
   test('a Grep of the key file or its folder is refused; a grep for the path in the repo\'s own files passes', async ($, on) => {
     engine(on)
     await start($)
@@ -455,7 +498,7 @@ describe('/duet provider', () => {
     const ui = await mount($)
     await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
     await seen.clock.settle()
-    expect(seen.events).toEqual(['write empty', 'chmod', 'write content'])
+    expect(seen.events).toEqual(['write empty', 'chmod', 'write content', 'chmod'])
     expect(seen.files[KEY_FILE]).toBe(`GEMINI_API_KEY=${KEY}\n`)
     await ui.unmount()
     seen.events.length = 0
@@ -514,9 +557,18 @@ describe('/duet provider', () => {
     expect(bash.deny).toMatch(/duet: that file holds API keys/)
     const bash2: any = await $.tool.call({ tool: 'Bash', command: 'cat /home/u/.claude/duet-data/.env' } as never)
     expect(bash2.deny).toMatch(/duet: that file holds API keys/)
-    const ok: any = await $.tool.call({ tool: 'Bash', command: 'ls ~/.claude/duet-data' } as never)
+    const ok: any = await $.tool.call({ tool: 'Bash', command: 'ls ~/.claude' } as never)
     expect(ok.deny).toBeUndefined()
     expect(ok.result.stdout).toBe('ran')
+    // The folder, a wildcard in it, a $HOME spelling and a -c payload are refused too; a heredoc that documents the path is not.
+    for (const command of ['ls ~/.claude/duet-data', 'cat ~/.claude/duet-data/*', 'cat "$HOME/.claude/duet-data/.env"', 'bash -c "cat ~/.claude/duet-data/.env"']) {
+      const r: any = await $.tool.call({ tool: 'Bash', command } as never)
+      expect([command, r.deny]).toEqual([command, expect.stringMatching(/duet: that file holds API keys/)])
+    }
+    const doc: any = await $.tool.call({ tool: 'Bash', command: "cat > README.md <<'EOF'\nkeys live in ~/.claude/duet-data/.env (600)\nEOF" } as never)
+    expect(doc.deny).toBeUndefined()
+    const read2: any = await $.tool.call({ tool: 'Read', file_path: '/home/u/.claude/duet-data//.env' } as never)
+    expect(read2.deny).toMatch(/duet: that file holds API keys/)
     const read: any = await $.tool.call({ tool: 'Read', file_path: '/home/u/.claude/duet-data/.env' } as never)
     expect(read.deny).toMatch(/duet: that file holds API keys/)
     const readOk: any = await $.tool.call({ tool: 'Read', file_path: '/w/.env' } as never)
