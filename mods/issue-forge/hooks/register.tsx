@@ -1724,7 +1724,7 @@ export const register: Register = (on, raw) => {
         {layout !== 'compact' && (
           <Text dimColor>
             {truncate(
-              [view === 'ready' ? 'p publish' : '', view === 'blocked' || view === 'interrupted' || view === 'elsewhere' ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab focuses the pane']
+              [view === 'ready' ? 'p publish' : '', (view === 'blocked' && !run?.blocked?.isFinal) || view === 'interrupted' || view === 'elsewhere' ? 'r resume' : '', canHandOff ? 'h hand off' : '', view === 'running' || view === 'blocked' || view === 'interrupted' || view === 'elsewhere' || view === 'ready' ? 's stop' : '', view !== 'empty' ? 't status' : '', demo ? 'n next · e end' : '', 'ctrl+x tab focuses the pane']
                 .filter(Boolean)
                 .join(' · '),
               cols,
