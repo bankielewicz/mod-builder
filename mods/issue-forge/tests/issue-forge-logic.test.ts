@@ -604,10 +604,16 @@ describe('state (§7.4)', () => {
     let r = advance(run({ step: 'gateG', used: { red: 1, green: 1, refactor: 0 }, redCommit: 'r1', redAnswer: 'first' }), { type: 'gated', gate: g6, stash }, 1)
     expect(r).toMatchObject({ step: 'red', behaviourFor: ['src/register.tsx'], greenStash: stash, used: { red: 0, green: 1 } })
     r = advance(advance(r, { type: 'spawned', agent: { id: 'a9', phase: 'red' } }, 2), { type: 'agentDone', answer: 'second' }, 3)
-    expect(r.redAnswer).toBe('first\n\nsecond')
+    // The detour's answer waits for gate R: an attempt that fails it isn't one green should read (PR #89 review).
+    expect(r).toMatchObject({ redAnswer: 'first', behaviourAnswer: 'second' })
+    r = advance(r, { type: 'gated', gate: failG('R') }, 4)
+    expect(r.step).toBe('red')
+    r = advance(advance(r, { type: 'spawned', agent: { id: 'a10', phase: 'red' } }, 5), { type: 'agentDone', answer: 'third' }, 6)
+    expect(r).toMatchObject({ redAnswer: 'first', behaviourAnswer: 'third' })
     r = advance(r, { type: 'gated', gate: pass('R'), commit: 'r2' }, 4)
-    expect(r).toMatchObject({ step: 'gateG', redCommit: 'r2', isBehaviourDone: true })
+    expect(r).toMatchObject({ step: 'gateG', redCommit: 'r2', isBehaviourDone: true, redAnswer: 'first\n\nthird' })
     expect(r.behaviourFor).toBeUndefined()
+    expect(r.behaviourAnswer).toBeUndefined()
     const again = advance(r, { type: 'gated', gate: g6 }, 5)
     expect(again.step).toBe('green')
     expect(advance({ ...r, used: { red: 1, green: 3, refactor: 0 } }, { type: 'gated', gate: g6 }, 5).step).toBe('blocked')
@@ -910,7 +916,8 @@ describe('edges', () => {
 
   test('a behaviour detour with no earlier answer, and a G6-only gate that names no files', () => {
     const r = advance(run({ step: 'red', behaviourFor: ['src/r.tsx'] }), { type: 'agentDone', answer: 'only' }, 1)
-    expect(r.redAnswer).toBe('only')
+    expect(r.redAnswer).toBeUndefined()
+    expect(advance(r, { type: 'gated', gate: pass('R'), commit: 'r2' }, 2).redAnswer).toBe('only')
     const g6 = { ...failG('G'), isBehaviourOnly: true }
     expect(advance(run({ step: 'gateG', used: { red: 1, green: 1, refactor: 0 } }), { type: 'gated', gate: g6 }, 1).behaviourFor).toEqual([])
   })
