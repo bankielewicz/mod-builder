@@ -29,5 +29,8 @@ describe('__NAME__-logic', () => {
     expect(paneAction([{ id: 'x', isShown: true, isPlaced: true }], 'x')).toBe('close')
     expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
     expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }, { id: 'x', isShown: false, isPlaced: true }], 'x')).toBe('show')
+    // A pane waiting undrawn (an open that was not placed) is no tab behind another: it counts as not listed.
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: false }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'x', isShown: true, isPlaced: false }], 'x')).toBe('open')
   })
 })

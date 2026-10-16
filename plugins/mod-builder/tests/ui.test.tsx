@@ -2080,6 +2080,19 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
     expect(seen.toasts).not.toContain(STILL_BEHIND)
   })
 
+  test('/modlab demo and /modlab <mod> with the pane waiting undrawn open it without the keyboard or a "behind" toast (PR #96 review, Codex P2)', OPTIONS, async ($, on) => {
+    const { seen, clock } = world(on, modFiles('git-branch'))
+    await start($)
+    await clock.advance(10)
+    seen.waiting = ['modlab']
+    await command($, 'demo')
+    await clock.advance(SETTLED_MS)
+    await command($, 'git-branch')
+    await clock.advance(SETTLED_MS)
+    expect(seen.opens.map(open => open.focus)).toEqual([undefined, undefined])
+    expect(seen.toasts).not.toContain(STILL_BEHIND)
+  })
+
   test('/modlab <mod> with the pane hidden selects the mod and brings the pane forward with the keyboard', OPTIONS, async ($, on) => {
     const { seen, clock } = world(on, { ...modFiles('duet'), ...modFiles('git-branch') })
     await start($)

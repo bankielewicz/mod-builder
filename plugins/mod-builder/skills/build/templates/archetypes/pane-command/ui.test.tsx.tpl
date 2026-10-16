@@ -54,6 +54,8 @@ describe('ui', () => {
 // A pane behind another tab is brought to the front, not closed. Each wait is 1 s, past the 500 ms the check takes.
 describe('a bare command, by pane state', () => {
   const HIDDEN = [{ id: '__NAME__', isShown: false }]
+  /** Open but waiting undrawn: an unasked open on a narrow terminal, or any open with no surface to draw it. */
+  const WAITING = [{ id: '__NAME__', isShown: false, isPlaced: false }]
 
   test('not listed: it opens the pane without the keyboard', async ($, on) => {
     const { world, clock } = engine(on)
@@ -62,6 +64,25 @@ describe('a bare command, by pane state', () => {
     await clock.advance(1000)
     expect(world.opens.map(open => open.focus)).toEqual([undefined])
     expect(world.closed).toEqual([])
+  })
+
+  test('waiting undrawn: it is no tab behind another, so it opens as before, without the keyboard or a toast', async ($, on) => {
+    const { world, clock } = engine(on, { panes: WAITING })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await command($, '')).text).toBe('__TITLE__ opened.')
+    await clock.advance(1000)
+    expect(world.opens.map(open => open.focus)).toEqual([undefined])
+    expect(world.closed).toEqual([])
+    expect(world.toasts).toEqual([])
+  })
+
+  test('demo with the pane waiting undrawn opens it without the keyboard or a toast', async ($, on) => {
+    const { world, clock } = engine(on, { panes: WAITING })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await command($, 'demo')).text).toBe('__TITLE__: demo items are in the pane.')
+    await clock.advance(1000)
+    expect(world.opens.map(open => open.focus)).toEqual([undefined])
+    expect(world.toasts).toEqual([])
   })
 
   test('shown: it closes the pane', async ($, on) => {

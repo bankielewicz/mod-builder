@@ -1702,6 +1702,12 @@ describe('paneAction: one rule for a bare pane command (#31)', () => {
     expect(paneAction([{ id: 'x', isShown: false, isPlaced: true }, { id: 'y', isShown: true, isPlaced: true }], 'y')).toBe('close')
   })
 
+  test('a pane waiting undrawn (isPlaced: false) is no tab behind another: it counts as not listed, and opens (PR #96 review, Codex P2)', () => {
+    expect(paneAction([{ id: 'x', isShown: false, isPlaced: false }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'x', isShown: true, isPlaced: false }], 'x')).toBe('open')
+    expect(paneAction([{ id: 'y', isShown: true, isPlaced: true }, { id: 'x', isShown: false, isPlaced: false }], 'x')).toBe('open')
+  })
+
   test('it takes what $.ui.panes() answers, whole entries included', () => {
     const entry = (id: string, isShown: boolean) => ({ id, title: id, isShown, isFocused: false, isPlaced: true })
     expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet-config')).toBe('show')

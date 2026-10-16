@@ -143,6 +143,8 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
   const SHOW = 'Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
   const STILL_BEHIND = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
   const HIDDEN = [{ id: 'duet', isShown: false }]
+  /** Open but waiting undrawn: an unasked open on a narrow terminal, or any open with no surface to draw it (d.ts `UiPane.isPlaced`). */
+  const WAITING = [{ id: 'duet', isShown: false, isPlaced: false }]
   // The read after the open may come at once or after 500 ms (the probe of #31 decides), so each test lets 1 s pass.
   const SETTLED_MS = 1000
 
@@ -197,6 +199,27 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
     expect((await duet($, '')).text).toBe(SHOW)
     await clock.advance(SETTLED_MS)
     expect(w.opens.at(-1)).toMatchObject({ id: 'duet', focus: true })
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('a pane waiting undrawn is no tab behind another: a bare /duet opens it as before, without the keyboard or a "behind" toast (PR #96 review, Codex P2)', async ($, on) => {
+    const w = world({ panes: WAITING })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await duet($, '')).text).toMatch(/^Opened\. /)
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    expect(w.closed).toEqual([])
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/duet demo with its pane waiting undrawn opens it without the keyboard or a "behind" toast (PR #96 review, Codex P2)', async ($, on) => {
+    const w = world({ panes: WAITING })
+    const clock = engine(on, [], {}, w)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect((await duet($, 'demo')).text).toMatch(/demo tasks/)
+    await clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
     expect(w.toasts).not.toContain(STILL_BEHIND)
   })
 

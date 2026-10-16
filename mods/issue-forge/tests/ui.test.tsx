@@ -2078,6 +2078,8 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
   const SHOW = 'bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
   const STILL_BEHIND = 'Issue Forge is still behind another tab: ctrl+x tab, then again until it shows.'
   const HIDDEN = [{ id: 'issue-forge', isShown: false }]
+  /** Open but waiting undrawn: an unasked open on a narrow terminal, or any open with no surface to draw it (d.ts `UiPane.isPlaced`). */
+  const WAITING = [{ id: 'issue-forge', isShown: false, isPlaced: false }]
   // The read after the open may come at once or after 500 ms (the probe of #31 decides), so each test lets 1 s pass.
   const SETTLED_MS = 1000
   const BEHIND = '(ctrl+x tab, then again until it shows)'
@@ -2171,6 +2173,41 @@ describe('a pane behind another tab is brought to the front, not closed (#31)', 
     await until(w, () => w.spawned.length === 1, 'green')
     expect(w.opens.length).toBeGreaterThan(0)
     expect(w.opens.every(open => !open.focus)).toBe(true)
+  })
+
+  test('a pane waiting undrawn is no tab behind another: a bare /issue-forge opens it as before, with the narrow-window toast and no "behind" one (PR #96 review, Codex P2)', async ($, on) => {
+    const w = engine(on, { panes: WAITING, isPlaced: false })
+    await start($)
+    expect((await run($, '')).text).toMatch(/^opened\. /)
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    expect(w.closed).toEqual([])
+    expect(w.toasts).toContain('Issue Forge needs a wider window. Widen it to see the pane, or watch the status line.')
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('/issue-forge demo with its pane waiting undrawn opens it without the keyboard or a "behind" toast (PR #96 review, Codex P2)', async ($, on) => {
+    const w = engine(on, { panes: WAITING })
+    await start($)
+    await run($, 'demo')
+    await w.clock.advance(SETTLED_MS)
+    expect(w.opens.map(open => open.focus)).toEqual([undefined])
+    expect(w.toasts).not.toContain(STILL_BEHIND)
+  })
+
+  test('a start with its pane waiting undrawn gives the usual answer, not "behind another tab" (PR #96 review)', async ($, on) => {
+    const w = engine(on, { isDirty: true, baseProfile: { ...PROFILE, workspace: 'here' }, panes: WAITING })
+    await start($)
+    expect((await run($, '16')).text).toBe('starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+  })
+
+  test('a resume with its pane waiting undrawn gives the usual answer, not "behind another tab" (PR #96 review)', async ($, on) => {
+    const blocked = storedRun('blocked', { blocked: { at: 'green', reason: 'gate G failed after 3 attempts: tests fail (exit 1)', next: 'fix it by hand on the branch' }, used: { red: 1, green: 3, refactor: 0 } })
+    const w = engine(on, { head: BRANCH, panes: WAITING }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, 'green')
   })
 
   test('the pane hint holds for any tab', async ($, on) => {
