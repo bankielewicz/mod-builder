@@ -2469,4 +2469,17 @@ describe('a held git index lock (#28)', () => {
     // The profile's own commands run as the user wrote them.
     expect(w.argv.flatMap((a, i) => (a[0] === 't' ? [w.inits[i]?.env] : []))).toEqual([undefined])
   })
+
+  // PR #88 (Codex 4290342002): a profile command that is itself git is the user's command, not one of the run's.
+  test("a profile command that is git runs with the session's env; worktree add still takes no optional locks", async ($, on) => {
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree', testCommand: ['git', 'diff', '--check'] }, spawnHold: held() })
+    await start($)
+    await run($, '16')
+    await pump(w, () => w.spawned.length === 1 || isBlocked(w))
+    expect(w.spawned.length).toBe(1)
+    const envs = (prefix: string) => w.argv.flatMap((a, i) => (a.join(' ').startsWith(prefix) ? [w.inits[i]?.env] : []))
+    expect(envs('git diff --check').length).toBeGreaterThan(0)
+    expect(envs('git diff --check').filter(e => e !== undefined)).toEqual([])
+    expect(envs('git worktree add').map(e => e?.GIT_OPTIONAL_LOCKS)).toEqual(['0'])
+  })
 })
