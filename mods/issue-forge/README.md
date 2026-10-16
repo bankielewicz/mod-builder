@@ -123,7 +123,7 @@ the remotes are fixed and it resumes.
   publish blocks if `origin` stops pushing to that fork. Anything else that `gh` and `origin`
   disagree on still blocks the run before it fetches or switches. With the fork as the only remote, or after
   `gh repo set-default <fork>`, gh names the fork itself, so the run stays inside the fork as before. The
-  whole flow is checked by the tests; no live pull request from a fork has been opened (the live probe is in #26).
+  whole flow is checked by the tests; no live pull request from a fork has been opened (the live probe is #102).
 - A pasted issue URL must name that same repository, or the command answers
   `x/y#16 is in another repository: this checkout's GitHub repository is o/r. …` and starts nothing.
   Only `https://<host>/<owner>/<repo>/issues/<N>` is read.

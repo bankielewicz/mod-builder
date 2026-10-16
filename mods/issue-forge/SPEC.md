@@ -1364,7 +1364,7 @@ the base remote. No new files, store keys or hooks. The push and the pull reques
 origin/<base>` label still says origin: it is drawn before preflight knows any remote. The busy-checkout block names the
 ref the profile was read from (`upstream/<base>` in a fork clone; PR #87 review).
 
-**Unverified (issue #26's probe).** Whether `gh pr create --repo <project> --head <fork owner>:<branch>` opens the pull
+**Unverified (#102, the fork pull request probe; it was #26's).** Whether `gh pr create --repo <project> --head <fork owner>:<branch>` opens the pull
 request, with a renamed fork too, and what 0.4.0's bare `--head` does from a fork clone, need a throwaway repository and a
 second personal GitHub account. No pull request from a fork has been opened by this change; the UI tests assert the
 command line, not gh's answer.
