@@ -230,7 +230,7 @@ Re-check [field] items against the d.ts after a Claude Code update.
   seed `$.store` (`mock.store`) at the step after it and resume from there. A test-side
   `$.prompt.submit` does carry the `origin` it is given, so a `peer` hand-back drop can be tested.
 
-- **[probe]** codex-cli 0.163.0's binary carries the string `"chat"\` is no longer supported` beside `wire_api`:
+- **[probe]** codex-cli 0.163.0's binary carries the string `"chat"` is no longer supported` beside `wire_api`:
   Codex speaks only OpenAI's Responses API, so a `model_providers` entry can't point it at a Chat
   Completions endpoint (Anthropic's and Gemini's OpenAI-compatible layers are Chat Completions only,
   `[field]`). A mod that wants other providers calls them itself with `$.http.fetch` (duet 0.3.0/0.4.0).
@@ -433,6 +433,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** A host security hook that greps written files for `exec(` blocks source that uses
   `RegExp.prototype.exec`. Write `str.match(re)` instead: same result, no false alarm.
 - **[field]** Run in-session tests that touch config with `CLAUDE_CONFIG_DIR=$(mktemp -d)`.
+- **[probe]** The bundled `claude-code.d.ts` names no built-in tools in `BuiltinToolInputs`, so a matcher such as
+  `{ tool: 'Grep' }` fails the pre-session typecheck ("Grep" is not in the union) although `Bash`, `Read` and `Agent`
+  pass (2.1.301). A mod's `types/index.d.ts` can add the tool: `interface BuiltinToolInputs { Grep: { pattern: string;
+  path?: string; glob?: string } }` inside `declare module 'claude-code'` (duet 0.3.0). Validate accepts the literal.
+- **[probe]** The coverage kit has no `toBeLessThan`; `toBeLessThanOrEqual` is there (#33).
 - **[probe]** `$.ui.mount({ surface: 'mobile' })` resolves an element table **with** `Input` (2.1.301), though the
   d.ts lists none for `mobile`, so a pane's "no `Input` on this surface" branch (`'Input' in els`) can't be
   reached in `claude plugin test`. duet's config and providers panes have that branch; it is read, not run.

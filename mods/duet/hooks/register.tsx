@@ -11,7 +11,7 @@ import {
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
-  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, savedNote, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
@@ -68,6 +68,14 @@ const provModelsState = atom({ plugin: 'duet', key: 'providerModelsState' } as c
 const provNote = atom({ plugin: 'duet', key: 'providerNote' } as const, '')
 const provAuth = atom({ plugin: 'duet', key: 'providerAuth' } as const, {} as Record<string, string>)
 const provTests = atom({ plugin: 'duet', key: 'providerTests' } as const, {} as Record<string, ProviderTest | 'running'>)
+const provFileError = atom({ plugin: 'duet', key: 'providerFileError' } as const, '')
+// Saves, removals and test results are read-modify-write sequences on shared files; this session's go one at a time.
+let keyChain: Promise<unknown> = Promise.resolve()
+function serialized<T>(work: () => Promise<T>): Promise<T> {
+  const next = keyChain.then(work, work)
+  keyChain = next.catch(() => undefined)
+  return next
+}
 /** A reload this long after a save began is that save's own; later ones leave the pane alone. */
 const REOPEN_WINDOW_MS = 60_000
 const MODEL_FIELD = CONFIG_FIELDS.find(f => f.field === 'codexModel')!
@@ -488,7 +496,7 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
   try {
-    answer = await $.ui.ask(consentText(cwd, options.sandbox, options.fsScope === 'anything' ? KEY_FILE_HOME : undefined), [YES, NO])
+    answer = await $.ui.ask(consentText(cwd, options.sandbox, keyFileExposed(options.fsScope, cwd, await keyFilePath($)) ? KEY_FILE_HOME : undefined), [YES, NO])
   } catch (err) {
     return consentRefusal(err)
   }
@@ -949,10 +957,11 @@ function keyValues(sources: Record<string, KeySource>): string[] {
 
 /** Refreshes the pane's sign-in column from the file and the environment. */
 async function refreshProviderAuth($: EngineInterface): Promise<Record<string, KeySource>> {
-  const { sources } = await keySources($)
+  const { sources, fileError } = await keySources($)
   const auth: Record<string, string> = {}
   for (const p of PROVIDERS) auth[p.id] = authTextOf(p, sources[p.id]!, options.customUrl)
   await update($, provAuth, () => auth)
+  await update($, provFileError, () => fileError)
   return sources
 }
 
@@ -963,7 +972,11 @@ async function loadProviderTests($: EngineInterface): Promise<void> {
 }
 
 /** One provider's result into the pane and the shared store, merged over what the store holds now, so another session's result survives (Codex 4298476151). */
-async function storeProviderTest($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+function storeProviderTest($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+  return serialized(() => storeProviderTestNow($, id, result))
+}
+
+async function storeProviderTestNow($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
   await update($, provTests, t => {
     const { [id]: _, ...rest } = t
     return result ? { ...rest, [id]: result } : rest
@@ -973,9 +986,22 @@ async function storeProviderTest($: EngineInterface, id: string, result: TestRes
   await $.store.set(TESTS_STORE_KEY, result ? { ...rest, [id]: result } : rest).catch(() => undefined)
 }
 
-/** Writes the key file and sets it to mode 600 on POSIX (both saves and removals: Codex 4297835988); says how the chmod went. */
+/**
+ * Writes the key file and sets it to mode 600 on POSIX (both saves and removals: Codex 4297835988); says how the chmod
+ * went. A file that isn't there yet is created empty and chmodded first, so the key is never on disk under the umask.
+ */
 async function writeKeyFile($: EngineInterface, path: string, text: string, secret: string): Promise<string> {
+  if (!(await $.fs.exists(path).catch(() => false))) {
+    await $.fs.write(path, '')
+    const mode = await chmod600($, path, secret)
+    await $.fs.write(path, text)
+    return mode
+  }
   await $.fs.write(path, text)
+  return chmod600($, path, secret)
+}
+
+async function chmod600($: EngineInterface, path: string, secret: string): Promise<string> {
   try {
     const r = await $.process.run(['chmod', '600', path], { timeoutMs: 10_000 })
     return r.exitCode === 0 ? 'chmod 600' : `chmod 600 failed: ${redact(r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`, [secret])}; set the file's permissions yourself`
@@ -988,7 +1014,11 @@ async function writeKeyFile($: EngineInterface, path: string, text: string, secr
  * Writes one key to the file (mode 600 on POSIX) and says what happened; the key never goes anywhere else. `{ saved }`
  * is the note; `{ failed }` is why nothing was written (the field stays open: Codex 4297836029).
  */
-async function saveKey($: EngineInterface, p: ProviderDef, value: string): Promise<{ saved: string } | { failed: string }> {
+function saveKey($: EngineInterface, p: ProviderDef, value: string): Promise<{ saved: string } | { failed: string }> {
+  return serialized(() => saveKeyNow($, p, value))
+}
+
+async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Promise<{ saved: string } | { failed: string }> {
   const key = value.trim()
   if (!p.keyName) return { failed: `${p.id} takes no key.` }
   if (key === '') return { failed: 'nothing saved: the field was empty.' }
@@ -1002,13 +1032,18 @@ async function saveKey($: EngineInterface, p: ProviderDef, value: string): Promi
   } catch (err) {
     return { failed: `not saved: ${redact(fsReason(err), [key])}` }
   }
-  await storeProviderTest($, p.id, null)   // a new key is untested (Codex 4297835973)
+  await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
   await refreshProviderAuth($)
-  return { saved: savedNote(mode, options.fsScope).join('\n') }
+  const cwd = await $.session.cwd().catch(() => '')
+  return { saved: savedNote(mode, keyFileExposed(options.fsScope, cwd, path)).join('\n') }
 }
 
 /** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
-async function removeKey($: EngineInterface, p: ProviderDef): Promise<string> {
+function removeKey($: EngineInterface, p: ProviderDef): Promise<string> {
+  return serialized(() => removeKeyNow($, p))
+}
+
+async function removeKeyNow($: EngineInterface, p: ProviderDef): Promise<string> {
   if (!p.keyName) return `${p.id} has no key to remove.`
   const path = await keyFilePath($)
   if (path === '') return `not changed: ${NO_HOME}.`
@@ -1022,7 +1057,7 @@ async function removeKey($: EngineInterface, p: ProviderDef): Promise<string> {
   } catch (err) {
     return `not changed: ${redact(fsReason(err), [held])}`
   }
-  await storeProviderTest($, p.id, null)
+  await storeProviderTestNow($, p.id, null)
   await refreshProviderAuth($)
   return `${p.id}: key removed from ${KEY_FILE_HOME}.${mode === 'chmod 600' ? '' : ` (${mode})`}`
 }
@@ -1065,7 +1100,9 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
   if (p.auth === 'cli') return { why: `${p.id} signs in with codex login; duet does not test it.`, key: '', base: '', keys }
   const base = baseUrlOf(p, { customUrl: options.customUrl })
   if (p.id === 'custom' && base === '') return { why: `${p.id}: no URL set. Set apiCustomUrl (https://, or http:// to localhost) in /duet config first.`, key: '', base, keys }
-  const needsKey = k.key === '' && !(op === 'models' && !p.modelsNeedKey)
+  // A provider that takes no key (ollama), a public model list, or a custom server on this machine (LM Studio) needs none (Codex 4298736545, 4298736595).
+  const takesKey = (p.auth === 'bearer' || p.auth === 'session') && !(p.id === 'custom' && isLocalBaseUrl(base))
+  const needsKey = takesKey && k.key === '' && !(op === 'models' && !p.modelsNeedKey)
   if (needsKey && fileError !== '') return { why: `${p.id}: ${fileError}; fix the file, or set ${p.keyName}.`, key: '', base, keys }
   if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
   if (p.auth === 'bearer' && needsKey) return { why: `${p.id}: no key. Press e on its row in /duet provider, or set ${p.keyName}.`, key: '', base, keys }
@@ -1186,7 +1223,7 @@ async function providersListText($: EngineInterface): Promise<string> {
   await refreshProviderAuth($)
   await loadProviderTests($)
   const { rows, keys, tested } = await providerRows($)
-  const { fileError } = await keySources($)
+  const fileError = await read($, provFileError)
   return providersText(rows, keys, tested) + (fileError ? `\n⚠ ${fileError}; only keys from the environment are used` : '')
 }
 
@@ -1202,7 +1239,7 @@ async function providerCommand($: EngineInterface, words: string[]): Promise<str
   const p = providerOf(id)
   if (!p) return `unknown provider "${id}". ${PROVIDER_USAGE}`
   if (verb === 'key') {
-    if (rest.length) return `duet: never type a key into the prompt; it would land in the transcript. Use the pane's field (/duet provider key ${p.id}, then type it there) or edit ${KEY_FILE_HOME}.`
+    if (rest.length) return `duet: a key typed into the prompt is already in your transcript and shell history; rotate it. Nothing was stored. Use the pane's field (/duet provider key ${p.id}, then type it there) or edit ${KEY_FILE_HOME}.`
     if (!p.keyName) return p.auth === 'cli' ? 'codex signs in with codex login; duet keeps no key for it.' : `${p.id} takes no key.`
     return openProvidersPane($, p.id, true)
   }
@@ -1471,11 +1508,16 @@ export const register: Register = (on, raw) => {
     .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
   on('tool.call', { tool: 'Read' }, ($, e, next) => (namesKeyFile(String((e as unknown as { file_path?: unknown }).file_path ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
     .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+  // A Grep over the key file, or over its folder, reads it too.
+  on('tool.call', { tool: 'Grep' }, ($, e, next) => {
+    const g = e as unknown as { path?: unknown; glob?: unknown }
+    return namesKeyFolder(String(g.path ?? '')) || namesKeyFolder(String(g.glob ?? '')) ? { deny: KEY_FILE_DENY } : next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
 
   on('ui.render', { component: 'Pane', requestId: PROVIDERS_PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { rows, keys, tested } = await providerRows($)
-    const { fileError } = await keySources($)
+    const fileError = await read($, provFileError)
     if (!('Input' in els)) {
       const { Box, Text } = els
       return (
@@ -1535,7 +1577,7 @@ export const register: Register = (on, raw) => {
           <Box flexDirection="column">
             <Input key="prov-key" label={`${sel.keyName} (${sel.name})`} value="" submitLabel="save" autoFocus placeholder="paste the key"
               onSubmit={(v: string) => void finishKeyEntry($, v).catch(() => undefined)} />
-            <Text dimColor>{`${sel.keyName}: typing is visible until Enter · Enter saves · Esc cancels`}</Text>
+            <Text dimColor>{`${sel.keyName}: typing is visible until Enter · Enter saves · j/k or c leave the field`}</Text>
           </Box>
         )}
         {note !== '' && note.split('\n').map((line, i) => (

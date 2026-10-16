@@ -63,8 +63,15 @@ export function providerOf(id: string): ProviderDef | undefined {
 
 /** https anywhere, or http to this machine only. */
 export function isAllowedBaseUrl(url: string): boolean {
-  // No user:password@ in the authority (Codex 4298476191): the pane and the transcript would show it.
+  // No user:password@ in the authority (Codex 4298476191): the pane and the transcript would show it. No query or
+  // fragment (Codex 4298736558): /models would be appended after it.
+  if (/[?#]/.test(url)) return false
   return /^https:\/\/[^/\s@]+(\/|$)/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(url)
+}
+
+/** A local http base (Ollama, LM Studio): a server that usually takes no key. */
+export function isLocalBaseUrl(url: string): boolean {
+  return /^http:\/\//.test(url)
 }
 
 /** A provider's base URL: the table's, or for `custom` the option when it is allowed, with no trailing slash. '' when there is none. */
@@ -83,9 +90,32 @@ export function keyFileOf(home: string): string {
 
 export const NO_HOME = "no home folder (HOME or USERPROFILE); keys can't be stored"
 
-/** True when a shell command or a file path names the key file: a guard keeps it out of the conversation. */
+const KEY_FILE_RE = /duet-data[\\/]\.env(?![\w.-])/
+
+/**
+ * True when a shell command or a file path names the key file: a guard keeps it out of the conversation. Text inside
+ * quotes is a pattern or a message, not a path, unless the quoted text is nothing but a path (`cat "~/…/.env"`).
+ */
 export function namesKeyFile(text: string): boolean {
-  return /duet-data[\\/]\.env(?![\w.-])/.test(text)
+  // A quoted segment counts only when it is a rooted path (`~/…`, `/…`, `./…`, `C:…`) to the file: `cat "~/.claude/duet-data/.env"`.
+  const unquoted = text.replace(/"([^"]*)"|'([^']*)'/g, (m, d: string | undefined, q: string | undefined) => (/^(?:~|\/|\.{1,2}[\\/]|[A-Za-z]:)\S*duet-data[\\/]\.env$/.test((d ?? q ?? '').trim()) ? m : ' '))
+  return KEY_FILE_RE.test(unquoted)
+}
+
+/** True when a path or glob names the key file or its folder (a Grep over the folder reads the file). */
+export function namesKeyFolder(text: string): boolean {
+  return KEY_FILE_RE.test(text) || /duet-data(?![\w.-])[\\/]?$/.test(text.trim())
+}
+
+/**
+ * Whether Codex can read the key file: always under `codexFsScope: anything`; under `project` only when the session
+ * folder holds it (a session started in the home folder, Codex 4298736579).
+ */
+export function keyFileExposed(fsScope: 'anything' | 'project', cwd: string, keyFile: string): boolean {
+  if (fsScope === 'anything') return true
+  if (keyFile === '') return false
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+  return keyFile.startsWith(norm(cwd) + '/')
 }
 
 /** `NAME=value` lines: an `export ` prefix, single or double quotes, `#` comments after an unquoted value, CRLF. Lines that are not assignments are skipped. */
@@ -95,15 +125,24 @@ export function parseEnvFile(text: string): Record<string, string> {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw)
     if (!m) continue
     let v = m[2]!.trim()
-    const q = /^(["'])(.*)\1\s*(?:#.*)?$/.exec(v)
-    if (q) v = q[2]!
-    else v = v.replace(/\s+#.*$/, '').trim()
+    if (v.startsWith('"')) {
+      // A double-quoted value ends at the first unescaped quote and decodes \\, \" and JSON's escapes (Codex 4298736511).
+      const end = /^"(?:[^"\\]|\\.)*"/.exec(v)
+      if (end) {
+        try { v = JSON.parse(end[0]) as string } catch { v = end[0].slice(1, -1) }
+      }
+    } else {
+      const q = /^'([^']*)'\s*(?:#.*)?$/.exec(v)
+      if (q) v = q[1]!
+      else v = v.replace(/\s+#.*$/, '').trim()
+    }
     out[m[1]!] = v
   }
   return out
 }
 
-const envLine = (name: string, value: string) => `${name}=${/[\s#"']/.test(value) ? JSON.stringify(value) : value}`
+/** A value with a space, `#`, a quote, a backslash or a control character is written as a JSON string, which the parser decodes. */
+const envLine = (name: string, value: string) => `${name}=${/[\s#"'\\\x00-\x1f]/.test(value) ? JSON.stringify(value) : value}`
 
 /**
  * The file with one variable set (or removed, for null), every other byte kept; a missing file is created. The parser
@@ -189,10 +228,12 @@ function parseJson(text: string): unknown | undefined {
 
 /** The ids (keys redacted, Codex 4298476186) and whether the list is paginated (`has_more`, Codex 4297836020). */
 export function parseModelsReply(text: string, keys: readonly string[] = []): { ids: string[]; hasMore: boolean } | { error: string } {
-  const j = parseJson(text) as { data?: unknown; has_more?: unknown } | undefined
+  const j = parseJson(text) as { data?: unknown; has_more?: unknown } | unknown[] | undefined
   if (j === undefined) return { error: 'the reply is not JSON' }
-  if (!Array.isArray(j?.data)) return { error: 'no model list in the reply' }
-  return { ids: j.data.map(m => redact(String((m as { id?: unknown })?.id ?? ''), keys)).filter(Boolean), hasMore: j.has_more === true }
+  // `{ data: [...] }` (OpenAI's shape), or a top-level array (Together AI, [field]).
+  const list = Array.isArray(j) ? j : Array.isArray(j?.data) ? j.data : null
+  if (!list) return { error: 'no model list in the reply' }
+  return { ids: list.map(m => redact(String((m as { id?: unknown })?.id ?? ''), keys)).filter(Boolean), hasMore: !Array.isArray(j) && j?.has_more === true }
 }
 
 type ChatReply = { model?: unknown; choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; error?: { message?: unknown } | string }
@@ -201,14 +242,15 @@ type ChatReply = { model?: unknown; choices?: { message?: { content?: unknown } 
 export function parseChatReply(text: string, keys: readonly string[] = []): { text: string; tokens: number; model: string } | { error: string } {
   const j = parseJson(text) as ChatReply | undefined
   if (j === undefined) return { error: 'the reply is not JSON' }
-  if (j.error !== undefined) {
+  if (j.error) {   // `"error": null` beside a reply is no error
     const msg = typeof j.error === 'string' ? j.error : String(j.error?.message ?? 'error')
     return { error: redact(msg, keys) }
   }
-  const content = j.choices?.[0]?.message?.content
-  if (typeof content !== 'string' || content === '') return { error: 'no reply text' }
+  // A choice with empty content is a reply too: a reasoning model spends a one-token budget thinking.
+  if (!Array.isArray(j.choices) || j.choices.length === 0) return { error: 'no reply text' }
+  const content = j.choices[0]?.message?.content
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-  return { text: content, tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: String(j.model ?? '') }
+  return { text: typeof content === 'string' ? content : '', tokens: n(j.usage?.prompt_tokens) + n(j.usage?.completion_tokens), model: redact(String(j.model ?? ''), keys).slice(0, 60) }
 }
 
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
@@ -268,15 +310,15 @@ export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, 
 export function authTextOf(p: ProviderDef, k: KeySource, customUrl: string): string {
   if (p.auth === 'cli') return 'codex login'
   if (p.auth === 'none') return p.baseUrl.replace(/^https?:\/\//, '').replace(/\/v1$/, '')
-  if (k.key === '') return p.auth === 'session' ? 'signed-in' : p.id === 'custom' && customUrl.trim() === '' ? 'no URL set' : 'no key'
-  const host = p.id === 'custom' ? ` · ${customUrl.replace(/^https?:\/\//, '').split('/')[0]}` : ''
+  const host = p.id === 'custom' && customUrl.trim() !== '' ? ` · ${customUrl.replace(/^https?:\/\//, '').split('/')[0]}` : ''
+  if (k.key === '') return p.auth === 'session' ? 'signed-in' : p.id === 'custom' && customUrl.trim() === '' ? 'no URL set' : `no key${host}`
   return `key ${maskKey(k.key)}${k.source === 'env' ? ' from env' : ''}${host}`
 }
 
 /** The test column. */
 export function testText(t: TestResult | 'running' | undefined): string {
   if (t === undefined) return 'untested'
-  if (t === 'running') return 'testing… GET /models'
+  if (t === 'running') return 'testing…'
   return t.note
 }
 
@@ -308,9 +350,9 @@ export function rowWindow(at: number, total: number, bodyRows: number, fixedLine
  * The note after a key is saved: where it went and how to test it; under `codexFsScope: anything` a second line,
  * since Codex can then read the file like any other (SPEC, Change 0.3.0, part C; the owner's note at review).
  */
-export function savedNote(mode: string, fsScope: 'anything' | 'project'): string[] {
+export function savedNote(mode: string, exposed: boolean): string[] {
   const lines = [`saved to ~/.claude/duet-data/.env (${mode}) · t tests it`]
-  if (fsScope === 'anything') lines.push('Codex can read this file under codexFsScope: anything; project hides it.')
+  if (exposed) lines.push('Codex can read this file under codexFsScope: anything; project hides it.')
   return lines
 }
 

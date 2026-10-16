@@ -60,6 +60,10 @@ export type Consent = 'unasked' | 'yes' | 'no'
 export type View = 'tasks' | 'stats'
 
 declare module 'claude-code' {
+  /** The Grep tool's arguments, so `tool.call { tool: 'Grep' }` type-checks before a session has laid claude-code-tools beside the mod (0.3.0). */
+  interface BuiltinToolInputs {
+    Grep: { pattern: string; path?: string; glob?: string; output_mode?: string }
+  }
   interface PluginState {
     duet: {
       tasks: Task[]
@@ -104,6 +108,8 @@ declare module 'claude-code' {
       providerAuth: Record<string, string>
       /** Key tests by provider id, as last stored, plus 'running' while one runs. */
       providerTests: Record<string, ProviderTest | 'running'>
+      /** Why the key file is not usable ('' when it is): no home folder, or a file that is there but can't be read. */
+      providerFileError: string
     }
   }
 }
