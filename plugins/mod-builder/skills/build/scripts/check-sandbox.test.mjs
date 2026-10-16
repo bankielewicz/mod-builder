@@ -36,6 +36,21 @@ test('loaderVerdict: no failures when the control file passed and each refused f
   assert.deepEqual(verdict(OUTPUT, FILES, 'tests/control.test.ts'), [])
 })
 
+test('runVerdict: the run must end on its own with a failing status, since two files fail to load (Codex 4296355718)', () => {
+  const verdict = helper('runVerdict')
+  assert.deepEqual(verdict({ status: 1, signal: null }), [])
+  assert.deepEqual(verdict({ status: 0, signal: null }), ['claude plugin test exited 0: it should fail on the refused files'])
+  assert.deepEqual(verdict({ status: null, signal: 'SIGTERM' }), ['claude plugin test was ended by SIGTERM before it finished'])
+  assert.deepEqual(verdict({ status: null, signal: null, error: new Error('spawnSync claude ENOBUFS') }), ['claude plugin test did not run to the end: spawnSync claude ENOBUFS'])
+})
+
+test("the dynamic-import fixture holds import() and no literal node:fs, so the loader refuses it for import() alone (Codex 4296355708)", async () => {
+  const { readFileSync } = await import('node:fs')
+  const fixture = readFileSync(new URL('./sandbox-fixture/dynamic-import.test.ts.tpl', import.meta.url), 'utf8')
+  assert.match(fixture, /await import\(/)
+  assert.doesNotMatch(fixture, /node:fs/)
+})
+
 test('loaderVerdict: a refused file that loaded, a file missing from the output, or a control that did not pass are failures', () => {
   const verdict = helper('loaderVerdict')
   const loaded = OUTPUT.replace(refused(FILES[1]), `${FILES[1]}:\n(pass) the loader > loaded a file that imports node:fs [1.00ms]\n`)
