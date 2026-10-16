@@ -89,7 +89,9 @@ let factsByMod = new Map<string, Lab.FileFacts>()
 /** The folder and mods of the last scan that wrote its rows (`judged`): set with no await after that write. */
 let published: { modsDir: string; names: ReadonlySet<string> } | null = null
 /** The folder the last scan listed and its mod folders, in order: a pass reads only some mods while they match (Change 0.2.24). */
-let scannedFolders: { modsDir: string; names: readonly string[] } | null = null
+let scannedFolders: { modsDir: string; names: readonly string[]; marketplaceMtime: number | null } | null = null
+/** Each mod folder's quick signature as last read, by its path, a folder that isn't a mod yet included (PR #109 review). */
+const folderSigs = new Map<string, string>()
 // Logging (Change 0.2.2): the level, this session's lines, its file once known, and writes in order.
 let logLevel: Lab.LogLevel = 'normal'
 let logBuffer: Lab.LogBuffer = Lab.EMPTY_LOG
@@ -359,6 +361,8 @@ async function modFactsOf($: Engine, modsDir: string, name: string, marketplace:
     listIf('commands'),
     listIf('skills'),
   ])
+  // The baseline the quick check after a tool batch compares, kept whether or not the folder is a mod yet (Codex 4296025357).
+  folderSigs.set(at, Lab.quickSigOf({ top, manifestDir, hooks, tests }))
   // Their subfolders are walked too; the manifest folder's are not.
   const codeFolders = { hooks, tests, types, agents, commands, skills }
   const nested = await Promise.all(Object.entries(codeFolders).map(([folder, entries]) => nestedFiles($, at, folder, entries, unlisted)))
@@ -497,8 +501,9 @@ async function scanPasses($: Engine, isAnnounced: boolean, request: Lab.ScanRequ
 }
 
 /**
- * The mods of the last scan whose quick signature moved since it read them (Change 0.2.24): four listings
- * each, no file read and no nested walk. A listing that fails counts as moved: can't tell isn't unchanged.
+ * The folders whose quick signature moved since they were last read (Change 0.2.24), mods or not yet mods (Codex
+ * 4296025357): four listings each, no file read and no nested walk. A listing that fails counts as moved: can't
+ * tell isn't unchanged.
  */
 async function movedMods($: Engine, modsDir: string, names: readonly string[]): Promise<string[]> {
   const moved: string[] = []
@@ -508,20 +513,37 @@ async function movedMods($: Engine, modsDir: string, names: readonly string[]): 
     const top = await list($, at, unlisted)
     const listIf = (folder: string): Promise<Lab.Entry[]> => (top.some(one => one.name === folder) ? list($, `${at}/${folder}`, unlisted) : Promise.resolve([]))
     const [manifestDir, hooks, tests] = await Promise.all([listIf('.claude-plugin'), listIf('hooks'), listIf('tests')])
-    if (unlisted.length || Lab.quickSigOf({ top, manifestDir, hooks, tests }) !== factsByMod.get(name)?.quickSig) moved.push(name)
+    if (unlisted.length || Lab.quickSigOf({ top, manifestDir, hooks, tests }) !== folderSigs.get(at)) moved.push(name)
   }
   return moved
+}
+
+/** The mtime of the marketplace file beside a mods folder, or null when it isn't there (Codex 4296025346): a stat, no read. */
+async function marketplaceMtimeOf($: Engine, modsDir: string): Promise<number | null> {
+  const file = Lab.marketplaceFileOf(modsDir)
+  const slash = file.lastIndexOf('/')
+  return (await list($, file.slice(0, slash))).find(entry => entry.name === file.slice(slash + 1))?.mtimeMs ?? null
 }
 
 async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanRequest): Promise<void> {
   const scanStartedAt = Date.now()
   const dir = await currentModsDir($)
-  const folders = (await list($, dir)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
+  const unlisted: string[] = []
+  const folders = (await list($, dir, unlisted)).filter(entry => entry.kind === 'dir' && !entry.name.startsWith('.'))
+  // A failed listing reads as empty: for a pass that reads only some mods, that isn't every mod gone, so it skips (PR #109 review).
+  if (!request.isFull && unlisted.length) return
   const names = folders.map(folder => folder.name)
   // Only some mods are read while the last scan listed the same folder and the same mods, and knows each one named.
-  const last = scannedFolders?.modsDir === dir ? scannedFolders.names : null
-  const isFull = request.isFull || last === null || last.join('\n') !== names.join('\n') || request.mods.some(name => !factsByMod.has(name))
-  const toRead = new Set(isFull ? names : [...request.mods, ...(request.isQuick ? await movedMods($, dir, [...factsByMod.keys()]) : [])])
+  const last = scannedFolders?.modsDir === dir ? scannedFolders : null
+  // Every listing pass stats the marketplace beside the folder; a moved one reads every mod, whose listing facts it holds (Codex 4296025346).
+  const marketplaceMtime = request.isFull || request.isQuick || last === null ? await marketplaceMtimeOf($, dir) : last.marketplaceMtime
+  const isFull =
+    request.isFull ||
+    last === null ||
+    last.names.join('\n') !== names.join('\n') ||
+    request.mods.some(name => !factsByMod.has(name)) ||
+    marketplaceMtime !== last.marketplaceMtime
+  const toRead = new Set(isFull ? names : [...request.mods, ...(request.isQuick ? await movedMods($, dir, names) : [])])
   // A pass for some mods where nothing moved: no file is read and nothing is judged again.
   if (!isFull && toRead.size === 0) return
   const marketplace = await marketplaceOf($, dir)
@@ -537,7 +559,7 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
     if (facts) found.set(facts.name, facts)
   }
   factsByMod = found
-  scannedFolders = { modsDir: dir, names }
+  scannedFolders = { modsDir: dir, names, marketplaceMtime }
   // "Ready to share" marks are kept per folder: a same-named mod elsewhere didn't just turn green.
   const freshIdOf = (name: string): string => `${dir}/${name}`
   // A build that reported a mod before writing its folder gets a row of its own until the folder is found (#19).
@@ -642,6 +664,8 @@ async function shownViews($: Engine): Promise<ModView[]> {
 
 /** After a tool batch: read again the mods it changed in the watched folder, or after shell the ones whose stats moved (Change 0.2.24). */
 async function rescanAfter($: Engine, calls: readonly Lab.BatchCall[]): Promise<void> {
+  // A batch of read-only tools changed nothing: not even the watched folder is looked up (PR #109 review).
+  if (Lab.isReadOnlyBatch(calls)) return
   const touch = Lab.batchTouch(calls, await currentModsDir($))
   if (touch.mods.length === 0 && !touch.isQuick) return
   // Announced, as a report's and the tick's scans are: announceGreen stamps a mod done before it checks the flag.
