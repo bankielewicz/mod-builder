@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, parseChatReply, parseEnvFile,
-  parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
+  keyFileExposed, parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -44,6 +44,10 @@ describe('providers as data', () => {
     // Codex 4298476191: a URL carrying user:password would show that password in the pane and the transcript.
     expect(isAllowedBaseUrl('https://user:password@gateway.example/v1')).toBe(false)
     expect(isAllowedBaseUrl('https://user@gateway.example/v1')).toBe(false)
+    // Codex 4298736558: a query or fragment would have /models appended after it.
+    expect(isAllowedBaseUrl('https://gw.example/v1?tenant=a')).toBe(false)
+    expect(isAllowedBaseUrl('https://gw.example/v1#x')).toBe(false)
+    expect(isAllowedBaseUrl('http://localhost:1234/v1?x')).toBe(false)
     expect(isAllowedBaseUrl('')).toBe(false)
     expect(baseUrlOf(providerOf('custom')!, { customUrl: 'https://my-gw.example.com/v1/' })).toBe('https://my-gw.example.com/v1')
     expect(baseUrlOf(providerOf('custom')!, { customUrl: '' })).toBe('')
@@ -64,6 +68,10 @@ describe('key file', () => {
   test('a command or path that names the key file is recognised, on either separator; look-alikes are not', () => {
     for (const text of ['cat ~/.claude/duet-data/.env', 'cat /home/u/.claude/duet-data/.env | head', 'type C:\\Users\\u\\.claude\\duet-data\\.env', '/home/u/.claude/duet-data/.env']) expect([text, namesKeyFile(text)]).toEqual([text, true])
     for (const text of ['ls ~/.claude/duet-data', 'cat .env', 'cat duet-data/.env.bak', 'cat duet-data/.environment', '']) expect([text, namesKeyFile(text)]).toEqual([text, false])
+    // A command that only mentions the path inside a longer quoted text (a grep pattern, a commit message) is not reading it;
+    // a quoted argument that is just the path is.
+    for (const text of ['grep -n "duet-data/.env" README.md', 'git commit -m "docs: ~/.claude/duet-data/.env"', "gh pr comment 110 --body 'keys live in ~/.claude/duet-data/.env (600)'"]) expect([text, namesKeyFile(text)]).toEqual([text, false])
+    for (const text of ['cat "~/.claude/duet-data/.env"', "cat '/home/u/.claude/duet-data/.env'", 'cat ~/.claude/duet-data/../duet-data/.env']) expect([text, namesKeyFile(text)]).toEqual([text, true])
     expect(KEY_FILE_NOTE).toContain('~/.claude/duet-data/.env')
   })
 
@@ -87,6 +95,10 @@ describe('key file', () => {
     expect(upsertEnvLine('A=1\n', 'B', null)).toBe('A=1\n')
     // A value with spaces or # is quoted so it reads back whole.
     expect(parseEnvFile(upsertEnvLine('', 'K', 'a b#c'))).toEqual({ K: 'a b#c' })
+    // Codex 4298736511: quotes, backslashes and newlines round-trip, and a closing quote is the first unescaped one.
+    for (const v of ['ab"cd', 'a\\ b', 'line1\nline2', '"leading', "it's", 'back\\slash\\', 'tab\there']) expect(parseEnvFile(upsertEnvLine('', 'K', v))).toEqual({ K: v })
+    expect(parseEnvFile('K="abc" # it\'s "x"')).toEqual({ K: 'abc' })
+    expect(parseEnvFile('K="a\\"b" # c')).toEqual({ K: 'a"b' })
     expect(serializeEnv({ A: '1', B: 'x y' })).toBe('A=1\nB="x y"\n')
   })
 
@@ -153,11 +165,18 @@ describe('requests and replies', () => {
     expect(parseModelsReply('{"data":[{"id":"claude-a"}],"has_more":true,"last_id":"claude-a"}')).toEqual({ ids: ['claude-a'], hasMore: true })
     expect(parseModelsReply(`{"data":[{"id":"leak-${KEY}"}]}`, [KEY])).toEqual({ ids: ['leak-[redacted]'], hasMore: false })
     expect(parseModelsReply('{"models":[{"name":"x"}]}')).toEqual({ error: 'no model list in the reply' })
+    // Together AI answers a top-level array (docs.together.ai, models list schema), [field].
+    expect(parseModelsReply('[{"id":"meta-llama/x"},{"id":"y"}]')).toEqual({ ids: ['meta-llama/x', 'y'], hasMore: false })
     expect(parseModelsReply('<html>')).toEqual({ error: 'the reply is not JSON' })
     const ok = parseChatReply('{"model":"sonar-pro","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":9,"completion_tokens":1}}')
     expect(ok).toEqual({ text: 'ok', tokens: 10, model: 'sonar-pro' })
     expect(parseChatReply(`{"error":{"message":"Incorrect API key provided: ${KEY}","type":"invalid_request_error"}}`, [KEY])).toEqual({ error: 'Incorrect API key provided: [redacted]' })
     expect(parseChatReply('{"choices":[]}')).toEqual({ error: 'no reply text' })
+    // A reasoning model spends the one-token budget thinking: 200, a choice, empty content. The key still worked.
+    expect(parseChatReply('{"model":"gpt-5","choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":9,"completion_tokens":1}}')).toEqual({ text: '', tokens: 10, model: 'gpt-5' })
+    expect(parseChatReply('{"model":"m","choices":[{"message":{"role":"assistant"}}]}')).toEqual({ text: '', tokens: 0, model: 'm' })
+    // A gateway that sends "error": null beside a reply is not an error.
+    expect(parseChatReply('{"error":null,"model":"m","choices":[{"message":{"content":"ok"}}]}')).toEqual({ text: 'ok', tokens: 0, model: 'm' })
     expect(parseChatReply('nope')).toEqual({ error: 'the reply is not JSON' })
   })
 
@@ -173,6 +192,10 @@ describe('requests and replies', () => {
     expect(testOutcome('probe', { status: 403, ok: false, text: '' }, 20, at).note).toBe('✕ 403 forbidden')
     expect(testOutcome('probe', { status: 418, ok: false, text: '{"error":"teapot"}' }, 20, at).note).toBe('✕ 418 failed (teapot)')
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[]}' }, 20, at).note).toBe('✕ 200 no reply text')
+    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"gpt-5","choices":[{"message":{"content":""}}]}' }, 20, at).note).toBe('ok 20ms gpt-5 · 1 token')
+    // Codex 4298736527: the model the reply names is redacted and bounded before it reaches the note.
+    expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${KEY}","choices":[{"message":{"content":"ok"}}]}` }, 20, at, [KEY]).note).toBe('ok 20ms [redacted] · 1 token')
+    expect(testOutcome('probe', { status: 200, ok: true, text: `{"model":"${'m'.repeat(5000)}","choices":[{"message":{"content":"ok"}}]}` }, 20, at).note.length).toBeLessThan(100)
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms (model not named) · 1 token')
     // Codex 4297835969: a 2xx that is not a model list is a failed test, never a green ok.
     expect(testOutcome('models', { status: 200, ok: true, text: '{"x":1}' }, 20, at)).toEqual({ ok: false, status: 200, ms: 20, model: '', note: '✕ 200 no model list in the reply', at })
@@ -191,10 +214,16 @@ describe('requests and replies', () => {
 })
 
 describe('pane text', () => {
-  test('the saved note warns that Codex can read the key file under codexFsScope anything, and not under project', () => {
-    expect(savedNote('chmod 600', 'anything')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it', 'Codex can read this file under codexFsScope: anything; project hides it.'])
-    expect(savedNote('chmod 600', 'project')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it'])
-    expect(savedNote('chmod 600 failed: EPERM; set the file\'s permissions yourself', 'project')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600 failed: EPERM; set the file\'s permissions yourself) · t tests it'])
+  test('the saved note warns when Codex can read the key file: under codexFsScope anything, or under project when the session folder holds it (Codex 4298736579)', () => {
+    expect(savedNote('chmod 600', true)).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it', 'Codex can read this file under codexFsScope: anything; project hides it.'])
+    expect(savedNote('chmod 600', false)).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it'])
+    expect(savedNote('chmod 600 failed: EPERM; set the file\'s permissions yourself', false)).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600 failed: EPERM; set the file\'s permissions yourself) · t tests it'])
+    expect(keyFileExposed('anything', '/w', '/home/u/.claude/duet-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '/w', '/home/u/.claude/duet-data/.env')).toBe(false)
+    expect(keyFileExposed('project', '/home/u', '/home/u/.claude/duet-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '/home/u/.claude/', '/home/u/.claude/duet-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '/home/user2', '/home/u/.claude/duet-data/.env')).toBe(false)
+    expect(keyFileExposed('project', '/w', '')).toBe(false)
   })
 
   test('the row window keeps the highlighted row in view and never shrinks under 3 rows (seen live: a 14-row pane scrolled the header out)', () => {
@@ -217,7 +246,7 @@ describe('pane text', () => {
     expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key')
     expect(testText(undefined)).toBe('untested')
     expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1 })).toBe('ok 412ms gemini-2.5-pro')
-    expect(testText('running')).toBe('testing… GET /models')
+    expect(testText('running')).toBe('testing…')
   })
 
   test('a row fits the width and marks the providers a route uses; the list prints every provider', () => {

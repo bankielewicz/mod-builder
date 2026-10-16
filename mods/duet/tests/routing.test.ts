@@ -1442,5 +1442,13 @@ describe('0.3.0: the consent question names the provider key file where Codex ca
     expect(seen.questions.length).toBe(1)
     expect(seen.questions[0]).not.toContain('key file')
   })
+
+  test('under codexFsScope project a session folder that holds the key file (the home folder) still names it (Codex 4298736579)', { options: { codexAgents: 'general-purpose', codexFsScope: 'project' } }, async ($, on) => {
+    const seen = engine(on, { cwd: '/home/u' })
+    await start($, '/home/u')
+    await $.tool.call(call() as never)
+    expect(seen.questions.length).toBe(1)
+    expect(seen.questions[0]).toContain('your provider key file ~/.claude/duet-data/.env')
+  })
 })
 

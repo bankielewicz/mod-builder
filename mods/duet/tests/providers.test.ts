@@ -27,10 +27,10 @@ type World = {
   /** fs.write fails with this text. */
   writeDeny?: string
 }
-type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; clock: ReturnType<typeof mock.clock> }
+type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; events: string[]; clock: ReturnType<typeof mock.clock> }
 
 function engine(on: any, o: World = {}): Seen {
-  const seen: Seen = { fetches: [], files: { ...(o.files ?? {}) }, argv: [], opened: [], toasts: [], store: new Map(Object.entries(o.store ?? {})), asked: 0, closed: [], clock: mock.clock(on) }
+  const seen: Seen = { fetches: [], files: { ...(o.files ?? {}) }, argv: [], opened: [], toasts: [], store: new Map(Object.entries(o.store ?? {})), asked: 0, closed: [], events: [], clock: mock.clock(on) }
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
   on('agent.register', () => ({ value: { agent: 'duet:x' } }))
@@ -38,12 +38,13 @@ function engine(on: any, o: World = {}): Seen {
   on('session.id', () => ({ value: 's1' }))
   on('env.get', ($: any, e: any) => ({ value: ({ ...(o.noHome ? {} : { HOME: '/home/u' }), ...(o.env ?? {}) } as Record<string, string>)[e.name] }))
   on('fs.read', ($: any, e: any) => (o.unreadable && e.path === KEY_FILE ? { deny: o.unreadable } : e.path in seen.files ? { value: seen.files[e.path] } : { deny: 'ENOENT: no such file' }))
-  on('fs.write', ($: any, e: any) => (o.writeDeny ? { deny: o.writeDeny } : ((seen.files[e.path] = e.text), { value: undefined })))
+  on('fs.write', ($: any, e: any) => (seen.events.push(`write ${e.text === '' ? 'empty' : 'content'}`), o.writeDeny ? { deny: o.writeDeny } : ((seen.files[e.path] = e.text), { value: undefined })))
+  on('tool.call', { tool: 'Grep' }, () => ({ result: { mode: 'content', numLines: 1, content: 'found' } }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'ran', stderr: '' } }))
   on('tool.call', { tool: 'Read' }, () => ({ result: { type: 'text', file: { filePath: '/w/x', content: 'read', numLines: 1, startLine: 1, totalLines: 1 } } }))
   on('fs.exists', ($: any, e: any) => ({ value: e.path in seen.files }))
   on('fs.list', () => ({ deny: 'ENOENT' }))
-  on('process.run', ($: any, e: any) => (seen.argv.push(e.argv), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', ($: any, e: any) => (seen.argv.push(e.argv), seen.events.push(e.argv[0]), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   const answerOf = (r: Reply) => {
     if (typeof r === 'string') return { value: { status: 200, ok: true, headers: {}, text: r } }
     if ('deny' in r) return { deny: r.deny }
@@ -73,7 +74,7 @@ async function run($: any, args: string): Promise<string> {
   return (await $.command.run({ command: 'duet', args, origin: COMPOSER, presentation: PRESENTATION })).text
 }
 
-const start = ($: any) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+const start = ($: any, cwd = '/w') => $.session.start({ surface: 'terminal', isInteractive: true, cwd })
 const mount = ($: any, surface: 'terminal' | 'desktop' = 'terminal', props: object = PANE) =>
   $.ui.mount({ plugin: 'duet', surface, component: 'Pane', requestId: 'duet-providers', props, viewport: { columns: 120, rows: 40 } })
 
@@ -101,7 +102,7 @@ describe('/duet provider', () => {
     const seen = engine(on)
     await start($)
     const text = await run($, `provider key google ${KEY}`)
-    expect(text).toContain('never type a key into the prompt')
+    expect(text).toContain('a key typed into the prompt is already in your transcript and shell history; rotate it')
     expect(text).toContain('/duet provider key google')
     expect(seen.files[KEY_FILE]).toBeUndefined()
     expect(everything(seen, text)).not.toContain(KEY)
@@ -364,9 +365,12 @@ describe('/duet provider', () => {
     await ui.unmount()
     expect(Object.keys(seen.files)).toEqual([])
     expect(seen.argv).toEqual([])
-    // Keys from the environment still work.
+    // Keys from the environment still work, and a provider that takes no key (Codex 4298736545) is tested and listed as usual.
     expect(await run($, 'provider list')).toMatch(/xai\s+xAI Grok\s+key …9f3e from env/)
     expect(await run($, 'provider remove google')).toContain("no home folder")
+    expect(await run($, 'provider test ollama')).toMatch(/ollama: ok \d+ms · 2 models/)
+    expect(await run($, 'provider models ollama')).toContain('ollama models (GET /models)')
+    expect(seen.fetches.every(f => f.init.headers.Authorization === undefined)).toBe(true)
   })
 
   test('Codex 4297836029: a key file that cannot be written leaves the field open and says why', async ($, on) => {
@@ -389,6 +393,7 @@ describe('/duet provider', () => {
     expect(text).toContain('~/.claude/duet-data/.env could not be read (EACCES: permission denied); only keys from the environment are used')
     expect(await run($, 'provider test google')).toBe('google: ~/.claude/duet-data/.env could not be read (EACCES: permission denied); fix the file, or set GEMINI_API_KEY.')
     expect(seen.fetches).toEqual([])
+    expect(await run($, 'provider test ollama')).toMatch(/ollama: ok/)
   })
 
   test('Codex 4297836014: a provider that never answers is given 30 s, then the test fails and a late reply changes nothing', async ($, on) => {
@@ -399,7 +404,7 @@ describe('/duet provider', () => {
     const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })   // wide: a 76-column pane cuts the test column
     await ui.press({ key: 'prov-test' })
     await seen.clock.advance(1)
-    expect(await ui.find({ type: 'Text', text: /testing… GET \/models/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /testing…/ })).toBeDefined()
     await seen.clock.advance(30_000)
     await seen.clock.advance(1)
     expect(await ui.find({ type: 'Text', text: /✕ not sent: no reply within 30 s/ })).toBeDefined()
@@ -425,6 +430,76 @@ describe('/duet provider', () => {
     await seen.clock.settle()
     expect(await ui.find({ type: 'Text', text: /grok-4/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /gemini-2.5-flash/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a Grep of the key file or its folder is refused; a grep for the path in the repo\'s own files passes', async ($, on) => {
+    engine(on)
+    await start($)
+    for (const input of [{ pattern: 'API_KEY', path: '/home/u/.claude/duet-data' }, { pattern: 'KEY', path: '/home/u/.claude/duet-data/.env' }, { pattern: 'x', glob: '**/duet-data/.env' }]) {
+      const r: any = await $.tool.call({ tool: 'Grep', ...input } as never)
+      expect([input, r.deny]).toEqual([input, expect.stringMatching(/duet: that file holds API keys/)])
+    }
+    const ok: any = await $.tool.call({ tool: 'Grep', pattern: 'duet-data/.env', path: '/w' } as never)
+    expect(ok.deny).toBeUndefined()
+    const bash: any = await $.tool.call({ tool: 'Bash', command: 'grep -n "duet-data/.env" README.md' } as never)
+    expect(bash.deny).toBeUndefined()
+  })
+
+  test('a new key file is created empty and chmodded before the key is written; an existing one is rewritten then chmodded', async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(seen.events).toEqual(['write empty', 'chmod', 'write content'])
+    expect(seen.files[KEY_FILE]).toBe(`GEMINI_API_KEY=${KEY}\n`)
+    await ui.unmount()
+    seen.events.length = 0
+    await run($, 'provider remove google')
+    expect(seen.events).toEqual(['write content', 'chmod'])
+  })
+
+  test('two key tests that finish together both land in the shared store (in-session serialization)', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\nXAI_API_KEY=${XAI}\n` }, fetch: () => Promise.resolve(MODELS) })
+    await start($)
+    const [g, x] = await Promise.all([run($, 'provider test google'), run($, 'provider test xai')])
+    expect(g).toMatch(/google: ok/)
+    expect(x).toMatch(/xai: ok/)
+    const stored = seen.store.get('duet:providers:tests') as Record<string, unknown>
+    expect(Object.keys(stored).sort()).toEqual(['google', 'xai'])
+  })
+
+  test('the custom provider at a local http URL needs no key (LM Studio, Codex 4298736595); a remote one does', { options: { apiCustomUrl: 'http://localhost:1234/v1' } }, async ($, on) => {
+    const seen = engine(on)
+    await start($)
+    expect(await run($, 'provider test custom')).toMatch(/custom: ok \d+ms · 2 models/)
+    expect(seen.fetches[0]!.url).toBe('http://localhost:1234/v1/models')
+    expect(seen.fetches[0]!.init.headers.Authorization).toBeUndefined()
+    expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+no key · localhost:1234/)
+  })
+
+  test('under codexFsScope project the saved note still warns when the session folder holds the key file (Codex 4298736579)', { options: { codexFsScope: 'project' } }, async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: '' } })
+    await start($, '/home/u')
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /Codex can read this file/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the field hint does not promise an Esc that the engine does not give; j/k leave the field', async ($, on) => {
+    engine(on)
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    expect(await ui.find({ type: 'Text', text: /Esc cancels/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /typing is visible until Enter · Enter saves · j\/k or c leave the field/ })).toBeDefined()
+    await ui.press({ key: 'prov-next' })
+    expect(await ui.find({ type: 'Input', key: 'prov-key' })).toBeUndefined()
     await ui.unmount()
   })
 
