@@ -2959,6 +2959,16 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect((await listed($)).names).toEqual(['alpha'])
   })
 
+  test('with no marketplace above the root, the walk starts from the working directory (PR #95 review)', async ($, on) => {
+    const { seen, clock } = world(on, disk())
+    // A session started in a parent folder; Claude cd'd into the worktree.
+    seen.root = '/home/u'
+    seen.cwd = WT
+    await start($)
+    await clock.advance(10)
+    expect((await listed($)).names).toEqual(['beta'])
+  })
+
   test('guard: with no pin, a /cd still moves the pane', async ($, on) => {
     const { seen, clock } = world(on, disk())
     seen.cwd = MAIN

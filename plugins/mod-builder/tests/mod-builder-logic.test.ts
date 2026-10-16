@@ -1241,6 +1241,13 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(configListText(values, '')).toContain('modsDir            default (…/main/mods)')
   })
 
+  test('watchedDirOf: with no marketplace above the root, the walk starts from the working directory (PR #95 review)', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    // A session started in a parent folder, and Claude cd'd into a worktree.
+    expect(watchedDirOf(null, '/home/u', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
+    expect(watchedDirOf(null, '/home/u', '', '/elsewhere', both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+
   test('pinCheckOf: a marketplace\'s mods folder under the project root can be pinned (PR #95 review)', () => {
     expect(pinCheckOf('/w/main/scratch/wt/mods', '/w/main')).toEqual({ marketplace: '/w/main/scratch/wt/.claude-plugin/marketplace.json', root: '/w/main' })
     expect(pinCheckOf('/w/main/mods', '/w/main/')).toEqual({ marketplace: '/w/main/.claude-plugin/marketplace.json', root: '/w/main' })
