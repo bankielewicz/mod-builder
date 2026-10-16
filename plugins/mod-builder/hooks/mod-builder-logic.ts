@@ -69,6 +69,8 @@ export type FileFacts = {
    * which no mtime shows. Null when a folder under hooks/ or tests/ couldn't be listed: what it holds is unknown.
    */
   logicSig: string | null
+  /** `quickSigOf` this read's listings: what the stats-only check after a Bash batch compares (Change 0.2.24). */
+  quickSig: string
   /** The version the marketplace lists this mod at, when it does. */
   listedVersion: string | null
 }
@@ -1170,6 +1172,7 @@ export function factsOf(read: FolderRead): FileFacts | null {
     readmeMtimeMs: readmeEntry?.mtimeMs ?? 0,
     logicMtimeMs: Math.max(0, ...logic.map(entry => entry.mtimeMs)),
     logicSig: (read.unlisted ?? []).some(path => /^(hooks|tests)(\/|$)/.test(path)) ? null : sigOf(logic),
+    quickSig: quickSigOf(read),
     codeMtimeMs,
     codeSig,
     firstMtimeMs: times.length ? Math.min(...times) : 0,
@@ -1208,9 +1211,87 @@ export function placeholderFacts(name: string): FileFacts {
     specMtimeMs: 0,
     logicMtimeMs: 0,
     logicSig: signatureOf([]),
+    quickSig: signatureOf([]),
     readmeMtimeMs: 0,
     listedVersion: null,
   }
+}
+
+// ── A rescan after a tool batch (Change 0.2.24, #100) ─────────────────────
+
+/** The file tools whose input names the one file they change, and the key that holds it (issue-forge has the same map). */
+const EDIT_PATHS: Readonly<Record<string, string>> = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' }
+
+/** One tool call of a `classic.PostToolBatch`, as far as a rescan reads it. */
+export type BatchCall = { tool_name: string; tool_input: unknown }
+
+/** The tools that change nothing on disk (the owner's list, PR #109 review): a batch of only these is skipped. */
+export const READ_ONLY_TOOLS: readonly string[] = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'TodoWrite', 'AskUserQuestion', 'mcp__mod-builder__lab_report']
+
+/** Every call in the batch is on the read-only list: nothing to look at, not even the watched folder. */
+export function isReadOnlyBatch(calls: readonly BatchCall[]): boolean {
+  return calls.every(call => READ_ONLY_TOOLS.includes(call.tool_name))
+}
+
+/** What a batch touched in the watched mods folder: the mods its file tools changed, and whether to run the quick check. */
+export type BatchTouch = { mods: string[]; isQuick: boolean }
+
+/**
+ * The mods a tool batch's Edit, Write and NotebookEdit changed under `modsDir` (each path's first segment there, not a
+ * file directly in it nor a dot-folder), and whether the quick check runs: for any tool not on the read-only list whose
+ * paths can't be read (Bash, PowerShell, Agent, MCP and unknown tools; the owner's decision on PR #109), and for an
+ * edit to the marketplace beside the folder. A drive or UNC path matches without case (`pathKey`), a POSIX one with it.
+ */
+export function batchTouch(calls: readonly BatchCall[], modsDir: string): BatchTouch {
+  const dir = pathKey(modsDir).replace(/\/$/, '')
+  const marketplace = pathKey(marketplaceFileOf(modsDir))
+  const mods = new Set<string>()
+  let isQuick = false
+  for (const call of calls) {
+    if (READ_ONLY_TOOLS.includes(call.tool_name)) continue
+    const key = EDIT_PATHS[call.tool_name]
+    if (!key) {
+      isQuick = true
+      continue
+    }
+    const input = call.tool_input
+    const path = input && typeof input === 'object' ? (input as Record<string, unknown>)[key] : undefined
+    if (typeof path !== 'string') continue
+    const at = pathKey(path)
+    if (at === marketplace) isQuick = true
+    if (!at.startsWith(`${dir}/`)) continue
+    // The name as written, not as compared: lower-casing keeps a drive path's length.
+    const [mod, ...rest] = normalizePath(path).slice(dir.length + 1).split('/')
+    if (mod && !mod.startsWith('.') && rest.length > 0) mods.add(mod)
+  }
+  return { mods: [...mods], isQuick }
+}
+
+/** The four listings the stats-only check reads: the mod's folder, `.claude-plugin/`, `hooks/` and `tests/`. */
+export type QuickRead = Pick<FolderRead, 'top' | 'manifestDir' | 'hooks' | 'tests'>
+
+/**
+ * A signature of the files Mod Lab judges that four listings show: SPEC.md, README.md, .mcp.json, the manifest, and every entry
+ * directly in hooks/ and tests/ (a subfolder by its own mtime), each by name and mtime. No file is read, and no
+ * subfolder walked: what sits deeper, and types/, agents/, commands/ and skills/, it doesn't see.
+ */
+export function quickSigOf(read: QuickRead): string {
+  const named = (folder: string, entries: readonly Entry[]): string[] => entries.map(entry => `${folder}/${entry.name}@${entry.mtimeMs}`)
+  return signatureOf([
+    ...named('', read.top.filter(entry => entry.kind === 'file' && (entry.name === 'SPEC.md' || entry.name === 'README.md' || entry.name === '.mcp.json'))),
+    ...named('.claude-plugin', read.manifestDir.filter(entry => entry.name === 'plugin.json')),
+    ...named('hooks', read.hooks),
+    ...named('tests', read.tests),
+  ])
+}
+
+/** What a scan pass reads: every mod (`isFull`), the mods whose quick signature moved (`isQuick`), and the named `mods`. */
+export type ScanRequest = { isFull: boolean; isQuick: boolean; mods: readonly string[] }
+
+/** Two requests as one pass: a full one wins, quick ORs, named mods union (the queued one first). */
+export function mergeScanRequests(queued: ScanRequest | null, next: ScanRequest): ScanRequest {
+  if (!queued) return next
+  return { isFull: queued.isFull || next.isFull, isQuick: queued.isQuick || next.isQuick, mods: [...new Set([...queued.mods, ...next.mods])] }
 }
 
 /**
