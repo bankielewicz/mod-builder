@@ -710,7 +710,7 @@ export function newModGuidance(body: string): string[] | null {
   const indent = LIST_ITEM.exec(first)?.[1]!.length ?? -1
   const quote = [first.trimEnd()]
   for (const line of lines.slice(at + 1)) {
-    if (line.trim() === '' || /^\s{0,3}#/.test(line)) break
+    if (line.trim() === '' || /^\s{0,3}#{1,6}(\s|$)/.test(line)) break
     const item = LIST_ITEM.exec(line)
     if (item && indent >= 0 && item[1]!.length <= indent) break
     quote.push(line.trimEnd())
@@ -718,9 +718,9 @@ export function newModGuidance(body: string): string[] | null {
   return capQuote(quote)
 }
 
-/** A Claude Code plugin's manifest: `plugin.json` in a `.claude-plugin` folder, at any depth. */
+/** A Claude Code plugin's manifest: `plugin.json` in a `.claude-plugin` folder, at any depth, in any case (a case-insensitive drive opens it). */
 export function isPluginManifest(path: string): boolean {
-  return /(^|\/)\.claude-plugin\/plugin\.json$/.test(path.replace(/\\/g, '/'))
+  return /(^|\/)\.claude-plugin\/plugin\.json$/i.test(path.replace(/\\/g, '/'))
 }
 
 /**
@@ -1339,10 +1339,11 @@ export function manifestOf(e: { tool: string; agentId?: string; [key: string]: u
   if (!e.agentId || e.agentId !== ctx.liveAgent || !work) return null
   const key = EDIT_PATHS[e.tool]
   const target = key ? e[key] : undefined
-  if (typeof target !== 'string' || !isPluginManifest(target)) return null
+  if (typeof target !== 'string') return null
+  // Judged on the path the write lands on, so `./` and `//` forms are seen (PR #103 /code-review).
   const absolute = normalizePath(isAbsolutePath(target) ? target : `${work}/${target}`)
-  const prefix = `${normalizePath(work).replace(/\/$/, '')}/`
-  const relative = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
+  if (!isPluginManifest(absolute)) return null
+  const relative = relativeTo(work, absolute) ?? absolute
   // A fixture under the test globs is test data, not a new plugin.
   return matchesAny(relative, testGlobs) || baseManifests.includes(relative) ? null : { absolute, relative }
 }
