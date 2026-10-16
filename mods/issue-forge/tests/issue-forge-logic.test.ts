@@ -1769,4 +1769,47 @@ describe('a fork clone: the base remote, the fork check and the pull request hea
     expect(forkOfOrigin(other(FORK), [other(FORK), other('github.com/you/r')], PIN)).toBe(null)
     expect(forkOfOrigin(other(FORK), [], PIN)).toBe(null)
   })
+
+  // PR #87 review, the owner's choice: a fork clone's ssh host nickname is resolved with `ssh -G`, never assumed.
+  test('sshHostname: the hostname line of ssh -G, lowercased; none is null', () => {
+    const sshHostname = helper<[string], string | null>('sshHostname')
+    expect(sshHostname('user git\nhostname github.com\nport 22\n')).toBe('github.com')
+    expect(sshHostname('hostname GitHub.COM\r\nport 22\r\n')).toBe('github.com')
+    expect(sshHostname('hostname  ghe.example.com  \n')).toBe('ghe.example.com')
+    expect(sshHostname('user git\nhostkeyalias x\nport 22\n')).toBe(null)
+    expect(sshHostname('')).toBe(null)
+  })
+
+  test("sshHostToResolve: an ssh URL's host when it isn't the project's; anything else needs no ssh", () => {
+    const sshHostToResolve = helper<[string, string], string | null>('sshHostToResolve')
+    const PIN = 'github.com/o/r'
+    expect(sshHostToResolve('git@gh-personal:me/r.git', PIN)).toBe('gh-personal')
+    expect(sshHostToResolve('ssh://git@ssh.github.com:443/me/r.git', PIN)).toBe('ssh.github.com')
+    expect(sshHostToResolve('git@GitLab.com:o/r.git', PIN)).toBe('gitlab.com')
+    expect(sshHostToResolve('git@github.com:me/r.git', PIN)).toBe(null)
+    expect(sshHostToResolve('https://gitlab.com/o/r.git', PIN)).toBe(null)
+    expect(sshHostToResolve('/srv/r.git', PIN)).toBe(null)
+  })
+
+  test('forkRemoteVerdict: an ssh host that is not the project\'s counts only as ssh resolves it; the same owner/repo elsewhere is another repository', () => {
+    const forkRemoteVerdict = helper<[string, string, (string | null)?], unknown>('forkRemoteVerdict')
+    const PIN = 'github.com/o/r'
+    // A nickname for the project's host: the fork on that host (gh then says what it is), or the project itself.
+    expect(forkRemoteVerdict('git@gh-personal:me/r.git', PIN, 'github.com')).toEqual({ kind: 'ask', repo: 'github.com/me/r' })
+    expect(forkRemoteVerdict('git@gh-work:o/r.git', PIN, 'github.com')).toEqual({ kind: 'match' })
+    // GitHub's ssh-over-443 host is github.com.
+    expect(forkRemoteVerdict('ssh://git@ssh.github.com:443/me/r.git', PIN, 'ssh.github.com')).toEqual({ kind: 'ask', repo: 'github.com/me/r' })
+    expect(forkRemoteVerdict('git@gh443:o/r.git', PIN, 'ssh.github.com')).toEqual({ kind: 'match' })
+    // Another real host: a mirror of o/r is not o/r (remoteVerdict, origin's #25 rule, still says match: #71).
+    expect(forkRemoteVerdict('git@gitlab.com:o/r.git', PIN, 'gitlab.com')).toEqual({ kind: 'other', repo: 'gitlab.com/o/r' })
+    expect(forkRemoteVerdict('git@gl:me/r.git', PIN, 'gitlab.com')).toEqual({ kind: 'other', repo: 'gitlab.com/me/r' })
+    // ssh couldn't say, or wasn't asked: nothing is assumed.
+    expect(forkRemoteVerdict('git@gh-personal:me/r.git', PIN, null)).toEqual({ kind: 'unrecognised' })
+    expect(forkRemoteVerdict('git@gh-personal:me/r.git', PIN)).toEqual({ kind: 'unrecognised' })
+    // On the project's host, or over https, it reads as remoteVerdict does.
+    expect(forkRemoteVerdict('git@github.com:me/r.git', PIN)).toEqual({ kind: 'ask', repo: 'github.com/me/r' })
+    expect(forkRemoteVerdict('https://github.com/O/R.git', PIN)).toEqual({ kind: 'match' })
+    expect(forkRemoteVerdict('https://gitlab.com/o/r.git', PIN)).toEqual({ kind: 'other', repo: 'gitlab.com/o/r' })
+    expect(forkRemoteVerdict('/srv/r.git', PIN)).toEqual({ kind: 'unrecognised' })
+  })
 })

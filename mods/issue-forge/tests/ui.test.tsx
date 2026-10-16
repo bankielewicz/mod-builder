@@ -111,6 +111,10 @@ type World = {
   canonical?: Record<string, string>
   /** Remotes other than origin, name to fetch URL: `git remote` lists origin and these, sorted; absent, origin alone (#26). */
   remotes?: Record<string, string>
+  /** `ssh -G <host>`: the HostName ~/.ssh/config gives a nickname; absent, the host itself, as ssh prints it. */
+  sshHosts?: Record<string, string>
+  /** `ssh -G` can't run (no ssh). */
+  sshFails?: boolean
   /** `gh repo view <repo> --json nameWithOwner,url` for this one repository answers only once `until` settles. */
   viewHold?: { repo: string; until: Promise<void> }
   /** Per folder, remotes whose fetch URL differs there (a worktree's own config); absent, `remotes` everywhere. */
@@ -275,6 +279,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       }
       if (a[0] === 'pr') return ok('https://github.com/o/r/pull/20\n')
     }
+    // As OpenSSH 10.2 does: ssh -G applies ~/.ssh/config and prints the host it would reach, lowercased, without connecting.
+    if (cmd === 'ssh' && a[0] === '-G') return world.sshFails ? fail('sh: 1: ssh: not found', 127) : ok(`user git\nhostname ${world.sshHosts?.[a[1] ?? ''] ?? (a[1] ?? '').toLowerCase()}\nport 22\n`)
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     // git's common folder: the main checkout answers relative, as git does there.
     // As git 2.53 prints them: `--all` lists every push URL, one per line.
@@ -2333,6 +2339,70 @@ describe('a fork clone: origin is the contributor\'s fork and the project is ano
     release()
     await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
     expect(w.spawned).toHaveLength(1)
+  })
+
+  // PR #87 review, the owner's choice: an ssh host nickname is resolved with ssh -G for the fork and the base remote, never
+  // assumed; origin's own check keeps #25's rule (#71).
+  test("start: origin through an ssh nickname for the project's host is a fork clone once ssh -G resolves it", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'git@gh-personal:me/r.git', sshHosts: { 'gh-personal': 'github.com' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['ssh', '-G', 'gh-personal'])
+    expect(w.argv).toContainEqual(FORK_VIEW)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test("start: an ssh nickname ssh can't resolve is no fork: the origin block, and nothing is fetched", async ($, on) => {
+    const w = engine(on, { ...FORK, originUrl: 'git@gh-personal:me/r.git', sshFails: true })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from gh-personal/me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test('start: a mirror on another host with the same owner/repo is not the project, so the real project remote is the base', async ($, on) => {
+    const w = engine(on, { ...FORK, remotes: { gitlab: 'git@gitlab.com:o/r.git', upstream: 'https://github.com/o/r.git' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.argv.some(a => a[1] === 'fetch' && a[2] === 'gitlab')).toBe(false)
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test('start: a mirror alone is no base remote: the origin block, and nothing is fetched from it', async ($, on) => {
+    const w = engine(on, { ...FORK, remotes: { gitlab: 'git@gitlab.com:o/r.git' } })
+    await start($)
+    const status = await started($, w)
+    expect(status).toContain('blocked at preflight: origin fetches from me/r, but gh sends issues and pull requests to o/r')
+    expect(w.argv.some(isGitWrite)).toBe(false)
+  })
+
+  test("start: a project remote through an ssh nickname for the project's host is the base", async ($, on) => {
+    const w = engine(on, { ...FORK, remotes: { upstream: 'git@gh-work:o/r.git' }, sshHosts: { 'gh-work': 'github.com' } })
+    await start($)
+    await started($, w)
+    expect(w.argv).toContainEqual(['git', 'fetch', 'upstream', 'main'])
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test("publish blocks a push URL with the fork's owner/repo on another host: git would push there", async ($, on) => {
+    const w = engine(on, { ...FORK, head: BRANCH, pushUrl: ['https://github.com/me/r.git', 'git@gitlab.com:me/r.git'] }, { [`issue-forge:run:${ROOT}`]: forkRun() })
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened') || t.includes('blocked')), 'the block')
+    expect((await run($, 'status')).text).toContain('blocked at publishing: origin no longer pushes to me/r')
+    expect(isPublished(w)).toBe(false)
+  })
+
+  test('resume at the baseline blocks when the project remote is now a mirror on another host', async ($, on) => {
+    const blocked = storedRun('blocked', { ghRepo: 'github.com/o/r', baseRemote: 'upstream', headRepo: 'github.com/me/r', blocked: { at: 'baseline', reason: 'tests fail before any change', next: 'fix main' }, redCommit: undefined, agents: [], used: { red: 0, green: 0, refactor: 0 } })
+    const w = engine(on, { ...FORK, head: BRANCH, remotes: { upstream: 'git@gitlab.com:o/r.git' } }, { [`issue-forge:run:${ROOT}`]: blocked })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'red or a block')
+    expect((await run($, 'status')).text).toContain('blocked at baseline: upstream no longer fetches from o/r')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'fetch')).toBe(false)
   })
 
   // PR #87 review (Codex): the stored base remote is a name; what it fetches from is read again where it is fetched.
