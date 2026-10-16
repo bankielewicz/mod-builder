@@ -735,8 +735,11 @@ async function whereToWork($: EngineInterface, run: Run, root: string, remote: s
   return { kind: 'worktree', worktreeDir, minutes: commandTimeoutMinutes }
 }
 
-/** Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree from `remote`'s base. */
-async function makeBranch($: EngineInterface, run: Run, issueBody: string, remote: string): Promise<Blocked | Kept> {
+/**
+ * Step 2: the base, where the run works, and the run's branch, cut here or in a new worktree from `remote`'s base. `repo` is
+ * the pinned repository: the base question can wait on the person, so the base remote is read again before the fetch.
+ */
+async function makeBranch($: EngineInterface, run: Run, issueBody: string, remote: string, repo: string): Promise<Blocked | Kept> {
   const root = run.root
   // This checkout's profile only names the base; the profile that is checked and runs is <remote>/<base>'s.
   await setActivity($, `reading ${PROFILE_FILE}`)
@@ -745,7 +748,7 @@ async function makeBranch($: EngineInterface, run: Run, issueBody: string, remot
   const base = asked === profileBase ? asked : await chooseBase($, run.issue, asked, profileBase)
   if (!base) return block(`issue #${run.issue} asks for base ${asked}, not ${profileBase}, and nobody confirmed it`, "answer the question in an interactive session, or remove the issue's Base branch line")
   stillDriving(run)
-  const unfetched = await fetchBase($, root, remote, base)
+  const unfetched = await fetchBase($, root, remote, base, repo)
   if (unfetched) return unfetched
   const where = await whereToWork($, run, root, remote, base)
   if ('type' in where) return where
@@ -851,7 +854,7 @@ async function preflight($: EngineInterface, run: Run): Promise<RunEvent> {
     const behind = await catchUp($, run, made.workRoot, remote, made.base)
     if (behind) return { ...behind, keep: made }
   } else {
-    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body, remote)
+    const fresh = await makeBranch($, { ...run, title: issue.title }, issue.body, remote, repo)
     if ('type' in fresh) return fresh
     made = fresh
   }
