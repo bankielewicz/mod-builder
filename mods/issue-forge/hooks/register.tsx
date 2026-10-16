@@ -171,8 +171,8 @@ let liveWork: { root: string; workRoot: string } | null = null
 let knownRefs = new Set<string>()
 /** The last run write queued: updateRun chains each one after it. */
 let runWrites: Promise<void> = Promise.resolve()
-/** Where git keeps each folder's index lock, asked once per folder (PR #88 review). */
-const indexLocks: Record<string, string> = {}
+/** Where git keeps each folder's lock files, asked once per folder and file (PR #88 review). */
+const lockFiles: Record<string, string> = {}
 const waiting: Record<string, { resolve: (answer: string) => void; reject: (err: Error) => void }> = {}
 
 function readOptions(raw: unknown): Options {
@@ -239,14 +239,16 @@ class Locked extends Error {
  * comes back as it is.
  */
 async function gitWrite($: EngineInterface, run: Run, root: string, args: string[], stdin?: string) {
-  // Known before the call: the file is a silent stash failure's only sign, and the other process may let it go soon after.
-  const indexLock = await indexLockOf($, root)
+  // Known before the call: a lock file is a silent failure's only sign, and the other process may let it go soon after.
+  // stash push names no lock when refs/stash's is held (git 2.53: only "Cannot save the current status").
+  const files = [await lockFileOf($, root, 'index.lock'), ...(args[0] === 'stash' && args[1] === 'push' ? [await lockFileOf($, root, 'refs/stash.lock')] : [])]
   for (let attempt = 1; ; attempt++) {
     const r = await git($, root, args, stdin)
     if (r.exitCode === 0) return r
     const text = `${r.stderr}\n${r.stdout}`
-    if (!isLockError(text) && !(await $.fs.exists(indexLock))) return r
-    if (attempt === INDEX_ATTEMPTS) throw new Locked(lockPathOf(text) ?? indexLock)
+    const held = lockPathOf(text) ?? (await heldOf($, files))
+    if (!held && !isLockError(text)) return r
+    if (attempt === INDEX_ATTEMPTS) throw new Locked(held ?? files[0]!)
     await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
     // The 5 s watch is too slow for a takeover during the waits: the stored run is read before each attempt.
     await stillOwned($, run)
@@ -254,16 +256,24 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
 }
 
 /**
- * The folder's index lock: a linked worktree's is under the main .git folder, and git says where. Without
- * `--path-format=absolute`, which git before 2.31 prints back instead of reading, so a relative answer is joined here.
+ * One of the folder's lock files: a linked worktree's index lock is under the main .git folder, and refs/stash is
+ * shared by every worktree, so git says where. Without `--path-format=absolute`, which git before 2.31 prints back
+ * instead of reading, so a relative answer is joined here.
  */
-async function indexLockOf($: EngineInterface, root: string): Promise<string> {
-  const known = indexLocks[root]
+async function lockFileOf($: EngineInterface, root: string, name: 'index.lock' | 'refs/stash.lock'): Promise<string> {
+  const key = `${root}\0${name}`
+  const known = lockFiles[key]
   if (known) return known
-  const r = await git($, root, ['rev-parse', '--git-path', 'index.lock'])
+  const r = await git($, root, ['rev-parse', '--git-path', name])
   const path = r.exitCode === 0 ? r.stdout.trim() : ''
-  if (!path) return `${root}/.git/index.lock`
-  return (indexLocks[root] = isAbsolutePath(path) ? path : `${root}/${path}`)
+  if (!path) return `${root}/.git/${name}`
+  return (lockFiles[key] = isAbsolutePath(path) ? path : `${root}/${path}`)
+}
+
+/** The first of `files` that exists, or null. */
+async function heldOf($: EngineInterface, files: string[]): Promise<string | null> {
+  for (const file of files) if (await $.fs.exists(file)) return file
+  return null
 }
 
 /** gitWrite for a call that must succeed: a failure throws, as gitOut's does. */
