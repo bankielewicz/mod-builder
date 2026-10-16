@@ -2072,7 +2072,8 @@ export function startChoices(ctx: StartContext): StartMenu | null {
   const middle: StartMenu['options'] = isDrivenElsewhere(other, me)
     ? [{ label: `Take over #${o} here (its session stops it, or has crashed)`, action: { kind: 'takeOver', issue: o } }]
     : [
-        { label: `Resume #${o} here (${stateOf(other, me, now)})`, action: { kind: 'resume', issue: o } },
+        // A final block refuses resume (Change 0.6.0), so the menu doesn't offer it (PR #103 /code-review).
+        ...(other.blocked?.isFinal ? [] : [{ label: `Resume #${o} here (${stateOf(other, me, now)})`, action: { kind: 'resume', issue: o } as StartAction }]),
         { label: `Stop #${o}, then start #${issue}`, action: { kind: 'stopThenStart', issue: o } },
       ]
   return {
