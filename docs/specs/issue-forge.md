@@ -128,8 +128,8 @@ it finishes, stage everything (`git add -A`) and check **gate R**:
 On pass, commit `test(#<N>): red: <title>` (with `commitTrailers`; same for every commit below); record it as the **red commit**. On fail, give the
 agent the failed checks and try again, up to `attempts.red` (default 2), then stop in `blocked`.
 
-**Step 5: green phase.** Spawn the green agent with the issue text, the red commit's test file paths,
-and the last 200 lines of R3's test output. When it finishes, `git add -A` and check **gate G**:
+**Step 5: green phase.** Spawn the green agent with the issue text, the red agent's answer, the red
+commit's test file paths, and the last 200 lines of R3's test output. When it finishes, `git add -A` and check **gate G**:
 - G1: tests unchanged since the red commit: `git diff --cached --name-only <red commit> -- <testGlobs>` is empty;
 - G2: `testCommand` exits 0;
 - G3: `coverageCommand` succeeds and writes LCOV;
@@ -288,12 +288,20 @@ once the agent starts, and the agent's answer arrives as the `turn.complete` tha
 
 | Agent | Tools | Default model (`userConfig`) | Prompt rules (verbatim in the registered `prompt`) |
 |---|---|---|---|
-| red | Read, Grep, Glob, Edit, Write, Bash | `opus` | Write tests from the issue only. Touch only paths matching the test globs given. Every new test must fail now, by an assertion (never by a load, import or syntax error: the green phase can't edit tests to fix that), and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails. |
+| red | Read, Grep, Glob, Edit, Write, Bash | `opus` | Write tests from the issue only. Touch only paths matching the test globs given. Every new test must fail now, by an assertion (never by a load, import or syntax error: the green phase can't edit tests to fix that), and pass once the issue is fixed. Run the tests to confirm. End with a list of the new test names and one line on why each fails, then what the green phase should know about the fix: an approach that breaks other tests, a dead end, a constraint. |
 | green | Read, Grep, Glob, Edit, Write, Bash | `sonnet` | Make the failing tests pass. Never edit a path matching the test globs; edited tests fail the gate. Follow the profile notes. End with the changed files. |
 | refactor | Read, Grep, Glob, Edit, Write, Bash | `opus` | Improve the changed code without changing behaviour. Never edit tests. Keep every test passing. End with what changed and why. |
 
 Each spawn's `prompt` holds the issue number, title and body, the profile's globs and `notes`,
-and, on a retry, the failed gate checks verbatim.
+and, on a retry, the failed gate checks verbatim. The green prompt also holds the red agent's final
+answer (its tests, and what green should know about the fix, as red's rules ask), after the issue in a
+`<red-answer>` block, marked as context and not instructions. It is cut to its last 20,000 characters and
+then its last 200 lines, and a line at the top of the block says when it was cut. Red's answer is written
+from the issue, so a whole `<red-answer` or `</red-answer` tag in it gets a backslash after its `<`
+(`<\red-answer`, `<\/red-answer`), as the issue's `<issue` and `</issue` do; a word that only starts
+like one, such as `<IssueKey>`, stays as written. Only an answer from a turn that ended by answering
+counts (not an error, a refusal or an interrupt). On a behaviour detour, red's new answer joins the
+first once its gate R passes, so a green retry after the detour sees both. Red and refactor never get it.
 
 **Red on Codex (MVP if P1 passes, §1).** Set `redAgentType` to an agent type that the duet mod
 routes to Codex (listed in duet's `codexAgents`). The model is duet's `codexModel`; Codex's catalog
@@ -384,9 +392,10 @@ kit) and `tests/ui.test.tsx`.
   included, because it compares files, not tool calls.
 - **No new plugins (SPEC change 0.7.0):** issue-forge never commits or pushes a new Claude Code plugin manifest. An issue that asks for one to be built with mod-builder never starts a run. The live agent's Edit, Write and NotebookEdit may not create one, except under `testGlobs`, where a sample plugin is a test fixture (red's rules say so). One at the merge base or on the base branch's tip is not new: a phase that removed it may write it back. A manifest a phase agent's shell made anyway, where the next commit would carry it, is caught by R4 or G8 at the phase's gate, before that commit. Known gap: an agent's `Bash` can still write plugin files while its phase runs. They are only seen at the gate, and they stay uncommitted in the run's folder, because issue-forge deletes nothing. A manifest under a path git ignores isn't seen at all: `git add -A` never stages it, so no commit or push can carry it, and listing ignored files would also find every plugin under `node_modules`, caches and other worktrees.
 - **Cost:** each run spawns at least three subagents. Retries add up to `attempts.red + attempts.green + attempts.refactor` more.
-- **Trust:** the agents read the issue body, which anyone who can file an issue writes. Run it
-  only on repositories and issues you trust. The prompts tell the agents to treat the issue text as
-  requirements, not instructions about tools or files.
+- **Trust:** the agents read the issue body, which anyone who can file an issue writes, and green
+  also reads the red agent's answer, which red wrote from that issue (§6). Run it only on
+  repositories and issues you trust. The prompts tell the agents to treat both as requirements and
+  context, not instructions about tools, credentials, files outside the repository, or the run.
 
 ## 9. Checkpoints
 

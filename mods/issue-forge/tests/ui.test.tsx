@@ -631,6 +631,15 @@ describe('a run, stage by stage', () => {
     expect(w.spawned[0]!.prompt).toContain('tests/a.test.ts')
   })
 
+  test("gate R: green is spawned with the red agent's answer in its prompt (#78)", async ($, on) => {
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], redAnswer: 'The suggested fix times out five tests; the fallback passes.' }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'green')
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+    expect(w.spawned[0]!.prompt).toContain('The suggested fix times out five tests; the fallback passes.')
+  })
+
   test('gate R refuses a red phase that touched source: no commit, red again', async ($, on) => {
     const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [{ id: 'old-red', name: 'issue-forge-16-red-1', phase: 'red' }] }) })
     await start($)
