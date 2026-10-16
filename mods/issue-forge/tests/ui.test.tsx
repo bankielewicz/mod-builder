@@ -119,6 +119,10 @@ type World = {
   gitFails?: { on: string; seq: GitFail[] }
   /** Whether .git/index.lock exists now: set by a failure that held it, cleared by the next call `gitFails` matches. */
   lockFile?: boolean
+  /** git before 2.31: rev-parse doesn't know `--path-format` and prints it back, exit 0, before the path (PR #88 review). */
+  isGitBefore231?: boolean
+  /** The other process lets go of .git/index.lock while the mod asks git where that file is (PR #88 review). */
+  isLockGoneOnLookup?: boolean
   /** `git stash list`'s output; absent, empty. */
   stashList?: string
   /** The url `gh issue view` answers with; absent, ISSUE's (#25). */
@@ -276,7 +280,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       world.lockFile = next?.isLocked ?? false
       if (next) return fail(next.stderr, next.code)
     }
-    if (s === 'rev-parse --path-format=absolute --git-path index.lock') return ok(`${LOCK_PATH}\n`)
+    // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
+    if (s === 'rev-parse --git-path index.lock' || s === 'rev-parse --path-format=absolute --git-path index.lock') {
+      if (world.isLockGoneOnLookup) world.lockFile = false
+      if (a[1] === '--git-path') return ok(inWorktree ? `${ROOT}/.git/worktrees/${(e.init?.cwd ?? '').split('/').pop()}/index.lock\n` : '.git/index.lock\n')
+      return ok(world.isGitBefore231 ? '--path-format=absolute\n.git/index.lock\n' : `${LOCK_PATH}\n`)
+    }
     if (a[0] === 'stash' && a[1] === 'list' && world.stashList !== undefined) return ok(world.stashList)
     // git's common folder: the main checkout answers relative, as git does there.
     // As git 2.53 prints them: `--all` lists every push URL, one per line.
@@ -2256,6 +2265,30 @@ describe('a held git index lock (#28)', () => {
       expect(w.commits[0]).toStartWith('test(#16): red: behaviour test for src/register.tsx')
       // Gate G has begun: green's work is back in the tree.
       expect(w.argv.some(a => a[1] === 'diff' && a.includes('-U0'))).toBe(true)
+    })
+
+    // PR #88 review (Codex P2): before 2.31, `rev-parse --path-format=absolute --git-path index.lock` exits 0 with the
+    // option on its first line, so the file looked for was never the lock and a silent stash failure was never retried.
+    test('gate R: with git before 2.31, a stash apply that exits 1 with no output while the lock file exists is still retried', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }] })
+      const w = engine(on, { ...world, isGitBefore231: true }, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')) || isBlocked(w))
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(applies(w).length).toBe(2)
+    })
+
+    // PR #88 review: stash apply says nothing when it meets the lock, so the file is the only sign. Its path is known
+    // before the call, so a lock let go while git was asked where it is still counts.
+    test('gate R: a silent stash apply is retried even when the lock is let go while its path would be looked up', async ($, on) => {
+      const { world, stored } = behaviour({ on: 'stash apply', seq: [{ stderr: '', code: 1, isLocked: true }] })
+      const w = engine(on, { ...world, isLockGoneOnLookup: true }, stored)
+      await start($)
+      await run($, 'resume')
+      await pump(w, () => w.argv.some(a => a[1] === 'diff' && a.includes('-U0')) || isBlocked(w))
+      expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+      expect(applies(w).length).toBe(2)
     })
 
     test('gate R: a stash apply that fails with no lock file is not tried again, and the block says where green\'s work is', async ($, on) => {
