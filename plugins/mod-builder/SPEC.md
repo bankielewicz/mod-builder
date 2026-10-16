@@ -696,5 +696,15 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - **Fewer calls:** an unchanged pin isn't written again, and a set `modsDir` reads no root.
     - **Docs (Codex P2, wider):** `plugin.json`'s `modsDir` description, CLAUDE.md, `docs/use-in-your-project.md`, `docs/troubleshooting.md`, the design prompt, the `pluginModsDirOf` comment and `gotchas.md` say the folder comes from the project root, a build's reported folder, or a set `modsDir`. "What gets touched" above also leaves out the `$.state.set` write and the `plugin.json` description; this round touches both.
     - **Refactor:** one walk shared by `currentModsDir` and `defaultModsDir`. The `modsDirFor` comment no longer says a set `modsDir` "always wins".
+  - **Commits (red, then green):**
+    - Race: `800d277` / `80cd39a`.
+    - `modsDir` wins: `492c96b` (the precedence test changed for the decision), `252bf76` / `cb4ab77`.
+    - Confinement, ignored path, gone pin: `adecaed` (three tests changed for the decisions), `28290d0` / `27b8064`. `28290d0`'s gone-pin test mounted the pane twice, so its red was a mount error. `0b8fc62` fixed the test, and a mutation run showed it fails by assertion without the drop.
+    - Walk falls back to the cwd: `395cc3c` / `6a2bb84`.
+    - Rows by folder: `e915118` / `a9072be`.
+    - Windows roots: `6a64f91` / `776d6c0`.
+    - Fewer calls: `f458d74` / `f26468b`.
+    - Refactor: `9a93659`.
+    - Docs: `f6e86d4`.
   - **Not changed, process:** the reload test (`f273e27`) and the draw guard's test (`4ab53d4`) were written after their code. Each was checked by mutation, but neither had the red run the repo's TDD rule asks for. Every fix in this round starts red.
 - **Version:** 0.2.20 in `plugin.json` and the marketplace entry. This change was drafted as 0.2.18. PR #93 (#90) merged first with 0.2.18, and PR #85 (#20) with 0.2.19. Merged from `main` after each: after #93, only the README rows, `docs/mod-lab.md` and this SPEC conflicted; after #85, only the version and this SPEC.
