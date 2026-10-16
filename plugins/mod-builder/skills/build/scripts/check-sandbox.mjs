@@ -56,6 +56,16 @@ export function loaderVerdict(output, files, control) {
   return failures
 }
 
+/**
+ * The failures in how the run ended: it must finish on its own, with a failing status, since two of the fixture's
+ * files fail to load. A run cut short (an error, a signal) may have printed the expected lines and still prove nothing.
+ */
+export function runVerdict(run) {
+  if (run.error) return [`claude plugin test did not run to the end: ${run.error.message}`]
+  if (run.signal) return [`claude plugin test was ended by ${run.signal} before it finished`]
+  return run.status === 0 ? ['claude plugin test exited 0: it should fail on the refused files'] : []
+}
+
 /** The fixture's .tpl files and where each goes in the scaffolded plugin. */
 const LAYOUT = {
   'plugin.json.tpl': '.claude-plugin/plugin.json',
@@ -82,8 +92,8 @@ function main() {
       writeFileSync(join(work, to), readFileSync(join(here, 'sandbox-fixture', from), 'utf8'))
     }
     const run = spawnSync(process.env.CLAUDE_BIN || 'claude', ['plugin', 'test', work], { encoding: 'utf8' })
-    output = `${run.stdout ?? ''}${run.stderr ?? ''}${run.error ? `\n${run.error.message}` : ''}`
-    failures.push(...loaderVerdict(output, REFUSED, CONTROL))
+    output = `${run.stdout ?? ''}${run.stderr ?? ''}`
+    failures.push(...runVerdict(run), ...loaderVerdict(output, REFUSED, CONTROL))
   } finally {
     rmSync(work, { recursive: true, force: true })
   }
