@@ -1105,9 +1105,9 @@ async function manifestsAt($: EngineInterface, root: string, mergeBase: string):
   return listed?.exitCode === 0 ? splitZ(listed.stdout).filter(isPluginManifest) : []
 }
 
-/** R4 and G8 (Change 0.6.0): a manifest added since the merge base, or the one the guard refused. Checked before any test runs. */
+/** R4 and G8 (Change 0.6.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard refused. Checked before any test runs. */
 async function newPluginAt($: EngineInterface, run: Run, root: string) {
-  return newPluginOf(splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z', run.mergeBase])), run.newPlugin, run.profile?.testGlobs ?? [])
+  return newPluginOf(splitZ(await gitOut($, root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase])), run.newPlugin, run.profile?.testGlobs ?? [])
 }
 
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
