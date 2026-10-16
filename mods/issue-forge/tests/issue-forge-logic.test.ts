@@ -2153,6 +2153,15 @@ describe('PR #103 review: the new-plugin rule reads an issue in linear time (/co
   })
 })
 
+describe('PR #103 review: red may write a sample plugin as a test fixture (/code-review)', () => {
+  test("red's rules allow a fixture plugin under the test globs, as the guard and R4 do; green and refactor, who never edit tests, aren't told", () => {
+    const FIXTURE_OK = 'A sample plugin under the test globs, as a test fixture, is fine.'
+    expect(RULES.red).toContain(`if the issue needs one, stop and say so. ${FIXTURE_OK}`)
+    expect(RULES.green).not.toContain(FIXTURE_OK)
+    expect(RULES.refactor).not.toContain(FIXTURE_OK)
+  })
+})
+
 describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574826)', () => {
   const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs: readonly string[], baseManifests: readonly string[]) =>
     (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown, t: readonly string[], b: readonly string[]) => { absolute: string; relative: string } | null }).manifestOf(e, ctx, testGlobs, baseManifests)
