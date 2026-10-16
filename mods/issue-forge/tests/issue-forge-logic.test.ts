@@ -2160,6 +2160,16 @@ describe('PR #103 review: red may write a sample plugin as a test fixture (/code
   })
 })
 
+describe("a manifest on the base branch's tip is not new (owner, after PR #103's review)", () => {
+  test("newPluginOf: a manifest the base branch has now, added or refused, is someone else's plugin, not the run's", () => {
+    const of = logic.newPluginOf as (added: readonly string[], refused?: string, testGlobs?: readonly string[], onBase?: readonly string[]) => { path: string; isCreated: boolean } | null
+    const FOO = 'mods/foo/.claude-plugin/plugin.json'
+    expect(of([FOO, 'src/a.ts'], undefined, [], [FOO])).toBeNull()
+    expect(of(['src/a.ts'], FOO, [], [FOO])).toBeNull()
+    expect(of([FOO, 'mods/x/.claude-plugin/plugin.json'], undefined, [], [FOO])).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+  })
+})
+
 describe('PR #103 review: a manifest at the merge base is not new (Codex 4290574826)', () => {
   const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs: readonly string[], baseManifests: readonly string[]) =>
     (logic as unknown as { manifestOf: (e: Record<string, unknown>, ctx: unknown, t: readonly string[], b: readonly string[]) => { absolute: string; relative: string } | null }).manifestOf(e, ctx, testGlobs, baseManifests)

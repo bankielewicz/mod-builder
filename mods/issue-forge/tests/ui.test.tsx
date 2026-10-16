@@ -153,6 +153,8 @@ type World = {
   issueFails?: string
   /** `git diff --cached … --diff-filter=A -z <merge base>`: paths a phase added (Change 0.6.0), found by its filter, not its exact flags. */
   added?: string[]
+  /** `git ls-tree -r --name-only -z origin/main`: the base branch's tip (owner's decision after PR #103's review). */
+  baseTip?: string[]
   /** What $.command.register was given. */
   registered: { name: string; argumentHint?: string }[]
   /** Every process.run with the folder it ran in and the mock time it ran at. */
@@ -408,6 +410,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
     if (a[0] === 'diff' && a[1] === '--cached' && a.includes('--diff-filter=A') && a.at(-1) === 'base0') return ok((world.added ?? []).join('\0'))
+    if (s === 'ls-tree -r --name-only -z origin/main') return ok((world.baseTip ?? []).join('\0'))
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
     if (a[0] === 'diff' && a[1] === '--cached' && a[2] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--name-only') return ok(world.redPaths.join('\0'))
@@ -3061,6 +3064,15 @@ describe('new plugins are mod-builder\'s (Change 0.6.0)', () => {
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
     const reads = w.calls.filter(c => c.argv.includes('--diff-filter=A')).map(c => c.argv.join(' '))
     expect(reads).toEqual(['git diff --cached --no-renames --name-only --diff-filter=A -z base0'])
+  })
+
+  test("a manifest on the base branch's tip isn't the run's new plugin: someone else's, merged in, doesn't block (owner, after PR #103's review)", async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts', MANIFEST], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], added: ['src/a.ts', MANIFEST], baseTip: [MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')) || w.argv.some(a => a[0] === 't'), 'the block or the tests')
+    expect(w.argv.some(a => a[0] === 't')).toBe(true)
+    expect(w.calls.some(c => c.argv.join(' ') === 'git ls-tree -r --name-only -z origin/main')).toBe(true)
   })
 
   test('red adding a plugin manifest blocks final at gate R, with nothing committed', async ($, on) => {
