@@ -42,6 +42,7 @@ import {
   parseTsc,
   parseValidate,
   reachesOf,
+  REPORT_SCHEMA,
   REPORT_TTL_MS,
   reportOf,
   signatureOf,
@@ -106,6 +107,42 @@ const modsDirFor = (configured: string, cwd: string | null, existing: readonly s
     existing,
     fallback,
   )
+
+/** The pinned folder rule (#92), read the same way: a missing rule fails its assertion, not the import. */
+type Pin = { modsDir: string; root: string | null }
+type Watched = { dir: string; pin: Pin | null }
+const watchedDirOf = (pin: Pin | null, root: string | null, configured: string, cwd: string | null, existing: readonly string[], fallback: string): Watched | undefined =>
+  (Logic as unknown as { watchedDirOf?: (pin: Pin | null, root: string | null, configured: string, cwd: string | null, existing: readonly string[], fallback: string) => Watched }).watchedDirOf?.(
+    pin,
+    root,
+    configured,
+    cwd,
+    existing,
+    fallback,
+  )
+
+/** The pin's confinement (PR #95 review), read the same way. */
+type PinCheck = { marketplace: string; root: string } | { reason: string }
+const pinCheckOf = (dir: string, root: string | null): PinCheck | undefined =>
+  (Logic as unknown as { pinCheckOf?: (dir: string, root: string | null) => PinCheck }).pinCheckOf?.(dir, root)
+const pinOf = (value: unknown): Pin | null | undefined => (Logic as unknown as { pinOf?: (value: unknown) => Pin | null }).pinOf?.(value)
+
+/** The repository rule (PR #95 review follow-up), read the same way. */
+type DotGit = { kind: 'dir' } | { kind: 'file'; text: string } | null
+const gitCommonDirOf = (folder: string, dotGit: DotGit): string | null | undefined =>
+  (Logic as unknown as { gitCommonDirOf?: (folder: string, dotGit: DotGit) => string | null }).gitCommonDirOf?.(folder, dotGit)
+const isSameRepo = (a: string | null, b: string | null): boolean | undefined =>
+  (Logic as unknown as { isSameRepo?: (a: string | null, b: string | null) => boolean }).isSameRepo?.(a, b)
+
+/** Git's own record of a worktree (PR #95 review follow-up), read the same way. */
+const worktreeLinkOf = (folder: string, dotGit: DotGit): { record: string } | null | undefined =>
+  (Logic as unknown as { worktreeLinkOf?: (folder: string, dotGit: DotGit) => { record: string } | null }).worktreeLinkOf?.(folder, dotGit)
+const isBackLinkTo = (folder: string, record: string, text: string): boolean | undefined =>
+  (Logic as unknown as { isBackLinkTo?: (folder: string, record: string, text: string) => boolean }).isBackLinkTo?.(folder, record, text)
+
+/** A row's report (PR #95 review), read the same way. */
+const reportIn = (report: Parameters<typeof liveReports>[0][string] | undefined, dir: string) =>
+  (Logic as unknown as { reportIn?: (report: unknown, dir: string) => unknown }).reportIn?.(report, dir)
 
 /** The placeholder rules (#19), read the same way: a missing rule fails its assertion, not the import. */
 type ReportedByMod = Parameters<typeof liveReports>[0]
@@ -1327,5 +1364,142 @@ describe('a streamed test run keeps bounded output (#9, Codex P2 on PR #65)', ()
     expect(s.failed).toBe(40)
     expect(parseTest(streamOutput(s), 1)).toEqual(parseTest(whole, 1))
     expect(parseTest(streamOutput(s), 1).failures[1]).toBe('  AssertionError: case 0')
+  })
+})
+
+describe('a build names its folder, and the session keeps it (#92)', () => {
+  const running = { stage: 'Logic', status: 'running' } as const
+
+  test('reportOf: a path gives the folder above it, normalized', () => {
+    expect(reportOf({ mod: 'foo', ...running, path: 'C:\\x\\mods\\foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: 'C:/x/mods' })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/foo/' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/wt/../mods/./foo' }, 5)).toEqual({ mod: 'foo', report: { ...running, since: 5 }, dir: '/r/mods' })
+  })
+
+  test('reportOf: a relative, non-string or misnamed path is ignored, and the report kept; no path is unchanged', () => {
+    const kept = { mod: 'foo', report: { ...running, since: 5 } }
+    const notAbsolute = { ...kept, pathIgnored: "path must be the absolute path of the mod's folder" }
+    expect(reportOf({ mod: 'foo', ...running, path: 'mods/foo' }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: '' }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: 42 }, 5)).toEqual(notAbsolute)
+    expect(reportOf({ mod: 'foo', ...running, path: '/r/mods/bar' }, 5)).toEqual({ ...kept, pathIgnored: "path must end with the mod's folder name, foo" })
+    expect(reportOf({ mod: 'foo', ...running }, 5)).toEqual(kept)
+  })
+
+  test('the config listing names a build\'s kept folder while modsDir is empty (PR #95 review)', () => {
+    const values = { logging: 'normal' as const, autoRerun: true, autoOpen: false, modsDir: '', modsDirShown: '…/main/mods', testTimeoutMinutes: 3 }
+    expect(configListText({ ...values, pinnedShown: '…/wt/mods' }, '')).toContain("modsDir            a build's folder (…/wt/mods)")
+    expect(configListText({ ...values, modsDir: '/my/mods', modsDirShown: '…/my/mods', pinnedShown: '…/wt/mods' }, '')).toContain('modsDir            …/my/mods')
+    expect(configListText(values, '')).toContain('modsDir            default (…/main/mods)')
+  })
+
+  test('watchedDirOf: with no marketplace above the root, the walk starts from the working directory (PR #95 review)', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    // A session started in a parent folder, and Claude cd'd into a worktree.
+    expect(watchedDirOf(null, '/home/u', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
+    expect(watchedDirOf(null, '/home/u', '', '/elsewhere', both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+
+  test('reportIn: a row takes a report made in its own folder, or one with no folder (PR #95 review)', () => {
+    const report = { stage: 'Logic' as const, status: 'running' as const, since: 1 }
+    expect(reportIn({ ...report, dir: '/w/main/mods' }, '/w/main/mods')).toEqual({ ...report, dir: '/w/main/mods' })
+    expect(reportIn({ ...report, dir: '/w/main/scratch/wt/mods' }, '/w/main/mods')).toBeNull()
+    expect(reportIn(report, '/w/main/mods')).toEqual(report)
+    expect(reportIn(undefined, '/w/main/mods')).toBeNull()
+  })
+
+  test('roots on a drive or UNC share compare without case; POSIX roots with it (PR #95 review, Codex P2)', () => {
+    const drive = { modsDir: 'C:/Users/Me/repo/scratch/wt/mods', root: 'C:/Users/Me/repo' }
+    expect(watchedDirOf(drive, 'C:/users/me/repo', '', null, [], '/p/mods')).toEqual({ dir: drive.modsDir, pin: drive })
+    const share = { modsDir: '//Server/Share/repo/wt/mods', root: '//Server/Share/repo' }
+    expect(watchedDirOf(share, '//server/share/REPO', '', null, [], '/p/mods')).toEqual({ dir: share.modsDir, pin: share })
+    const posix = { modsDir: '/w/Main/scratch/wt/mods', root: '/w/Main' }
+    expect(watchedDirOf(posix, '/w/main', '', null, [], '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
+  })
+
+  test('pinCheckOf: a marketplace\'s mods folder, inside or outside the project root, passes this check (PR #95 review)', () => {
+    expect(pinCheckOf('/w/main/scratch/wt/mods', '/w/main')).toEqual({ marketplace: '/w/main/scratch/wt/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('/w/main/mods', '/w/main/')).toEqual({ marketplace: '/w/main/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('C:/r/wt/mods', 'C:\\r')).toEqual({ marketplace: 'C:/r/wt/.claude-plugin/marketplace.json', root: 'C:/r' })
+    expect(pinCheckOf('/w/mods', '/')).toEqual({ marketplace: '/w/.claude-plugin/marketplace.json', root: '/' })
+  })
+
+  test('pinCheckOf: no root, or a folder not named mods, is refused (PR #95 review)', () => {
+    expect(pinCheckOf('/w/main/scratch/wt/mods', null)).toEqual({ reason: "the project root can't be read" })
+    expect(pinCheckOf('/w/sib/mods', '/w/main')).toEqual({ marketplace: '/w/sib/.claude-plugin/marketplace.json', root: '/w/main' })
+    expect(pinCheckOf('/w/main/scratch/wt/plugins', '/w/main')).toEqual({ reason: "/w/main/scratch/wt/plugins isn't a marketplace's mods folder" })
+  })
+
+  test('gitCommonDirOf: a repository top, a worktree (absolute or relative gitdir), a submodule; nothing else (PR #95 review follow-up)', () => {
+    expect(gitCommonDirOf('/w/main', { kind: 'dir' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/wt\n' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/sib', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/sib\r\n' })).toBe('/w/main/.git')
+    expect(gitCommonDirOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: ../../.git/worktrees/wt' })).toBe('/w/main/.git')
+    // A submodule's git folder is its own repository's.
+    expect(gitCommonDirOf('/w/main/sub', { kind: 'file', text: 'gitdir: ../.git/modules/sub\n' })).toBe('/w/main/.git/modules/sub')
+    expect(gitCommonDirOf('/w/main/tmp/copy', null)).toBeNull()
+    expect(gitCommonDirOf('/w/x', { kind: 'file', text: 'not a gitdir line' })).toBeNull()
+  })
+
+  test('isSameRepo: one common git folder, without case on a drive or UNC share; unknown is never the same (PR #95 review follow-up)', () => {
+    expect(isSameRepo('/w/main/.git', '/w/main/.git/')).toBe(true)
+    expect(isSameRepo('C:/Users/Me/repo/.git', 'C:/users/me/repo/.git')).toBe(true)
+    expect(isSameRepo('/w/Main/.git', '/w/main/.git')).toBe(false)
+    expect(isSameRepo('/w/main/tmp/clone/.git', '/w/main/.git')).toBe(false)
+    expect(isSameRepo(null, '/w/main/.git')).toBe(false)
+    expect(isSameRepo(null, null)).toBe(false)
+  })
+
+  test('worktreeLinkOf: a worktree pointer names git\'s record of it; a repository top or a submodule has none (PR #95 review follow-up)', () => {
+    expect(worktreeLinkOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: /w/main/.git/worktrees/wt\n' })).toEqual({ record: '/w/main/.git/worktrees/wt/gitdir' })
+    expect(worktreeLinkOf('/w/main/scratch/wt', { kind: 'file', text: 'gitdir: ../../.git/worktrees/wt' })).toEqual({ record: '/w/main/.git/worktrees/wt/gitdir' })
+    expect(worktreeLinkOf('/w/main', { kind: 'dir' })).toBeNull()
+    expect(worktreeLinkOf('/w/main/sub', { kind: 'file', text: 'gitdir: ../.git/modules/sub\n' })).toBeNull()
+    expect(worktreeLinkOf('/w/main/tmp/copy', null)).toBeNull()
+  })
+
+  test('isBackLinkTo: git\'s record must name this folder\'s .git, absolute or relative to the record (PR #95 review follow-up)', () => {
+    const record = '/w/main/.git/worktrees/wt/gitdir'
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '/w/main/scratch/wt/.git\n')).toBe(true)
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '../../../scratch/wt/.git\r\n')).toBe(true)
+    expect(isBackLinkTo('C:/r/wt', 'C:/r/.git/worktrees/wt/gitdir', 'C:/R/WT/.git')).toBe(true)
+    expect(isBackLinkTo('/w/main/tmp/forged', record, '/w/main/scratch/wt/.git\n')).toBe(false)
+    expect(isBackLinkTo('/w/main/scratch/wt', record, '')).toBe(false)
+  })
+
+  test('pinOf: a stored pin needs a folder and a root (PR #95 review)', () => {
+    expect(pinOf({ modsDir: '/w/wt/mods', root: '/w' })).toEqual({ modsDir: '/w/wt/mods', root: '/w' })
+    expect(pinOf({ modsDir: '/w/wt/mods', root: null })).toBeNull()
+    expect(pinOf({ modsDir: 3, root: '/w' })).toBeNull()
+    expect(pinOf(null)).toBeNull()
+  })
+
+  test('REPORT_SCHEMA lists path, and is still closed to other keys', () => {
+    expect((REPORT_SCHEMA.properties as Record<string, { type?: string }>).path?.type).toBe('string')
+    expect(REPORT_SCHEMA.additionalProperties).toBe(false)
+    expect([...REPORT_SCHEMA.required]).toEqual(['mod', 'stage', 'status'])
+  })
+
+  test('watchedDirOf: a pin wins over the walk while the root is its own or unknown; a set modsDir wins over the pin', () => {
+    const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
+    const main = ['/w/main/.claude-plugin/marketplace.json']
+    expect(watchedDirOf(pin, '/w/main', '/chosen/mods', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/chosen/mods', pin })
+    expect(watchedDirOf(pin, '/w/main/', '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+    expect(watchedDirOf(pin, null, '', '/w/main/x', main, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin })
+  })
+
+  test('watchedDirOf: a changed root drops the pin, and modsDir or the walk decides', () => {
+    const pin = { modsDir: '/w/main/scratch/wt/mods', root: '/w/main' }
+    expect(watchedDirOf(pin, '/w/two', '', '/w/two', ['/w/two/.claude-plugin/marketplace.json'], '/p/mods')).toEqual({ dir: '/w/two/mods', pin: null })
+    expect(watchedDirOf(pin, '/w/two', '/chosen/mods', '/w/two', [], '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
+  })
+
+  test('watchedDirOf: with no pin the walk starts from the root, else from the working directory', () => {
+    const both = ['/w/main/.claude-plugin/marketplace.json', '/w/main/scratch/wt/.claude-plugin/marketplace.json']
+    // A Bash cd moved the working directory into the worktree; the root stayed.
+    expect(watchedDirOf(null, '/w/main', '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/mods', pin: null })
+    expect(watchedDirOf(null, null, '', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/w/main/scratch/wt/mods', pin: null })
+    expect(watchedDirOf(null, '/w/main', '/chosen/mods', '/w/main/scratch/wt', both, '/p/mods')).toEqual({ dir: '/chosen/mods', pin: null })
+    expect(watchedDirOf(null, null, '', null, both, '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
   })
 })

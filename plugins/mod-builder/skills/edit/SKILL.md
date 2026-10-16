@@ -19,7 +19,8 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
 1. Find `<mods>/<mod>/`. If it doesn't exist, stop and suggest `/mod-builder:build`.
 2. Read its `SPEC.md`, `README.md`, `.claude-plugin/plugin.json`, `hooks/` and `tests/`.
 3. **Mod Lab:** if `mcp__mod-builder__lab_report` is among your tools, your **first** call is
-   `{ mod, stage: 'Spec', status: 'running', note: 'editing: <change in a few words>' }`. On a mod
+   `{ mod, stage: 'Spec', status: 'running', note: 'editing: <change in a few words>', path }`, with
+   `path` the absolute path of the folder you found in 1 (pass it on every report). On a mod
    that was built before, that starts a new **build generation**: every stage whose evidence is
    older than now turns `◌` stale in the pane, and turns green again as you redo it. Report each
    stage as build's step 0 describes. Scaffold isn't redone; it stays green.
