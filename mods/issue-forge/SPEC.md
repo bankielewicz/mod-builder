@@ -1396,6 +1396,19 @@ code. git's lock texts below were captured with git 2.53.0 in a scratch reposito
 
   The 5-attempt test now counts `rev-parse --git-path index.lock`, changed in its own commit (cf78eb9).
 - **QA** (review 11) is in the PR body.
+- **Codex rounds 2 and 3** (on 59b2fe4's parent and on f5685de), each checked against the code, git's texts captured
+  in a scratch repository [probe, git 2.53.0]:
+  - 4290283822: a lock refusal that no lock file explains (`cannot lock ref 'HEAD': unable to resolve reference
+    '…': reference broken`) comes back as git said it after the attempts (above; 4bd5c8b, a795be4);
+  - 4290341993 and 4290341987: `lockPathOf` takes only `': File exists` (a read-only `.git` gives `Unable to create
+    '…/index.lock': Permission denied`, which is no other process's lock), and reads up to `.lock': File exists`,
+    so a repository path with an apostrophe keeps its ref-lock block (41e03c9);
+  - 4290342002: `runLong` and `runShort` take the env from the caller, and only the two `worktree add` calls pass
+    `GIT_OPTIONAL_LOCKS=0`; a profile command that is itself git keeps the session's env (bbc5ce1);
+  - 4290341996 (P1): a gate commits the index as it is when `git commit` runs, not the tree it tested. That gap is
+    older than this change (staging, then minutes of tests, then the commit); the retries add up to 4 s to it. Filed
+    as #101. **Stopping rule** (the owner's call, 2026-10-16): later Codex findings on this change's lock handling
+    go to #101, not into this PR.
 - **Live check** (2026-10-16, Claude Code 2.1.301, git 2.53.0, head 59b2fe4) [probe]. Throwaway issue #99 ran in
   a fresh clone in a private tmux (agent teams, in-process; the installed claudemod plugins off), and a `git`
   wrapper on PATH logged each call's `GIT_OPTIONAL_LOCKS`:
