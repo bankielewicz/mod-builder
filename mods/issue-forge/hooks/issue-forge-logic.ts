@@ -1033,12 +1033,15 @@ export function checkoutState(f: CheckoutFacts): CheckoutState {
   return { isBusy: reasons.length > 0, why: reasons.join(', ') }
 }
 
-/** `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. */
-export function workspacePlan(mode: Workspace, s: CheckoutState, base: string): WorkspacePlan {
+/**
+ * `here` never branches a busy checkout, `ask` asks only when it's busy, `worktree` always makes one. `ref` is where the profile
+ * was read: `upstream/<base>` in a fork clone (PR #87 review).
+ */
+export function workspacePlan(mode: Workspace, s: CheckoutState, base: string, ref = `origin/${base}`): WorkspacePlan {
   if (mode === 'worktree') return { kind: 'worktree' }
   if (!s.isBusy) return { kind: 'here' }
   if (mode === 'ask') return { kind: 'ask' }
-  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads origin/${base}'s copy), or clean the checkout` }
+  return { kind: 'block', reason: `the checkout is busy (${s.why})`, next: `set "workspace" to "worktree" or "ask" in ${PROFILE_FILE} on ${base} (the run reads ${ref}'s copy), or clean the checkout` }
 }
 
 export type WorktreeState = 'present' | 'missing' | 'unregistered'
@@ -1197,7 +1200,8 @@ export function mergeLine(run: Run): string | null {
 
 /** The publish question without the merge check: the pane's ready line, and the question's head. */
 export function publishAsk(run: Run): string {
-  return `Push ${run.branch} and open a pull request${run.ghRepo ? ` on ${repoLabel(run.ghRepo)}` : ''} against ${run.base}?`
+  // A fork run's branch goes to the fork, its pull request to the project (PR #87 review).
+  return `Push ${run.branch}${run.headRepo ? ` to ${repoLabel(run.headRepo)}` : ''} and open a pull request${run.ghRepo ? ` on ${repoLabel(run.ghRepo)}` : ''} against ${run.base}?`
 }
 
 export function publishQuestion(run: Run): string {

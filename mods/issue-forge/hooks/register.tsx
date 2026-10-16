@@ -722,7 +722,7 @@ async function whereToWork($: EngineInterface, run: Run, root: string, remote: s
   const holder = workspace === 'worktree' ? undefined : (await runsOf($, run.repo ?? root)).find(r => r.id !== run.id && isActive(r) && normalizePath(workOf(r)) === normalizePath(root))
   const state = workspace === 'worktree' ? { isBusy: false, why: '' } : await checkoutOf($, root, base, holder?.issue)
   // Start in the menu under `ask` was the answer to the worktree question: it isn't asked twice.
-  const plan = workspacePlan(run.chosenWorktree && workspace === 'ask' ? 'worktree' : workspace, state, base)
+  const plan = workspacePlan(run.chosenWorktree && workspace === 'ask' ? 'worktree' : workspace, state, base, `${remote}/${base}`)
   if (plan.kind === 'block') return block(plan.reason, plan.next)
   if (plan.kind === 'here') return { kind: 'here' }
   // Everything a worktree needs is checked before anyone is asked for one.
