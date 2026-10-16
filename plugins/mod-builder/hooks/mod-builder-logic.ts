@@ -918,10 +918,17 @@ export function walkStartOf(root: string | null, cwd: string | null): string | n
   return root ?? cwd
 }
 
+/** A path to compare by: normalized, and lower-cased on a drive or UNC share, which Windows reads without case (PR #95 review). */
+function pathKey(path: string): string {
+  const normal = normalizePath(path)
+  const root = rootOf(normal)
+  return root === '/' || root === '' ? normal : normal.toLowerCase()
+}
+
 /** A build's pinned folder, while the project root is the one it was pinned under or can't be read now; else null (#92). */
 export function keptPinOf(pin: Pin | null, root: string | null): Pin | null {
   if (!pin) return null
-  return root === null || normalizePath(pin.root) === normalizePath(root) ? pin : null
+  return root === null || pathKey(pin.root) === pathKey(root) ? pin : null
 }
 
 /**
@@ -950,8 +957,8 @@ export function pinCheckOf(dir: string, root: string | null): { marketplace: str
   if (root === null) return { reason: "the project root can't be read" }
   const folder = normalizePath(dir)
   const top = normalizePath(root)
-  const prefix = top.endsWith('/') ? top : `${top}/`
-  if (!folder.startsWith(prefix)) return { reason: `${folder} is outside the project root` }
+  const topKey = pathKey(top)
+  if (!pathKey(folder).startsWith(topKey.endsWith('/') ? topKey : `${topKey}/`)) return { reason: `${folder} is outside the project root` }
   if (folder.slice(folder.lastIndexOf('/') + 1) !== 'mods') return { reason: `${folder} isn't a marketplace's mods folder` }
   return { marketplace: marketplaceFileOf(folder), root: top }
 }
