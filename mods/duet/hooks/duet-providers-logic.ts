@@ -63,7 +63,8 @@ export function providerOf(id: string): ProviderDef | undefined {
 
 /** https anywhere, or http to this machine only. */
 export function isAllowedBaseUrl(url: string): boolean {
-  return /^https:\/\/[^/\s]+/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(url)
+  // No user:password@ in the authority (Codex 4298476191): the pane and the transcript would show it.
+  return /^https:\/\/[^/\s@]+(\/|$)/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(url)
 }
 
 /** A provider's base URL: the table's, or for `custom` the option when it is allowed, with no trailing slash. '' when there is none. */
@@ -74,9 +75,17 @@ export function baseUrlOf(p: ProviderDef, o: { customUrl: string }): string {
 
 // ── The key file ─────────────────────────────────────────────────────────
 
-/** `~/.claude/duet-data/.env`, with `/` separators whatever the home folder uses. */
+/** `~/.claude/duet-data/.env`, with `/` separators whatever the home folder uses; '' with no home folder (never a path under the project, Codex 4297835997). */
 export function keyFileOf(home: string): string {
-  return `${home.replace(/\\/g, '/').replace(/\/+$/, '')}/.claude/duet-data/.env`
+  const h = home.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  return h === '' ? '' : `${h}/.claude/duet-data/.env`
+}
+
+export const NO_HOME = "no home folder (HOME or USERPROFILE); keys can't be stored"
+
+/** True when a shell command or a file path names the key file: a guard keeps it out of the conversation. */
+export function namesKeyFile(text: string): boolean {
+  return /duet-data[\\/]\.env(?![\w.-])/.test(text)
 }
 
 /** `NAME=value` lines: an `export ` prefix, single or double quotes, `#` comments after an unquoted value, CRLF. Lines that are not assignments are skipped. */
@@ -96,18 +105,17 @@ export function parseEnvFile(text: string): Record<string, string> {
 
 const envLine = (name: string, value: string) => `${name}=${/[\s#"']/.test(value) ? JSON.stringify(value) : value}`
 
-/** The file with one variable set (or removed, for null), every other byte kept; a missing file is created. */
+/**
+ * The file with one variable set (or removed, for null), every other byte kept; a missing file is created. The parser
+ * reads the last of duplicate lines, so a set keeps one line where the last was and drops the others (Codex 4297835963).
+ */
 export function upsertEnvLine(text: string, name: string, value: string | null): string {
   const lines = text === '' ? [] : text.split('\n')
   const isLine = (l: string) => new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=`).test(l)
-  if (value === null) {
-    const kept = lines.filter(l => !isLine(l))
-    return kept.join('\n')
-  }
-  const at = lines.findIndex(isLine)
-  if (at >= 0) {
-    lines[at] = envLine(name, value)
-    return lines.join('\n')
+  const last = lines.map((l, i) => (isLine(l) ? i : -1)).filter(i => i >= 0).pop()
+  if (value === null) return lines.filter(l => !isLine(l)).join('\n')
+  if (last !== undefined) {
+    return lines.map((l, i) => (i === last ? envLine(name, value) : isLine(l) ? null : l)).filter((l): l is string => l !== null).join('\n')
   }
   const body = lines.join('\n')
   return `${body === '' ? '' : body.endsWith('\n') ? body : body + '\n'}${envLine(name, value)}\n`
@@ -140,7 +148,8 @@ export function maskKey(key: string): string {
 /** Every stored key's value replaced with `[redacted]`, wherever it appears. Blank keys are ignored. */
 export function redact(text: string, keys: readonly string[]): string {
   let out = text
-  for (const k of keys) if (k.trim() !== '') out = out.split(k).join('[redacted]')
+  // Longest first (Codex 4297836038): a key that is a prefix of another would otherwise leave the suffix.
+  for (const k of [...new Set(keys.filter(k => k.trim() !== ''))].sort((a, b) => b.length - a.length)) out = out.split(k).join('[redacted]')
   return out
 }
 
@@ -148,9 +157,13 @@ export function redact(text: string, keys: readonly string[]): string {
 
 export type HttpRequest = { url: string; init: { method: string; headers: Record<string, string>; body?: string } }
 
+/** Anthropic's native endpoints need the API version header (Codex 4298476139); the compatibility layer accepts it too. */
+export const ANTHROPIC_VERSION = '2023-06-01'
+
 function headersFor(p: ProviderDef, key: string): Record<string, string> {
   const h: Record<string, string> = { Accept: 'application/json' }
   if (key !== '' && p.auth !== 'none') h.Authorization = `Bearer ${key}`
+  if (p.id === 'anthropic') h['anthropic-version'] = ANTHROPIC_VERSION
   return h
 }
 
@@ -164,7 +177,9 @@ export const PROBE_PROMPT = 'Reply with ok.'
 
 /** A one-token completion: the cheapest request that proves the key and names the model. No temperature or top_p. */
 export function probeRequest(p: ProviderDef, key: string, base: string, model: string): HttpRequest {
-  const body = JSON.stringify({ model: model || p.defaultModel, messages: [{ role: 'user', content: PROBE_PROMPT }], max_tokens: 1 })
+  // OpenAI's o-series rejects max_tokens (Codex 4297836005); the other providers document max_tokens, `[field]`.
+  const cap = p.id === 'openai' ? { max_completion_tokens: 1 } : { max_tokens: 1 }
+  const body = JSON.stringify({ model: model || p.defaultModel, messages: [{ role: 'user', content: PROBE_PROMPT }], ...cap })
   return { url: `${base}/chat/completions`, init: { method: 'POST', headers: { ...headersFor(p, key), 'Content-Type': 'application/json' }, body } }
 }
 
@@ -172,11 +187,12 @@ function parseJson(text: string): unknown | undefined {
   try { return JSON.parse(text) } catch { return undefined }
 }
 
-export function parseModelsReply(text: string): { ids: string[] } | { error: string } {
-  const j = parseJson(text) as { data?: unknown } | undefined
+/** The ids (keys redacted, Codex 4298476186) and whether the list is paginated (`has_more`, Codex 4297836020). */
+export function parseModelsReply(text: string, keys: readonly string[] = []): { ids: string[]; hasMore: boolean } | { error: string } {
+  const j = parseJson(text) as { data?: unknown; has_more?: unknown } | undefined
   if (j === undefined) return { error: 'the reply is not JSON' }
   if (!Array.isArray(j?.data)) return { error: 'no model list in the reply' }
-  return { ids: j.data.map(m => String((m as { id?: unknown })?.id ?? '')).filter(Boolean) }
+  return { ids: j.data.map(m => redact(String((m as { id?: unknown })?.id ?? ''), keys)).filter(Boolean), hasMore: j.has_more === true }
 }
 
 type ChatReply = { model?: unknown; choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }; error?: { message?: unknown } | string }
@@ -230,8 +246,10 @@ export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, 
   if (step === 'models' && (r.status === 404 || r.status === 405)) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${STATUS_WORD[r.status] ?? 'not allowed'} on /models: is the base URL right? (test <id> <model> runs a one-token completion instead)`, at }
   if (r.ok) {
     if (step === 'models') {
-      const list = parseModelsReply(r.text)
-      const count = 'ids' in list ? `${list.ids.length} models` : list.error
+      const list = parseModelsReply(r.text, keys)
+      // A 2xx that is not a model list is a failed test, never a green ok (Codex 4297835969).
+      if ('error' in list) return { ok: false, status: r.status, ms, model: '', note: `✕ ${r.status} ${list.error}`, at }
+      const count = `${list.ids.length}${list.hasMore ? '+' : ''} models${list.hasMore ? ' (first page)' : ''}`
       const caveat = modelsNeedKey ? '' : ' (the list needs no key; test <id> <model> checks the key)'
       return { ok: true, status: r.status, ms, model: '', note: `ok ${ms}ms · ${count}${caveat}`, at }
     }

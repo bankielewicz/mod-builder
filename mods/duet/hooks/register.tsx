@@ -11,7 +11,7 @@ import {
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
-  PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, savedNote, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
@@ -905,24 +905,41 @@ async function envKey($: EngineInterface, name: string): Promise<string | undefi
   }
 }
 
+/** The key file's path, '' with no home folder (then no key is ever stored: Codex 4297835997). */
 async function keyFilePath($: EngineInterface): Promise<string> {
-  return keyFileOf((await homeDir($)) || '.')
+  return keyFileOf(await homeDir($))
 }
 
-/** The key file's variables; {} when there is no file. */
-async function readKeyFile($: EngineInterface): Promise<Record<string, string>> {
-  return parseEnvFile((await readIfThere($, await keyFilePath($))) ?? '')
+/** The engine's wording of a failed `$.fs` call, its prefix removed. */
+function fsReason(err: unknown): string {
+  return String((err as Error)?.message ?? err).split('\n')[0]!.replace(/^\S+: \$\.fs\.\w+(?:\([^)]*\))?: /, '').trim()
 }
 
-/** Every provider's key and where it came from. The values stay in this call; only masks reach `$.state`. */
-async function keySources($: EngineInterface): Promise<Record<string, KeySource>> {
-  const file = await readKeyFile($)
-  const out: Record<string, KeySource> = {}
+/**
+ * The key file: its variables, or why it is not usable (no home folder; a file that is there but can't be read, Codex
+ * 4298476175). A missing file is an empty one.
+ */
+async function readKeyFile($: EngineInterface): Promise<{ file: Record<string, string>; error: string }> {
+  const path = await keyFilePath($)
+  if (path === '') return { file: {}, error: NO_HOME }
+  try {
+    return { file: parseEnvFile(String(await $.fs.read(path))), error: '' }
+  } catch (err) {
+    const reason = fsReason(err)
+    if (/\bENOENT\b/.test(reason) || !(await $.fs.exists(path).catch(() => true))) return { file: {}, error: '' }
+    return { file: {}, error: `${KEY_FILE_HOME} could not be read (${reason})` }
+  }
+}
+
+/** Every provider's key and where it came from, and the key file's trouble if any. The values stay in this call; only masks reach `$.state`. */
+async function keySources($: EngineInterface): Promise<{ sources: Record<string, KeySource>; fileError: string }> {
+  const { file, error } = await readKeyFile($)
+  const sources: Record<string, KeySource> = {}
   for (const p of PROVIDERS) {
     const fromEnv = p.keyName ? await envKey($, p.keyName).catch(() => undefined) : undefined
-    out[p.id] = keyFor(p, p.keyName ? { [p.keyName]: fromEnv } : {}, file)
+    sources[p.id] = keyFor(p, p.keyName ? { [p.keyName]: fromEnv } : {}, file)
   }
-  return out
+  return { sources, fileError: error }
 }
 
 /** The values to redact from anything duet shows or writes. */
@@ -932,7 +949,7 @@ function keyValues(sources: Record<string, KeySource>): string[] {
 
 /** Refreshes the pane's sign-in column from the file and the environment. */
 async function refreshProviderAuth($: EngineInterface): Promise<Record<string, KeySource>> {
-  const sources = await keySources($)
+  const { sources } = await keySources($)
   const auth: Record<string, string> = {}
   for (const p of PROVIDERS) auth[p.id] = authTextOf(p, sources[p.id]!, options.customUrl)
   await update($, provAuth, () => auth)
@@ -945,42 +962,69 @@ async function loadProviderTests($: EngineInterface): Promise<void> {
   await update($, provTests, t => ({ ...stored, ...Object.fromEntries(Object.entries(t).filter(([, v]) => v === 'running')) }))
 }
 
-async function storeProviderTest($: EngineInterface, id: string, result: TestResult): Promise<void> {
-  const tests = await update($, provTests, t => ({ ...t, [id]: result }))
-  const toStore = Object.fromEntries(Object.entries(tests).filter(([, v]) => v !== 'running'))
-  await $.store.set(TESTS_STORE_KEY, toStore).catch(() => undefined)
+/** One provider's result into the pane and the shared store, merged over what the store holds now, so another session's result survives (Codex 4298476151). */
+async function storeProviderTest($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+  await update($, provTests, t => {
+    const { [id]: _, ...rest } = t
+    return result ? { ...rest, [id]: result } : rest
+  })
+  const stored = ((await $.store.get(TESTS_STORE_KEY).catch(() => undefined)) ?? {}) as Record<string, ProviderTest>
+  const { [id]: _, ...rest } = stored
+  await $.store.set(TESTS_STORE_KEY, result ? { ...rest, [id]: result } : rest).catch(() => undefined)
 }
 
-/** Writes one key to the file (mode 600 on POSIX) and says what happened; the key never goes anywhere else. */
-async function saveKey($: EngineInterface, p: ProviderDef, value: string): Promise<string> {
-  const key = value.trim()
-  if (!p.keyName) return `${p.id} takes no key.`
-  if (key === '') return 'nothing saved: the field was empty.'
-  const path = await keyFilePath($)
-  const before = await readIfThere($, path)
-  if (before === undefined) return `not saved: ${KEY_FILE_HOME} could not be read.`
-  await $.fs.write(path, upsertEnvLine(before, p.keyName, key))
-  let mode = 'chmod 600'
+/** Writes the key file and sets it to mode 600 on POSIX (both saves and removals: Codex 4297835988); says how the chmod went. */
+async function writeKeyFile($: EngineInterface, path: string, text: string, secret: string): Promise<string> {
+  await $.fs.write(path, text)
   try {
     const r = await $.process.run(['chmod', '600', path], { timeoutMs: 10_000 })
-    if (r.exitCode !== 0) mode = `chmod 600 failed: ${redact(r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`, [key])}; set the file's permissions yourself`
+    return r.exitCode === 0 ? 'chmod 600' : `chmod 600 failed: ${redact(r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`, [secret])}; set the file's permissions yourself`
   } catch (err) {
-    mode = `chmod 600 failed: ${redact(String((err as Error)?.message ?? err).split('\n')[0]!, [key])}; set the file's permissions yourself`
+    return `chmod 600 failed: ${redact(String((err as Error)?.message ?? err).split('\n')[0]!, [secret])}; set the file's permissions yourself`
   }
+}
+
+/**
+ * Writes one key to the file (mode 600 on POSIX) and says what happened; the key never goes anywhere else. `{ saved }`
+ * is the note; `{ failed }` is why nothing was written (the field stays open: Codex 4297836029).
+ */
+async function saveKey($: EngineInterface, p: ProviderDef, value: string): Promise<{ saved: string } | { failed: string }> {
+  const key = value.trim()
+  if (!p.keyName) return { failed: `${p.id} takes no key.` }
+  if (key === '') return { failed: 'nothing saved: the field was empty.' }
+  const path = await keyFilePath($)
+  if (path === '') return { failed: `not saved: ${NO_HOME}.` }
+  const before = await readIfThere($, path)
+  if (before === undefined) return { failed: `not saved: ${KEY_FILE_HOME} could not be read.` }
+  let mode: string
+  try {
+    mode = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, key), key)
+  } catch (err) {
+    return { failed: `not saved: ${redact(fsReason(err), [key])}` }
+  }
+  await storeProviderTest($, p.id, null)   // a new key is untested (Codex 4297835973)
   await refreshProviderAuth($)
-  return savedNote(mode, options.fsScope).join('\n')
+  return { saved: savedNote(mode, options.fsScope).join('\n') }
 }
 
 /** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
 async function removeKey($: EngineInterface, p: ProviderDef): Promise<string> {
   if (!p.keyName) return `${p.id} has no key to remove.`
   const path = await keyFilePath($)
+  if (path === '') return `not changed: ${NO_HOME}.`
   const before = await readIfThere($, path)
   if (before === undefined) return `not changed: ${KEY_FILE_HOME} could not be read.`
-  if (!(p.keyName in parseEnvFile(before))) return `${p.id}: no key stored in ${KEY_FILE_HOME} (a key in your environment stays).`
-  await $.fs.write(path, upsertEnvLine(before, p.keyName, null))
+  const held = parseEnvFile(before)[p.keyName]
+  if (held === undefined) return `${p.id}: no key stored in ${KEY_FILE_HOME} (a key in your environment stays).`
+  let mode: string
+  try {
+    mode = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, null), held)
+  } catch (err) {
+    return `not changed: ${redact(fsReason(err), [held])}`
+  }
+  await storeProviderTest($, p.id, null)
   await refreshProviderAuth($)
-  return `${p.id}: key removed from ${KEY_FILE_HOME}.`
+  return `${p.id}: key removed from ${KEY_FILE_HOME}.${mode === 'chmod 600' ? '' : ` (${mode})`}`
 }
 
 /** The pane's x: asks first, since a hotkey that deletes must not act on a stray key. */
@@ -992,26 +1036,39 @@ async function removeKeyAsked($: EngineInterface, p: ProviderDef): Promise<void>
   await update($, provNote, () => note)
 }
 
-/** One request through the host; a refusal (policy, no traffic, no network) becomes `{ refused }`, never a throw. */
+/** How long a key test or model list waits for a reply: `$.http.fetch` has no timeout of its own (Codex 4297836014). */
+const REPLY_DEADLINE_MS = 30_000
+
+/**
+ * One request through the host; a refusal (policy, no traffic, no network) becomes `{ refused }`, never a throw. An
+ * endpoint that never finishes answering is given the deadline, then counts as not sent; its late reply is dropped.
+ */
 async function fetchReply($: EngineInterface, r: { url: string; init: { method: string; headers: Record<string, string>; body?: string } }): Promise<HttpReply> {
-  try {
-    const res = await $.http.fetch(r.url, r.init)
-    return { status: res.status, ok: res.ok, text: res.text, headers: res.headers }
-  } catch (err) {
-    return { refused: String((err as Error)?.message ?? err) }
-  }
+  const timer: { t: Timer | null } = { t: null }
+  const deadline = new Promise<HttpReply>(resolve => {
+    timer.t = $.clock.after(REPLY_DEADLINE_MS, () => resolve({ refused: `no reply within ${REPLY_DEADLINE_MS / 1000} s` }))
+  })
+  const request = $.http.fetch(r.url, r.init).then(
+    (res): HttpReply => ({ status: res.status, ok: res.ok, text: res.text, headers: res.headers }),
+    (err): HttpReply => ({ refused: String((err as Error)?.message ?? err) }),
+  )
+  const reply = await Promise.race([request, deadline])
+  timer.t?.cancel()
+  return reply
 }
 
-/** Why a provider can't be tested or listed right now, or '' with what it needs. */
-async function providerReady($: EngineInterface, p: ProviderDef): Promise<{ why: string; key: string; base: string; keys: string[] }> {
-  const sources = await keySources($)
+/** Why a provider can't be tested or listed right now, or '' with what it needs. A public model list (`modelsNeedKey: false`) needs no key (Codex 4297835980). */
+async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 'probe'): Promise<{ why: string; key: string; base: string; keys: string[] }> {
+  const { sources, fileError } = await keySources($)
   const keys = keyValues(sources)
   const k = sources[p.id]!
   if (p.auth === 'cli') return { why: `${p.id} signs in with codex login; duet does not test it.`, key: '', base: '', keys }
   const base = baseUrlOf(p, { customUrl: options.customUrl })
   if (p.id === 'custom' && base === '') return { why: `${p.id}: no URL set. Set apiCustomUrl (https://, or http:// to localhost) in /duet config first.`, key: '', base, keys }
-  if (p.auth === 'session' && k.key === '') return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
-  if (p.auth === 'bearer' && k.key === '') return { why: `${p.id}: no key. Press e on its row in /duet provider, or set ${p.keyName}.`, key: '', base, keys }
+  const needsKey = k.key === '' && !(op === 'models' && !p.modelsNeedKey)
+  if (needsKey && fileError !== '') return { why: `${p.id}: ${fileError}; fix the file, or set ${p.keyName}.`, key: '', base, keys }
+  if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
+  if (p.auth === 'bearer' && needsKey) return { why: `${p.id}: no key. Press e on its row in /duet provider, or set ${p.keyName}.`, key: '', base, keys }
   return { why: '', key: k.key, base, keys }
 }
 
@@ -1020,11 +1077,12 @@ async function providerReady($: EngineInterface, p: ProviderDef): Promise<{ why:
  * table says the provider lists no models, or when the person names a model. Nothing is retried.
  */
 async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<string> {
-  const ready = await providerReady($, p)
+  const models0 = model === '' && p.modelsPath !== null
+  const ready = await providerReady($, p, models0 ? 'models' : 'probe')
   if (ready.why) return ready.why
   await update($, provTests, t => ({ ...t, [p.id]: 'running' as const }))
   const started = Date.now()
-  const models = model === '' ? modelsRequest(p, ready.key, ready.base) : null
+  const models = models0 ? modelsRequest(p, ready.key, ready.base) : null
   const step = models ? 'models' : 'probe'
   const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
   const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey)
@@ -1035,15 +1093,15 @@ async function testProvider($: EngineInterface, p: ProviderDef, model: string): 
 /** `GET /models` as text, or why not. */
 async function listProviderModels($: EngineInterface, p: ProviderDef): Promise<{ ids: string[]; error: string }> {
   if (p.modelsPath === null && p.auth !== 'cli') return { ids: [], error: `${p.id} lists no models (no /models endpoint); its key test runs a one-token completion instead.` }
-  const ready = await providerReady($, p)
+  const ready = await providerReady($, p, 'models')
   if (ready.why) return { ids: [], error: ready.why }
   const req = modelsRequest(p, ready.key, ready.base)
   if (!req) return { ids: [], error: `${p.id} lists no models.` }
   const reply = await fetchReply($, req)
   if ('refused' in reply) return { ids: [], error: `not sent: ${redact(refusalReason(reply.refused), ready.keys)}` }
   if (!reply.ok) return { ids: [], error: `${reply.status}: ${redact(reply.text.trim().split('\n')[0] ?? '', ready.keys).slice(0, 120)}` }
-  const parsed = parseModelsReply(reply.text)
-  return 'ids' in parsed ? { ids: parsed.ids, error: '' } : { ids: [], error: parsed.error }
+  const parsed = parseModelsReply(reply.text, ready.keys)
+  return 'ids' in parsed ? { ids: parsed.hasMore ? [...parsed.ids, '(first page; the provider lists more)'] : parsed.ids, error: '' } : { ids: [], error: parsed.error }
 }
 
 /** m on a row: the list opens under it, fetched now. */
@@ -1053,6 +1111,7 @@ async function openModelList($: EngineInterface, p: ProviderDef): Promise<void> 
   await update($, provModelsState, () => 'fetching')
   await update($, provModels, () => [])
   const r = await listProviderModels($, p)
+  if ((await read($, provListing)) !== p.id) return   // the person moved on; a late list must not land under another row (Codex 4298476163)
   await update($, provModels, () => r.ids)
   await update($, provModelsState, () => (r.error ? r.error : 'idle'))
 }
@@ -1083,9 +1142,9 @@ async function startKeyEntry($: EngineInterface): Promise<void> {
 
 async function finishKeyEntry($: EngineInterface, value: string): Promise<void> {
   const p = await highlightedProvider($)
-  await update($, provEditing, () => false)
-  const note = await saveKey($, p, value)
-  await update($, provNote, () => note)
+  const r = await saveKey($, p, value)
+  await update($, provEditing, () => 'failed' in r && value.trim() !== '' && Boolean(p.keyName))   // a write that failed keeps the field open
+  await update($, provNote, () => ('saved' in r ? r.saved : r.failed))
 }
 
 async function testHighlighted($: EngineInterface): Promise<void> {
@@ -1127,7 +1186,8 @@ async function providersListText($: EngineInterface): Promise<string> {
   await refreshProviderAuth($)
   await loadProviderTests($)
   const { rows, keys, tested } = await providerRows($)
-  return providersText(rows, keys, tested)
+  const { fileError } = await keySources($)
+  return providersText(rows, keys, tested) + (fileError ? `\n⚠ ${fileError}; only keys from the environment are used` : '')
 }
 
 const PROVIDER_USAGE = 'Usage: /duet provider [list | key <id> | test <id> [model] | models <id> | remove <id>]   ids: ' + PROVIDERS.map(p => p.id).join(', ')
@@ -1403,13 +1463,19 @@ export const register: Register = (on, raw) => {
     )
   })
 
-  // The key file is never read into the conversation through an @-mention.
-  on('prompt.mention', { path: /duet-data[\\/]\.env$/ }, () => ({ deny: 'duet: that file holds API keys; it is not read into the conversation. /duet provider manages them.' }))
-    .catch(() => ({ deny: 'duet: that file holds API keys; it is not read into the conversation.' }))
+  // The key file is never read into the conversation: not through an @-mention, a Bash command that names it, or the Read tool.
+  const KEY_FILE_DENY = 'duet: that file holds API keys; it is not read into the conversation. /duet provider manages them.'
+  on('prompt.mention', { path: /duet-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
+    .catch(() => ({ deny: KEY_FILE_DENY }))
+  on('tool.call', { tool: 'Bash' }, ($, e, next) => (namesKeyFile(String((e as unknown as { command?: unknown }).command ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+  on('tool.call', { tool: 'Read' }, ($, e, next) => (namesKeyFile(String((e as unknown as { file_path?: unknown }).file_path ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
 
   on('ui.render', { component: 'Pane', requestId: PROVIDERS_PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { rows, keys, tested } = await providerRows($)
+    const { fileError } = await keySources($)
     if (!('Input' in els)) {
       const { Box, Text } = els
       return (
@@ -1432,7 +1498,7 @@ export const register: Register = (on, raw) => {
     // The pane is a window: rows besides the providers (header, rules, routes, the field, a note, buttons, the hint, the two
     // "more" marks) are counted, and the providers scroll in what is left, the highlighted one always in view (seen live).
     const shown = listing ? Math.min(models.length, 12) + (models.length > 12 ? 1 : 0) + (modelsState !== 'idle' ? 1 : 0) : 0
-    const fixed = 8 + (keys === 0 ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? note.split('\n').length : 0) + shown
+    const fixed = 8 + (keys === 0 ? 1 : 0) + (fileError !== '' ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? note.split('\n').length : 0) + shown
     const win = rowWindow(at, rows.length, e.props.scroll.bodyRows, fixed)
     const visible = rows.slice(win.start, win.start + win.room)
     const above = win.start
@@ -1445,6 +1511,7 @@ export const register: Register = (on, raw) => {
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
         {keys === 0 && <Text dimColor>no provider keys yet · e on a row enters one · codex signs in with codex login</Text>}
+        {fileError !== '' && <Text color={COLORS.warn}>{`⚠ ${fileError}`.slice(0, width)}</Text>}
         {above > 0 && <Text dimColor>{`  ↑ ${above} more (k)`}</Text>}
         {visible.map((r, j) => { const i = win.start + j; return (
           <Box key={`prov-row-${r.p.id}`} flexDirection="column">

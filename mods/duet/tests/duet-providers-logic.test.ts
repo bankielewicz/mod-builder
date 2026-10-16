@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
-  PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, parseChatReply, parseEnvFile,
+  PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, parseChatReply, parseEnvFile,
   parseModelsReply, probeRequest, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
@@ -58,6 +58,12 @@ describe('key file', () => {
     expect(keyFileOf('C:\\Users\\u')).toBe('C:/Users/u/.claude/duet-data/.env')
     // Codex 4297835997 (P1): with no home folder there is no key file; never a path under the project.
     expect(keyFileOf('')).toBe('')
+    expect(keyFileOf('  ')).toBe('')
+  })
+
+  test('a command or path that names the key file is recognised, on either separator; look-alikes are not', () => {
+    for (const text of ['cat ~/.claude/duet-data/.env', 'cat /home/u/.claude/duet-data/.env | head', 'type C:\\Users\\u\\.claude\\duet-data\\.env', '/home/u/.claude/duet-data/.env']) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    for (const text of ['ls ~/.claude/duet-data', 'cat .env', 'cat duet-data/.env.bak', 'cat duet-data/.environment', '']) expect([text, namesKeyFile(text)]).toEqual([text, false])
     expect(KEY_FILE_NOTE).toContain('~/.claude/duet-data/.env')
   })
 
