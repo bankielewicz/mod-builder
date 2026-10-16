@@ -97,7 +97,7 @@ describe('a bare command, by pane state', () => {
   test('behind another tab: it answers at once, brings the pane to the front with the keyboard, and closes nothing', async ($, on) => {
     const { world, clock } = engine(on, { panes: HIDDEN, showOnOpen: true })
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
-    expect((await command($, '')).text).toBe('Bringing __TITLE__ to the front; it has the keyboard, Esc returns it to the prompt.')
+    expect((await command($, '')).text).toBe('Bringing __TITLE__ to the front; it takes the keyboard if your prompt is empty (Esc gives it back).')
     await clock.advance(1000)
     expect(world.closed).toEqual([])
     expect(world.opens.at(-1)).toMatchObject({ id: '__NAME__', focus: true })

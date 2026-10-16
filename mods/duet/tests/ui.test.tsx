@@ -140,7 +140,7 @@ describe('ui', () => {
 })
 
 describe('a pane behind another tab is brought to the front, not closed (#31)', () => {
-  const SHOW = 'Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
+  const SHOW = 'Bringing the pane to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
   const STILL_BEHIND = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
   const HIDDEN = [{ id: 'duet', isShown: false }]
   /** Open but waiting undrawn: an unasked open on a narrow terminal, or any open with no surface to draw it (d.ts `UiPane.isPlaced`). */

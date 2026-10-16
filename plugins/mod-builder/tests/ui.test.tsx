@@ -2352,7 +2352,7 @@ describe('the pane opens from the command itself (#90)', () => {
 })
 
 describe('a pane behind another tab is brought to the front, not closed (#31)', () => {
-  const SHOW = 'Bringing Mod Lab to the front; it has the keyboard, Esc returns it to the prompt.'
+  const SHOW = 'Bringing Mod Lab to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
   const STILL_BEHIND = 'Mod Lab is still behind another tab: ctrl+x tab, then again until it shows.'
   // The read after the open may come at once or after 500 ms (the probe of #31 decides), so each test lets 1 s pass.
   const SETTLED_MS = 1000
