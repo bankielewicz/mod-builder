@@ -264,6 +264,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   terminal too narrow for an unrequested pane", and "False on every row, none shown or focused, while an
   open answers `no-surface`". Such a row has `isShown: false` but is no tab behind another, so
   `paneAction` counts it as not listed (PR #96, Codex P2).
+- **[probe]** Under `claude -p --input-format stream-json` (2.1.301, 2026-10-15, PR #96), after a first
+  `/duet` opened the pane, `$.ui.panes()` listed it unplaced and not shown. Read from the answers, not a
+  dump of the rows: a second bare `/duet` answered `Bringing the pane to the front…` while `paneAction`
+  took every listed row (so the row had `isShown: false`), and `Opened.` once it skipped unplaced rows (so
+  `isPlaced: false`); `/issue-forge` the same. So a headless session can hold an unplaced pane.
 - **[probe]** The host draws Buttons as `[ Label ]`, with no hotkey letter. If the hotkeys matter,
   name them in a hint line or in the README.
 - **[probe]** `$.ui.status` text shows under the prompt as `⚠ <plugin>: <text>`, and toasts appear in
