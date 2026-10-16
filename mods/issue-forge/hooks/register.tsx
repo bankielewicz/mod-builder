@@ -19,6 +19,7 @@ import {
   newModReply,
   newPluginGate,
   newPluginOf,
+  newPluginRecord,
   newPluginRefusal,
   agentsKey,
   agentPrompt,
@@ -1088,12 +1089,12 @@ async function stagedSince($: EngineInterface, root: string, ref: string): Promi
   return splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '-z', ref]))
 }
 
-/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.6.0). */
+/** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.6.0); never a run another session took over. */
 async function recordNewPlugin($: EngineInterface, path: string): Promise<void> {
   const d = drivingNow()
   if (!d) return
   const now = await $.clock.now()
-  await updateRun($, d.key, stored => (stored?.id === d.runId ? advance(stored, { type: 'newPlugin', path }, now) : null))
+  await updateRun($, d.key, stored => newPluginRecord(stored, d.runId, sessionId, path, now))
 }
 
 /** R4 and G8 (Change 0.6.0): a manifest added since the merge base, or the one the guard refused. Checked before any test runs. */

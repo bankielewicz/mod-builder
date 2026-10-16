@@ -725,6 +725,14 @@ export function newPluginGate(which: 'R' | 'G' | 'F', np: NewPlugin): Gate {
   return { gate: which, passed: false, checks: [check(id, false, `${np.isCreated ? 'a new' : 'a refused'} Claude Code plugin: ${np.path}`)], newPlugin: np }
 }
 
+/**
+ * The stored run with the guard's refusal on it, or null to write nothing: never onto a run another session took over,
+ * one that stopped, or another run (Codex 4290574833 on PR #103).
+ */
+export function newPluginRecord(stored: Run | null, runId: string, me: string, path: string, now: number): Run | null {
+  return stored && !foreignChange(stored, runId, me) && isActive(stored) ? advance(stored, { type: 'newPlugin', path }, now) : null
+}
+
 /** What the guard tells a phase agent that would create a manifest. */
 export function newPluginRefusal(path: string): string {
   return `issue-forge: creating a new Claude Code plugin (${path}) is mod-builder's job, not this run's. End your turn now; the run stops with next steps for the person.`
