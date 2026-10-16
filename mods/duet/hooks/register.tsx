@@ -23,7 +23,7 @@ const PANE = 'duet'
 /** The main pane as every open asks for it; bringing it to the front adds only `focus`. */
 const PANE_ARGS = { id: PANE, title: 'Duet', columns: 76 }
 const CONFIG_PANE = 'duet-config'
-const SHOW_TEXT = 'Bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
+const SHOW_TEXT = 'Bringing the pane to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
 const STILL_BEHIND_TOAST = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
 /** How long after asking for the front the pane is read again (#31). */
 const FRONT_CHECK_MS = 500

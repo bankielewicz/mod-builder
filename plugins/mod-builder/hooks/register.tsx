@@ -27,7 +27,7 @@ const FRAME_MS = 250
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
 const NARROW_TOAST = '◆ Mod Lab needs a wider window. Widen it, or watch the status line.'
-const SHOW_TEXT = 'Bringing Mod Lab to the front; it has the keyboard, Esc returns it to the prompt.'
+const SHOW_TEXT = 'Bringing Mod Lab to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
 const STILL_BEHIND_TOAST = 'Mod Lab is still behind another tab: ctrl+x tab, then again until it shows.'
 /** How long after asking for the front the pane is read again (#31). */
 const FRONT_CHECK_MS = 500

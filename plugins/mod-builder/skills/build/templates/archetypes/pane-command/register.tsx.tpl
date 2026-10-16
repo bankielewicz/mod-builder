@@ -76,7 +76,7 @@ export const register: Register = on => {
       const action = await paneActionOf($)
       if (action === 'show') {
         void bringToFront($).catch(() => undefined)
-        return { text: 'Bringing __TITLE__ to the front; it has the keyboard, Esc returns it to the prompt.' }
+        return { text: 'Bringing __TITLE__ to the front; it takes the keyboard if your prompt is empty (Esc gives it back).' }
       }
       void (action === 'close' ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
       return { text: action === 'close' ? '__TITLE__ closed. /__NAME__ to reopen.' : '__TITLE__ opened.' }

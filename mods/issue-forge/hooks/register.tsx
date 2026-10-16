@@ -134,7 +134,7 @@ const PANE = 'issue-forge'
 const TITLE = 'Issue Forge'
 /** The pane as every open asks for it; bringing it to the front adds only `focus`. */
 const PANE_ARGS = { id: PANE, title: TITLE, columns: 76 }
-const SHOW_TEXT = 'bringing the pane to the front; it has the keyboard, Esc returns it to the prompt.'
+const SHOW_TEXT = 'bringing the pane to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
 const STILL_BEHIND_TOAST = `${TITLE} is still behind another tab: ctrl+x tab, then again until it shows.`
 /** After a start or a resume opened the pane behind another tab: where it is and how to reach it. */
 const BEHIND_TEXT = 'its pane is behind another tab (ctrl+x tab, then again until it shows)'
