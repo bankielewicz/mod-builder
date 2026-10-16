@@ -1867,3 +1867,24 @@ describe('the guard and new plugins (Change 0.5.0)', () => {
     expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, { ...ctx, workRoot: null })).toBeNull()
   })
 })
+
+describe('a plugin fixture under the test globs is test data (Change 0.5.0, owner\'s decision after the PR opened)', () => {
+  const FIXTURE = 'tests/fixtures/sample/.claude-plugin/plugin.json'
+  const manifestOf = (e: Record<string, unknown>, ctx: unknown, testGlobs?: readonly string[]) =>
+    (logic as unknown as { manifestOf?: (e: Record<string, unknown>, ctx: unknown, testGlobs?: readonly string[]) => unknown }).manifestOf?.(e, ctx, testGlobs)
+  const newPluginOf = (added: readonly string[], refused?: string, testGlobs?: readonly string[]) =>
+    (logic as unknown as { newPluginOf: (added: readonly string[], refused?: string, testGlobs?: readonly string[]) => unknown }).newPluginOf(added, refused, testGlobs)
+  const ctx = { liveAgent: 'a1', known: new Set(['a1']), workRoot: '/w/wt', root: '/w' }
+
+  test('newPluginOf: a manifest under the test globs is not a new plugin; one elsewhere still is', () => {
+    expect(newPluginOf([FIXTURE], undefined, ['tests/**'])).toBeNull()
+    expect(newPluginOf([FIXTURE, 'mods/x/.claude-plugin/plugin.json'], undefined, ['tests/**'])).toEqual({ path: 'mods/x/.claude-plugin/plugin.json', isCreated: true })
+    expect(newPluginOf([FIXTURE])).toEqual({ path: FIXTURE, isCreated: true })
+  })
+
+  test('manifestOf: the live agent writing a fixture manifest under the test globs is not the guard\'s case', () => {
+    expect(manifestOf({ tool: 'Write', file_path: `/w/wt/${FIXTURE}`, agentId: 'a1' }, ctx, ['tests/**'])).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: FIXTURE, agentId: 'a1' }, ctx, ['tests/**'])).toBeNull()
+    expect(manifestOf({ tool: 'Write', file_path: '/w/wt/mods/x/.claude-plugin/plugin.json', agentId: 'a1' }, ctx, ['tests/**'])).toEqual({ absolute: '/w/wt/mods/x/.claude-plugin/plugin.json', relative: 'mods/x/.claude-plugin/plugin.json' })
+  })
+})

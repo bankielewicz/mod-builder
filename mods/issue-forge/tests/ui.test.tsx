@@ -2134,6 +2134,17 @@ describe('new plugins are mod-builder\'s (Change 0.5.0)', () => {
     expect(status).not.toContain('git show')
   })
 
+  test('red adding a plugin fixture under the test globs passes gate R as test data (owner\'s decision after the PR opened)', async ($, on) => {
+    const FIXTURE = 'tests/fixtures/sample/.claude-plugin/plugin.json'
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', FIXTURE], redPaths: ['tests/a.test.ts', FIXTURE], added: ['tests/a.test.ts', FIXTURE] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || w.toasts.some(t => t.includes('blocked')), 'green, or a block')
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    expect(w.commits[0]).toStartWith('test(#16): red: Fix the thing')
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
   test('a final block\'s hint line offers stop and status, not resume', async ($, on) => {
     const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', MANIFEST], sinceRed: [MANIFEST], redPaths: ['tests/a.test.ts'], added: [MANIFEST] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
     await start($)

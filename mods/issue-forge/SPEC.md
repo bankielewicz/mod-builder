@@ -1470,6 +1470,8 @@ UI (`ui.test.tsx`):
 - **Hint line.** A final block's hint line offers no `r resume` (`0bae248`), as its buttons don't.
 - **Test harness.** It gained a `--diff-filter=A` answer and `fs.stat` for the files a test places.
 
+**Decision after the PR opened (2026-10-16, owner; a side review).** A sample-plugin fixture under the test folders is test data, not a new plugin. An example is `tests/fixtures/sample/.claude-plugin/plugin.json`, which repositories that build or check plugins commonly have. A manifest whose path matches the profile's `testGlobs` is therefore exempt: the guard lets the live agent write it, and R4 and G8 ignore it. Green and refactor still can't add one there, because G1 already refuses tests changed after red.
+
 **Done means.** `/issue-forge 18` here answers with the next steps and leaves no run, worktree or branch; the person
 can follow them to `/mod-builder:build`. No issue-forge run can commit or push a new plugin. The live check:
 `claude -p --plugin-dir mods/issue-forge --settings '{"enabledPlugins":{"issue-forge@claudemod":false}}' "/issue-forge 18"`
