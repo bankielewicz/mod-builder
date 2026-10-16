@@ -221,8 +221,8 @@ async function gitOut($: EngineInterface, root: string, args: string[]): Promise
   return outputOf(args, await git($, root, args))
 }
 
-/** Thrown when the index lock is still held after the last attempt: the drive blocks with its reason and next step. */
-class IndexLocked extends Error {
+/** Thrown when a git lock (the index's or a ref's) is still held after the last attempt: the drive blocks with its reason and next step. */
+class Locked extends Error {
   readonly next: string
   constructor(lockPath: string) {
     super(`another git process is using ${lockPath} (${INDEX_ATTEMPTS} attempts over ${((INDEX_ATTEMPTS - 1) * INDEX_WAIT_MS) / 1000} s)`)
@@ -231,9 +231,10 @@ class IndexLocked extends Error {
 }
 
 /**
- * git that writes the index (add, commit, stash, switch, merge): another process holding .git/index.lock fails it at
- * once, so a failure caused by the lock waits a second and tries again, five attempts in all (#28). Stash prints
- * nothing when it meets the lock, so the lock file is looked for too. Any other failure comes back as it is.
+ * git that writes the index or a ref (add, commit, stash, switch, merge): another process holding .git/index.lock, or a
+ * ref's lock, fails it at once, so a failure caused by a lock waits a second and tries again, five attempts in all (#28,
+ * PR #88 review). Stash prints nothing when it meets the index lock, so that file is looked for too. Any other failure
+ * comes back as it is.
  */
 async function gitWrite($: EngineInterface, run: Run, root: string, args: string[], stdin?: string) {
   let lockPath: string | undefined
@@ -244,7 +245,7 @@ async function gitWrite($: EngineInterface, run: Run, root: string, args: string
     lockPath ??= (await git($, root, ['rev-parse', '--path-format=absolute', '--git-path', 'index.lock'])).stdout.trim() || 'index.lock'
     const text = `${r.stderr}\n${r.stdout}`
     if (!isLockError(text) && !(await $.fs.exists(lockPath))) return r
-    if (attempt === INDEX_ATTEMPTS) throw new IndexLocked(lockPathOf(text) ?? lockPath)
+    if (attempt === INDEX_ATTEMPTS) throw new Locked(lockPathOf(text) ?? lockPath)
     await new Promise<void>(resolve => void $.clock.after(INDEX_WAIT_MS, () => resolve()))
     stillDriving(run)
   }
@@ -1084,7 +1085,7 @@ async function drive($: EngineInterface, first: Run, mayAsk: boolean): Promise<v
         const stamped: Stamped = { ...run, driveGen: me.gen }
         ev = await doStep($, stamped)
       } catch (err) {
-        ev = err instanceof IndexLocked ? block(err.message, err.next) : block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
+        ev = err instanceof Locked ? block(err.message, err.next) : block(`unexpected: ${err instanceof Error ? err.message : String(err)}`, 'see /issue-forge status')
       }
       if (!ev || !isMine()) return
       const latest = (await loadRun($, key)) ?? run
