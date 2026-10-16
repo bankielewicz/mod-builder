@@ -203,7 +203,7 @@ describe('requests and replies', () => {
     expect(parseModelsReply('null')).toEqual({ error: 'the reply is not JSON' })
     expect(parseModelsReply('"x"')).toEqual({ error: 'no model list in the reply' })
     // Codex 4298989646: a model id is cleaned of control characters and line breaks, and bounded.
-    expect(parseModelsReply('{"data":[{"id":"ok\u001b[31mINJECTED\nline"},{"id":"' + 'x'.repeat(300) + '"}]}')).toEqual({ ids: ['ok[31mINJECTEDline', 'x'.repeat(120)], hasMore: false })
+    expect(parseModelsReply('{"data":[{"id":"ok\\u001b[31mINJECTED\\nline"},{"id":"' + 'x'.repeat(300) + '"}]}')).toEqual({ ids: ['ok[31mINJECTEDline', 'x'.repeat(120)], hasMore: false })
   })
 
   test('test outcome: /models 200 → ok; 404/405 → a likely wrong base URL, no billed fallback; 401 → unauthorized; the probe records the model', () => {
@@ -242,7 +242,7 @@ describe('requests and replies', () => {
     // The result remembers the mask of the key it tested, so a result never outlives its key (Codex 4298989626).
     expect(testOutcome('models', { status: 200, ok: true, text: '{"data":[{"id":"a"}]}' }, 20, at, [], true, '…a1b2').key).toBe('…a1b2')
     // A model name with a line break is cleaned before it reaches the note.
-    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"m\nINJECTED","choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms mINJECTED · 1 token')
+    expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"m\\nINJECTED","choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms mINJECTED · 1 token')
     // A refusal before any reply (the host refused the request).
     expect(testOutcome('models', { refused: 'duet: $.http.fetch: nonessential traffic is disabled' }, 0, at).note).toBe('✕ not sent: nonessential traffic is disabled')
     // Wordings seen on 2.1.301: a policy refusal, and a connection that failed (ollama not running).
@@ -293,7 +293,7 @@ describe('pane text', () => {
     expect(authTextOf(providerOf('custom')!, { key: KEY, source: 'file' }, 'https://gw.example.com/v1')).toBe('key …a1b2 · gw.example.com')
     expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key · gw.example.com')
     expect(testText(undefined)).toBe('untested')
-    expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1 })).toBe('ok 412ms gemini-2.5-pro')
+    expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1, key: '' })).toBe('ok 412ms gemini-2.5-pro')
     expect(testText('running')).toBe('testing…')
   })
 
