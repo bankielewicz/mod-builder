@@ -1267,21 +1267,18 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     expect(watchedDirOf(share, '//server/share/REPO', '', null, [], '/p/mods')).toEqual({ dir: share.modsDir, pin: share })
     const posix = { modsDir: '/w/Main/scratch/wt/mods', root: '/w/Main' }
     expect(watchedDirOf(posix, '/w/main', '', null, [], '/p/mods')).toEqual({ dir: '/p/mods', pin: null })
-    expect(pinCheckOf('C:/users/me/repo/wt/mods', 'C:/Users/Me/repo')).toEqual({ marketplace: 'C:/users/me/repo/wt/.claude-plugin/marketplace.json', root: 'C:/Users/Me/repo' })
-    expect(pinCheckOf('/w/main/wt/mods', '/w/Main')).toEqual({ reason: '/w/main/wt/mods is outside the project root' })
   })
 
-  test('pinCheckOf: a marketplace\'s mods folder under the project root can be pinned (PR #95 review)', () => {
+  test('pinCheckOf: a marketplace\'s mods folder, inside or outside the project root, passes this check (PR #95 review)', () => {
     expect(pinCheckOf('/w/main/scratch/wt/mods', '/w/main')).toEqual({ marketplace: '/w/main/scratch/wt/.claude-plugin/marketplace.json', root: '/w/main' })
     expect(pinCheckOf('/w/main/mods', '/w/main/')).toEqual({ marketplace: '/w/main/.claude-plugin/marketplace.json', root: '/w/main' })
     expect(pinCheckOf('C:/r/wt/mods', 'C:\\r')).toEqual({ marketplace: 'C:/r/wt/.claude-plugin/marketplace.json', root: 'C:/r' })
     expect(pinCheckOf('/w/mods', '/')).toEqual({ marketplace: '/w/.claude-plugin/marketplace.json', root: '/' })
   })
 
-  test('pinCheckOf: no root, a folder outside it, or one not named mods is refused (PR #95 review)', () => {
+  test('pinCheckOf: no root, or a folder not named mods, is refused (PR #95 review)', () => {
     expect(pinCheckOf('/w/main/scratch/wt/mods', null)).toEqual({ reason: "the project root can't be read" })
-    expect(pinCheckOf('/w/other/mods', '/w/main')).toEqual({ reason: '/w/other/mods is outside the project root' })
-    expect(pinCheckOf('/w/main2/mods', '/w/main')).toEqual({ reason: '/w/main2/mods is outside the project root' })
+    expect(pinCheckOf('/w/sib/mods', '/w/main')).toEqual({ marketplace: '/w/sib/.claude-plugin/marketplace.json', root: '/w/main' })
     expect(pinCheckOf('/w/main/scratch/wt/plugins', '/w/main')).toEqual({ reason: "/w/main/scratch/wt/plugins isn't a marketplace's mods folder" })
   })
 
