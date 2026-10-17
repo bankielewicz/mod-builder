@@ -10,6 +10,12 @@ import {
   paneAction, codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+import {
+  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  redact, refusalReason, rowWindow, safeText, savedNote, testOutcome, testText, upsertEnvLine,
+} from './duet-providers-logic'
+import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
+import type { ProviderTest } from '../types'
 
 /**
  * Duet: delegates chosen subagent types and its own `duet:` roles to Codex,
@@ -49,6 +55,36 @@ const modelsStateAtom = atom({ plugin: 'duet', key: 'configModelsState' } as con
 const pickingAtom = atom({ plugin: 'duet', key: 'configPicking' } as const, false)
 const reopenAtom = atom({ plugin: 'duet', key: 'configReopenAt' } as const, 0)
 const claudePending = atom({ plugin: 'duet', key: 'claudePending' } as const, {} as Record<string, ClaudePending>)
+// /duet provider (0.3.0): the pane's rows, the open key field, the model list, the last note; never a key itself.
+const PROVIDERS_PANE = 'duet-providers'
+const PROVIDERS_PANE_ARGS = { id: PROVIDERS_PANE, title: 'Duet providers', columns: 76 }
+/** One store key per provider (`duet:providers:tests:<id>`): `$.store` is shared live by every session and the last write to a key wins (CLAUDE.md; Codex 4298476151). */
+const testsKeyOf = (id: string) => `duet:providers:tests:${id}`
+const KEY_FILE_HOME = '~/.claude/duet-data/.env'
+const provAt = atom({ plugin: 'duet', key: 'providerAt' } as const, 0)
+const provEditing = atom({ plugin: 'duet', key: 'providerEditing' } as const, false)
+const provListing = atom({ plugin: 'duet', key: 'providerListing' } as const, '')
+const provModels = atom({ plugin: 'duet', key: 'providerModels' } as const, [] as string[])
+const provModelsState = atom({ plugin: 'duet', key: 'providerModelsState' } as const, 'idle')
+const provNote = atom({ plugin: 'duet', key: 'providerNote' } as const, '')
+const provAuth = atom({ plugin: 'duet', key: 'providerAuth' } as const, {} as Record<string, string>)
+const provTests = atom({ plugin: 'duet', key: 'providerTests' } as const, {} as Record<string, ProviderTest | 'running'>)
+const provFileError = atom({ plugin: 'duet', key: 'providerFileError' } as const, '')
+const provKeyIds = atom({ plugin: 'duet', key: 'providerKeyIds' } as const, {} as Record<string, string>)
+// Saves, removals and test results are read-modify-write sequences on shared files; this session's go one at a time.
+let keyChain: Promise<unknown> = Promise.resolve()
+/** Per provider, a count bumped by every save, removal and test start: a test whose count moved on records nothing (Codex 4298989626). */
+const provGen = new Map<string, number>()
+const bumpGen = (id: string): number => {
+  const n = (provGen.get(id) ?? 0) + 1
+  provGen.set(id, n)
+  return n
+}
+function serialized<T>(work: () => Promise<T>): Promise<T> {
+  const next = keyChain.then(work, work)
+  keyChain = next.catch(() => undefined)
+  return next
+}
 /** A reload this long after a save began is that save's own; later ones leave the pane alone. */
 const REOPEN_WINDOW_MS = 60_000
 const MODEL_FIELD = CONFIG_FIELDS.find(f => f.field === 'codexModel')!
@@ -468,8 +504,9 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (now === 'yes') return ''
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
+  const keyFile = await keyFilePath($).catch(() => '')
   try {
-    answer = await $.ui.ask(consentText(cwd, options.sandbox), [YES, NO])
+    answer = await $.ui.ask(consentText(cwd, options.sandbox, keyFileExposed(options.fsScope, cwd, keyFile) ? KEY_FILE_HOME : undefined), [YES, NO])
   } catch (err) {
     return consentRefusal(err)
   }
@@ -864,6 +901,432 @@ async function readReview($: EngineInterface, id: string): Promise<string> {
   return readText($, `${await sessionDir($)}/review-${id}.md`)
 }
 
+// ── /duet provider: keys, tests, the pane (0.3.0) ────────────────────────
+
+/** A provider key from the process environment. `$.env.get` takes a literal name, so each is spelled out. */
+async function envKey($: EngineInterface, name: string): Promise<string | undefined> {
+  switch (name) {
+    case 'ANTHROPIC_API_KEY': return $.env.get('ANTHROPIC_API_KEY')
+    case 'OPENAI_API_KEY': return $.env.get('OPENAI_API_KEY')
+    case 'GEMINI_API_KEY': return $.env.get('GEMINI_API_KEY')
+    case 'XAI_API_KEY': return $.env.get('XAI_API_KEY')
+    case 'MISTRAL_API_KEY': return $.env.get('MISTRAL_API_KEY')
+    case 'DEEPSEEK_API_KEY': return $.env.get('DEEPSEEK_API_KEY')
+    case 'GROQ_API_KEY': return $.env.get('GROQ_API_KEY')
+    case 'TOGETHER_API_KEY': return $.env.get('TOGETHER_API_KEY')
+    case 'FIREWORKS_API_KEY': return $.env.get('FIREWORKS_API_KEY')
+    case 'OPENROUTER_API_KEY': return $.env.get('OPENROUTER_API_KEY')
+    case 'PERPLEXITY_API_KEY': return $.env.get('PERPLEXITY_API_KEY')
+    case 'CEREBRAS_API_KEY': return $.env.get('CEREBRAS_API_KEY')
+    case 'DUET_CUSTOM_API_KEY': return $.env.get('DUET_CUSTOM_API_KEY')
+    default: return undefined
+  }
+}
+
+/** The key file's path, '' with no home folder (then no key is ever stored: Codex 4297835997). */
+async function keyFilePath($: EngineInterface): Promise<string> {
+  return keyFileOf(await homeDir($))
+}
+
+/** The engine's wording of a failed `$.fs` call, its prefix removed. */
+function fsReason(err: unknown): string {
+  return String((err as Error)?.message ?? err).split('\n')[0]!.replace(/^\S+: \$\.fs\.\w+(?:\([^)]*\))?: /, '').trim()
+}
+
+/**
+ * The key file: its variables, or why it is not usable (no home folder; a file that is there but can't be read, Codex
+ * 4298476175). A missing file is an empty one.
+ */
+async function readKeyFile($: EngineInterface): Promise<{ file: Record<string, string>; error: string }> {
+  const path = await keyFilePath($)
+  if (path === '') return { file: {}, error: NO_HOME }
+  try {
+    return { file: parseEnvFile(String(await $.fs.read(path))), error: '' }
+  } catch (err) {
+    const reason = fsReason(err)
+    if (/\bENOENT\b/.test(reason) || !(await $.fs.exists(path).catch(() => true))) return { file: {}, error: '' }
+    return { file: {}, error: `${KEY_FILE_HOME} could not be read (${reason})` }
+  }
+}
+
+/** Every provider's key and where it came from, and the key file's trouble if any. The values stay in this call; only masks reach `$.state`. */
+async function keySources($: EngineInterface): Promise<{ sources: Record<string, KeySource>; fileError: string }> {
+  const { file, error } = await readKeyFile($)
+  const sources: Record<string, KeySource> = {}
+  for (const p of PROVIDERS) {
+    const fromEnv = p.keyName ? await envKey($, p.keyName).catch(() => undefined) : undefined
+    sources[p.id] = keyFor(p, p.keyName ? { [p.keyName]: fromEnv } : {}, file)
+  }
+  return { sources, fileError: error }
+}
+
+/** The values to redact from anything duet shows or writes. */
+function keyValues(sources: Record<string, KeySource>): string[] {
+  return Object.values(sources).map(k => k.key).filter(Boolean)
+}
+
+/** Refreshes the pane's sign-in column from the file and the environment. */
+async function refreshProviderAuth($: EngineInterface): Promise<Record<string, KeySource>> {
+  const { sources, fileError } = await keySources($)
+  const auth: Record<string, string> = {}
+  const ids: Record<string, string> = {}
+  for (const p of PROVIDERS) {
+    auth[p.id] = authTextOf(p, sources[p.id]!, options.customUrl)
+    ids[p.id] = keyId(sources[p.id]!.key)
+  }
+  await update($, provAuth, () => auth)
+  await update($, provKeyIds, () => ids)
+  await update($, provFileError, () => fileError)
+  return sources
+}
+
+/** The stored test results into the pane, keeping any test running now. */
+async function loadProviderTests($: EngineInterface): Promise<void> {
+  const stored: Record<string, ProviderTest> = {}
+  for (const p of PROVIDERS) {
+    const t = (await $.store.get(testsKeyOf(p.id)).catch(() => undefined)) as ProviderTest | undefined
+    if (t && typeof t === 'object') stored[p.id] = t
+  }
+  await update($, provTests, t => ({ ...stored, ...Object.fromEntries(Object.entries(t).filter(([, v]) => v === 'running')) }))
+}
+
+/** One provider's result into the pane and the shared store, merged over what the store holds now, so another session's result survives (Codex 4298476151). */
+function storeProviderTest($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+  return serialized(() => storeProviderTestNow($, id, result))
+}
+
+async function storeProviderTestNow($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+  await update($, provTests, t => {
+    const { [id]: _, ...rest } = t
+    return result ? { ...rest, [id]: result } : rest
+  })
+  await (result ? $.store.set(testsKeyOf(id), result) : $.store.delete(testsKeyOf(id))).catch(() => undefined)
+}
+
+/**
+ * Writes the key file and sets it to mode 600 on POSIX (both saves and removals: Codex 4297835988); says how the chmod
+ * went. A file that isn't there yet is created empty and chmodded first, so the key is never on disk under the umask.
+ */
+async function writeKeyFile($: EngineInterface, path: string, text: string, secret: string): Promise<{ mode: string; ok: boolean; written: boolean }> {
+  // The mode is set before any secret is written, on a new file (created empty) and on an existing one (a retry after a failed
+  // chmod finds the empty file, Codex 4299362989); a mode that can't be set means no key goes into a file others may read.
+  // An `exists` that rejects (a network location) counts as there: an empty write would truncate the other keys.
+  if (!(await $.fs.exists(path).catch(() => true))) await $.fs.write(path, '')
+  const before = await setMode($, path, secret)
+  if (!before.ok) return { mode: before.text, ok: false, written: false }
+  await $.fs.write(path, text)
+  const after = await setMode($, path, secret)   // after the final write too: a host that writes through a temporary file would leave the umask's mode
+  return { mode: after.text, ok: after.ok, written: true }
+}
+
+/**
+ * Mode 600 on POSIX. Windows has no chmod and keeps the file under the user folder's own permissions, so a Windows path
+ * (`C:/…`) skips it rather than failing every save (the third /code-review on PR #110).
+ */
+async function setMode($: EngineInterface, path: string, secret: string): Promise<{ ok: boolean; text: string }> {
+  if (/^[A-Za-z]:\//.test(path)) return { ok: true, text: 'Windows: no chmod' }
+  try {
+    const r = await $.process.run(['chmod', '600', path], { timeoutMs: 10_000 })
+    return r.exitCode === 0 ? { ok: true, text: 'chmod 600' } : { ok: false, text: `chmod 600 failed: ${safeText(r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`, [secret], 120)}; set the file's permissions yourself` }
+  } catch (err) {
+    return { ok: false, text: `chmod 600 failed: ${safeText(String((err as Error)?.message ?? err).split('\n')[0]!, [secret], 120)}; set the file's permissions yourself` }
+  }
+}
+
+/**
+ * Writes one key to the file (mode 600 on POSIX) and says what happened; the key never goes anywhere else. `{ saved }`
+ * is the note; `{ failed }` is why nothing was written (the field stays open: Codex 4297836029).
+ */
+function saveKey($: EngineInterface, p: ProviderDef, value: string): Promise<{ saved: string } | { failed: string }> {
+  return serialized(() => saveKeyNow($, p, value))
+}
+
+async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Promise<{ saved: string } | { failed: string }> {
+  const key = value.trim()
+  if (!p.keyName) return { failed: `${p.id} takes no key.` }
+  if (key === '') return { failed: 'nothing saved: the field was empty.' }
+  const path = await keyFilePath($)
+  if (path === '') return { failed: `not saved: ${NO_HOME}.` }
+  const before = await readIfThere($, path)
+  if (before === undefined) return { failed: `not saved: ${KEY_FILE_HOME} could not be read.` }
+  let mode: string
+  try {
+    const w = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, key), key)
+    if (!w.written) return { failed: `not saved: ${w.mode}` }
+    mode = w.mode
+  } catch (err) {
+    return { failed: `not saved: ${redact(fsReason(err), [key])}` }
+  }
+  bumpGen(p.id)
+  await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
+  await refreshProviderAuth($)
+  const cwd = await $.session.cwd().catch(() => '')
+  return { saved: savedNote(mode, keyFileExposed(options.fsScope, cwd, path)).join('\n') }
+}
+
+/** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
+function removeKey($: EngineInterface, p: ProviderDef): Promise<string> {
+  return serialized(() => removeKeyNow($, p))
+}
+
+async function removeKeyNow($: EngineInterface, p: ProviderDef): Promise<string> {
+  if (!p.keyName) return `${p.id} has no key to remove.`
+  const path = await keyFilePath($)
+  if (path === '') return `not changed: ${NO_HOME}.`
+  const before = await readIfThere($, path)
+  if (before === undefined) return `not changed: ${KEY_FILE_HOME} could not be read.`
+  const held = parseEnvFile(before)[p.keyName]
+  if (held === undefined) return `${p.id}: no key stored in ${KEY_FILE_HOME} (a key in your environment stays).`
+  let mode: string
+  try {
+    const w = await writeKeyFile($, path, upsertEnvLine(before, p.keyName, null), held)
+    if (!w.written) return `not changed: ${w.mode}`
+    mode = w.ok ? 'chmod 600' : w.mode
+  } catch (err) {
+    return `not changed: ${redact(fsReason(err), [held])}`
+  }
+  bumpGen(p.id)
+  await storeProviderTestNow($, p.id, null)
+  await refreshProviderAuth($)
+  return `${p.id}: key removed from ${KEY_FILE_HOME}.${mode === 'chmod 600' ? '' : ` (${mode})`}`
+}
+
+/** The pane's x: asks first, since a hotkey that deletes must not act on a stray key. */
+async function removeKeyAsked($: EngineInterface, p: ProviderDef): Promise<void> {
+  const answer = await $.ui.ask(`Remove the ${p.keyName ?? 'key'} stored for ${p.name}?`, ['Remove', 'Keep']).catch(() => 'Keep')
+  await update($, provNote, () => '')
+  if (answer !== 'Remove') return
+  const note = await removeKey($, p)
+  await update($, provNote, () => note)
+}
+
+/** How long a key test or model list waits for a reply: `$.http.fetch` has no timeout of its own (Codex 4297836014). */
+const REPLY_DEADLINE_MS = 30_000
+
+/**
+ * One request through the host; a refusal (policy, no traffic, no network) becomes `{ refused }`, never a throw. An
+ * endpoint that never finishes answering is given the deadline, then counts as not sent; its late reply is dropped.
+ */
+async function fetchReply($: EngineInterface, r: { url: string; init: { method: string; headers: Record<string, string>; body?: string } }): Promise<HttpReply> {
+  const timer: { t: Timer | null } = { t: null }
+  const deadline = new Promise<HttpReply>(resolve => {
+    timer.t = $.clock.after(REPLY_DEADLINE_MS, () => resolve({ refused: `no reply within ${REPLY_DEADLINE_MS / 1000} s` }))
+  })
+  const request = $.http.fetch(r.url, r.init).then(
+    (res): HttpReply => ({ status: res.status, ok: res.ok, text: res.text, headers: res.headers }),
+    (err): HttpReply => ({ refused: String((err as Error)?.message ?? err) }),
+  )
+  const reply = await Promise.race([request, deadline])
+  timer.t?.cancel()
+  return reply
+}
+
+/** Why a provider can't be tested or listed right now, or '' with what it needs. A public model list (`modelsNeedKey: false`) needs no key (Codex 4297835980). */
+async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 'probe'): Promise<{ why: string; key: string; base: string; keys: string[] }> {
+  const { sources, fileError } = await keySources($)
+  const keys = keyValues(sources)
+  const k = sources[p.id]!
+  if (p.auth === 'cli') return { why: `${p.id} signs in with codex login; duet does not test it.`, key: '', base: '', keys }
+  const base = baseUrlOf(p, { customUrl: options.customUrl })
+  if (p.id === 'custom' && base === '') return { why: `${p.id}: no URL set. Set apiCustomUrl (https://, or http:// to localhost) in /duet config first.`, key: '', base, keys }
+  // A provider that takes no key (ollama), a public model list, or a custom server on this machine (LM Studio) needs none (Codex 4298736545, 4298736595).
+  const takesKey = (p.auth === 'bearer' || p.auth === 'session') && !(p.id === 'custom' && isLocalBaseUrl(base))
+  const needsKey = takesKey && k.key === '' && !(op === 'models' && !p.modelsNeedKey)
+  if (needsKey && fileError !== '') return { why: `${p.id}: ${fileError}; fix the file, or set ${p.keyName}.`, key: '', base, keys }
+  if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
+  if (p.auth === 'bearer' && needsKey) return { why: `${p.id}: no key. Press e on its row in /duet provider, or set ${p.keyName}.`, key: '', base, keys }
+  return { why: '', key: k.key, base, keys }
+}
+
+/**
+ * The key test. `GET /models` is free; the one-token completion is billed by most providers, so it runs only where the
+ * table says the provider lists no models, or when the person names a model. Nothing is retried.
+ */
+/** Providers with a test under way in this session: the slot is claimed before any await, so a double start sends one request (Codex 4299426945). */
+const testing = new Set<string>()
+
+async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
+  if (testing.has(p.id)) return { ran: false, text: `${p.id}: a test is already running.` }
+  testing.add(p.id)
+  try {
+    return await testProviderNow($, p, model)
+  } finally {
+    testing.delete(p.id)
+  }
+}
+
+async function testProviderNow($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
+  const models0 = model === '' && p.modelsPath !== null
+  const ready = await providerReady($, p, models0 ? 'models' : 'probe')
+  if (ready.why) return { ran: false, text: ready.why }
+  const gen = bumpGen(p.id)
+  await update($, provTests, t => ({ ...t, [p.id]: 'running' as const }))
+  let recorded = false
+  try {
+    const started = Date.now()
+    const models = models0 ? modelsRequest(p, ready.key, ready.base) : null
+    const step = models ? 'models' : 'probe'
+    const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
+    if (provGen.get(p.id) !== gen) {
+      // The key was saved or removed while the request was out: this reply says nothing about the key now stored.
+      await storeProviderTest($, p.id, null)
+      recorded = true
+      return { ran: false, text: `${p.id}: the key changed during the test; nothing recorded. Run it again.` }
+    }
+    const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey, keyId(ready.key), ready.base)
+    await storeProviderTest($, p.id, result)
+    recorded = true
+    return { ran: true, text: `${p.id}: ${result.note}` }
+  } catch (err) {
+    const note = `✕ internal error (${safeText(String((err as Error)?.message ?? err), ready.keys, 80)})`
+    await storeProviderTest($, p.id, { ok: false, status: 0, ms: 0, model: '', note, at: Date.now(), key: keyId(ready.key), host: ready.base }).catch(() => undefined)
+    recorded = true
+    return { ran: true, text: `${p.id}: ${note}` }
+  } finally {
+    // Nothing stays on `testing…` whatever happened above (Codex 4298989618).
+    if (!recorded) await update($, provTests, t => { const { [p.id]: _, ...rest } = t; return rest }).catch(() => undefined)
+  }
+}
+
+/** `GET /models` as text, or why not. */
+async function listProviderModels($: EngineInterface, p: ProviderDef): Promise<{ ids: string[]; error: string }> {
+  if (p.modelsPath === null && p.auth !== 'cli') return { ids: [], error: `${p.id} lists no models (no /models endpoint); its key test runs a one-token completion instead.` }
+  const ready = await providerReady($, p, 'models')
+  if (ready.why) return { ids: [], error: ready.why }
+  const req = modelsRequest(p, ready.key, ready.base)
+  if (!req) return { ids: [], error: `${p.id} lists no models.` }
+  const reply = await fetchReply($, req)
+  if ('refused' in reply) return { ids: [], error: `not sent: ${safeText(refusalReason(reply.refused), ready.keys, 120)}` }
+  if (!reply.ok) return { ids: [], error: `${reply.status}: ${safeText(reply.text.trim().split('\n')[0] ?? '', ready.keys, 120)}` }
+  const parsed = parseModelsReply(reply.text, ready.keys)
+  if (!('ids' in parsed)) return { ids: [], error: parsed.error }
+  const more = parsed.cut ? [`… ${parsed.cut} more not shown (the list stops at ${parsed.ids.length})`] : parsed.hasMore ? ['(first page; the provider lists more)'] : []
+  return { ids: [...parsed.ids, ...more], error: '' }
+}
+
+/** m on a row: the list opens under it, fetched now. */
+async function openModelList($: EngineInterface, p: ProviderDef): Promise<void> {
+  await update($, provEditing, () => false)
+  await update($, provListing, () => p.id)
+  await update($, provModelsState, () => 'fetching')
+  await update($, provModels, () => [])
+  const r = await listProviderModels($, p)
+  if ((await read($, provListing)) !== p.id) return   // the person moved on; a late list must not land under another row (Codex 4298476163)
+  await update($, provModels, () => r.ids)
+  await update($, provModelsState, () => (r.error ? r.error : 'idle'))
+}
+
+async function highlightedProvider($: EngineInterface): Promise<ProviderDef> {
+  return PROVIDERS[Math.min(await read($, provAt), PROVIDERS.length - 1)] ?? PROVIDERS[0]!
+}
+
+async function moveProvider($: EngineInterface, by: number): Promise<void> {
+  await update($, provEditing, () => false)
+  await update($, provListing, () => '')
+  await update($, provNote, () => '')
+  await update($, provAt, at => moved(at, by, PROVIDERS.length))
+}
+
+/** e on a row: the key field opens (a provider that takes no key says so). */
+async function startKeyEntry($: EngineInterface): Promise<void> {
+  const p = await highlightedProvider($)
+  await update($, provListing, () => '')
+  if (!p.keyName) {
+    await update($, provNote, () => (p.auth === 'cli' ? 'codex signs in with codex login.' : `${p.id} takes no key.`))
+    return
+  }
+  await update($, provNote, () => '')
+  await update($, provEditing, () => true)
+  await $.ui.focus({ requestId: PROVIDERS_PANE, key: 'prov-key' }).catch(() => undefined)
+}
+
+async function finishKeyEntry($: EngineInterface, value: string): Promise<void> {
+  const p = await highlightedProvider($)
+  const r = await saveKey($, p, value)
+  await update($, provEditing, () => 'failed' in r && value.trim() !== '' && Boolean(p.keyName))   // a write that failed keeps the field open
+  await update($, provNote, () => ('saved' in r ? r.saved : r.failed))
+}
+
+async function testHighlighted($: EngineInterface): Promise<void> {
+  const p = await highlightedProvider($)
+  await update($, provEditing, () => false)
+  await update($, provNote, () => '')
+  const r = await testProvider($, p, '')
+  if (!r.ran) await update($, provNote, () => r.text)
+}
+
+/** Opens the providers pane with the keyboard, its rows refreshed; `rowId` highlights a provider and `edit` opens its key field. */
+async function openProvidersPane($: EngineInterface, rowId = '', edit = false): Promise<string> {
+  await refreshProviderAuth($)
+  await loadProviderTests($)
+  if (rowId) {
+    const at = PROVIDERS.findIndex(p => p.id === rowId)
+    if (at >= 0) await update($, provAt, () => at)
+    await update($, provListing, () => '')
+    await update($, provNote, () => '')
+    await update($, provEditing, () => edit && Boolean(PROVIDERS[at]?.keyName))
+  }
+  const opened = await $.ui.open({ ...PROVIDERS_PANE_ARGS, focus: true })
+  if (edit) await $.ui.focus({ requestId: PROVIDERS_PANE, key: 'prov-key' }).catch(() => undefined)
+  if (!opened.isPlaced) {
+    const p = PROVIDERS.find(x => x.id === rowId)
+    if (edit && p?.keyName) return `No pane could be shown here: set ${p.keyName} in your environment, or add a line ${p.keyName}=<key> to ${KEY_FILE_HOME} (mode 600).`
+    return `${await providersListText($)}\n(The pane could not be shown here: a narrow window or a headless run. Keys go in your environment or ${KEY_FILE_HOME}.)`
+  }
+  return 'Duet providers pane opened: j/k move, e enters a key, t tests it, m lists models, x removes a key, c closes.'
+}
+
+async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; keys: number; tested: number }> {
+  const auth = await read($, provAuth)
+  const tests = await read($, provTests)
+  const keyIds = await read($, provKeyIds)
+  // `used` marks a provider a route uses; routes arrive in 0.4.0 with the mark's legend, so no row is marked yet.
+  // A stored result vouches only for the key it tested: its fingerprint must be the current key's, `none` for no key (Codex 4298989626, 4299537610).
+  const current = (id: string, t: ProviderTest | 'running' | undefined) => {
+    if (t === undefined || t === 'running') return t
+    if ((t.key ?? '') !== (keyIds[id] ?? 'none')) return undefined
+    if (id === 'custom' && (t.host ?? '') !== baseUrlOf(providerOf('custom')!, { customUrl: options.customUrl })) return undefined   // the endpoint moved (Codex 4299362999)
+    return t
+  }
+  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
+  const keys = rows.filter(r => r.auth.startsWith('key ')).length
+  // Only results that are still current count (Codex 4299537623).
+  const tested = PROVIDERS.filter(p => p.auth !== 'cli' && (t => t !== undefined && t !== 'running')(current(p.id, tests[p.id]))).length
+  return { rows, keys, tested }
+}
+
+async function providersListText($: EngineInterface): Promise<string> {
+  await refreshProviderAuth($)
+  await loadProviderTests($)
+  const { rows, keys, tested } = await providerRows($)
+  const fileError = await read($, provFileError)
+  return providersText(rows, keys, tested) + (fileError ? `\n⚠ ${fileError}; only keys from the environment are used` : '')
+}
+
+const PROVIDER_USAGE = 'Usage: /duet provider [list | key <id> | test <id> [model] | models <id> | remove <id>]   ids: ' + PROVIDERS.map(p => p.id).join(', ')
+
+/** `/duet provider …`. A key is never taken from the command line: it would land in the transcript. */
+async function providerCommand($: EngineInterface, words: string[]): Promise<string> {
+  const [sub = '', id = '', ...rest] = words
+  const verb = sub.toLowerCase()
+  if (verb === '') return openProvidersPane($)
+  if (verb === 'list') return providersListText($)
+  if (!['key', 'test', 'models', 'remove'].includes(verb)) return `no such subcommand "${sub}". ${PROVIDER_USAGE}`
+  const p = providerOf(id)
+  if (!p) return `unknown provider "${id}". ${PROVIDER_USAGE}`
+  if (verb === 'key') {
+    if (rest.length) return `duet: a key typed into the prompt is already in your transcript and shell history; rotate it. Nothing was stored. Use the pane's field (/duet provider key ${p.id}, then type it there) or edit ${KEY_FILE_HOME}.`
+    if (!p.keyName) return p.auth === 'cli' ? 'codex signs in with codex login; duet keeps no key for it.' : `${p.id} takes no key.`
+    return openProvidersPane($, p.id, true)
+  }
+  if (verb === 'test') return (await testProvider($, p, rest.join(' ').trim())).text
+  if (verb === 'models') {
+    const r = await listProviderModels($, p)
+    return r.error ? (r.error.startsWith(p.id) ? r.error : `${p.id}: ${r.error}`) : [`${p.id} models (GET /models)`, ...r.ids.map(m => `  ${m}`)].join('\n')
+  }
+  return removeKey($, p)
+}
+
 export const register: Register = (on, raw) => {
   rawOptions = raw
   options = readOptions(raw)
@@ -897,7 +1360,7 @@ export const register: Register = (on, raw) => {
       }
     }
     await $.command
-      .register({ name: 'duet', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>]]' })
+      .register({ name: 'duet', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' })
       .catch(() => undefined)
     return next(e)
   })
@@ -927,7 +1390,8 @@ export const register: Register = (on, raw) => {
       if (sub === 'stats') return { text: await showStats($) }
       if (sub === 'routes') return { text: routesText(options) }
       if (sub === 'config') return { text: await configure($, rest) }
-      if (sub !== '') return { text: 'Usage: /duet [demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>]]' }
+      if (sub === 'provider' || sub === 'providers') return { text: await providerCommand($, rest) }
+      if (sub !== '') return { text: 'Usage: /duet [demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' }
       const action = await paneActionOf($)
       if (action === 'show') {
         void bringToFront($).catch(() => undefined)
@@ -1055,6 +1519,9 @@ export const register: Register = (on, raw) => {
     const modelNow = draft[MODEL_FIELD.field] ?? storedText(rawOptions, MODEL_FIELD)
     const picks = pickable(models)
     const warning = onModel ? modelWarning(modelNow, models) : ''
+    // The option rows scroll in a window around the highlighted one, as the providers pane's do (the pane gained rows in 0.3.0).
+    const cfgWin = rowWindow(at, CONFIG_FIELDS.length, e.props.scroll.bodyRows, 9 + (editing ? 1 : 0) + (note !== '' ? 1 : 0) + (warning ? 1 : 0) + (picking ? picks.length + 2 : 0))
+    const cfgBelow = CONFIG_FIELDS.length - cfgWin.start - cfgWin.room
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
@@ -1062,15 +1529,18 @@ export const register: Register = (on, raw) => {
           <Text dimColor>{saving ? 'saving…' : isDirty ? 'unsaved changes' : 'saved'}</Text>
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
-        {CONFIG_FIELDS.map((f, i) => {
+        {cfgWin.start > 0 && <Text dimColor>{`  ↑ ${cfgWin.start} more (k)`}</Text>}
+        {CONFIG_FIELDS.slice(cfgWin.start, cfgWin.start + cfgWin.room).map((f, j) => {
+          const i = cfgWin.start + j
           const stored = storedText(rawOptions, f)
           const shown = draft[f.field] ?? stored
           const changed = draft[f.field] !== undefined && draft[f.field] !== stored
           const value = shown === '' ? '(empty)' : shown
           const choices = f.choices ? `   [${f.choices.join(' | ')}]` : ''
-          const line = `${i === at ? '▸' : ' '} ${changed ? '•' : ' '} ${f.alias.padEnd(8)} ${value}${choices}`
+          const line = `${i === at ? '▸' : ' '} ${changed ? '•' : ' '} ${f.alias.padEnd(11)} ${value}${choices}`
           return <Text key={`cfg-row-${f.field}`} inverse={i === at} color={changed ? COLORS.warn : undefined}>{line.slice(0, width)}</Text>
         })}
+        {cfgBelow > 0 && <Text dimColor>{`  ↓ ${cfgBelow} more (j)`}</Text>}
         <Text dimColor>{'─'.repeat(width)}</Text>
         <Text dimColor>{(sel.field + ': ' + sel.help).slice(0, width)}</Text>
         {picking && !editing && (
@@ -1108,6 +1578,110 @@ export const register: Register = (on, raw) => {
           <Button key="cfg-close" label="Close" hotkey="c" plain onPress={() => void $.ui.close({ id: CONFIG_PANE }).catch(() => undefined)} />
         </Box>
         <Text dimColor>{editing ? 'type the value, enter: set  ·  esc: back to the keys' : picking ? '0-9: pick  ·  t: type one  ·  r: refresh  ·  j/k: move  ·  c: close' : onModel ? 'e: choose a model  ·  r: refresh  ·  j/k: move  ·  s: save  ·  c: close' : 'j/k: move  ·  e: change  ·  s: save  ·  u: revert  ·  c: close'}</Text>
+      </Box>
+    )
+  })
+
+  // The key file is never read into the conversation: not through an @-mention, a Bash command that names it, or the Read tool.
+  const KEY_FILE_DENY = 'duet: that file holds API keys; it is not read into the conversation. /duet provider manages them.'
+  on('prompt.mention', { path: /duet-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
+    .catch(() => ({ deny: KEY_FILE_DENY }))
+  on('tool.call', { tool: 'Bash' }, ($, e, next) => (namesKeyFile(String((e as unknown as { command?: unknown }).command ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+  on('tool.call', { tool: 'Read' }, ($, e, next) => (keyPathReaches(String((e as unknown as { file_path?: unknown }).file_path ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+  // A Grep over the key file, or over its folder, reads it too; a Glob there lists it.
+  // Grep and Glob through one matcher: this build lays neither tool, and naming them as strings needed hand-declared tool
+  // types that would collide with a build that does. Grep's `pattern` is what it searches for; Glob's is a path pattern.
+  on('tool.call', { tool: /^(?:Grep|Glob)$/ }, ($, e, next) => {
+    const g = e as unknown as { tool?: unknown; path?: unknown; glob?: unknown; pattern?: unknown }
+    const paths = [g.path, g.glob, g.tool === 'Glob' ? g.pattern : undefined].map(v => String(v ?? ''))
+    return paths.some(namesKeyFolder) ? { deny: KEY_FILE_DENY } : next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+
+  on('ui.render', { component: 'Pane', requestId: PROVIDERS_PANE }, async ($, e) => {
+    const els = $.ui.resolve(e)
+    const { rows, keys, tested } = await providerRows($)
+    const fileError = await read($, provFileError)
+    if (!('Input' in els)) {
+      const { Box, Text } = els
+      return (
+        <Box flexDirection="column" paddingX={1}>
+          <Text>{providersText(rows, keys, tested)}</Text>
+          <Text dimColor>{`enter keys with /duet provider key <id> from a terminal, or edit ${KEY_FILE_HOME}`}</Text>
+        </Box>
+      )
+    }
+    const { Box, Text, Button, Input } = els
+    const at = Math.min(await read($, provAt), PROVIDERS.length - 1)
+    const sel = PROVIDERS[at]!
+    const editing = (await read($, provEditing)) && Boolean(sel.keyName)
+    const listing = await read($, provListing)
+    const models = listing ? await read($, provModels) : []
+    const modelsState = listing ? await read($, provModelsState) : 'idle'
+    const note = await read($, provNote)
+    const width = Math.max(20, e.props.bodyColumns - 2)
+    const focused = e.props.isFocused
+    // The pane is a window: rows besides the providers (header, rules, routes, the field, a note, buttons, the hint, the two
+    // "more" marks) are counted, and the providers scroll in what is left, the highlighted one always in view (seen live).
+    const fixed0 = 8 + (keys === 0 ? 1 : 0) + (fileError !== '' ? 1 : 0) + (editing ? 2 : 0) + (note !== '' ? note.split('\n').length : 0)
+    // The model list under a row takes only what the window has left after the fixed lines and three rows (Codex 4298989642).
+    const modelRoom = listing ? detailLinesThatFit(e.props.scroll.bodyRows, fixed0 + (modelsState !== 'idle' ? 1 : 0), 13) : 0
+    const listed = Math.max(0, Math.min(models.length, modelRoom - (models.length > modelRoom ? 1 : 0)))
+    const shown = listing ? listed + (models.length > listed ? 1 : 0) + (modelsState !== 'idle' ? 1 : 0) : 0
+    const fixed = fixed0 + shown
+    const win = rowWindow(at, rows.length, e.props.scroll.bodyRows, fixed)
+    const visible = rows.slice(win.start, win.start + win.room)
+    const above = win.start
+    const below = rows.length - win.start - win.room
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Box justifyContent="space-between">
+          <Text color={COLORS.accent} bold={focused}>DUET PROVIDERS</Text>
+          <Text dimColor>{`${keys} keys · ${tested} tested`}</Text>
+        </Box>
+        <Text dimColor>{'─'.repeat(width)}</Text>
+        {keys === 0 && <Text dimColor>no provider keys yet · e on a row enters one · codex signs in with codex login</Text>}
+        {fileError !== '' && <Text color={COLORS.warn}>{`⚠ ${fileError}`.slice(0, width)}</Text>}
+        {above > 0 && <Text dimColor>{`  ↑ ${above} more (k)`}</Text>}
+        {visible.map((r, j) => { const i = win.start + j; return (
+          <Box key={`prov-row-${r.p.id}`} flexDirection="column">
+            <Text inverse={focused && i === at} color={r.test.startsWith('✕') ? COLORS.error : r.test.startsWith('ok') ? COLORS.success : undefined}>
+              {`${i === at ? '▸' : ' '} ${providerRowText(r, width - 2)}`}
+            </Text>
+            {listing === r.p.id && (
+              <Box flexDirection="column" paddingLeft={4}>
+                {modelsState === 'fetching' && <Text dimColor>{`asking ${r.p.id} for its models…`}</Text>}
+                {modelsState !== 'fetching' && modelsState !== 'idle' && <Text color={COLORS.warn}>{modelsState.slice(0, width - 4)}</Text>}
+                {models.slice(0, listed).map(m => <Text key={`prov-model-${r.p.id}-${m}`} dimColor>{m.slice(0, width - 4)}</Text>)}
+                {models.length > listed && <Text dimColor>{`… ${models.length - listed} more: /duet provider models ${r.p.id}`}</Text>}
+              </Box>
+            )}
+          </Box>
+        ) })}
+        {below > 0 && <Text dimColor>{`  ↓ ${below} more (j)`}</Text>}
+        <Text dimColor>{'─'.repeat(width)}</Text>
+        <Text dimColor wrap="truncate">{`routes  advisor, reviewer, review, implementer, routed types → codex (apiRoutes arrive in 0.4.0)`}</Text>
+        {editing && (
+          <Box flexDirection="column">
+            <Input key="prov-key" label={`${sel.keyName} (${sel.name})`} value="" submitLabel="save" autoFocus placeholder="paste the key"
+              onSubmit={(v: string) => void finishKeyEntry($, v).catch(() => undefined)} />
+            <Text dimColor>{`${sel.keyName}: typing is visible until Enter · Enter saves · j/k or c leave the field`}</Text>
+          </Box>
+        )}
+        {note !== '' && note.split('\n').map((line, i) => (
+          <Text key={`prov-note-${i}`} color={i > 0 || line.includes('failed') ? COLORS.warn : note.startsWith('saved') || note.endsWith('removed from ' + KEY_FILE_HOME + '.') ? COLORS.success : COLORS.warn}>{line.slice(0, width)}</Text>
+        ))}
+        <Box gap={2}>
+          <Button key="prov-enter" label="Enter key" hotkey="e" variant="primary" onPress={() => void startKeyEntry($).catch(() => undefined)} />
+          <Button key="prov-test" label="Test" hotkey="t" plain onPress={() => void testHighlighted($).catch(() => undefined)} />
+          <Button key="prov-models" label="Models" hotkey="m" plain onPress={() => void highlightedProvider($).then(p => openModelList($, p)).catch(() => undefined)} />
+          <Button key="prov-remove" label="Remove" hotkey="x" plain onPress={() => void highlightedProvider($).then(p => removeKeyAsked($, p)).catch(() => undefined)} />
+          <Button key="prov-next" label="Down" hotkey="j" plain onPress={() => void moveProvider($, 1).catch(() => undefined)} />
+          <Button key="prov-prev" label="Up" hotkey="k" plain onPress={() => void moveProvider($, -1).catch(() => undefined)} />
+          <Button key="prov-close" label="Close" hotkey="c" plain onPress={() => void $.ui.close({ id: PROVIDERS_PANE }).catch(() => undefined)} />
+        </Box>
+        <Text dimColor wrap="truncate">{`e enter key  t test  m models  x remove  j/k  c close  ·  ${KEY_FILE_HOME} (600)`}</Text>
       </Box>
     )
   })
