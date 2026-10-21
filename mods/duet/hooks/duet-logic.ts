@@ -1340,7 +1340,7 @@ const FAILED_MARK: Partial<Record<TaskStatus, string>> = { error: '✕ ', refuse
 /** The dim line under a row: error or refusal, a review's verdict, a running row's note, else the description. */
 export function subText(t: Task, columns: number): string {
   const mark = FAILED_MARK[t.status] ?? ''
-  const showsDetail = mark !== '' || ((t.kind === 'review' || t.status === 'running') && t.detail !== '')
+  const showsDetail = mark !== '' || ((t.kind === 'review' || t.status === 'running' || t.status === 'stopped') && t.detail !== '')
   const s = showsDetail ? `${mark}${t.detail}` : `"${t.description}"`
   return s.length > columns ? `${s.slice(0, Math.max(0, columns - 1))}…` : s
 }
@@ -1369,9 +1369,10 @@ export function demoTasks(now: number): Task[] {
   const base = { model: 'gpt-5-codex', endedAt: null, envelope: null, detail: '', tokens: 0 }
   const env: Envelope = { specVersion: '3fa9c21', base: '45798a0', candidate: 'no files changed', sandbox: 'read-only', scope: '/work/app', role: 'code-explorer' }
   return [
-    { ...base, id: 'd5', provider: 'codex', kind: 'agent', subagentType: 'code-explorer', status: 'running', startedAt: now - 72_000, tokens: 38_000, description: 'Find every caller of parseConfig and list risky ones', envelope: env },
-    { ...base, id: 'd4', provider: 'codex', kind: 'review', subagentType: '--base main', status: 'done', startedAt: now - 400_000, endedAt: now - 240_000, tokens: 61_000, description: 'review --base main', detail: 'verdict: changes requested (1 high, 2 medium, 0 low)' },
-    { ...base, id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'done', startedAt: now - 900_000, endedAt: now - 780_000, tokens: 24_000, description: 'Summarise README.md', envelope: { ...env, role: '', candidate: 'no files changed' } },
+    { ...base, id: 'd6', provider: 'codex', kind: 'agent', subagentType: 'code-explorer', status: 'running', startedAt: now - 72_000, tokens: 38_000, description: 'Find every caller of parseConfig and list risky ones', envelope: env },
+    { ...base, id: 'd5', provider: 'codex', kind: 'review', subagentType: '--base main', status: 'done', startedAt: now - 400_000, endedAt: now - 240_000, tokens: 61_000, description: 'review --base main', detail: 'verdict: changes requested (1 high, 2 medium, 0 low)' },
+    { ...base, id: 'd4', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'done', startedAt: now - 900_000, endedAt: now - 780_000, tokens: 24_000, description: 'Summarise README.md', envelope: { ...env, role: '', candidate: 'no files changed' } },
+    { ...base, id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'stopped', startedAt: now - 960_000, endedAt: now - 950_000, tokens: 2_000, description: 'Check the error handling', detail: STOPPED, envelope: { ...env, candidate: STOPPED_CANDIDATE } },
     { ...base, id: 'd2', provider: 'codex', kind: 'agent', subagentType: 'Explore', status: 'error', startedAt: now - 1_000_000, endedAt: now - 996_000, description: 'Map the auth flow', detail: 'codex: not signed in. Run `codex login`, then retry.' },
     { ...base, id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'test-writer', status: 'refused', startedAt: now - 1_100_000, endedAt: now - 1_100_000, description: 'Add tests for the parser', detail: 'limit: 2 Codex runs already running' },
   ]
