@@ -1504,3 +1504,33 @@ describe('#119: a background answer that Stop dropped', () => {
     expect(seen.dropped.length).toBe(1)
   })
 })
+
+// #119 gap 1, the owner's choice: the consent answer outlives /clear, /resume and /branch, which reset every atom.
+describe('#119: the Codex consent answer outlives /clear', () => {
+  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+  test('a classic.SessionStart after /clear writes the answer back; one after compaction writes nothing', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($: any, e: any, next: any) => (writes.push({ key: e.key, value: e.value }), next(e)))
+    on('classic.SessionStart', () => ({}))
+    const seen = engine(on)
+    await start($)
+    await review($)
+    expect(seen.asked).toBe(1)
+    writes.length = 0
+    await $.classic.SessionStart({ source: 'compact' })
+    expect(writes.filter(w => w.key === 'consent')).toEqual([])
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(writes.filter(w => w.key === 'consent')).toEqual([{ key: 'consent', value: 'yes' }])
+  })
+
+  test('with nothing answered yet, /clear writes no answer', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($: any, e: any, next: any) => (writes.push({ key: e.key, value: e.value }), next(e)))
+    on('classic.SessionStart', () => ({}))
+    engine(on)
+    await start($)
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(writes.filter(w => w.key === 'consent')).toEqual([])
+  })
+})
