@@ -1869,10 +1869,12 @@ describe('parallel runs (Change 0.3.0)', () => {
       await start($)
       await run($, '16')
       await until(w, () => w.spawned.length === 1, "#16's red agent")
+      const shown = writes.filter(x => x.key === 'activity').at(-1)!.value
+      expect(shown?.label).toBeDefined()
       writes.length = 0
       await $.classic.SessionStart({ source: 'clear' })
       await until(w, () => writes.some(x => x.key === 'activity'), 'the activity written back')
-      expect(writes.filter(x => x.key === 'activity').at(-1)!.value).toMatchObject({ label: 'agent working' })
+      expect(writes.filter(x => x.key === 'activity').at(-1)!.value).toEqual(shown)
     })
   })
 })
