@@ -5,6 +5,15 @@ const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 120 } as const
 
 describe('ui', () => {
+  // demo, hide and show only change what the band shows, so a command typed mid-turn need not wait (#119).
+  test('the command is registered to run mid-turn', async ($, on) => {
+    const registered: { name: string; immediate?: true }[] = []
+    on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', ($, e) => (registered.push({ ...e }), { value: undefined }) as never)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect(registered.map(r => [r.name, r.immediate])).toEqual([['__NAME__', true]])
+  })
+
   test('demo draws the band above the band below; idle draws only the band below', async ($, on) => {
     mock.clock(on)
     on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
