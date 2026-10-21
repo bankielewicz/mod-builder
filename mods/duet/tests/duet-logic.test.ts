@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isInside, isProtectedPath, isRouted, resolveFrom, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isProtectedPath, isRouted, resolveFrom, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   footerOf, statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, configText, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -361,8 +361,8 @@ describe('review fixes', () => {
   })
 
   test('admission counts reviews too; session folders are filesystem-safe', () => {
-    const t = (kind: 'agent' | 'review', status: 'running' | 'done') => ({ id: 'd1', provider: 'codex', kind, status }) as never
-    expect(codexRunning([t('agent', 'running'), t('review', 'running'), t('review', 'done')])).toBe(2)
+    const t = (id: string, kind: 'agent' | 'review', status: 'running' | 'done') => ({ id, provider: 'codex', kind, status }) as never
+    expect(logic.liveRuns([t('d1', 'agent', 'running'), t('d2', 'review', 'running'), t('d3', 'review', 'done')], new Set())).toBe(2)
     expect(sessionFolderOf('a1b2-c3/../x')).toBe('a1b2-c3_.._x')
     expect(sessionFolderOf('')).toBe('unknown')
   })
