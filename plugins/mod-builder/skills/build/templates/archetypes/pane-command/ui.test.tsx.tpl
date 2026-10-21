@@ -10,13 +10,13 @@ const PRESENTATION = { isFullscreen: false, columns: 120 } as const
  * `isPlaced: false` one waiting undrawn (a row is placed unless it says so).
  * A listed pane comes to the front once it was opened while `showOnOpen` is set.
  */
-type World = { panes: { id: string; isShown: boolean; isPlaced?: boolean }[]; showOnOpen: boolean; opens: { id: string; focus?: boolean }[]; closed: string[]; toasts: string[] }
+type World = { panes: { id: string; isShown: boolean; isPlaced?: boolean }[]; showOnOpen: boolean; opens: { id: string; focus?: boolean }[]; closed: string[]; toasts: string[]; registered: { name: string; immediate?: true }[] }
 
 function engine(on: On, w: Partial<World> = {}) {
-  const world: World = { panes: [], showOnOpen: false, opens: [], closed: [], toasts: [], ...w }
+  const world: World = { panes: [], showOnOpen: false, opens: [], closed: [], toasts: [], registered: [], ...w }
   const clock = mock.clock(on)
   on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
-  on('command.register', () => ({ value: undefined }) as never)
+  on('command.register', ($, e) => (world.registered.push({ ...e }), { value: undefined }) as never)
   on('ui.open', ($, e) => (world.opens.push({ ...e }), { value: { isPlaced: true } }) as never)
   on('ui.panes', () => ({
     value: world.panes.map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: pane.isPlaced ?? true, isShown: pane.isShown || (world.showOnOpen && world.opens.some(open => open.id === pane.id)) })),
@@ -29,6 +29,13 @@ function engine(on: On, w: Partial<World> = {}) {
 const command = ($: Engine, args: string) => $.command.run({ command: '__NAME__', args, origin: COMPOSER, presentation: PRESENTATION })
 
 describe('ui', () => {
+  // Every branch only opens, closes or fronts the pane (the demo fills atoms), so a command typed mid-turn need not wait (#119).
+  test('the command is registered to run mid-turn', async ($, on) => {
+    const { world } = engine(on)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect(world.registered.map(r => [r.name, r.immediate])).toEqual([['__NAME__', true]])
+  })
+
   test('demo fills the pane on terminal and desktop; Toggle flips the selected item', async ($, on) => {
     const { world } = engine(on)
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
