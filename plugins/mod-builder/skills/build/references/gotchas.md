@@ -435,10 +435,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[field]** Run in-session tests that touch config with `CLAUDE_CONFIG_DIR=$(mktemp -d)`.
 - **[probe]** The bundled `claude-code.d.ts` names no built-in tools in `BuiltinToolInputs`, so a matcher such as
   `{ tool: 'Grep' }` fails the pre-session typecheck ("Grep" is not in the union) although `Bash`, `Read` and `Agent`
-  pass (2.1.301). A mod's `types/index.d.ts` can add the tool: `interface BuiltinToolInputs { Grep: { pattern: string;
-  path?: string; glob?: string } }` inside `declare module 'claude-code'` (duet 0.3.0). Validate accepts the literal.
-  A build that lays its own `Grep` type beside the mod would make that a duplicate member with another type (TS2717)
-  in `tsc -p <mod>`; the 2.1.301 tools d.ts lays none (searches run through Bash), so the Grep guard is unverified live.
+  pass (2.1.301, and so on 2.1.306 for `Grep`, `Glob` and `PowerShell`). Declaring the tool in the mod's contract
+  (`interface BuiltinToolInputs { Grep: … }`) would type-check, but collides (TS2717) with a build that lays its own
+  `Grep` type. Use a RegExp literal instead: `on('tool.call', { tool: /^(?:Grep|Glob)$/ }, …)` type-checks, and
+  validate reads it statically and lists it as `tool.call{tool=/"^(?:Grep|Glob)$"/}` (duet 0.3.1 also guards
+  `/^(?:Bash|PowerShell)$/`). Neither tool is laid on these builds (searches run through Bash), so those guards are
+  unverified live.
 - **[probe]** The coverage kit has no `toBeLessThan`; `toBeLessThanOrEqual` is there (#33).
 - **[probe]** `$.ui.mount({ surface: 'mobile' })` resolves an element table **with** `Input` (2.1.301), though the
   d.ts lists none for `mobile`, so a pane's "no `Input` on this surface" branch (`'Input' in els`) can't be

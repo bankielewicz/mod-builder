@@ -147,8 +147,9 @@ not in the marketplace). Each has the same layout and its own `SPEC.md` with dat
 
 - `$` may only be passed to functions **declared at the top level of `register.tsx`**, never to
   imported functions or closures inside `register`. Module state lives in top-level `let`s.
-- `atom({ plugin, key })` and `command.run`/`tool.call` matchers must be **string literals** (validate
-  reads them statically).
+- `atom({ plugin, key })` and `command.run`/`tool.call` matchers must be **literals** (validate reads them
+  statically): strings, or a RegExp literal for a `tool.call` matcher that covers tools the build's types don't
+  name (duet's `{ tool: /^(?:Grep|Glob)$/ }`, `gotchas.md`).
 - One hook per event + matcher per plugin. Guards (`tool.call`, `command.run`, …) carry `.catch`.
 - Tests: nothing sits beneath the mod, so every `$` call needs an `on(...)` stub (including
   `session.start`); one stub per event per test; `$.ui.ask` is a `tool.call` of `AskUserQuestion`;
