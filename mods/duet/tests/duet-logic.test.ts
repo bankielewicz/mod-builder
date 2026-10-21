@@ -1226,3 +1226,18 @@ describe('#119: a git read that failed (null) is never a comparison (Codex, PR #
     expect(logic.stoppedCandidateOf(null, ' M\ta.ts\th1')).toBe(logic.STOPPED_CANDIDATE)
   })
 })
+
+// PR #123 review: the end-of-run decision is pure, so a test pins it (mapping a stop to 'error' survived every test before).
+describe('#119: outcomeOf, how a Codex run ends', () => {
+  const end = (failure: string, isStopped: boolean, sandbox: 'read-only' | 'workspace-write') => logic.outcomeOf?.({ id: 'd4', type: 'test-writer', failure, isStopped, sandbox })
+  test('done, failed and stopped, read-only and writing', () => {
+    expect(end('', false, 'read-only')).toEqual({ status: 'done', compare: 'none', candidate: logic.READ_ONLY_CANDIDATE, toast: 'd4 done on codex · test-writer' })
+    expect(end('', false, 'workspace-write')).toEqual({ status: 'done', compare: 'now', candidate: '', toast: 'd4 done on codex · test-writer' })
+    expect(end('codex: not signed in', false, 'workspace-write')).toEqual({ status: 'error', compare: 'now', candidate: '', toast: 'd4 failed on codex: codex: not signed in' })
+    expect(end(logic.STOPPED, true, 'workspace-write')).toEqual({ status: 'stopped', compare: 'after', candidate: logic.STOPPED_CANDIDATE, toast: `d4 ${logic.STOPPED}` })
+    expect(end(logic.STOPPED, true, 'read-only')).toEqual({ status: 'stopped', compare: 'none', candidate: logic.READ_ONLY_CANDIDATE, toast: `d4 ${logic.STOPPED}` })
+  })
+  test('the toast stays within 80 characters', () => {
+    expect(end('x'.repeat(200), false, 'read-only')!.toast.length).toBe(80)
+  })
+})
