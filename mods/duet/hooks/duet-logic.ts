@@ -1033,6 +1033,21 @@ export function deliveryText(a: { id: string; label: string; model: string; sand
 
 export const READ_ONLY_CANDIDATE = 'read-only run: no files changed'
 
+/** A waited run the person stopped with Esc (#119): the engine killed Codex, so this is neither done nor failed. */
+export const STOPPED = 'stopped: you pressed Esc'
+
+/** After Esc the engine refuses process calls, so git reads nothing and a comparison would invent changes. */
+export const STOPPED_CANDIDATE = 'stopped with Esc: files not compared'
+
+/**
+ * What a `$.process.spawn` error means for a Codex run: after `next.signal` aborted it is the person's stop,
+ * never a fallback (#119, probe on 2.1.306); with output already read, a failure; before any, spawn couldn't start.
+ */
+export function spawnErrorAction(at: { started: boolean; aborted: boolean }): 'stop' | 'fail' | 'fallback' {
+  if (at.aborted) return 'stop'
+  return at.started ? 'fail' : 'fallback'
+}
+
 /**
  * `git status --porcelain` lines as status + path. The leading space is part
  * of the status column (` M a.ts`), so lines must not be trimmed at the
@@ -1275,8 +1290,9 @@ export function compact(n: number): string {
 export function countsOf(tasks: Task[]): string {
   const running = tasks.filter(t => t.status === 'running').length
   const done = tasks.filter(t => t.status === 'done').length
+  const stopped = tasks.filter(t => t.status === 'stopped').length
   const failed = tasks.filter(t => t.status === 'error' || t.status === 'refused').length
-  return [running && `${running} running`, `${done} done`, failed && `${failed} failed`].filter(Boolean).join(' · ')
+  return [running && `${running} running`, `${done} done`, stopped && `${stopped} stopped`, failed && `${failed} failed`].filter(Boolean).join(' · ')
 }
 
 /** The folded status line; undefined when nothing ran on Codex. */

@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, idAfter, liveRuns, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, idAfter, liveRuns, spawnErrorAction, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -34,7 +34,7 @@ const STILL_BEHIND_TOAST = 'Duet is still behind another tab: ctrl+x tab, then a
 /** How long after asking for the front the pane is read again (#31). */
 const FRONT_CHECK_MS = 500
 const COLORS = { accent: '#D97757', success: '#7FB685', warn: '#E0B15A', error: '#E06C6C' } as const
-const STATUS_COLOR = { running: COLORS.accent, done: COLORS.success, error: COLORS.error, refused: COLORS.warn } as const
+const STATUS_COLOR = { running: COLORS.accent, done: COLORS.success, error: COLORS.error, refused: COLORS.warn, stopped: COLORS.warn } as const
 const YES = 'Yes, send to Codex'
 const NO = 'No'
 
@@ -512,10 +512,10 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
 
 // ── Running Codex ────────────────────────────────────────────────────────
 
-type Ran = { run: Run; failure: string }
+type Ran = { run: Run; failure: string; isStopped?: true }
 
 /** Runs Codex, folding its JSONL into the task as it streams; stops at the timeout. */
-async function runCodex($: EngineInterface, id: string, argv: string[], input: string | undefined): Promise<Ran> {
+async function runCodex($: EngineInterface, id: string, argv: string[], input: string | undefined, signal?: AbortSignal): Promise<Ran> {
   const launch = codexLaunch(argv, input)
   let run = EMPTY_RUN
   let carry = ''
@@ -549,7 +549,10 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     const end = await stream.result
     return { run, failure: failureOf(run, end.code, stderr) }
   } catch (err) {
-    if (started) return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
+    const action = spawnErrorAction({ started, aborted: signal?.aborted === true })
+    // Esc: the engine killed Codex and refuses new process calls, so no fallback (#119).
+    if (action === 'stop') return { run, failure: STOPPED, isStopped: true }
+    if (action === 'fail') return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
     // spawn could not start: try a one-shot run (also the path tests exercise)
     const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
     // The cap cuts a longer timeoutMinutes: say so on the row while it runs.
@@ -574,20 +577,20 @@ type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
 type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; searchNote: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
-type Finished = { run: Run; failure: string; footer: string; endedAt: number }
+type Finished = { run: Run; failure: string; footer: string; endedAt: number; isStopped?: true }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
-async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt)
+async function runJob($: EngineInterface, j: Job, signal?: AbortSignal): Promise<Finished> {
+  const { run, failure, isStopped } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt, signal)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
-  const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
-  const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure }
+  const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : isStopped ? STOPPED_CANDIDATE : candidateOf(j.before, await porcelain($))
+  const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: isStopped ? 'stopped' : failure ? 'error' : 'done', detail: failure }
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
-  $.ui.toast((failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
+  $.ui.toast((isStopped ? `${j.id} ${STOPPED}` : failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
   const footer = footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped })
-  return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer }
+  return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer, ...(isStopped ? { isStopped } : {}) }
 }
 
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */
@@ -608,7 +611,7 @@ async function finishInBackground($: EngineInterface, j: Job, outputFile: string
   await $.prompt.submit({ text }).catch(() => $.ui.toast(`${j.id} ended on codex · answer in ${outputFile}`.slice(0, 80)))
 }
 
-async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null): Promise<{ deny: string } | { result: ReturnType<typeof agentResult> | ReturnType<typeof launchedRecord> }> {
+async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null, signal: AbortSignal): Promise<{ deny: string } | { result: ReturnType<typeof agentResult> | ReturnType<typeof launchedRecord> }> {
   const type = role ? ROLE_PREFIX + role.name : e.subagent_type?.trim() || DEFAULT_TYPE
   const cwd = await $.session.cwd()
   const startedAt = Date.now()
@@ -653,7 +656,8 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
       return { result: launchedRecord({ id, description: e.description, prompt: e.prompt, outputFile, model: options.model }) }
     }
 
-    const r = await runJob($, job)
+    const r = await runJob($, job, signal)
+    if (r.isStopped) return { deny: `duet: ${STOPPED}; the ${type} subagent did not finish on Codex.` }
     if (r.failure) return { deny: `duet: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.${searchNote ? `\n${searchNote}` : ''}` }
     return { result: agentResult({ id, prompt: e.prompt, text: r.run.text, footer: r.footer, durationMs: r.endedAt - startedAt, run: r.run, model: options.model }) }
   } catch (err) {
@@ -1440,7 +1444,7 @@ export const register: Register = (on, raw) => {
     // duet: roles always go to Codex (main loop only); codexAgents types unless named, isolated or nested.
     const route = routeOf(options, e)
     if (route.to === 'deny') return { deny: route.reason }
-    if (route.to === 'codex') return routeToCodex($, e, route.role)
+    if (route.to === 'codex') return routeToCodex($, e, route.role, next.signal)
     const startedAt = Date.now()
     const ran = await next(e)
     if (!e.agentId && ran.deny === undefined && !ran.isError) {
