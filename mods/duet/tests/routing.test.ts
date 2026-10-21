@@ -1613,6 +1613,30 @@ describe('#121: /duet stop and the Stop key', () => {
     }
   })
 
+  // Codex on PR #126: in the Stats view no task row is shown or highlighted, so no Stop key either.
+  test('the Stats view shows no Stop key: no run is highlighted there', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    let release!: () => void
+    let begun!: () => void
+    const started = new Promise<void>(resolve => (begun = resolve))
+    const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: begun })
+    await start($)
+    try {
+      await duet($, 'review')
+      await started
+      await seen.clock.settle()
+      let ui = await pane($)
+      expect(await ui.find({ key: 'stop' })).toBeDefined()
+      await ui.press({ key: 'stats' })
+      await seen.clock.settle()
+      await ui.unmount()
+      ui = await pane($)
+      expect(await ui.find({ key: 'stop' })).toBeUndefined()
+      await ui.unmount()
+    } finally {
+      release()
+    }
+  })
+
   test('the demo shows no Stop key: its rows are samples', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
     engine(on)
     await start($)
