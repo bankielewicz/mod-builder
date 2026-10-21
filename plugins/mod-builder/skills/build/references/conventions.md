@@ -37,6 +37,22 @@ Write the chosen value into the SPEC so the person can override it at approval.
 
 Use atoms over raw `$.state.get/set`. `claude plugin validate` checks atom refs against the contract.
 
+**After `/clear`, `/resume` and `/branch`** every atom is back at its initial value, and `session.start`
+doesn't run again (`gotchas.md`). Whatever `session.start` copies into atoms, from `$.store`, disk or
+module state, a `classic.SessionStart` hook copies again:
+
+```ts
+on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+  await seed($).catch(() => undefined)
+  return next(e)
+}).catch(($, e, next) => next(e))
+```
+
+`startup` and `compact` reset nothing, so the matcher leaves them out. Validate counts the hook as
+gating, hence the `.catch`. Atoms that only count this conversation (a turn's tools, the watcher's
+stats) are right to reset, so the archetypes have no such hook. Where an organization manages Claude
+Code, `classic.*` hooks don't run in a plugin a person installs, and the reset stays.
+
 ## Hooks
 
 - `register.tsx` reads top to bottom: imports, constants, atoms (literal `plugin`/`key`), module
@@ -54,6 +70,22 @@ Use atoms over raw `$.state.get/set`. `claude plugin validate` checks atom refs 
   A deny reason is addressed to Claude and starts with `<name>:`.
 - **Background work** is `void work($).catch(() => undefined)`. Never leave a floating promise:
   tests fail at teardown.
+- **Long work a hook waits on** (a process, a model call, a poll) stops when the event is abandoned,
+  as when the person presses Esc. Pass `next.signal` to each call that takes one (`$.clock.sleep`,
+  `$.model.complete`'s options). A `$.process.spawn` the hook waits on is ended by the engine when the
+  signal aborts, and a process call after that rejects `… aborted`, while state, store, toast and file
+  writes still work (`gotchas.md`). So in the `catch`, check `next.signal.aborted`, record a stop the
+  person asked for (not a failure), and start no fallback process. Work started with `void` survives
+  Esc: give it a stop command.
+- **`$.prompt.submit` resolves `{ drop }` rather than rejecting** when it can't queue the prompt:
+  `the session was stopped and nobody has sent input since` until the person's next input after Stop,
+  or `the prompt was removed from the queue before it ran` for one queued at Stop. Retry only those
+  two: queue each such text in a top-level list (several jobs can finish while submits are refused),
+  and in `turn.complete` take the whole queue, empty it, then submit each item detached
+  (`void submit($, text).catch(…)`, never awaited: the call resolves only when the new turn starts).
+  A retry refused again goes back on the queue for the next `turn.complete`. Any other `drop` is
+  another hook's choice: report it (a toast naming where the text is saved) and don't retry it. Never
+  lose the text quietly.
 
 ## Commands
 
@@ -73,6 +105,16 @@ on('command.run', { command: NAME }, async ($, e) => {
 ```
 
 - Every mod has a `demo` subcommand that shows every state.
+- **`immediate: true`** in the registration lets a command typed mid-turn run at once rather than wait
+  for the turn to end. It covers every subcommand, and the hook must not assume the turn's state. Set it
+  only when every branch only shows something: it opens, closes or fronts a pane, shows or hides what the
+  mod draws, fills the prompt box for the person to finish, or reads (files and folders included). Leave
+  it off a command with a branch that starts work (a run, a review), asks a
+  question, writes state the turn's own hooks write (a band's per-turn counts: a mid-turn write races
+  them), changes what the mod counts or saves, sets an option (`$.config.set` on the plugin's own
+  option reloads the plugin) or makes a billed call. The pane-command archetype sets it. Band (its demo
+  writes the per-turn counts), guard (its demo asks), watcher (`reset`) and command-only (it records
+  notes) don't.
 - A bare pane command reads `paneAction(await $.ui.panes(), NAME)` (a pure rule in the mod's logic
   module; the pane-command archetype has it) rather than a saved flag. Three states: `open` when the
   pane isn't listed, `close` when the surface shows it (`isShown`), and `show` when it is open as a

@@ -5,6 +5,15 @@ const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 120 } as const
 
 describe('ui', () => {
+  // demo writes `turn`, which this turn's tool.call and turn.complete hooks write too, so it waits for the turn (#119, PR #122 review).
+  test('the command waits for the turn to end', async ($, on) => {
+    const registered: { name: string; immediate?: true }[] = []
+    on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+    on('command.register', ($, e) => (registered.push({ ...e }), { value: undefined }) as never)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    expect(registered.map(r => [r.name, r.immediate])).toEqual([['__NAME__', undefined]])
+  })
+
   test('demo draws the band above the band below; idle draws only the band below', async ($, on) => {
     mock.clock(on)
     on('session.start', ($, e) => ({ cwd: e.cwd }) as never)

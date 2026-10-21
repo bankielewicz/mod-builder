@@ -59,7 +59,7 @@ async function toggleSelected($: EngineInterface): Promise<void> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command
-      .register({ name: '__NAME__', description: __DESCRIPTION_JS__, argumentHint: '[demo]' })
+      .register({ name: '__NAME__', description: __DESCRIPTION_JS__, argumentHint: '[demo]', immediate: true })
       .catch(() => undefined)
     return next(e)
   })

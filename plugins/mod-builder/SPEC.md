@@ -852,3 +852,44 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - CLAUDE.md says a `.test.ts` not named `*-logic.test.ts` runs only under `claude plugin test`.
 - **Not taken:** pinning the code-from-strings message. The error class (`EvalError`) is pinned instead: the message is the engine's wording, the class is the claim.
 - **Codex round 2 (on `ca8315f`):** the `import()` fixture imported `node:fs` by name, so a loader that allowed `import()` but refused that name would still have read as refused. It now builds its specifier at run time (Codex 4296355708). A run cut short by an error or a signal, or one that exited 0, could still have passed on partial output; `runVerdict` fails it (Codex 4296355718). Red `8d8bb18`, green `7713be0`.
+
+## Change 0.2.27 (2026-10-21)
+
+> For issue #119, the owner's decisions (2026-10-21): "File one issue, then fix", with the build skill's conventions and archetype templates first, then duet, issue-forge and Mod Lab; `immediate: true` on "/modlab + /git-branch", with `/duet`, `/issue-forge` and `/mod-builder config` waiting for the turn. The full decisions are in #119's first comment.
+
+- **Why:** Anthropic's mod docs (`docs/research/Mods/`, PR #120) describe four practices the build skill didn't teach: seeding atoms again after `/clear`, `/resume` and `/branch`; passing `next.signal` to long work a hook waits on; handling `$.prompt.submit`'s `{ drop }`; and `immediate: true` for a command that may run mid-turn.
+- **The probe this rests on** (2026-10-21, Claude Code 2.1.296, installed as CI does, and 2.1.306; a throwaway mod in the session scratchpad, run headless with `claude -p --input-format stream-json`, a throwaway `CLAUDE_CONFIG_DIR` and a placeholder key, so no model call):
+  - `$.command.register({ …, immediate: true })` resolves `{ command }` on both, and the command runs.
+  - `on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, …)` loads, and validate lists it as a gating hook without `.catch`.
+  - An atom set to 42 in `session.start` reads 0 after `/clear`, and 0 inside the `classic.SessionStart` hook, which fired with `source: 'clear'`.
+- **What changes:**
+  1. `references/conventions.md`:
+     - State: the `/clear` rule, with the `classic.SessionStart` hook and its `.catch`, and why the archetypes' atoms are right to reset.
+     - Hooks: `next.signal` for long work a hook waits on: the engine ends a waited `$.process.spawn` on abort, so the `catch` records a stop and starts no fallback. `$.prompt.submit`'s `{ drop }` is treated as a failure.
+     - Commands: when to set `immediate: true`. Every branch only shows something: it opens, closes or fronts a pane, shows or hides the drawing, fills the prompt box, or reads. The wording covers `/modlab` (#119 step 4): `new` fills the prompt box, and `<mod>` reads the mods folder and fronts the pane.
+  2. `references/gotchas.md`: the probe above, as two `[probe]` entries, and a third from the Esc probe on 2.1.306 (#119's gap 2 comment). A waited spawn is killed and its loop throws `… aborted`, a `$` call after that rejects, and a `void` spawn survives.
+  3. `templates/SPEC.template.md`: HOUSE rows "mid-turn" and "after /clear". Mod Lab's `slotsOf` reads only `archetype` and `built` by name (`hooks/mod-builder-logic.ts:1180-1181`), so nothing else changes.
+  4. The pane-command archetype registers its command with `immediate: true`. Every branch opens, closes or fronts the pane, or fills it with demo items. The other archetypes leave it off:
+     - Band's demo writes the per-turn `turn` atom, which its own `tool.call` and `turn.complete` hooks write too.
+     - Guard's demo asks a question, which would compete with the turn's own.
+     - Watcher's `reset` changes what it counts.
+     - Command-only records and clears notes.
+- **Not changed:**
+  - No archetype gains a `classic.SessionStart` hook. None copies anything into atoms at `session.start`, and their atoms count this conversation only.
+  - Mod Lab's own commands are #119's later step.
+- **What gets touched:** the two references, the SPEC template, the pane-command archetype's `register.tsx.tpl` and `ui.test.tsx.tpl`, the band archetype's `ui.test.tsx.tpl` (a test that its command waits), this SPEC, and the version in `plugin.json` and the marketplace entry. No new reach.
+- **Tests:** the pane-command template's UI test records the `command.register` call and expects `[['<name>', true]]`.
+  - **Red** `8ea387e`: scaffolded, it fails with `Received [["check-pane", undefined]]`.
+  - **Green** `6864e42`.
+  - Band's test now expects no `immediate`; see review round 1.
+- **Live check** (2.1.306, a private tmux session, `claude --plugin-dir <pane-command scaffold>`): a turn was still running ("Pontificating… (34s)") when `/check-pane` was typed, and the pane opened at once, before the turn ended.
+- **Version:** 0.2.27 (patch: docs and one template field).
+- **PR #122 review round 1** (Codex, three P2 findings, each checked against the code and the docs):
+  - **The band's demo races the turn.** `showDemo` makes two detached `update`s of `turn`, which the archetype's `tool.call` and `turn.complete` hooks also write. Run mid-turn, the demo overwrites live counts, or comes back after `turn.complete` cleared it. The red test `a86f0e3` was wrong. `84824e7` fixes it to expect no `immediate` (it failed with `Received [["check-band", true]]`). The template drops the field, and the rule now leaves `immediate` off a branch that writes state the turn's own hooks write.
+  - **A `drop` is retried only for the engine's two reasons.** Another `prompt.submit` hook's deliberate drop must not be resubmitted, as the docs' retry pattern shows. Other drops are reported with a toast, not retried.
+  - **The retry is detached.** `turn.complete` empties the pending text first, then submits it with `void … .catch(…)`: the call resolves only when the new turn starts. Both changes are conventions wording, in one commit.
+- **PR #122 Codex round 2** (three P2 findings, each checked):
+  - **A dropped prompt is kept in a queue, not one slot.** Several jobs can finish while submits are refused. `turn.complete` takes the whole queue, empties it, and submits each item detached. A retry refused again goes back on the queue.
+  - **What still works after an abort.** `conventions.md` said every `$` call after the abort rejects. That overstated the probe: only process calls reject. State, store, toast and file writes still work, so recording the stop in the hook's `catch` is viable. The text now says so, and gotchas.md's Esc entry adds the after-abort calls that were probed (#119's probe, duet 0.3.3's live check).
+  - **The SPEC template's "after /clear" row** names the managed-settings exception, since the person approves that row.
+
