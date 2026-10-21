@@ -1839,7 +1839,7 @@ describe('parallel runs (Change 0.3.0)', () => {
       expect(others.map(o => o.issue)).toEqual([52])
     })
 
-    for (const source of ['resume', 'fork']) {
+    for (const source of ['resume', 'fork'] as const) {
       test(`after ${source === 'fork' ? '/branch (source fork)' : '/resume'} it writes the focus back too`, async ($, on) => {
         const writes = watch(on)
         const w = engine(on, {}, RUNS())
