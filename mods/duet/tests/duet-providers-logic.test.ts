@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, detailLinesThatFit, isAllowedBaseUrl, isLocalBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
-  keyFileExposed, keyId, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, searchCoversKeyFile, serializeEnv, testOutcome, testText, upsertEnvLine,
+  keyFileExposed, keyId, keyPathReaches, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, searchCoversKeyFile, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -376,6 +376,8 @@ describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', ()
   test('a quoted rooted path with a space is a path, not a message; a message that starts with a slash is still a message', () => {
     for (const text of [`cat "C:/Users/John Smith/.claude/duet-data/.env"`, `cat '/home/u/my files/.claude/duet-data/.env'`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     expect(namesKeyFile('git commit -m "/duet: keys live in ~/.claude/duet-data/.env"')).toBe(false)
+    // A file tool's path whose last segment is not a valid glob counts, to be safe (a shell word stops before the bracket).
+    expect(keyPathReaches('/home/u/.claude/duet-data/[')).toBe(true)
   })
 
   test('Windows spellings: backslash paths, $env:USERPROFILE, %USERPROFILE%', () => {
