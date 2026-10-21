@@ -101,7 +101,8 @@ on('command.run', { command: NAME }, async ($, e) => {
 - **`immediate: true`** in the registration lets a command typed mid-turn run at once rather than wait
   for the turn to end. It covers every subcommand, and the hook must not assume the turn's state. Set it
   only when every branch only shows something: it opens, closes or fronts a pane, shows or hides what the
-  mod draws, or reads. Leave it off a command with a branch that starts work (a run, a review), asks a
+  mod draws, fills the prompt box for the person to finish, or reads (files and folders included). Leave
+  it off a command with a branch that starts work (a run, a review), asks a
   question, changes what the mod counts or saves, sets an option (`$.config.set` on the plugin's own
   option reloads the plugin) or makes a billed call. The pane-command and band archetypes set it; guard
   (its demo asks), watcher (`reset`) and command-only (it records notes) don't.

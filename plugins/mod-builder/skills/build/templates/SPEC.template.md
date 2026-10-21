@@ -41,7 +41,7 @@ everything that costs money or is hard to undo. Nothing is built until the perso
 | logic split | HOUSE | `$`-free `hooks/<name>-logic.ts`; every `$` call in `hooks/register.tsx` | conventions.md |
 | tests | HOUSE | `tests/<name>-logic.test.ts`, `tests/ui.test.tsx` | conventions.md |
 | demo | HOUSE | `/<name> demo` shows every state without waiting for real events | conventions.md |
-| mid-turn | HOUSE | `immediate: true` on `/<name>` when every subcommand only shows something (opens, closes or fronts a pane, shows or hides the drawing, reads); else waits for the turn | conventions.md |
+| mid-turn | HOUSE | `immediate: true` on `/<name>` when every subcommand only shows something (opens, closes or fronts a pane, shows or hides the drawing, fills the prompt box, reads); else waits for the turn | conventions.md |
 | after /clear | HOUSE | atoms `session.start` seeds are seeded again in `classic.SessionStart` (`clear`, `resume`, `fork`); n/a when none are | conventions.md |
 | built on | HOUSE | Claude Code <version from `claude --version`> | |
 

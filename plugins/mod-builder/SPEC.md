@@ -866,9 +866,9 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   1. `references/conventions.md`:
      - State: the `/clear` rule, with the `classic.SessionStart` hook and its `.catch`, and why the archetypes' atoms are right to reset.
      - Hooks: `next.signal` for long work a hook waits on, and `$.prompt.submit`'s `{ drop }` treated as a failure.
-     - Commands: when to set `immediate: true`.
+     - Commands: when to set `immediate: true`. Every branch only shows something: it opens, closes or fronts a pane, shows or hides the drawing, fills the prompt box, or reads. The wording covers `/modlab` (#119 step 4): `new` fills the prompt box, and `<mod>` reads the mods folder and fronts the pane.
   2. `references/gotchas.md`: the probe above, as two `[probe]` entries.
-  3. `templates/SPEC.template.md`: HOUSE rows "mid-turn" and "after /clear".
+  3. `templates/SPEC.template.md`: HOUSE rows "mid-turn" and "after /clear". Mod Lab's `slotsOf` reads only `archetype` and `built` by name (`hooks/mod-builder-logic.ts:1180-1181`), so nothing else changes.
   4. The pane-command and band archetypes register their command with `immediate: true`. Their branches only show something: pane-command opens, closes or fronts the pane and fills it with demo items, and band shows or hides the band or draws a demo. The other archetypes leave it off. Guard's demo asks a question, which would compete with the turn's own. Watcher's `reset` changes what it counts. Command-only records and clears notes.
 - **Not changed:**
   - No archetype gains a `classic.SessionStart` hook. None copies anything into atoms at `session.start`, and their atoms count this conversation only.
