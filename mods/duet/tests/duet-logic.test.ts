@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
   isInside, isProtectedPath, isRouted, resolveFrom, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   footerOf, statsText, summarize, verdictOf,
-  claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
+  claudeTaskOf, coerceConfigValue, configText, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
 } from '../hooks/duet-logic'
 import * as logic from '../hooks/duet-logic'
