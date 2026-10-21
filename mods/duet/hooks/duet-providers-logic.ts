@@ -168,8 +168,11 @@ function pathReaches(p: string): boolean {
 const HOME_SPELLINGS = /\$\{HOME\}|\$HOME\b|\$\{env:(?:USERPROFILE|HOME)\}|\$env:(?:USERPROFILE|HOME)\b|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%/gi
 const normPath = (value: string) => value.replace(HOME_SPELLINGS, '~').replace(/\\/g, '/')
 const ROOTED = /^(?:~|\/|\.{1,2}\/|[A-Za-z]:\/)/
-/** A rooted path inside a word: stops at code punctuation (`,` `]` `}` `)` quotes), keeps whole `{a,b}` and `[…]` groups. */
-const PATH_IN_WORD = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[^\s"'<>|;&(),{}[\]])*)/g
+/**
+ * A rooted path inside a word: stops at code punctuation (`,` `]` `}` `)` quotes), keeps whole `{a,b}` and `[…]` groups. A `]`
+ * or `}` that a later `/` follows in the same run is part of a segment (`/home/u]/…`, Codex 4337056082), not code closing.
+ */
+const PATH_IN_WORD = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[\]}](?=[^\s"'<>|;&(),{}[\]]*\/)|[^\s"'<>|;&(),{}[\]])*)/g
 
 /** A path as a file tool gives it (`$HOME`, `~`, `\`, `//`, `/.`, `..` allowed) reaches the key file or its folder. */
 export function keyPathReaches(path: string): boolean {
@@ -322,7 +325,9 @@ export function searchCoversKeyFile(path: string, home: string): boolean {
   const h = home.trim() === '' ? '' : norm(home)
   let p = norm(t)
   if (p === '~' || p.startsWith('~/')) p = (h || '~') + p.slice(1)
-  if (/\/\.claude$/i.test(p) || p === '/') return true
+  // Any `.claude` folder counts only while the home folder is unknown; with it known, the prefix check below finds the home
+  // one, and a project's own `.claude` is not it (Codex 4337056086).
+  if (p === '/' || (!h && /(?:^|\/)\.claude$/i.test(p))) return true
   const keyFolder = `${h || '~'}/.claude/duet-data`.toLowerCase()
   return keyFolder.startsWith(`${p.toLowerCase()}/`)
 }
