@@ -1186,3 +1186,11 @@ describe('#119: which prompt drops are retried', () => {
     expect(logic.dropOf?.({ drop: 7 })).toBe('')
   })
 })
+
+describe('#119: a stopped row in the pane', () => {
+  const t = (detail: string) => ({ id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'x', model: '', status: 'stopped', startedAt: 0, endedAt: 1, tokens: 0, description: 'Check the error handling', detail, envelope: null }) as unknown as Task
+  test('shows why it stopped, with no failure mark', () => {
+    expect(logic.subText(t(logic.STOPPED), 80)).toBe('stopped: you pressed Esc')
+    expect(logic.subText(t(''), 80)).toBe('"Check the error handling"')
+  })
+})
