@@ -1114,6 +1114,19 @@ export function codexRunning(tasks: Task[]): number {
   return tasks.filter(t => t.provider === 'codex' && t.status === 'running').length
 }
 
+/** Running Codex rows and the runs this module started, each once: /clear empties the rows while those runs go on (#119). */
+export function liveRuns(tasks: Task[], mine: ReadonlySet<string>): number {
+  const ids = new Set(mine)
+  for (const t of tasks) if (t.provider === 'codex' && t.status === 'running') ids.add(t.id)
+  return ids.size
+}
+
+/** The next row id, past every row and every id still taken, so a run that outlived /clear keeps its own row (#119). */
+export function idAfter(tasks: Task[], taken: Iterable<string>): string {
+  const n = [...tasks.map(t => t.id), ...taken].reduce((m, id) => Math.max(m, Number(id.slice(1)) || 0), 0)
+  return `d${n + 1}`
+}
+
 /** Why a Codex run was refused at the limit. */
 export function limitText(running: number, max: number): string {
   return `limit: ${running} Codex run${running === 1 ? '' : 's'} already running (maxConcurrent ${max})`

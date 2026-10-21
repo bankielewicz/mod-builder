@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, idAfter, liveRuns, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -158,7 +158,7 @@ async function putTask($: EngineInterface, task: Task): Promise<void> {
 async function addRefused($: EngineInterface, make: (id: string) => Task): Promise<Task> {
   let added: Task | null = null
   await update($, tasks, list => {
-    added = make(idAfter(list))
+    added = make(idAfter(list, mine))
     return [added, ...list]
   })
   await refreshStatus($)
@@ -170,21 +170,16 @@ async function patchTask($: EngineInterface, id: string, patch: Partial<Task>): 
   await refreshStatus($)
 }
 
-function idAfter(list: Task[]): string {
-  const n = list.reduce((m, t) => Math.max(m, Number(t.id.slice(1)) || 0), 0)
-  return `d${n + 1}`
-}
-
 async function nextId($: EngineInterface): Promise<string> {
-  return idAfter(await read($, tasks))
+  return idAfter(await read($, tasks), mine)
 }
 
 /** Admits a run under the concurrency limit, its row added in the same write: the row, or null at the limit. */
 async function admit($: EngineInterface, make: (id: string) => Task): Promise<Task | null> {
   let admitted: Task | null = null
   await update($, tasks, list => {
-    const t = make(idAfter(list))
-    admitted = codexRunning(list) < options.maxConcurrent ? t : null
+    const t = make(idAfter(list, mine))
+    admitted = liveRuns(list, mine) < options.maxConcurrent ? t : null
     return admitted ? [t, ...list] : list
   })
   await refreshStatus($)
@@ -628,7 +623,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   if (blocked) return refuse(blocked)
   const task = await admit($, rowOf)
   if (!task) {
-    return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
+    return refuse(limitText(liveRuns(await read($, tasks), mine), options.maxConcurrent))
   }
 
   const id = task.id
@@ -698,8 +693,11 @@ async function startReview($: EngineInterface, target: ReviewTarget): Promise<Re
   const blocked = await ensureConsent($, cwd)
   if (blocked) return refuse(blocked)
   const admitted = await admit($, rowOf)
-  if (!admitted) return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
-  void finishReview($, admitted, target, cwd).catch(() => undefined)
+  if (!admitted) return refuse(limitText(liveRuns(await read($, tasks), mine), options.maxConcurrent))
+  mine.add(admitted.id)
+  void finishReview($, admitted, target, cwd)
+    .catch(() => undefined)
+    .finally(() => mine.delete(admitted.id))
   return { started: true, reason: '' }
 }
 
