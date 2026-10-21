@@ -176,6 +176,8 @@ let isInteractive = true
 let home = ''
 /** This session's id, read once at session start: what a run's driver names (Change 0.3.0). */
 let sessionId = ''
+/** The issue the pane shows, kept in the module: /clear, /resume and /branch reset focusAtom (#119). */
+let focusKept: number | null = null
 /**
  * A drive: its run, the run's store key and issue, whether it was stopped or handed off, and its generation. A new
  * drive of the same run (a hand-off, then a resume) has a new one, so the old drive's step in flight fails every
@@ -1461,6 +1463,7 @@ async function lineCtx($: EngineInterface): Promise<LineContext> {
 
 /** The pane shows this run: the one a command named or acted on (Change 0.3.0). */
 async function setFocus($: EngineInterface, run: Run | null): Promise<void> {
+  focusKept = run?.issue ?? null
   await update($, focusAtom, () => run?.issue ?? null)
   await update($, runAtom, () => run)
 }
@@ -1584,6 +1587,7 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   const now = await $.clock.now()
   const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now, ghRepo), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
   const run = advance(fresh, { type: 'drive', session: sessionId }, now)
+  focusKept = issue
   await update($, focusAtom, () => issue)
   const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
@@ -1868,6 +1872,20 @@ async function restore($: EngineInterface): Promise<void> {
   await refreshOthers($, at.repo, runs)
 }
 
+/**
+ * After /clear, /resume or /branch every atom is back at its default and session.start doesn't run: the pane's run,
+ * its focus and the also line come back from the store (#119). The drive and `sessionId` are the module's and stay:
+ * the process goes on under a new session id, and the run's driver record names the old one.
+ */
+async function reseed($: EngineInterface): Promise<void> {
+  const at = await repoOf($)
+  if (!at) return
+  const runs = await runsOf($, at.repo)
+  const pick = pickRun(runs, { issue: null, focus: focusKept, root: at.root, needActive: false })
+  await setFocus($, pick.kind === 'run' ? pick.run : null)
+  await refreshOthers($, at.repo, runs)
+}
+
 /** At session end (not /clear or /resume: the process goes on), the run this session drives is let go. */
 async function releaseOnEnd($: EngineInterface, reason: string): Promise<void> {
   const d = drivingNow()
@@ -1900,6 +1918,12 @@ export const register: Register = (on, raw) => {
     await restore($).catch(() => undefined)
     return next(e)
   })
+
+  // /clear, /resume and /branch reset every atom; startup and compaction reset nothing (#119).
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    await reseed($).catch(() => undefined)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // Change 0.3.0: a session that ends lets go of the run it drives, so another can resume it without a take-over.
   on('session.end', async ($, e, next) => {
