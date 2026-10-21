@@ -6,8 +6,8 @@ import {
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
-  claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, candidateFrom, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, ROLE_PREFIX,
+  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -612,13 +612,14 @@ async function runJob($: EngineInterface, j: Job, signal?: AbortSignal): Promise
   const { run, failure, isStopped } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt, signal)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
-  const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : isStopped ? STOPPED_CANDIDATE : candidateFrom(j.before, await porcelain($))
-  const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: isStopped ? 'stopped' : failure ? 'error' : 'done', detail: failure }
+  const end = outcomeOf({ id: j.id, type: j.type, failure, isStopped: isStopped === true, sandbox: j.sandbox })
+  const cand = end.compare === 'now' ? candidateFrom(j.before, await porcelain($)) : end.candidate
+  const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: end.status, detail: failure }
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
-  $.ui.toast((isStopped ? `${j.id} ${STOPPED}` : failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
+  $.ui.toast(end.toast)
   // Esc keeps what Codex already wrote. git is refused in this aborted dispatch, but runs from a timer (probe, 2.1.306).
-  if (isStopped && j.sandbox !== 'read-only') $.clock.after(0, () => void compareAfterStop($, j.id, j.before).catch(() => undefined))
+  if (end.compare === 'after') $.clock.after(0, () => void compareAfterStop($, j.id, j.before).catch(() => undefined))
   const footer = footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped })
   return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer, ...(isStopped ? { isStopped } : {}) }
 }

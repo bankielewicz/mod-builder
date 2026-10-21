@@ -1059,6 +1059,20 @@ export function stoppedCandidateOf(before: string | null, after: string | null):
   return before === null || after === null ? STOPPED_CANDIDATE : `stopped with Esc: ${candidateOf(before, after)}`
 }
 
+/**
+ * How a Codex run ends (#119): its status; whether its files are compared now, after the stop (git is refused in the
+ * aborted dispatch, so a timer does it) or not at all (a read-only run writes nothing); the candidate when there is no
+ * comparison to make now; and its toast.
+ */
+export function outcomeOf(o: { id: string; type: string; failure: string; isStopped: boolean; sandbox: Sandbox }): { status: TaskStatus; compare: 'none' | 'now' | 'after'; candidate: string; toast: string } {
+  const isReadOnly = o.sandbox === 'read-only'
+  const compare = isReadOnly ? 'none' : o.isStopped ? 'after' : 'now'
+  const candidate = isReadOnly ? READ_ONLY_CANDIDATE : o.isStopped ? STOPPED_CANDIDATE : ''
+  const status: TaskStatus = o.isStopped ? 'stopped' : o.failure ? 'error' : 'done'
+  const toast = o.isStopped ? `${o.id} ${STOPPED}` : o.failure ? `${o.id} failed on codex: ${o.failure}` : `${o.id} done on codex · ${o.type}`
+  return { status, compare, candidate, toast: toast.slice(0, 80) }
+}
+
 /** An editing run's candidate when git couldn't read the folder before or after it (#119, Codex on PR #123). */
 export const UNREAD_CANDIDATE = 'files not compared: git could not read the folder'
 
