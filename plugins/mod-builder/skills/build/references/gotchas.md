@@ -150,6 +150,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   .catch: classic.SessionStart{source=clear|resume|fork}`). Probed on 2.1.296 and 2.1.306 (#119): a
   throwaway mod set an atom to 42 in `session.start`; headless `claude -p --input-format stream-json`
   with `/probe-state`, `/clear`, `/probe-state` read 42, then 0, and 0 inside the hook.
+- **[probe]** `classic.SessionStart` fires **before** `session.start` at startup (`source: startup`) and
+  at a resumed startup, `claude --continue` (`source: resume`). A `{ source: ['clear', 'resume',
+  'fork'] }` hook therefore runs once before the module's `session.start` has set anything up. Probed on
+  2.1.296 and 2.1.306 (PR #124 review) with a throwaway mod logging both events, run headless twice in
+  one folder: `classic:startup > session.start`, then `classic:resume > session.start`.
 - **[probe]** `$.command.register` accepts `immediate: true` on 2.1.296 and 2.1.306: it resolves
   `{ command }` and the command runs. A build that refused the field would lose the command behind the
   house `.catch(() => {})`. Whether 2.1.296 runs it mid-turn wasn't probed (#119).

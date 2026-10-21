@@ -892,4 +892,5 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **A dropped prompt is kept in a queue, not one slot.** Several jobs can finish while submits are refused. `turn.complete` takes the whole queue, empties it, and submits each item detached. A retry refused again goes back on the queue.
   - **What still works after an abort.** `conventions.md` said every `$` call after the abort rejects. That overstated the probe: only process calls reject. State, store, toast and file writes still work, so recording the stop in the hook's `catch` is viable. The text now says so, and gotchas.md's Esc entry adds the after-abort calls that were probed (#119's probe, duet 0.3.3's live check).
   - **The SPEC template's "after /clear" row** names the managed-settings exception, since the person approves that row.
+- **From PR #124's review:** `classic.SessionStart` fires before `session.start` at startup and at `claude --continue` (`source: resume`); probed on 2.1.296 and 2.1.306. gotchas.md gains it as `[probe]`, and the `/clear` convention says to skip the reseed when the module hasn't started.
 
