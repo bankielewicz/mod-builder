@@ -387,6 +387,27 @@ describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', ()
     expect(keyPathReaches('/home/u/.claude/duet-data/[')).toBe(true)
   })
 
+  test('Codex 4337185228: a comma inside a home segment does not end the path; a list of paths still reads both', () => {
+    for (const text of ["cat '/home/u,team/.claude/duet-data/.env'", 'cat /home/u,team/.claude/duet-data/.env', "cat '/home/a,b,c/.claude/duet-data/.env'",
+      `python3 -c "x = ['/home/u/.claude/duet-data/.env','/b']"`, `python3 -c "x = ['/b','/home/u/.claude/duet-data/.env']"`, `node -e "fs.readFileSync('/home/u/.claude/duet-data/.env', 'utf8')"`,
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    expect(namesKeyFile(`python3 -c "x = ['/home/u/.claude/agents','/tmp/.env']"`)).toBe(false)
+  })
+
+  test('Codex 4337185247: a quoted message that starts with a slash and names the path later is a message; a spaced home path is still a path', () => {
+    for (const text of ["git commit -m '/duet keeps keys in ~/.claude/duet-data/.env'", 'git commit -m "/duet keeps keys in /home/u/.claude/duet-data/.env"', "gh pr comment 116 --body '/duet provider: see C:/Users/u/.claude/duet-data/.env'"])
+      expect([text, namesKeyFile(text)]).toEqual([text, false])
+    for (const text of [`cat '/home/John Smith/.claude/duet-data/.env'`, `cat "C:/Users/John Smith/.claude/duet-data/.env"`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+  })
+
+  test('Codex 4337185238: POSIX search roots compare with their case; Windows ones without', () => {
+    expect(searchCoversKeyFile('/home/user', '/home/User')).toBe(false)
+    expect(searchCoversKeyFile('/home/User', '/home/User')).toBe(true)
+    expect(searchCoversKeyFile('/HOME', '/home/u')).toBe(false)
+    expect(searchCoversKeyFile('c:/users/u', 'C:/Users/U')).toBe(true)
+    expect(searchCoversKeyFile('//SERVER/share/u', '//server/share/u')).toBe(true)
+  })
+
   test('Windows spellings: backslash paths, $env:USERPROFILE, %USERPROFILE%', () => {
     for (const text of [
       'Get-Content C:\\Users\\u\\.claude\\duet-data\\.env', 'Get-Content "$env:USERPROFILE\\.claude\\duet-data\\.env"', 'Get-Content ${env:HOME}/.claude/duet-data/.env',
