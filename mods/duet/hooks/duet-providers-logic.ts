@@ -8,6 +8,8 @@
  * `/duet provider test` has hit them live (SPEC, Change 0.3.0, part A).
  */
 
+import type { ProviderTest } from '../types'
+
 export type ProviderAuth = 'bearer' | 'session' | 'none' | 'cli'
 
 export type ProviderDef = {
@@ -54,7 +56,10 @@ export const PROVIDERS: ProviderDef[] = [
  */
 export const PROVIDER_KEY_NAMES: readonly string[] = PROVIDERS.map(p => p.keyName).filter((n): n is string => n !== null && n !== 'OPENAI_API_KEY' && n !== 'ANTHROPIC_API_KEY')
 
-export const KEY_FILE_NOTE = 'keys live in ~/.claude/duet-data/.env (mode 600), never in the project'
+/** The key file as the pane, notes and answers show it. */
+export const KEY_FILE_SHOWN = '~/.claude/duet-data/.env'
+
+export const KEY_FILE_NOTE = `keys live in ${KEY_FILE_SHOWN} (mode 600), never in the project`
 
 export function providerOf(id: string): ProviderDef | undefined {
   const k = id.trim().toLowerCase()
@@ -524,7 +529,8 @@ export type HttpReply = { status: number; ok: boolean; text: string; headers?: R
 export function refusalReason(message: string): string {
   return message.split('\n')[0]!.replace(/^\S+: \$\.http\.fetch(?:\([^)]*\))?(?: failed)?: /, '').trim()
 }
-export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number; key: string; host: string }
+/** A key test's outcome: the contract's `ProviderTest`, one shape for the pane, the store and the logic. */
+export type TestResult = ProviderTest
 
 const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 405: 'not allowed', 429: 'rate limited' }
 
@@ -616,7 +622,7 @@ export function rowWindow(at: number, total: number, bodyRows: number, fixedLine
  * since Codex can then read the file like any other (SPEC, Change 0.3.0, part C; the owner's note at review).
  */
 export function savedNote(mode: string, exposed: boolean, shadowedBy = ''): string[] {
-  const lines = [`saved to ~/.claude/duet-data/.env (${mode}) · t tests it`]
+  const lines = [`saved to ${KEY_FILE_SHOWN} (${mode}) · t tests it`]
   if (exposed) lines.push('Codex can read this file under codexFsScope: anything; project hides it.')
   if (shadowedBy) lines.push(`${shadowedBy} in your environment wins; unset it to use this key.`)   // the environment wins over the file (#115)
   return lines

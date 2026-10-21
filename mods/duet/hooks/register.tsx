@@ -11,7 +11,7 @@ import {
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
-  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  KEY_FILE_SHOWN, NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, safeText, savedNote, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
@@ -60,7 +60,7 @@ const PROVIDERS_PANE = 'duet-providers'
 const PROVIDERS_PANE_ARGS = { id: PROVIDERS_PANE, title: 'Duet providers', columns: 76 }
 /** One store key per provider (`duet:providers:tests:<id>`): `$.store` is shared live by every session and the last write to a key wins (CLAUDE.md; Codex 4298476151). */
 const testsKeyOf = (id: string) => `duet:providers:tests:${id}`
-const KEY_FILE_HOME = '~/.claude/duet-data/.env'
+const KEY_FILE_HOME = KEY_FILE_SHOWN
 const provAt = atom({ plugin: 'duet', key: 'providerAt' } as const, 0)
 const provEditing = atom({ plugin: 'duet', key: 'providerEditing' } as const, false)
 const provListing = atom({ plugin: 'duet', key: 'providerListing' } as const, '')
@@ -952,11 +952,12 @@ async function readKeyFile($: EngineInterface): Promise<{ file: Record<string, s
 /** Every provider's key and where it came from, and the key file's trouble if any. The values stay in this call; only masks reach `$.state`. */
 async function keySources($: EngineInterface): Promise<{ sources: Record<string, KeySource>; fileError: string }> {
   const { file, error } = await readKeyFile($)
+  // The environment reads are independent: one round of them, not fifteen in a row.
+  const fromEnv = await Promise.all(PROVIDERS.map(p => (p.keyName ? envKey($, p.keyName).catch(() => undefined) : Promise.resolve(undefined))))
   const sources: Record<string, KeySource> = {}
-  for (const p of PROVIDERS) {
-    const fromEnv = p.keyName ? await envKey($, p.keyName).catch(() => undefined) : undefined
-    sources[p.id] = keyFor(p, p.keyName ? { [p.keyName]: fromEnv } : {}, file)
-  }
+  PROVIDERS.forEach((p, i) => {
+    sources[p.id] = keyFor(p, p.keyName ? { [p.keyName]: fromEnv[i] } : {}, file)
+  })
   return { sources, fileError: error }
 }
 
@@ -982,11 +983,12 @@ async function refreshProviderAuth($: EngineInterface): Promise<Record<string, K
 
 /** The stored test results into the pane, keeping any test running now. */
 async function loadProviderTests($: EngineInterface): Promise<void> {
+  const got = await Promise.all(PROVIDERS.map(p => $.store.get(testsKeyOf(p.id)).catch(() => undefined) as Promise<ProviderTest | undefined>))
   const stored: Record<string, ProviderTest> = {}
-  for (const p of PROVIDERS) {
-    const t = (await $.store.get(testsKeyOf(p.id)).catch(() => undefined)) as ProviderTest | undefined
+  PROVIDERS.forEach((p, i) => {
+    const t = got[i]
     if (t && typeof t === 'object') stored[p.id] = t
-  }
+  })
   await update($, provTests, t => ({ ...stored, ...Object.fromEntries(Object.entries(t).filter(([, v]) => v === 'running')) }))
 }
 
