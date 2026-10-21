@@ -3570,3 +3570,26 @@ describe('new plugins are mod-builder\'s (Change 0.7.0)', () => {
     expect(w.spawned).toEqual([])
   })
 })
+
+// #119 gap 1: /clear, /resume and /branch reset every atom, and session.start doesn't run again. The pane's run comes back.
+describe('#119: the pane shows its run again after /clear', () => {
+  const blocked44 = (extra: Record<string, unknown> = {}) =>
+    storedRun('blocked', { id: '44-1', issue: 44, title: 'duet follow-ups', branch: 'issue-44-duet', blocked: { at: 'gateG', reason: 'HEAD is on main, not issue-44-duet', next: 'git switch issue-44-duet' }, agents: [{ id: 'old-44', name: 'issue-forge-44-green-1', phase: 'green' }], ...extra })
+  const RUNS = () => ({ [key(44)]: blocked44({ repo: `${ROOT}/.git`, startedAt: 1 }), [key(52)]: blocked44({ id: '52-1', issue: 52, repo: `${ROOT}/.git`, startedAt: 2 }) })
+
+  test('a classic.SessionStart after /clear writes the focused run back; one after compaction writes nothing', async ($, on) => {
+    const writes: { key: string; value: any }[] = []
+    on('state.set', ($: any, e: any, next: any) => (writes.push({ key: e.key, value: e.value }), next(e)))
+    on('classic.SessionStart', () => ({}))
+    engine(on, {}, RUNS())
+    await start($)
+    expect((await run($, 'status 44')).text).toContain('blocked at gateG')
+    writes.length = 0
+    await $.classic.SessionStart({ source: 'compact' })
+    expect(writes.filter(w => w.key === 'focus' || w.key === 'run')).toEqual([])
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(writes.filter(w => w.key === 'focus').map(w => w.value)).toEqual([44])
+    expect(writes.filter(w => w.key === 'run').map(w => w.value?.issue)).toContain(44)
+    expect(writes.some(w => w.key === 'others')).toBe(true)
+  })
+})
