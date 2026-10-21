@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, detailLinesThatFit, isAllowedBaseUrl, isLocalBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
-  keyFileExposed, keyId, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, serializeEnv, testOutcome, testText, upsertEnvLine,
+  keyFileExposed, keyId, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, searchCoversKeyFile, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/duet-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
@@ -346,6 +346,59 @@ describe('provider text: cleaned, redacted, then cut', () => {
     expect(parseModelsReply('{"data":[{"name":"x"},{"id":"y"}]}')).toEqual({ ids: ['y'], hasMore: false })
     expect(parseChatReply('{"error":"plain words"}')).toEqual({ error: 'plain words' })
     expect(testOutcome('probe', { status: 404, ok: false, text: '' }, 1, 1).note).toBe('✕ 404 not found')
+  })
+})
+
+describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', () => {
+  test('a path followed by code punctuation, inside lists or objects, still reaches the key file', () => {
+    for (const text of [
+      `node -e "console.log(require('fs').readFileSync('/home/u/.claude/duet-data/.env', 'utf8'))"`,
+      `python3 -c 'print(open("/home/u/.claude/duet-data/.env","r").read())'`,
+      `python3 -c "import subprocess; subprocess.run(['cat','/home/u/.claude/duet-data/.env'])"`,
+      `node -e "x({path: '/home/u/.claude/duet-data/.env'})"`,
+      'cat ~/.claude/duet-data/{.env,x}',
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+  })
+
+  test('every argument of an interpreter is code, and so is text piped into one: -lc, -ec, -ic, -p, -r, eval, echo | sh, a heredoc piped to bash', () => {
+    for (const text of [
+      "bash -lc 'cat ~/.claude/duet-data/.env'", "sh -ec 'cat ~/.claude/duet-data/.env'", "zsh -ic 'cat ~/.claude/duet-data/.env'",
+      `node -p "require('fs').readFileSync('/home/u/.claude/duet-data/.env','utf8')"`, `php -r 'echo file_get_contents("/home/u/.claude/duet-data/.env");'`,
+      "eval 'cat ~/.claude/duet-data/.env'", "echo 'cat ~/.claude/duet-data/.env' | sh", "cat <<'EOF' | bash\ncat ~/.claude/duet-data/.env\nEOF",
+      "timeout 5 bash -lc 'cat ~/.claude/duet-data/.env'",
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    for (const text of [
+      "echo 'keys live in ~/.claude/duet-data/.env' | tee notes.md", "echo 'cat ~/.claude/duet-data/.env' > notes.md", 'cp -r src dst',
+      "printf 'a' || sh -c 'echo ok'", "cat <<'EOF' > notes.md\ncat ~/.claude/duet-data/.env\nEOF",
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
+  })
+
+  test('a quoted rooted path with a space is a path, not a message; a message that starts with a slash is still a message', () => {
+    for (const text of [`cat "C:/Users/John Smith/.claude/duet-data/.env"`, `cat '/home/u/my files/.claude/duet-data/.env'`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    expect(namesKeyFile('git commit -m "/duet: keys live in ~/.claude/duet-data/.env"')).toBe(false)
+  })
+
+  test('Windows spellings: backslash paths, $env:USERPROFILE, %USERPROFILE%', () => {
+    for (const text of [
+      'Get-Content C:\\Users\\u\\.claude\\duet-data\\.env', 'Get-Content "$env:USERPROFILE\\.claude\\duet-data\\.env"', 'Get-Content ${env:HOME}/.claude/duet-data/.env',
+      'type %USERPROFILE%\\.claude\\duet-data\\.env',
+    ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+  })
+
+  test('a search rooted above the key folder covers the key file; one beside it does not', () => {
+    for (const [path, want] of [['/home/u/.claude', true], ['~/.claude', true], ['/home/u', true], ['/home', true], ['/', true], ['/home/u/.claude/duet-data', true],
+      ['/home/u/.claude/agents', false], ['/w', false], ['', false], ['/home/user2', false]] as const) expect([path, searchCoversKeyFile(path, '/home/u')]).toEqual([path, want])
+    expect(searchCoversKeyFile('C:\\Users\\U', 'C:/Users/u')).toBe(true)
+  })
+
+  test('a base URL is checked whole: no whitespace, control character or backslash anywhere', () => {
+    for (const u of ['https://a.com/v1 foo', 'https://a.com/v1\n', 'https://evil.com\\.good.com/v1', 'https://a.com/v\u0007']) expect([u, isAllowedBaseUrl(u)]).toEqual([u, false])
+    expect(isAllowedBaseUrl('https://gw.example.com/v1')).toBe(true)
+  })
+
+  test('the saved note says when the same variable in the environment wins over the file', () => {
+    expect(savedNote('chmod 600', false, 'GEMINI_API_KEY')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it', 'GEMINI_API_KEY in your environment wins; unset it to use this key.'])
+    expect(savedNote('chmod 600', false, '')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it'])
   })
 })
 

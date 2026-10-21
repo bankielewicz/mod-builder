@@ -276,6 +276,11 @@ export function namesKeyFile(text: string): boolean {
   return reaches(text, 0)
 }
 
+/** Red skeleton: today's behaviour (only the folder or below). */
+export function searchCoversKeyFile(path: string, _home: string): boolean {
+  return namesKeyFolder(path)
+}
+
 /** True when a Grep's or Glob's path, glob or pattern reaches the key file or its folder (a search over the folder reads the file). */
 export function namesKeyFolder(text: string): boolean {
   const t = text.trim()
