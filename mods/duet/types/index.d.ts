@@ -16,7 +16,7 @@ export type ProviderTest = {
   /** The base URL the test reached ('' for none), so a custom endpoint that moved shows as untested. */
   host: string
 }
-export type TaskStatus = 'running' | 'done' | 'error' | 'refused'
+export type TaskStatus = 'running' | 'done' | 'error' | 'refused' | 'stopped'
 export type Sandbox = 'read-only' | 'workspace-write'
 
 /** What a handoff carried, shown when a row is selected. */

@@ -1033,6 +1033,66 @@ export function deliveryText(a: { id: string; label: string; model: string; sand
 
 export const READ_ONLY_CANDIDATE = 'read-only run: no files changed'
 
+/** The reason of a `$.prompt.submit` answer that queued nothing, or null when it was queued; an empty or odd reason is still a drop. */
+export function dropOf(answer: unknown): string | null {
+  if (answer === null || typeof answer !== 'object' || !('drop' in answer)) return null
+  const drop = (answer as { drop: unknown }).drop
+  return typeof drop === 'string' && drop !== '' ? drop : 'dropped with no reason'
+}
+
+/** A drop the engine gave after Stop, which the next main turn's end may retry (#119); any other drop is another hook's choice. */
+export function retryableDrop(reason: string): boolean {
+  return reason.includes('the session was stopped and nobody has sent input since') || reason.includes('was removed from the queue before it ran')
+}
+
+/**
+ * A waited run whose event was abandoned (#119): the engine killed Codex, so it is neither done nor failed. Usually the
+ * person's Esc; next.signal also aborts when a hook above settles first or the budget runs out, hence 'usually'.
+ */
+export const STOPPED = 'stopped: cancelled (usually Esc)'
+
+/** After Esc the engine refuses process calls, so git reads nothing and a comparison would invent changes. */
+export const STOPPED_CANDIDATE = 'stopped: files not compared'
+
+/**
+ * A stopped run that could write, compared just after the stop from outside the aborted hook (#119): what changed
+ * since the run began, or the placeholder when git gave no reading (`null`), so a failed read isn't every file changed.
+ */
+export function stoppedCandidateOf(before: string | null, after: string | null): string {
+  return before === null || after === null ? STOPPED_CANDIDATE : `stopped: ${candidateOf(before, after)}`
+}
+
+/**
+ * How a Codex run ends (#119): its status; whether its files are compared now, after the stop (git is refused in the
+ * aborted dispatch, so a timer does it) or not at all (a read-only run writes nothing); the candidate when there is no
+ * comparison to make now; and its toast.
+ */
+export function outcomeOf(o: { id: string; type: string; failure: string; isStopped: boolean; sandbox: Sandbox }): { status: TaskStatus; compare: 'none' | 'now' | 'after'; candidate: string; toast: string } {
+  const isReadOnly = o.sandbox === 'read-only'
+  const compare = isReadOnly ? 'none' : o.isStopped ? 'after' : 'now'
+  const candidate = isReadOnly ? READ_ONLY_CANDIDATE : o.isStopped ? STOPPED_CANDIDATE : ''
+  const status: TaskStatus = o.isStopped ? 'stopped' : o.failure ? 'error' : 'done'
+  const toast = o.isStopped ? `${o.id} ${STOPPED}` : o.failure ? `${o.id} failed on codex: ${o.failure}` : `${o.id} done on codex · ${o.type}`
+  return { status, compare, candidate, toast: toast.slice(0, 80) }
+}
+
+/** An editing run's candidate when git couldn't read the folder before or after it (#119, Codex on PR #123). */
+export const UNREAD_CANDIDATE = 'files not compared: git could not read the folder'
+
+/** What an editing run changed; a failed git read (`null`) is no reading, not an empty tree. */
+export function candidateFrom(before: string | null, after: string | null): string {
+  return before === null || after === null ? UNREAD_CANDIDATE : candidateOf(before, after)
+}
+
+/**
+ * What a `$.process.spawn` error means for a Codex run: after `next.signal` aborted it is the person's stop,
+ * never a fallback (#119, probe on 2.1.306); with output already read, a failure; before any, spawn couldn't start.
+ */
+export function spawnErrorAction(at: { started: boolean; aborted: boolean }): 'stop' | 'fail' | 'fallback' {
+  if (at.aborted) return 'stop'
+  return at.started ? 'fail' : 'fallback'
+}
+
 /**
  * `git status --porcelain` lines as status + path. The leading space is part
  * of the status column (` M a.ts`), so lines must not be trimmed at the
@@ -1109,9 +1169,20 @@ export function lostOnReload(tasks: Task[], mine: ReadonlySet<string>, now: numb
   return { tasks: next, lost }
 }
 
-/** Codex runs in flight of any kind (routed agents and reviews): what the concurrency limit admits against. */
-export function codexRunning(tasks: Task[]): number {
-  return tasks.filter(t => t.provider === 'codex' && t.status === 'running').length
+/**
+ * Codex runs in flight of any kind (routed agents and reviews), what the concurrency limit admits against: running
+ * Codex rows and the runs this module started, each once. /clear empties the rows while those runs go on (#119).
+ */
+export function liveRuns(tasks: Task[], mine: ReadonlySet<string>): number {
+  const ids = new Set(mine)
+  for (const t of tasks) if (t.provider === 'codex' && t.status === 'running') ids.add(t.id)
+  return ids.size
+}
+
+/** The next row id, past every row and every id still taken, so a run that outlived /clear keeps its own row (#119). */
+export function idAfter(tasks: Task[], taken: Iterable<string>): string {
+  const n = [...tasks.map(t => t.id), ...taken].reduce((m, id) => Math.max(m, Number(id.slice(1)) || 0), 0)
+  return `d${n + 1}`
 }
 
 /** Why a Codex run was refused at the limit. */
@@ -1262,8 +1333,9 @@ export function compact(n: number): string {
 export function countsOf(tasks: Task[]): string {
   const running = tasks.filter(t => t.status === 'running').length
   const done = tasks.filter(t => t.status === 'done').length
+  const stopped = tasks.filter(t => t.status === 'stopped').length
   const failed = tasks.filter(t => t.status === 'error' || t.status === 'refused').length
-  return [running && `${running} running`, `${done} done`, failed && `${failed} failed`].filter(Boolean).join(' · ')
+  return [running && `${running} running`, `${done} done`, stopped && `${stopped} stopped`, failed && `${failed} failed`].filter(Boolean).join(' · ')
 }
 
 /** The folded status line; undefined when nothing ran on Codex. */
@@ -1300,7 +1372,7 @@ const FAILED_MARK: Partial<Record<TaskStatus, string>> = { error: '✕ ', refuse
 /** The dim line under a row: error or refusal, a review's verdict, a running row's note, else the description. */
 export function subText(t: Task, columns: number): string {
   const mark = FAILED_MARK[t.status] ?? ''
-  const showsDetail = mark !== '' || ((t.kind === 'review' || t.status === 'running') && t.detail !== '')
+  const showsDetail = mark !== '' || ((t.kind === 'review' || t.status === 'running' || t.status === 'stopped') && t.detail !== '')
   const s = showsDetail ? `${mark}${t.detail}` : `"${t.description}"`
   return s.length > columns ? `${s.slice(0, Math.max(0, columns - 1))}…` : s
 }
@@ -1329,9 +1401,10 @@ export function demoTasks(now: number): Task[] {
   const base = { model: 'gpt-5-codex', endedAt: null, envelope: null, detail: '', tokens: 0 }
   const env: Envelope = { specVersion: '3fa9c21', base: '45798a0', candidate: 'no files changed', sandbox: 'read-only', scope: '/work/app', role: 'code-explorer' }
   return [
-    { ...base, id: 'd5', provider: 'codex', kind: 'agent', subagentType: 'code-explorer', status: 'running', startedAt: now - 72_000, tokens: 38_000, description: 'Find every caller of parseConfig and list risky ones', envelope: env },
-    { ...base, id: 'd4', provider: 'codex', kind: 'review', subagentType: '--base main', status: 'done', startedAt: now - 400_000, endedAt: now - 240_000, tokens: 61_000, description: 'review --base main', detail: 'verdict: changes requested (1 high, 2 medium, 0 low)' },
-    { ...base, id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'done', startedAt: now - 900_000, endedAt: now - 780_000, tokens: 24_000, description: 'Summarise README.md', envelope: { ...env, role: '', candidate: 'no files changed' } },
+    { ...base, id: 'd6', provider: 'codex', kind: 'agent', subagentType: 'code-explorer', status: 'running', startedAt: now - 72_000, tokens: 38_000, description: 'Find every caller of parseConfig and list risky ones', envelope: env },
+    { ...base, id: 'd5', provider: 'codex', kind: 'review', subagentType: '--base main', status: 'done', startedAt: now - 400_000, endedAt: now - 240_000, tokens: 61_000, description: 'review --base main', detail: 'verdict: changes requested (1 high, 2 medium, 0 low)' },
+    { ...base, id: 'd4', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'done', startedAt: now - 900_000, endedAt: now - 780_000, tokens: 24_000, description: 'Summarise README.md', envelope: { ...env, role: '', candidate: 'no files changed' } },
+    { ...base, id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'stopped', startedAt: now - 960_000, endedAt: now - 950_000, tokens: 2_000, description: 'Check the error handling', detail: STOPPED, envelope: { ...env, candidate: STOPPED_CANDIDATE } },
     { ...base, id: 'd2', provider: 'codex', kind: 'agent', subagentType: 'Explore', status: 'error', startedAt: now - 1_000_000, endedAt: now - 996_000, description: 'Map the auth flow', detail: 'codex: not signed in. Run `codex login`, then retry.' },
     { ...base, id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'test-writer', status: 'refused', startedAt: now - 1_100_000, endedAt: now - 1_100_000, description: 'Add tests for the parser', detail: 'limit: 2 Codex runs already running' },
   ]

@@ -2,12 +2,12 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import {
-  agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
+  agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
-  claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, codexRunning, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, ROLE_PREFIX,
+  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -34,7 +34,7 @@ const STILL_BEHIND_TOAST = 'Duet is still behind another tab: ctrl+x tab, then a
 /** How long after asking for the front the pane is read again (#31). */
 const FRONT_CHECK_MS = 500
 const COLORS = { accent: '#D97757', success: '#7FB685', warn: '#E0B15A', error: '#E06C6C' } as const
-const STATUS_COLOR = { running: COLORS.accent, done: COLORS.success, error: COLORS.error, refused: COLORS.warn } as const
+const STATUS_COLOR = { running: COLORS.accent, done: COLORS.success, error: COLORS.error, refused: COLORS.warn, stopped: COLORS.warn } as const
 const YES = 'Yes, send to Codex'
 const NO = 'No'
 
@@ -94,6 +94,10 @@ let rawOptions: unknown = {}
 let ticker: Timer | null = null
 /** Codex runs this module instance started; a running row not in here was cut off by a reload. */
 const mine = new Set<string>()
+/** The consent answer given in this module: /clear, /resume and /branch reset the atom, and it is written back (#119). */
+let consentGiven: 'yes' | 'no' | null = null
+/** Answers Stop dropped, submitted again when the next main turn ends (#119). */
+let held: { text: string; note: string }[] = []
 
 // ── Pane, status, ticker ─────────────────────────────────────────────────
 
@@ -158,7 +162,7 @@ async function putTask($: EngineInterface, task: Task): Promise<void> {
 async function addRefused($: EngineInterface, make: (id: string) => Task): Promise<Task> {
   let added: Task | null = null
   await update($, tasks, list => {
-    added = make(idAfter(list))
+    added = make(idAfter(list, mine))
     return [added, ...list]
   })
   await refreshStatus($)
@@ -170,25 +174,25 @@ async function patchTask($: EngineInterface, id: string, patch: Partial<Task>): 
   await refreshStatus($)
 }
 
-function idAfter(list: Task[]): string {
-  const n = list.reduce((m, t) => Math.max(m, Number(t.id.slice(1)) || 0), 0)
-  return `d${n + 1}`
-}
-
 async function nextId($: EngineInterface): Promise<string> {
-  return idAfter(await read($, tasks))
+  return idAfter(await read($, tasks), mine)
 }
 
-/** Admits a run under the concurrency limit, its row added in the same write: the row, or null at the limit. */
+/**
+ * Admits a run under the concurrency limit, its row added in the same write: the row, or null at the limit. An admitted
+ * run joins `mine` here, the one place, as soon as the write lands (not in `update`'s function, which may run again).
+ */
 async function admit($: EngineInterface, make: (id: string) => Task): Promise<Task | null> {
   let admitted: Task | null = null
   await update($, tasks, list => {
-    const t = make(idAfter(list))
-    admitted = codexRunning(list) < options.maxConcurrent ? t : null
+    const t = make(idAfter(list, mine))
+    admitted = liveRuns(list, mine) < options.maxConcurrent ? t : null
     return admitted ? [t, ...list] : list
   })
+  const row = admitted as Task | null
+  if (row) mine.add(row.id)
   await refreshStatus($)
-  return admitted
+  return row
 }
 
 // ── Files ────────────────────────────────────────────────────────────────
@@ -483,14 +487,28 @@ async function baseCommit($: EngineInterface): Promise<string> {
   return (await git($, ['rev-parse', '--short', 'HEAD'])) || 'none'
 }
 
-/** The dirty tree with each file's content hash, for comparing before and after an editing run. */
-async function porcelain($: EngineInterface): Promise<string> {
-  const status = await git($, ['status', '--porcelain', '--untracked-files=all'])
+/** git's output, or null when git failed or couldn't start: a failed read is no reading, not an empty tree (#119). */
+async function gitRead($: EngineInterface, args: string[]): Promise<string | null> {
+  try {
+    const r = await $.process.run(['git', '--no-optional-locks', ...args], { timeoutMs: 10_000 })
+    // Trim only the end: `git status --porcelain` lines start with a meaningful space.
+    return r.exitCode === 0 ? r.stdout.replace(/\s+$/, '') : null
+  } catch {
+    return null
+  }
+}
+
+/** The dirty tree with each file's content hash, for comparing before and after an editing run; null when git can't read it. */
+async function porcelain($: EngineInterface): Promise<string | null> {
+  const status = await gitRead($, ['status', '--porcelain', '--untracked-files=all'])
+  if (status === null) return null
   const paths = hashablePaths(status).slice(0, 500)
   const hashes: Record<string, string> = {}
   if (paths.length) {
-    const out = (await git($, ['hash-object', '--', ...paths])).split('\n')
-    paths.forEach((path, at) => (hashes[path] = out[at] ?? ''))
+    const out = await gitRead($, ['hash-object', '--', ...paths])
+    if (out === null) return null
+    const lines = out.split('\n')
+    paths.forEach((path, at) => (hashes[path] = lines[at] ?? ''))
   }
   return snapshotOf(status, hashes)
 }
@@ -501,6 +519,8 @@ async function porcelain($: EngineInterface): Promise<string> {
 async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (options.consent === 'allow') return ''
   const now = await read($, consent)
+  // An answer from before a reload: the atom kept it, the module didn't (Codex, PR #123).
+  if (now === 'yes' || now === 'no') consentGiven = now
   if (now === 'yes') return ''
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
@@ -511,16 +531,17 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
     return consentRefusal(err)
   }
   const ok = answer === YES
+  consentGiven = ok ? 'yes' : 'no'
   await update($, consent, () => (ok ? 'yes' : 'no'))
   return ok ? '' : 'you declined sending this repo to Codex this session'
 }
 
 // ── Running Codex ────────────────────────────────────────────────────────
 
-type Ran = { run: Run; failure: string }
+type Ran = { run: Run; failure: string; isStopped?: true }
 
 /** Runs Codex, folding its JSONL into the task as it streams; stops at the timeout. */
-async function runCodex($: EngineInterface, id: string, argv: string[], input: string | undefined): Promise<Ran> {
+async function runCodex($: EngineInterface, id: string, argv: string[], input: string | undefined, signal?: AbortSignal): Promise<Ran> {
   const launch = codexLaunch(argv, input)
   let run = EMPTY_RUN
   let carry = ''
@@ -554,7 +575,10 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     const end = await stream.result
     return { run, failure: failureOf(run, end.code, stderr) }
   } catch (err) {
-    if (started) return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
+    const action = spawnErrorAction({ started, aborted: signal?.aborted === true })
+    // Esc: the engine killed Codex and refuses new process calls, so no fallback (#119).
+    if (action === 'stop') return { run, failure: STOPPED, isStopped: true }
+    if (action === 'fail') return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
     // spawn could not start: try a one-shot run (also the path tests exercise)
     const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
     // The cap cuts a longer timeoutMinutes: say so on the row while it runs.
@@ -566,6 +590,8 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
       const folded = foldAll(r.stdout)
       return { run: folded, failure: failureOf(folded, r.exitCode, r.stderr) }
     } catch (err2) {
+      // Esc while the one-shot run goes on: the engine aborted it, so this is a stop too (#119).
+      if (spawnErrorAction({ started: false, aborted: signal?.aborted === true }) === 'stop') return { run, failure: STOPPED, isStopped: true }
       return { run, failure: fallbackFailure(String((err2 as Error)?.message ?? err2), Date.now() - fallbackAt, cap) }
     }
   } finally {
@@ -578,21 +604,32 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; searchNote: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
-type Finished = { run: Run; failure: string; footer: string; endedAt: number }
+type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; searchNote: string; sandbox: Sandbox; baseSha: string; before: string | null; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Finished = { run: Run; failure: string; footer: string; endedAt: number; isStopped?: true }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
-async function runJob($: EngineInterface, j: Job): Promise<Finished> {
-  const { run, failure } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt)
+async function runJob($: EngineInterface, j: Job, signal?: AbortSignal): Promise<Finished> {
+  const { run, failure, isStopped } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt, signal)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
-  const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : candidateOf(j.before, await porcelain($))
-  const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure }
+  const end = outcomeOf({ id: j.id, type: j.type, failure, isStopped: isStopped === true, sandbox: j.sandbox })
+  const cand = end.compare === 'now' ? candidateFrom(j.before, await porcelain($)) : end.candidate
+  const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: end.status, detail: failure }
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
-  $.ui.toast((failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
+  $.ui.toast(end.toast)
+  // Esc keeps what Codex already wrote. git is refused in this aborted dispatch, but runs from a timer (probe, 2.1.306).
+  if (end.compare === 'after') $.clock.after(0, () => void compareAfterStop($, j.id, j.before).catch(() => undefined))
   const footer = footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped })
-  return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer }
+  return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer, ...(isStopped ? { isStopped } : {}) }
+}
+
+/** Puts on a stopped run's row the files Codex changed before Esc, and says so; the placeholder stays when git can't read the folder. */
+async function compareAfterStop($: EngineInterface, id: string, before: string | null): Promise<void> {
+  const candidate = stoppedCandidateOf(before, await porcelain($))
+  if (candidate === STOPPED_CANDIDATE) return
+  await update($, tasks, list => list.map(t => (t.id === id && t.envelope ? { ...t, envelope: { ...t.envelope, candidate } } : t)))
+  $.ui.toast(`${id} ${candidate}`.slice(0, 80))
 }
 
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */
@@ -609,11 +646,26 @@ async function finishInBackground($: EngineInterface, j: Job, outputFile: string
   } finally {
     mine.delete(j.id)
   }
-  // Never quietly: if the message can't be queued, the toast points at the answer on disk.
-  await $.prompt.submit({ text }).catch(() => $.ui.toast(`${j.id} ended on codex · answer in ${outputFile}`.slice(0, 80)))
+  await deliver($, text, `${j.id} ended on codex · answer in ${outputFile}`)
 }
 
-async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null): Promise<{ deny: string } | { result: ReturnType<typeof agentResult> | ReturnType<typeof launchedRecord> }> {
+/**
+ * Hands a finished run's text to the main session. Never quietly: a drop for Stop is kept for the next main
+ * turn's end (#119); any drop or failure toasts `note`, which points at the answer on disk, once.
+ */
+async function deliver($: EngineInterface, text: string, note: string, isRetry = false): Promise<void> {
+  let reason: string | null
+  try {
+    reason = dropOf(await $.prompt.submit({ text }))
+  } catch (err) {
+    reason = String((err as Error)?.message ?? err) || 'not queued'
+  }
+  if (reason === null) return
+  if (retryableDrop(reason)) held.push({ text, note })
+  if (!isRetry) $.ui.toast(note.slice(0, 80))
+}
+
+async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null, signal: AbortSignal): Promise<{ deny: string } | { result: ReturnType<typeof agentResult> | ReturnType<typeof launchedRecord> }> {
   const type = role ? ROLE_PREFIX + role.name : e.subagent_type?.trim() || DEFAULT_TYPE
   const cwd = await $.session.cwd()
   const startedAt = Date.now()
@@ -628,11 +680,10 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
   if (blocked) return refuse(blocked)
   const task = await admit($, rowOf)
   if (!task) {
-    return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
+    return refuse(limitText(liveRuns(await read($, tasks), mine), options.maxConcurrent))
   }
 
   const id = task.id
-  mine.add(id)
   let handedOff = false
   try {
     const { def, isCut, note: searchNote } = role ? { def: roleDef(role), isCut: false, note: '' } : await agentDef($, cwd, type)
@@ -658,7 +709,8 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null)
       return { result: launchedRecord({ id, description: e.description, prompt: e.prompt, outputFile, model: options.model }) }
     }
 
-    const r = await runJob($, job)
+    const r = await runJob($, job, signal)
+    if (r.isStopped) return { deny: `duet: ${STOPPED}; the ${type} subagent did not finish on Codex.` }
     if (r.failure) return { deny: `duet: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.${searchNote ? `\n${searchNote}` : ''}` }
     return { result: agentResult({ id, prompt: e.prompt, text: r.run.text, footer: r.footer, durationMs: r.endedAt - startedAt, run: r.run, model: options.model }) }
   } catch (err) {
@@ -698,8 +750,10 @@ async function startReview($: EngineInterface, target: ReviewTarget): Promise<Re
   const blocked = await ensureConsent($, cwd)
   if (blocked) return refuse(blocked)
   const admitted = await admit($, rowOf)
-  if (!admitted) return refuse(limitText(codexRunning(await read($, tasks)), options.maxConcurrent))
-  void finishReview($, admitted, target, cwd).catch(() => undefined)
+  if (!admitted) return refuse(limitText(liveRuns(await read($, tasks), mine), options.maxConcurrent))
+  void finishReview($, admitted, target, cwd)
+    .catch(() => undefined)
+    .finally(() => mine.delete(admitted.id))
   return { started: true, reason: '' }
 }
 
@@ -1366,6 +1420,9 @@ export const register: Register = (on, raw) => {
   options = readOptions(raw)
 
   on('session.start', async ($, e, next) => {
+    // A reload keeps the consent atom and restarts the module: copy the answer back, so /clear can restore it (Codex, PR #123).
+    const answered = await read($, consent).catch(() => 'unasked' as const)
+    if (answered === 'yes' || answered === 'no') consentGiven = answered
     // Rows still running that this module didn't start were cut off by a reload: say so, never quietly.
     let lost: Task[] = []
     await update($, tasks, list => {
@@ -1377,7 +1434,8 @@ export const register: Register = (on, raw) => {
       await refreshStatus($)
       for (const t of lost) {
         void logRun($, t).catch(() => undefined)
-        if (t.kind === 'agent') void $.prompt.submit({ text: deliveryText({ id: t.id, label: t.subagentType, model: t.model, sandbox: t.envelope?.sandbox ?? 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: t.detail }) }).catch(() => undefined)
+        // Through deliver: a drop after Stop is retried and any other is toasted, never lost quietly (PR #123 review).
+        if (t.kind === 'agent') void deliver($, deliveryText({ id: t.id, label: t.subagentType, model: t.model, sandbox: t.envelope?.sandbox ?? 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: t.detail }), `${t.id} was cut off by a reload; /duet show ${t.id}`).catch(() => undefined)
       }
     }
     for (const r of rolesFor(options.sandbox)) {
@@ -1442,7 +1500,7 @@ export const register: Register = (on, raw) => {
     // duet: roles always go to Codex (main loop only); codexAgents types unless named, isolated or nested.
     const route = routeOf(options, e)
     if (route.to === 'deny') return { deny: route.reason }
-    if (route.to === 'codex') return routeToCodex($, e, route.role)
+    if (route.to === 'codex') return routeToCodex($, e, route.role, next.signal)
     const startedAt = Date.now()
     const ran = await next(e)
     if (!e.agentId && ran.deny === undefined && !ran.isError) {
@@ -1455,6 +1513,13 @@ export const register: Register = (on, raw) => {
     return ran
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the Codex handoff failed unexpectedly; the subagent did not run. See claude --debug.' }))
 
+  // /clear, /resume and /branch reset every atom and don't run session.start; startup and compaction reset nothing (#119).
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    const given = consentGiven
+    if (given) await update($, consent, () => given).catch(() => undefined)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('turn.complete', async ($, e, next) => {
     const agentId = e.agentId
     if (agentId) {
@@ -1466,9 +1531,17 @@ export const register: Register = (on, raw) => {
         return rest
       })
       if (taken) void logRun($, claudeTaskOf(taken, e, Date.now())).catch(() => undefined)
-    } else if (await read($, isDemo)) {
-      await update($, isDemo, () => false)
-      await update($, selected, () => 0)
+    } else {
+      if (held.length) {
+        // Emptied first; a retry refused again is kept by deliver for a later turn's end. Detached: a submit resolves only when its turn starts.
+        const due = held
+        held = []
+        for (const d of due) void deliver($, d.text, d.note, true).catch(() => undefined)
+      }
+      if (await read($, isDemo)) {
+        await update($, isDemo, () => false)
+        await update($, selected, () => 0)
+      }
     }
     return next(e)
   })

@@ -912,3 +912,92 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
 - **Done means:** a Windows host with a UNC home folder can store keys; a store that can't be written never leaves a result that looks kept.
 - **Test fixed in its own commit:** the engine under test collapses a UNC path's leading `//` on Linux, so the file is found by its ending.
 
+## Change 0.3.3 (2026-10-21)
+
+> Issue #119, step 2, with the owner's decisions (2026-10-21, #119's first comment):
+> - for the run list after `/clear`, "Cheap guard only": the owner won't `/clear` with runs going, and would press Esc first;
+> - consent: "Keep it";
+> - dropped answers: "(b) Retry + toast";
+> - stopping a background run is #121.
+
+- **Why:** Anthropic's mod docs (`docs/research/Mods/`) describe practices duet didn't follow. The probes on #119 back each change:
+  - `/clear` resets atoms, and `classic.SessionStart` fires after the reset (2.1.296, 2.1.306).
+  - On 2.1.306, Esc kills a waited `$.process.spawn` and makes its loop throw `… aborted`. A `$.process.run` after that rejects at once. State writes, toasts and store writes still work. A `void` spawn survives.
+- **What changes:**
+  1. **The limit and ids after `/clear`.** `admit` counts `liveRuns(rows, mine)`: running Codex rows and this module's runs, each once. A review joins `mine` while it runs. `idAfter` (moved to `duet-logic.ts`) skips `mine`'s ids, so a run that outlived `/clear` keeps its own row.
+  2. **Esc on a waited run.** The Agent hook passes `next.signal` to `routeToCodex`, then `runJob` and `runCodex`. A spawn error after the abort is `spawnErrorAction` `stop`. Before 0.3.3, the "spawn could not start" branch ran when no chunk had come yet: it patched a fallback note, tried a `$.process.run` the engine refuses, and recorded `codex could not start: …`.
+     - The row ends `stopped`. `TaskStatus` gains it, `STATUS_COLOR` gives it the warn colour, and `countsOf` counts it apart from failures.
+     - Its candidate is `STOPPED_CANDIDATE`: after the abort, git reads nothing, and a comparison would invent changes.
+     - The toast reads `<id> stopped: you pressed Esc`.
+     - Stats count a stopped run as not ok, the same as before.
+  3. **A dropped delivery.** `finishInBackground` hands its text to `deliver`. A `{ drop }` for Stop (`retryableDrop`: the engine's two reasons) is kept in `held`, and the next main `turn.complete` empties `held` and resubmits detached. Any other drop or failure toasts `<id> ended on codex · answer in <file>` once. Before 0.3.3, only a rejection toasted, and a drop was lost quietly.
+  4. **Consent after `/clear`.** `ensureConsent` keeps the answer in the module (`consentGiven`). A `classic.SessionStart` hook on `clear`, `resume` and `fork`, with `.catch`, writes it back. Startup and compaction reset nothing, so they are left out.
+- **Not changed:**
+  - The pane's run list still empties after `/clear`, by the owner's choice.
+  - Background runs and reviews pass no signal (#121).
+  - The lost-on-reload delivery in `session.start` keeps its quiet `.catch`: no test can set up a reload's lost row, and a reload isn't a Stop.
+  - Where an organization manages Claude Code, `classic.*` hooks don't run in an installed plugin, so consent resets there.
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `liveRuns`, `idAfter`, `spawnErrorAction`, `STOPPED`, `STOPPED_CANDIDATE`, `dropOf`, `retryableDrop`, and `countsOf`.
+  - `hooks/register.tsx`, `types/index.d.ts` (`TaskStatus`), and the tests: `duet-logic.test.ts`, plus `routing.test.ts`, whose harness gains a `drops` option.
+  - `README.md`, this SPEC, and version 0.3.3 in `plugin.json` and the marketplace entry.
+  - New reach: one hook, `classic.SessionStart{source=clear|resume|fork}`, which only writes duet's own atom.
+- **TDD:**
+
+  | Part | Red | Green |
+  | :- | :- | :- |
+  | Limit and ids | `eba95bf` | `5b3c04d` |
+  | Stop | `114b495`, `444fefa` | `43daee8` |
+  | Dropped delivery | `1bc1d6c` | `183c3cd` |
+  | Consent | `72f0f88` | `8589e30` |
+
+  Each red failed by assertion. The consent test watches state writes, since the kit can't reset atoms the way `/clear` does.
+- **Version:** 0.3.3 (patch).
+- **Live check** (2026-10-21, Claude Code 2.1.306). A private tmux session ran `claude --plugin-dir <worktree>/mods/duet` with the installed duet turned off. A stand-in `codex` first on `PATH` read its input, slept, then printed three JSONL lines, so no Codex quota was used:
+  1. **Esc on a waited run** (`duet:codex-advisor`, the stand-in still silent). The status line read `codex: 0 done · 1 stopped`, and the toast `duet: d1 stopped: you pressed Esc`. The stand-in was gone, and its call log shows one `exec`, with no fallback.
+  2. **Consent after `/clear`.** Answered yes once, then `/clear`. The next delegation started Codex with no question.
+  3. **A dropped answer.** A background `duet:codex-reviewer` run (40 s) was going, and the turn was stopped with Esc mid-stream. When the stand-in finished, no turn started. After the next message (`Reply only: ok`) and Claude's `ok`, duet's message carrying d3's answer arrived. The toast wasn't caught: it lasts 4 s, and the screen was read after that. The UI test covers it.
+- **Review before Codex** (an advisor pass, 2026-10-21):
+  - **The demo shows every state** (house rule), so it gains a `stopped` row: the demo's ids now run d6 to d1. Red `679b6bb`. Green `eb9cea1` also fixes what the red test found: `subText` showed a stopped row's description, not why it stopped. A stop shows its detail with no ✕ mark. `7ee7578` updates the test that pins the demo's size, which is built to fail first when the demo changes.
+  - **Esc during the one-shot fallback** is a stop too. The fallback's `catch` applies the same `spawnErrorAction` rule. This is wiring only: the kit can't abort an event, and the path is rare (the fallback runs only when streaming can't start).
+  - **Checked on the live check's disk:**
+    - Both stopped runs were logged in their session's `runs.jsonl` (`ok: false`), so `$.fs.write` works after the abort.
+    - After `/clear` the session id changed, so `d1` went into a new session folder, with no file collision.
+- **What a stop leaves behind** (a side note on PR #123: Esc keeps Codex's partial edits).
+  - **Probe** (2.1.306, a throwaway mod in a private tmux session): after the abort, `$.process.run(git)` is refused inside the hook (`… aborted`) but runs from a `$.clock.after` callback, at 0 ms and at 1.5 s.
+  - **Change:** a stopped run that could write gets `STOPPED_CANDIDATE` first. A 0 ms timer then runs `compareAfterStop`: `git rev-parse --is-inside-work-tree`, then the same porcelain snapshot. `stoppedCandidateOf(before, after)` writes `stopped with Esc: <what changed>` on the row and toasts it. With no git reading, the placeholder stays, so a failed read isn't counted as every file changed.
+  - **Commits:** red `797917e`, green `e5d9852`. The README says Esc undoes nothing and to check `git status`.
+  - **Live check:** a stand-in `codex` under `workspace-write` (`duet:codex-implementer`) wrote one file and hung, and Esc followed. The toast read `d1 stopped with Esc: files changed during this run: 1 (duet-stop-probe.txt)`, and the stand-in was gone. The file was removed afterwards, which left the worktree clean.
+- **PR #123 review round 1.** Codex raised three P2 findings, and a `/code-review` at xhigh tested each with probes and mutation runs. Its advisor pass decided what is fixed here and what is filed. Each finding was checked again here.
+
+  | Finding | Commits |
+  | :- | :- |
+  | 1. The reach table | `9fddde6` |
+  | 2. A failed git read (Codex P2) | red `d95039f`, green `b9174cf` |
+  | 3. Consent after a reload (Codex P2) | `a87a43e` |
+  | 4. `dropOf` | red `18b3c3d`, green `378bb06` |
+  | 5. The lost-on-reload message | `df22e80` |
+  | 6. Run ownership | `0f5afd9` |
+  | 7. `codexRunning` removed | `3e60d71`, `48491a8` |
+  | 8. `outcomeOf` | red `35326a9`, green `8ceb24f` |
+  | 9. The stop wording | red `6d76a3a`, green `0d9192e` |
+
+  1. **The reach table.** Its code spans held unescaped pipes, the older regex entries' included, and these split the cells. They are escaped now, and the gating-hooks and processes rows name 0.3.3's hook and timer. Checked with GitHub's Markdown API: 12 rows of 2 cells.
+  2. **A failed git read is no reading.** `git()` turned a failed read into `''`, so every file dirty before an editing run counted as changed by it. That happened on the done path and after a stop alike. The routing test reproduced it as `files changed during this run: 2`. Now `gitRead` returns `null` for a failed or unstartable git, `porcelain` passes it through, `candidateFrom` records `files not compared: git could not read the folder`, and `stoppedCandidateOf` keeps the placeholder. `compareAfterStop`'s `rev-parse` pre-check goes.
+  3. **Consent after a reload.** The module copy is filled from the atom at `session.start` and in `ensureConsent`. This is wiring only: the kit can't build "atom set, module copy empty", since a `state.get` hook is ignored and the test `$` has no `$.state`. Live: Yes, then `/reload-plugins`, then `/clear`, then a delegation that asked nothing.
+  4. **`dropOf`** returns `null` for a queued prompt and a reason for any drop, so `{ drop: '' }` is no longer taken as delivered.
+  5. **The lost-on-reload message** goes through `deliver`. This is wiring only.
+  6. **`admit` owns run ownership.** An admitted run joins `mine` as soon as the write lands, before `refreshStatus`. It isn't added inside `update`'s function, which runs again on a version miss (2.1.306 types).
+  7. **`codexRunning` is removed.** Its test now goes through `liveRuns`.
+  8. **`outcomeOf`** decides a run's end: its status, whether to compare now, after the stop or not at all, its candidate, and its toast. Before this, the review's mutation that mapped a stop to `error` survived every test.
+  9. **The stop wording** is `stopped: cancelled (usually Esc)`, and the candidates read `stopped: …`. `next.signal` also aborts when a hook above settles first or the budget runs out. The live checks above quote the old strings, which were the output at the time.
+
+  Not fixed here:
+  - **Filed as an issue:** Codex's third P2 (held answers aren't scoped to their session, so they survive `/resume` and are lost on a reload), and the consent answer carrying over to another folder on `/resume`.
+  - **Still not covered by any test**, because the kit can't abort an event or reset atoms; the live checks cover them: `next.signal` reaching `runCodex`, the `$.clock.after` comparison, the fallback's stop branch, and the hydration.
+  - **Live check** (2.1.306, the stand-in `codex` under `workspace-write`, consent `ask`):
+    1. Yes, then Esc after the stand-in wrote its file. The toast read `d1 stopped: files changed during this run: 1 (duet-stop-probe.txt)`.
+    2. `/reload-plugins`, then `/clear`, then a second delegation that asked no consent question. Esc on it read `d1 stopped: no files changed by this run`, since the file was unchanged since that run began.
+
+    The file was removed afterwards.
+

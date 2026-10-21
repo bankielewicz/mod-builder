@@ -70,7 +70,7 @@ describe('ui', () => {
     expect(text).toMatch(/demo tasks/)
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await mount($, surface)
-      for (const re of [/running/, /verdict: changes requested/, /✕ codex: not signed in/, /refused/, /code-explorer/, /spec 3fa9c21/]) {
+      for (const re of [/running/, /verdict: changes requested/, /✕ codex: not signed in/, /refused/, /stopped: cancelled \(usually Esc\)/, /code-explorer/, /spec 3fa9c21/]) {
         expect(await ui.find({ type: 'Text', text: re })).toBeDefined()
       }
       await ui.unmount()
@@ -122,9 +122,9 @@ describe('ui', () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
     await $.command.run({ command: 'duet', args: 'demo', origin: COMPOSER, presentation: PRESENTATION })
     await clock.settle() // the demo's tasks are set without being awaited
-    // The demo lists 5 tasks and bodyRows 10 draws 2 of them (d5, d4), so d4 is the last drawn row. If the demo or the
+    // The demo lists 6 tasks and bodyRows 10 draws 2 of them (d6, d5), so d5 is the last drawn row. If the demo or the
     // pane's chrome changes, these two fail first and say which.
-    expect(demoTasks(0).length).toBe(5)
+    expect(demoTasks(0).length).toBe(6)
     expect(rowsThatFit(10)).toBe(2)
     const props = { ...PANE, scroll: { offset: 0, bodyRows: 10 } }
     let ui = await mount($, 'terminal', props)
@@ -133,7 +133,7 @@ describe('ui', () => {
       await clock.settle()
       await ui.unmount()
       ui = await mount($, 'terminal', props)
-      expect([press, (await ui.find({ type: 'Text', text: /▸ d4 / })) !== undefined]).toEqual([press, true])
+      expect([press, (await ui.find({ type: 'Text', text: /▸ d5 / })) !== undefined]).toEqual([press, true])
     }
     await ui.unmount()
   })

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   modelWarning, parseModelCatalog,
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
-  isInside, isProtectedPath, isRouted, resolveFrom, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
+  isInside, isProtectedPath, isRouted, resolveFrom, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   footerOf, statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, configText, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
@@ -361,8 +361,8 @@ describe('review fixes', () => {
   })
 
   test('admission counts reviews too; session folders are filesystem-safe', () => {
-    const t = (kind: 'agent' | 'review', status: 'running' | 'done') => ({ id: 'd1', provider: 'codex', kind, status }) as never
-    expect(codexRunning([t('agent', 'running'), t('review', 'running'), t('review', 'done')])).toBe(2)
+    const t = (id: string, kind: 'agent' | 'review', status: 'running' | 'done') => ({ id, provider: 'codex', kind, status }) as never
+    expect(logic.liveRuns([t('d1', 'agent', 'running'), t('d2', 'review', 'running'), t('d3', 'review', 'done')], new Set())).toBe(2)
     expect(sessionFolderOf('a1b2-c3/../x')).toBe('a1b2-c3_.._x')
     expect(sessionFolderOf('')).toBe('unknown')
   })
@@ -1121,5 +1121,123 @@ describe('paneAction: one rule for a bare pane command (#31)', () => {
     const entry = (id: string, isShown: boolean) => ({ id, title: id, isShown, isFocused: false, isPlaced: true })
     expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet-config')).toBe('show')
     expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet')).toBe('close')
+  })
+})
+
+// #119 gap 1 (the owner's cheap guard): /clear empties the tasks atom while the runs this module started go on.
+describe('#119: the concurrency limit and row ids hold after /clear', () => {
+  const t = (id: string, status: 'running' | 'done', provider: 'codex' | 'claude' = 'codex', kind: 'agent' | 'review' = 'agent') =>
+    ({ id, provider, kind, subagentType: 'x', model: '', status, startedAt: 0, endedAt: null, tokens: 0, description: '', detail: '', envelope: null }) as Task
+
+  test('liveRuns counts running Codex rows and the runs this module started, each once', () => {
+    const list = [t('d1', 'running'), t('d2', 'done'), t('d3', 'running', 'codex', 'review'), t('c1', 'running', 'claude')]
+    expect(logic.liveRuns?.(list, new Set(['d1', 'd3']))).toBe(2)
+    // After /clear the list is empty and two runs are still going.
+    expect(logic.liveRuns?.([], new Set(['d1', 'd3']))).toBe(2)
+    expect(logic.liveRuns?.(list, new Set())).toBe(2)
+  })
+
+  test('idAfter skips the ids of runs still going, so a run that outlived /clear keeps its own row', () => {
+    expect(logic.idAfter?.([], ['d4'])).toBe('d5')
+    expect(logic.idAfter?.([t('d2', 'done')], [])).toBe('d3')
+    expect(logic.idAfter?.([t('d7', 'done')], ['d3'])).toBe('d8')
+    expect(logic.idAfter?.([], [])).toBe('d1')
+    // An id with no number after its letter counts as 0, so it never blocks the next id.
+    expect(logic.idAfter?.([t('dx', 'done')], ['d'])).toBe('d1')
+  })
+})
+
+// #119 gap 2 (probe, 2.1.306): Esc kills a waited spawn, its loop throws "… aborted", and $ calls after it reject.
+describe('#119: a Codex run the person stopped with Esc', () => {
+  test('a spawn error after an abort is a stop, never a fallback, whether or not output came', () => {
+    expect(logic.spawnErrorAction?.({ started: false, aborted: true })).toBe('stop')
+    expect(logic.spawnErrorAction?.({ started: true, aborted: true })).toBe('stop')
+    expect(logic.spawnErrorAction?.({ started: true, aborted: false })).toBe('fail')
+    expect(logic.spawnErrorAction?.({ started: false, aborted: false })).toBe('fallback')
+  })
+
+  test('a stopped run is counted as stopped, neither done nor failed', () => {
+    expect(logic.STOPPED).toBe('stopped: cancelled (usually Esc)')
+    const t = (id: string, status: string) => ({ id, provider: 'codex', kind: 'agent', subagentType: 'x', model: '', status, startedAt: 0, endedAt: 1, tokens: 0, description: '', detail: '', envelope: null }) as unknown as Task
+    expect(logic.countsOf([t('d1', 'stopped'), t('d2', 'done'), t('d3', 'error')])).toBe('1 done · 1 stopped · 1 failed')
+  })
+})
+
+describe('#119: a stopped run makes no file comparison', () => {
+  // After the abort the engine refuses process calls, so git status reads '' and a comparison would invent changes.
+  test('its candidate says the files were not compared', () => {
+    expect(logic.STOPPED_CANDIDATE).toBe('stopped: files not compared')
+  })
+})
+
+describe('#119: which prompt drops are retried', () => {
+  test('only the two the engine gives after Stop', () => {
+    expect(logic.retryableDrop?.('the session was stopped and nobody has sent input since')).toBe(true)
+    expect(logic.retryableDrop?.('the prompt was removed from the queue before it ran')).toBe(true)
+    expect(logic.retryableDrop?.('duet: $.prompt.submit: the command was removed from the queue before it ran')).toBe(true)
+    expect(logic.retryableDrop?.('a policy hook held it')).toBe(false)
+    expect(logic.retryableDrop?.('')).toBe(false)
+  })
+
+  test('dropOf reads the reason of a { drop } answer; anything else is no drop (null)', () => {
+    expect(logic.dropOf?.({ drop: 'why' })).toBe('why')
+    expect(logic.dropOf?.({ text: 'sent' })).toBe(null)
+    expect(logic.dropOf?.(undefined)).toBe(null)
+  })
+
+  // PR #123 review: an empty or odd reason is still a drop, so the answer must not be lost quietly.
+  test('an empty or non-string drop reason is still a drop', () => {
+    expect(logic.dropOf?.({ drop: '' })).toBe('dropped with no reason')
+    expect(logic.dropOf?.({ drop: 7 })).toBe('dropped with no reason')
+    expect(logic.retryableDrop?.('dropped with no reason')).toBe(false)
+  })
+})
+
+describe('#119: a stopped row in the pane', () => {
+  const t = (detail: string) => ({ id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'x', model: '', status: 'stopped', startedAt: 0, endedAt: 1, tokens: 0, description: 'Check the error handling', detail, envelope: null }) as unknown as Task
+  test('shows why it stopped, with no failure mark', () => {
+    expect(logic.subText(t(logic.STOPPED), 80)).toBe('stopped: cancelled (usually Esc)')
+    expect(logic.subText(t(''), 80)).toBe('"Check the error handling"')
+  })
+})
+
+// Probe (2.1.306): git is refused inside the aborted hook but runs from a $.clock.after callback, so a stopped run that
+// could write is compared just after the stop (the side note on PR #123: Esc keeps Codex's partial edits).
+describe('#119: what a stopped run that could write left behind', () => {
+  test('the comparison made after the stop says what changed, or that nothing did', () => {
+    const before = ' M\tsrc/a.ts\th1'
+    expect(logic.stoppedCandidateOf?.(before, ' M\tsrc/a.ts\th2\n??\tsrc/b.ts\th3')).toBe('stopped: files changed during this run: 2 (src/a.ts, src/b.ts)')
+    expect(logic.stoppedCandidateOf?.(before, before)).toBe('stopped: no files changed by this run')
+  })
+
+  test('with no git reading (null), the placeholder stays rather than counting every file as changed', () => {
+    expect(logic.stoppedCandidateOf?.(' M\tsrc/a.ts\th1', null)).toBe(logic.STOPPED_CANDIDATE)
+  })
+})
+
+describe('#119: a git read that failed (null) is never a comparison (Codex, PR #123)', () => {
+  test('candidateFrom: either side unread says so; both read compares', () => {
+    expect(logic.candidateFrom?.(' M\ta.ts\th1', null)).toBe('files not compared: git could not read the folder')
+    expect(logic.candidateFrom?.(null, '')).toBe('files not compared: git could not read the folder')
+    expect(logic.candidateFrom?.(' M\ta.ts\th1', ' M\ta.ts\th1')).toBe('no files changed by this run')
+  })
+
+  test('stoppedCandidateOf keeps the placeholder when the reading before the run failed too', () => {
+    expect(logic.stoppedCandidateOf(null, ' M\ta.ts\th1')).toBe(logic.STOPPED_CANDIDATE)
+  })
+})
+
+// PR #123 review: the end-of-run decision is pure, so a test pins it (mapping a stop to 'error' survived every test before).
+describe('#119: outcomeOf, how a Codex run ends', () => {
+  const end = (failure: string, isStopped: boolean, sandbox: 'read-only' | 'workspace-write') => logic.outcomeOf?.({ id: 'd4', type: 'test-writer', failure, isStopped, sandbox })
+  test('done, failed and stopped, read-only and writing', () => {
+    expect(end('', false, 'read-only')).toEqual({ status: 'done', compare: 'none', candidate: logic.READ_ONLY_CANDIDATE, toast: 'd4 done on codex · test-writer' })
+    expect(end('', false, 'workspace-write')).toEqual({ status: 'done', compare: 'now', candidate: '', toast: 'd4 done on codex · test-writer' })
+    expect(end('codex: not signed in', false, 'workspace-write')).toEqual({ status: 'error', compare: 'now', candidate: '', toast: 'd4 failed on codex: codex: not signed in' })
+    expect(end(logic.STOPPED, true, 'workspace-write')).toEqual({ status: 'stopped', compare: 'after', candidate: logic.STOPPED_CANDIDATE, toast: `d4 ${logic.STOPPED}` })
+    expect(end(logic.STOPPED, true, 'read-only')).toEqual({ status: 'stopped', compare: 'none', candidate: logic.READ_ONLY_CANDIDATE, toast: `d4 ${logic.STOPPED}` })
+  })
+  test('the toast stays within 80 characters', () => {
+    expect(end('x'.repeat(200), false, 'read-only')!.toast.length).toBe(80)
   })
 })

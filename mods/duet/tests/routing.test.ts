@@ -22,14 +22,15 @@ const logOf = (session: string) => `${DATA}/sessions/${session}/runs.jsonl`
 const runLine = (provider: 'codex' | 'claude', type: string, id = 'x') =>
   JSON.stringify({ id, at: 0, provider, kind: 'agent', type, model: '', ms: 1000, tokens: 100, ok: true }) + '\n'
 
-type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; questions: string[]; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
+type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; questions: string[]; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; dropped: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; logGate?: Promise<void> } = {}): Seen {
-  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, questions: [], toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], maxReads: 0, timeouts: [], clock: null }
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; logGate?: Promise<void>; drops?: string[]; dirty?: string; gitFailAfterCodex?: boolean } = {}): Seen {
+  const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, questions: [], toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], dropped: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
-  on('prompt.submit', ($: any, e: any) => (seen.submitted.push(e.text), { text: e.text }))
+  // A drop answers the prompt in Claude Code's place while o.drops lasts, as after Stop (#119).
+  on('prompt.submit', ($: any, e: any) => (o.drops?.length ? (seen.dropped.push(e.text), { drop: o.drops.shift() }) : (seen.submitted.push(e.text), { text: e.text })))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer, usage: e.usage }))
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: undefined }))
@@ -104,6 +105,10 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     // `oldGit`: git before 2.31, which has no --path-format.
     if (argv[0] === 'git' && o.oldGit && argv.some(a => a.startsWith('--path-format'))) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unknown option', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git' && argv.includes('--git-common-dir')) return { value: { exitCode: 0, stdout: `${o.gitDirs ?? '/w/.git\n/w/.git'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    // `dirty`: what git status prints before Codex runs; `gitFailAfterCodex`: git status exits 128 once Codex has run (#119).
+    if (argv[0] === 'git' && argv.includes('status') && o.gitFailAfterCodex && seen.argv.length > 0) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unable to read index', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'git' && argv.includes('status') && o.dirty) return { value: { exitCode: 0, stdout: o.dirty, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'git' && argv.includes('hash-object')) return { value: { exitCode: 0, stdout: argv.slice(argv.indexOf('--') + 1).map((_, i) => `h${i}`).join('\n'), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git') return { value: { exitCode: 0, stdout: argv.includes('rev-parse') ? 'abc1234\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     seen.argv.push(argv)
     seen.stdin.push(e.init?.stdin ?? '')
@@ -1465,3 +1470,84 @@ describe('0.3.0: provider keys are never blanked for Codex (the owner\'s decisio
   })
 })
 
+
+// #119 gap 3: after Stop, $.prompt.submit resolves { drop } and queues nothing (the owner's option b: retry at turn.complete, toast as the fallback).
+describe('#119: a background answer that Stop dropped', () => {
+  const STOPPED_DROP = 'the session was stopped and nobody has sent input since'
+  const OUT = '/home/u/.claude/duet-data/sessions/s1/d1.out.md'
+  const turnEnds = ($: any, agentId?: string) => $.turn.complete({ turnId: 't', answer: '', durationMs: 0, isAborted: false, usage: null, ...(agentId ? { agentId } : {}) })
+
+  test('is kept, named in a toast, and submitted again when the next main turn ends', { options: { codexConsent: 'allow' } }, async ($, on) => {
+    const seen = engine(on, { drops: [STOPPED_DROP] })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    await seen.clock.settle()
+    expect(seen.dropped.length).toBe(1)
+    expect(seen.submitted.length).toBe(0)
+    expect(seen.toasts.some(t => t.includes('d1') && t.includes('answer in'))).toBe(true)
+    // A subagent's turn ending is not the person's next input.
+    await turnEnds($, 'sub-1')
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(0)
+    await turnEnds($)
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(1)
+    expect(seen.submitted[0]).toContain('Background agent duet-d1 (duet:codex-reviewer) finished on Codex')
+    expect(seen.files[OUT]).toContain('Found 3 callers.')
+  })
+
+  test("another hook's drop is not retried: the toast points at the answer on disk", { options: { codexConsent: 'allow' } }, async ($, on) => {
+    const seen = engine(on, { drops: ['a policy hook held it'] })
+    await start($)
+    await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    await seen.clock.settle()
+    expect(seen.toasts.some(t => t.includes('answer in'))).toBe(true)
+    await turnEnds($)
+    await seen.clock.settle()
+    expect(seen.submitted.length).toBe(0)
+    expect(seen.dropped.length).toBe(1)
+  })
+})
+
+// #119 gap 1, the owner's choice: the consent answer outlives /clear, /resume and /branch, which reset every atom.
+describe('#119: the Codex consent answer outlives /clear', () => {
+  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+  test('a classic.SessionStart after /clear writes the answer back; one after compaction writes nothing', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($: any, e: any, next: any) => (writes.push({ key: e.key, value: e.value }), next(e)))
+    on('classic.SessionStart', () => ({}))
+    const seen = engine(on)
+    await start($)
+    await review($)
+    expect(seen.asked).toBe(1)
+    writes.length = 0
+    await $.classic.SessionStart({ source: 'compact' })
+    expect(writes.filter(w => w.key === 'consent')).toEqual([])
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(writes.filter(w => w.key === 'consent')).toEqual([{ key: 'consent', value: 'yes' }])
+  })
+
+  test('with nothing answered yet, /clear writes no answer', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', ($: any, e: any, next: any) => (writes.push({ key: e.key, value: e.value }), next(e)))
+    on('classic.SessionStart', () => ({}))
+    engine(on)
+    await start($)
+    await $.classic.SessionStart({ source: 'clear' })
+    expect(writes.filter(w => w.key === 'consent')).toEqual([])
+  })
+})
+
+// #119, Codex on PR #123: a git read that fails is no reading, not an empty tree, or every file dirty before the run counts as changed by it.
+describe('#119: a failed git read after an editing run', () => {
+  test('records that the files were not compared, not that the dirty ones changed', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow' } }, async ($, on) => {
+    const seen = engine(on, { dirty: ' M a.ts\n M b.ts\n', gitFailAfterCodex: true, agents: { '/home/u/.claude/agents/test-writer.md': '---\nname: test-writer\ndescription: Writes tests.\ntools: Read, Write, Edit, Bash\n---\nWrite tests.' } })
+    await start($)
+    const r: any = await $.tool.call(call({ subagent_type: 'test-writer' }) as never)
+    const text = JSON.stringify(r)
+    expect(text).not.toContain('files changed during this run')
+    expect(text).toContain('files not compared')
+    expect(seen.argv.length).toBe(1)
+  })
+})
