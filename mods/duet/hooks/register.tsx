@@ -550,6 +550,9 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
   let timedOut = false
   let started = false
   const stream = $.process.spawn(launch)
+  // `result` rejects when the stream closes early (a stop, the timeout, Esc) and only the normal end awaits it, so it is
+  // observed here; a catch doesn't consume it (gotchas.md's HookStream entry; Codex on PR #126).
+  void stream.result?.catch?.(() => undefined)
   // The Stop key and /duet stop (#121): ending the stream kills Codex, and the loop ends cleanly (probe, 2.1.306).
   let stopAsked = false
   stoppers.set(id, () => {
