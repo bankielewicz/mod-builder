@@ -1144,3 +1144,19 @@ describe('#119: the concurrency limit and row ids hold after /clear', () => {
     expect(logic.idAfter?.([], [])).toBe('d1')
   })
 })
+
+// #119 gap 2 (probe, 2.1.306): Esc kills a waited spawn, its loop throws "… aborted", and $ calls after it reject.
+describe('#119: a Codex run the person stopped with Esc', () => {
+  test('a spawn error after an abort is a stop, never a fallback, whether or not output came', () => {
+    expect(logic.spawnErrorAction?.({ started: false, aborted: true })).toBe('stop')
+    expect(logic.spawnErrorAction?.({ started: true, aborted: true })).toBe('stop')
+    expect(logic.spawnErrorAction?.({ started: true, aborted: false })).toBe('fail')
+    expect(logic.spawnErrorAction?.({ started: false, aborted: false })).toBe('fallback')
+  })
+
+  test('a stopped run is counted as stopped, neither done nor failed', () => {
+    expect(logic.STOPPED).toBe('stopped: you pressed Esc')
+    const t = (id: string, status: string) => ({ id, provider: 'codex', kind: 'agent', subagentType: 'x', model: '', status, startedAt: 0, endedAt: 1, tokens: 0, description: '', detail: '', envelope: null }) as unknown as Task
+    expect(logic.countsOf([t('d1', 'stopped'), t('d2', 'done'), t('d3', 'error')])).toBe('1 done · 1 stopped · 1 failed')
+  })
+})
