@@ -153,6 +153,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** `$.command.register` accepts `immediate: true` on 2.1.296 and 2.1.306: it resolves
   `{ command }` and the command runs. A build that refused the field would lose the command behind the
   house `.catch(() => {})`. Whether 2.1.296 runs it mid-turn wasn't probed (#119).
+- **[probe]** Esc during a `tool.call` hook that waits on a `$.process.spawn` loop aborts `next.signal`,
+  and the engine kills the child: the loop throws `<plugin>: $.process.spawn(<cmd>) aborted`, and a
+  `$.process.run` the hook starts after that rejects `<plugin>: $.process.run(<cmd>) aborted` without
+  running. A spawn the same hook started `void` before returning survives Esc and runs until the module
+  unloads. Probed on 2.1.306 (#119) with a throwaway mod holding a Bash call over `sleep` children, in a
+  private tmux session, checked with `pgrep -x sleep`. Not probed on 2.1.296.
 - **[probe]** Under `claude plugin test`, nothing beneath the plugin answers `session.end`: a test that
   fires it needs `on('session.end', ($, e) => ({ sessionId: e.sessionId }))`, as `session.start` needs
   its stub.

@@ -72,8 +72,10 @@ Code, `classic.*` hooks don't run in a plugin a person installs, and the reset s
   tests fail at teardown.
 - **Long work a hook waits on** (a process, a model call, a poll) stops when the event is abandoned,
   as when the person presses Esc. Pass `next.signal` to each call that takes one (`$.clock.sleep`,
-  `$.model.complete`'s options). A `$.process.spawn` request takes none (2.1.306 types), so end its
-  stream when the signal aborts. Background work has no event to abandon: give it a stop command.
+  `$.model.complete`'s options). A `$.process.spawn` the hook waits on is ended by the engine when the
+  signal aborts, and every `$` call after that rejects `… aborted` (`gotchas.md`). So in the `catch`,
+  check `next.signal.aborted` and record a stop the person asked for, not a failure, and start no
+  fallback. Work started with `void` survives Esc: give it a stop command.
 - **`$.prompt.submit` resolves `{ drop }` rather than rejecting** when it can't queue the prompt:
   `the session was stopped and nobody has sent input since` until the person's next input after Stop,
   or `the prompt was removed from the queue before it ran` for one queued at Stop. Treat a `drop` as a
