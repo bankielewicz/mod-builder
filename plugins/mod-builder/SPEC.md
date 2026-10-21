@@ -893,4 +893,5 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **What still works after an abort.** `conventions.md` said every `$` call after the abort rejects. That overstated the probe: only process calls reject. State, store, toast and file writes still work, so recording the stop in the hook's `catch` is viable. The text now says so, and gotchas.md's Esc entry adds the after-abort calls that were probed (#119's probe, duet 0.3.3's live check).
   - **The SPEC template's "after /clear" row** names the managed-settings exception, since the person approves that row.
 - **From PR #124's review:** `classic.SessionStart` fires before `session.start` at startup and at `claude --continue` (`source: resume`); probed on 2.1.296 and 2.1.306. gotchas.md gains it as `[probe]`, and the `/clear` convention says to skip the reseed when the module hasn't started.
+- **After a stop, process calls work again from a timer** (probe, 2.1.306): `git` is refused in the aborted hook but runs from `$.clock.after(0, …)`. gotchas.md and conventions.md say so; duet 0.3.3 (PR #123) uses it to name what a stopped run changed.
 
