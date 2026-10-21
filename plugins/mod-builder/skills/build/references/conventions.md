@@ -105,9 +105,11 @@ on('command.run', { command: NAME }, async ($, e) => {
   only when every branch only shows something: it opens, closes or fronts a pane, shows or hides what the
   mod draws, fills the prompt box for the person to finish, or reads (files and folders included). Leave
   it off a command with a branch that starts work (a run, a review), asks a
-  question, changes what the mod counts or saves, sets an option (`$.config.set` on the plugin's own
-  option reloads the plugin) or makes a billed call. The pane-command and band archetypes set it; guard
-  (its demo asks), watcher (`reset`) and command-only (it records notes) don't.
+  question, writes state the turn's own hooks write (a band's per-turn counts: a mid-turn write races
+  them), changes what the mod counts or saves, sets an option (`$.config.set` on the plugin's own
+  option reloads the plugin) or makes a billed call. The pane-command archetype sets it. Band (its demo
+  writes the per-turn counts), guard (its demo asks), watcher (`reset`) and command-only (it records
+  notes) don't.
 - A bare pane command reads `paneAction(await $.ui.panes(), NAME)` (a pure rule in the mod's logic
   module; the pane-command archetype has it) rather than a saved flag. Three states: `open` when the
   pane isn't listed, `close` when the surface shows it (`isShown`), and `show` when it is open as a

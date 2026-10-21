@@ -20,7 +20,7 @@ async function showDemo($: EngineInterface): Promise<void> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command
-      .register({ name: '__NAME__', description: __DESCRIPTION_JS__, argumentHint: '[demo | hide | show]', immediate: true })
+      .register({ name: '__NAME__', description: __DESCRIPTION_JS__, argumentHint: '[demo | hide | show]' })
       .catch(() => undefined)
     return next(e)
   })

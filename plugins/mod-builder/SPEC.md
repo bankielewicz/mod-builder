@@ -869,13 +869,20 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
      - Commands: when to set `immediate: true`. Every branch only shows something: it opens, closes or fronts a pane, shows or hides the drawing, fills the prompt box, or reads. The wording covers `/modlab` (#119 step 4): `new` fills the prompt box, and `<mod>` reads the mods folder and fronts the pane.
   2. `references/gotchas.md`: the probe above, as two `[probe]` entries, and a third from the Esc probe on 2.1.306 (#119's gap 2 comment). A waited spawn is killed and its loop throws `… aborted`, a `$` call after that rejects, and a `void` spawn survives.
   3. `templates/SPEC.template.md`: HOUSE rows "mid-turn" and "after /clear". Mod Lab's `slotsOf` reads only `archetype` and `built` by name (`hooks/mod-builder-logic.ts:1180-1181`), so nothing else changes.
-  4. The pane-command and band archetypes register their command with `immediate: true`. Their branches only show something: pane-command opens, closes or fronts the pane and fills it with demo items, and band shows or hides the band or draws a demo. The other archetypes leave it off. Guard's demo asks a question, which would compete with the turn's own. Watcher's `reset` changes what it counts. Command-only records and clears notes.
+  4. The pane-command archetype registers its command with `immediate: true`. Every branch opens, closes or fronts the pane, or fills it with demo items. The other archetypes leave it off:
+     - Band's demo writes the per-turn `turn` atom, which its own `tool.call` and `turn.complete` hooks write too.
+     - Guard's demo asks a question, which would compete with the turn's own.
+     - Watcher's `reset` changes what it counts.
+     - Command-only records and clears notes.
 - **Not changed:**
   - No archetype gains a `classic.SessionStart` hook. None copies anything into atoms at `session.start`, and their atoms count this conversation only.
   - Mod Lab's own commands are #119's later step.
-- **What gets touched:** the two references, the SPEC template, the pane-command and band archetypes' `register.tsx.tpl` and `ui.test.tsx.tpl`, this SPEC, and the version in `plugin.json` and the marketplace entry. No new reach.
-- **Tests:** each of the two templates' UI tests records the `command.register` call and expects `[['<name>', true]]`.
-  - **Red:** pane-command `8ea387e`, band `a86f0e3`. Scaffolded, each fails with `Received [["check-…", undefined]]`.
-  - **Green** `6864e42`: each registration gains `immediate: true`.
+- **What gets touched:** the two references, the SPEC template, the pane-command archetype's `register.tsx.tpl` and `ui.test.tsx.tpl`, the band archetype's `ui.test.tsx.tpl` (a test that its command waits), this SPEC, and the version in `plugin.json` and the marketplace entry. No new reach.
+- **Tests:** the pane-command template's UI test records the `command.register` call and expects `[['<name>', true]]`.
+  - **Red** `8ea387e`: scaffolded, it fails with `Received [["check-pane", undefined]]`.
+  - **Green** `6864e42`.
+  - Band's test now expects no `immediate`; see review round 1.
 - **Live check** (2.1.306, a private tmux session, `claude --plugin-dir <pane-command scaffold>`): a turn was still running ("Pontificating… (34s)") when `/check-pane` was typed, and the pane opened at once, before the turn ended.
 - **Version:** 0.2.27 (patch: docs and one template field).
+- **PR #122 review round 1** (Codex, three P2 findings, each checked against the code and the docs):
+  - **The band's demo races the turn.** `showDemo` makes two detached `update`s of `turn`, which the archetype's `tool.call` and `turn.complete` hooks also write. Run mid-turn, the demo overwrites live counts, or comes back after `turn.complete` cleared it. The red test `a86f0e3` was wrong. `84824e7` fixes it to expect no `immediate` (it failed with `Received [["check-band", true]]`). The template drops the field, and the rule now leaves `immediate` off a branch that writes state the turn's own hooks write.
