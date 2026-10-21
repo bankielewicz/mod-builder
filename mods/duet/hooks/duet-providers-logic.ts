@@ -169,10 +169,13 @@ const HOME_SPELLINGS = /\$\{HOME\}|\$HOME\b|\$\{env:(?:USERPROFILE|HOME)\}|\$env
 const normPath = (value: string) => value.replace(HOME_SPELLINGS, '~').replace(/\\/g, '/')
 const ROOTED = /^(?:~|\/|\.{1,2}\/|[A-Za-z]:\/)/
 /**
- * A rooted path inside a word: stops at code punctuation (`,` `]` `}` `)` quotes), keeps whole `{a,b}` and `[…]` groups. A `]`
- * or `}` that a later `/` follows in the same run is part of a segment (`/home/u]/…`, Codex 4337056082), not code closing.
+ * A rooted path inside a word: stops at code punctuation (`,` `]` `}` `)` quotes), keeps whole `{a,b}` and `[…]` groups. A `]`,
+ * `}` or `,` that a later `/` follows in the same run is part of a segment (`/home/u]/…`, `/home/u,team/…`: Codex 4337056082,
+ * 4337185228), not code closing. A word is read both ways (`PATH_IN_WORD_STRICT` stops at every one of them), so a list of
+ * paths (`['/home/u/.claude/duet-data/.env','/b']`) still has its first path read on its own.
  */
-const PATH_IN_WORD = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[\]}](?=[^\s"'<>|;&(),{}[\]]*\/)|[^\s"'<>|;&(),{}[\]])*)/g
+const PATH_IN_WORD = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[\]},](?=[^\s"'<>|;&(){}[\]]*\/)|[^\s"'<>|;&(),{}[\]])*)/g
+const PATH_IN_WORD_STRICT = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[^\s"'<>|;&(),{}[\]])*)/g
 
 /** A path as a file tool gives it (`$HOME`, `~`, `\`, `//`, `/.`, `..` allowed) reaches the key file or its folder. */
 export function keyPathReaches(path: string): boolean {
@@ -181,14 +184,18 @@ export function keyPathReaches(path: string): boolean {
 
 /** A shell word holds a rooted path (`~/`, `/`, `./`, `$HOME/`, `C:\`) that reaches the key file, at its start or after `=`, `:`, `,`, `(`, `[` or `{`. */
 function wordReaches(value: string): boolean {
-  for (const m of normPath(value).matchAll(PATH_IN_WORD)) if (pathReaches(m[1]!)) return true
+  const n = normPath(value)
+  for (const re of [PATH_IN_WORD, PATH_IN_WORD_STRICT]) for (const m of n.matchAll(re)) if (pathReaches(m[1]!)) return true
   return false
 }
 
-/** A quoted word with spaces is a message, unless it is a rooted path (a home folder with a space) and reads like one: no `: `. */
+/**
+ * A quoted word with spaces is a message, unless it is one rooted path (a home folder with a space): no `: `, and no space
+ * that starts another rooted path, as in `/duet keeps keys in ~/.claude/…` (Codex 4337185247).
+ */
 function spacedPathReaches(value: string): boolean {
   const n = normPath(value).trim()
-  return ROOTED.test(n) && !/:\s/.test(n) && pathReaches(n)
+  return ROOTED.test(n) && !/:\s/.test(n) && !/\s(?:~|\/|\.{1,2}\/|[A-Za-z]:\/)/.test(n) && pathReaches(n)
 }
 
 /** The command's own name, past `sudo`, `env` and `VAR=value` prefixes. */
@@ -328,8 +335,10 @@ export function searchCoversKeyFile(path: string, home: string): boolean {
   // Any `.claude` folder counts only while the home folder is unknown; with it known, the prefix check below finds the home
   // one, and a project's own `.claude` is not it (Codex 4337056086).
   if (p === '/' || (!h && /(?:^|\/)\.claude$/i.test(p))) return true
-  const keyFolder = `${h || '~'}/.claude/duet-data`.toLowerCase()
-  return keyFolder.startsWith(`${p.toLowerCase()}/`)
+  // Windows paths (a drive or a UNC share) compare without case; POSIX ones with it (Codex 4337185238).
+  const keyFolder = `${h || '~'}/.claude/duet-data`
+  const fold = (s: string) => (/^(?:[A-Za-z]:\/|\/\/)/.test(keyFolder) ? s.toLowerCase() : s)
+  return fold(keyFolder).startsWith(`${fold(p)}/`)
 }
 
 /** True when a Grep's or Glob's path, glob or pattern reaches the key file or its folder (a search over the folder reads the file). */
