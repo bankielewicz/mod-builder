@@ -1157,7 +1157,7 @@ describe('#119: a Codex run the person stopped with Esc', () => {
   })
 
   test('a stopped run is counted as stopped, neither done nor failed', () => {
-    expect(logic.STOPPED).toBe('stopped: you pressed Esc')
+    expect(logic.STOPPED).toBe('stopped: cancelled (usually Esc)')
     const t = (id: string, status: string) => ({ id, provider: 'codex', kind: 'agent', subagentType: 'x', model: '', status, startedAt: 0, endedAt: 1, tokens: 0, description: '', detail: '', envelope: null }) as unknown as Task
     expect(logic.countsOf([t('d1', 'stopped'), t('d2', 'done'), t('d3', 'error')])).toBe('1 done · 1 stopped · 1 failed')
   })
@@ -1166,7 +1166,7 @@ describe('#119: a Codex run the person stopped with Esc', () => {
 describe('#119: a stopped run makes no file comparison', () => {
   // After the abort the engine refuses process calls, so git status reads '' and a comparison would invent changes.
   test('its candidate says the files were not compared', () => {
-    expect(logic.STOPPED_CANDIDATE).toBe('stopped with Esc: files not compared')
+    expect(logic.STOPPED_CANDIDATE).toBe('stopped: files not compared')
   })
 })
 
@@ -1196,7 +1196,7 @@ describe('#119: which prompt drops are retried', () => {
 describe('#119: a stopped row in the pane', () => {
   const t = (detail: string) => ({ id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'x', model: '', status: 'stopped', startedAt: 0, endedAt: 1, tokens: 0, description: 'Check the error handling', detail, envelope: null }) as unknown as Task
   test('shows why it stopped, with no failure mark', () => {
-    expect(logic.subText(t(logic.STOPPED), 80)).toBe('stopped: you pressed Esc')
+    expect(logic.subText(t(logic.STOPPED), 80)).toBe('stopped: cancelled (usually Esc)')
     expect(logic.subText(t(''), 80)).toBe('"Check the error handling"')
   })
 })
@@ -1206,8 +1206,8 @@ describe('#119: a stopped row in the pane', () => {
 describe('#119: what a stopped run that could write left behind', () => {
   test('the comparison made after the stop says what changed, or that nothing did', () => {
     const before = ' M\tsrc/a.ts\th1'
-    expect(logic.stoppedCandidateOf?.(before, ' M\tsrc/a.ts\th2\n??\tsrc/b.ts\th3')).toBe('stopped with Esc: files changed during this run: 2 (src/a.ts, src/b.ts)')
-    expect(logic.stoppedCandidateOf?.(before, before)).toBe('stopped with Esc: no files changed by this run')
+    expect(logic.stoppedCandidateOf?.(before, ' M\tsrc/a.ts\th2\n??\tsrc/b.ts\th3')).toBe('stopped: files changed during this run: 2 (src/a.ts, src/b.ts)')
+    expect(logic.stoppedCandidateOf?.(before, before)).toBe('stopped: no files changed by this run')
   })
 
   test('with no git reading (null), the placeholder stays rather than counting every file as changed', () => {
