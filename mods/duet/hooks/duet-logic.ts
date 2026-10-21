@@ -1045,18 +1045,21 @@ export function retryableDrop(reason: string): boolean {
   return reason.includes('the session was stopped and nobody has sent input since') || reason.includes('was removed from the queue before it ran')
 }
 
-/** A waited run the person stopped with Esc (#119): the engine killed Codex, so this is neither done nor failed. */
-export const STOPPED = 'stopped: you pressed Esc'
+/**
+ * A waited run whose event was abandoned (#119): the engine killed Codex, so it is neither done nor failed. Usually the
+ * person's Esc; next.signal also aborts when a hook above settles first or the budget runs out, hence 'usually'.
+ */
+export const STOPPED = 'stopped: cancelled (usually Esc)'
 
 /** After Esc the engine refuses process calls, so git reads nothing and a comparison would invent changes. */
-export const STOPPED_CANDIDATE = 'stopped with Esc: files not compared'
+export const STOPPED_CANDIDATE = 'stopped: files not compared'
 
 /**
  * A stopped run that could write, compared just after the stop from outside the aborted hook (#119): what changed
  * since the run began, or the placeholder when git gave no reading (`null`), so a failed read isn't every file changed.
  */
 export function stoppedCandidateOf(before: string | null, after: string | null): string {
-  return before === null || after === null ? STOPPED_CANDIDATE : `stopped with Esc: ${candidateOf(before, after)}`
+  return before === null || after === null ? STOPPED_CANDIDATE : `stopped: ${candidateOf(before, after)}`
 }
 
 /**
