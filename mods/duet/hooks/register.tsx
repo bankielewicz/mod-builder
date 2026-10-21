@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -596,8 +596,19 @@ async function runJob($: EngineInterface, j: Job, signal?: AbortSignal): Promise
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
   $.ui.toast((isStopped ? `${j.id} ${STOPPED}` : failure ? `${j.id} failed on codex: ${failure}` : `${j.id} done on codex · ${j.type}`).slice(0, 80))
+  // Esc keeps what Codex already wrote. git is refused in this aborted dispatch, but runs from a timer (probe, 2.1.306).
+  if (isStopped && j.sandbox !== 'read-only') $.clock.after(0, () => void compareAfterStop($, j.id, j.before).catch(() => undefined))
   const footer = footerOf({ id: j.id, model: options.model, sandbox: j.sandbox, base: j.baseSha, candidate: cand, dropped: j.dropped })
   return { run, failure, endedAt, footer: j.searchNote ? `${j.searchNote}\n${footer}` : footer, ...(isStopped ? { isStopped } : {}) }
+}
+
+/** Puts on a stopped run's row the files Codex changed before Esc, and says so; the placeholder stays when git can't read the folder. */
+async function compareAfterStop($: EngineInterface, id: string, before: string): Promise<void> {
+  const inside = (await git($, ['rev-parse', '--is-inside-work-tree'])) === 'true'
+  const candidate = stoppedCandidateOf(before, inside ? await porcelain($) : null)
+  if (candidate === STOPPED_CANDIDATE) return
+  await update($, tasks, list => list.map(t => (t.id === id && t.envelope ? { ...t, envelope: { ...t.envelope, candidate } } : t)))
+  $.ui.toast(`${id} ${candidate}`.slice(0, 80))
 }
 
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */

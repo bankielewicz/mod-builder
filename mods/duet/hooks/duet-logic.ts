@@ -1051,6 +1051,14 @@ export const STOPPED = 'stopped: you pressed Esc'
 export const STOPPED_CANDIDATE = 'stopped with Esc: files not compared'
 
 /**
+ * A stopped run that could write, compared just after the stop from outside the aborted hook (#119): what changed
+ * since the run began, or the placeholder when git gave no reading (`null`), so a failed read isn't every file changed.
+ */
+export function stoppedCandidateOf(before: string, after: string | null): string {
+  return after === null ? STOPPED_CANDIDATE : `stopped with Esc: ${candidateOf(before, after)}`
+}
+
+/**
  * What a `$.process.spawn` error means for a Codex run: after `next.signal` aborted it is the person's stop,
  * never a fallback (#119, probe on 2.1.306); with output already read, a failure; before any, spawn couldn't start.
  */
