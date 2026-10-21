@@ -133,7 +133,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
+import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -178,6 +178,8 @@ let home = ''
 let sessionId = ''
 /** The issue the pane shows, kept in the module: /clear, /resume and /branch reset focusAtom (#119). */
 let focusKept: number | null = null
+/** The drive's activity line, kept in the module for the same reason (#119). */
+let activityKept: Activity | null = null
 /**
  * A drive: its run, the run's store key and issue, whether it was stopped or handed off, and its generation. A new
  * drive of the same run (a hand-off, then a resume) has a new one, so the old drive's step in flight fails every
@@ -453,7 +455,9 @@ async function rememberAgents($: EngineInterface, run: Run, refs: readonly strin
 
 async function setActivity($: EngineInterface, label: string | null): Promise<void> {
   const since = await $.clock.now()
-  await update($, activityAtom, () => (label ? { label, since } : null))
+  const activity = label ? { label, since } : null
+  activityKept = activity
+  await update($, activityAtom, () => activity)
 }
 
 /**
@@ -1878,6 +1882,10 @@ async function restore($: EngineInterface): Promise<void> {
  * the process goes on under a new session id, and the run's driver record names the old one.
  */
 async function reseed($: EngineInterface): Promise<void> {
+  // A resumed startup fires this before session.start (probed on 2.1.296 and 2.1.306): restore() seeds the pane there.
+  if (!sessionId) return
+  const kept = activityKept
+  if (kept) await update($, activityAtom, () => kept)
   const at = await repoOf($)
   if (!at) return
   const runs = await runsOf($, at.repo)
