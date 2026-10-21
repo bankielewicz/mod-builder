@@ -373,6 +373,13 @@ describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', ()
     ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
   })
 
+  test('Codex 4337056082: a ] or } inside a path segment does not end the path; one that closes code still does', () => {
+    for (const text of ["cat '/home/u]/.claude/duet-data/.env'", "cat '/home/u}/.claude/duet-data/.env'", 'cat /home/u]/.claude/duet-data/.env', 'cat /home/u]x/.claude/duet-data/.env'])
+      expect([text, namesKeyFile(text)]).toEqual([text, true])
+    // A comma still ends the path, so a list of two paths does not run together.
+    expect(namesKeyFile(`python3 -c "x = ['/home/u/.claude/duet-data/.env','/b']"`)).toBe(true)
+  })
+
   test('a quoted rooted path with a space is a path, not a message; a message that starts with a slash is still a message', () => {
     for (const text of [`cat "C:/Users/John Smith/.claude/duet-data/.env"`, `cat '/home/u/my files/.claude/duet-data/.env'`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     expect(namesKeyFile('git commit -m "/duet: keys live in ~/.claude/duet-data/.env"')).toBe(false)
@@ -391,6 +398,10 @@ describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', ()
     for (const [path, want] of [['/home/u/.claude', true], ['~/.claude', true], ['/home/u', true], ['/home', true], ['/', true], ['/home/u/.claude/duet-data', true],
       ['/home/u/.claude/agents', false], ['/w', false], ['', false], ['/home/user2', false]] as const) expect([path, searchCoversKeyFile(path, '/home/u')]).toEqual([path, want])
     expect(searchCoversKeyFile('C:\\Users\\U', 'C:/Users/u')).toBe(true)
+    // Codex 4337056086: a project's own .claude folder is not the home one; with the home folder unknown, any .claude still counts.
+    expect(searchCoversKeyFile('/workspace/app/.claude', '/home/u')).toBe(false)
+    expect(searchCoversKeyFile('/workspace/app/.claude', '')).toBe(true)
+    expect(searchCoversKeyFile('~/.claude', '')).toBe(true)
   })
 
   test('a base URL is checked whole: no whitespace, control character or backslash anywhere', () => {
