@@ -1430,7 +1430,8 @@ export const register: Register = (on, raw) => {
       await refreshStatus($)
       for (const t of lost) {
         void logRun($, t).catch(() => undefined)
-        if (t.kind === 'agent') void $.prompt.submit({ text: deliveryText({ id: t.id, label: t.subagentType, model: t.model, sandbox: t.envelope?.sandbox ?? 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: t.detail }) }).catch(() => undefined)
+        // Through deliver: a drop after Stop is retried and any other is toasted, never lost quietly (PR #123 review).
+        if (t.kind === 'agent') void deliver($, deliveryText({ id: t.id, label: t.subagentType, model: t.model, sandbox: t.envelope?.sandbox ?? 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: t.detail }), `${t.id} was cut off by a reload; /duet show ${t.id}`).catch(() => undefined)
       }
     }
     for (const r of rolesFor(options.sandbox)) {
