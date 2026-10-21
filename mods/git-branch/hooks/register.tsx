@@ -76,6 +76,8 @@ export const register: Register = on => {
       .register({ name: 'git-branch', description: 'A band above the prompt showing the current git branch', argumentHint: '[demo | hide | show | refresh]' })
       .catch(() => undefined)
     const started = await next(e)
+    // A reload starts the module afresh and keeps the atoms: a hide from before it is kept too (Codex P2, PR #127).
+    hiddenKept = await read($, isHidden).catch(() => false)
     hasStarted = true
     void refresh($).catch(() => undefined)
     return started
