@@ -968,4 +968,36 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
   - **Change:** a stopped run that could write gets `STOPPED_CANDIDATE` first. A 0 ms timer then runs `compareAfterStop`: `git rev-parse --is-inside-work-tree`, then the same porcelain snapshot. `stoppedCandidateOf(before, after)` writes `stopped with Esc: <what changed>` on the row and toasts it. With no git reading, the placeholder stays, so a failed read isn't counted as every file changed.
   - **Commits:** red `797917e`, green `e5d9852`. The README says Esc undoes nothing and to check `git status`.
   - **Live check:** a stand-in `codex` under `workspace-write` (`duet:codex-implementer`) wrote one file and hung, and Esc followed. The toast read `d1 stopped with Esc: files changed during this run: 1 (duet-stop-probe.txt)`, and the stand-in was gone. The file was removed afterwards, which left the worktree clean.
+- **PR #123 review round 1.** Codex raised three P2 findings, and a `/code-review` at xhigh tested each with probes and mutation runs. Its advisor pass decided what is fixed here and what is filed. Each finding was checked again here.
+
+  | Finding | Commits |
+  | :- | :- |
+  | 1. The reach table | `9fddde6` |
+  | 2. A failed git read (Codex P2) | red `d95039f`, green `b9174cf` |
+  | 3. Consent after a reload (Codex P2) | `a87a43e` |
+  | 4. `dropOf` | red `18b3c3d`, green `378bb06` |
+  | 5. The lost-on-reload message | `df22e80` |
+  | 6. Run ownership | `0f5afd9` |
+  | 7. `codexRunning` removed | `3e60d71`, `48491a8` |
+  | 8. `outcomeOf` | red `35326a9`, green `8ceb24f` |
+  | 9. The stop wording | red `6d76a3a`, green `0d9192e` |
+
+  1. **The reach table.** Its code spans held unescaped pipes, the older regex entries' included, and these split the cells. They are escaped now, and the gating-hooks and processes rows name 0.3.3's hook and timer. Checked with GitHub's Markdown API: 12 rows of 2 cells.
+  2. **A failed git read is no reading.** `git()` turned a failed read into `''`, so every file dirty before an editing run counted as changed by it. That happened on the done path and after a stop alike. The routing test reproduced it as `files changed during this run: 2`. Now `gitRead` returns `null` for a failed or unstartable git, `porcelain` passes it through, `candidateFrom` records `files not compared: git could not read the folder`, and `stoppedCandidateOf` keeps the placeholder. `compareAfterStop`'s `rev-parse` pre-check goes.
+  3. **Consent after a reload.** The module copy is filled from the atom at `session.start` and in `ensureConsent`. This is wiring only: the kit can't build "atom set, module copy empty", since a `state.get` hook is ignored and the test `$` has no `$.state`. Live: Yes, then `/reload-plugins`, then `/clear`, then a delegation that asked nothing.
+  4. **`dropOf`** returns `null` for a queued prompt and a reason for any drop, so `{ drop: '' }` is no longer taken as delivered.
+  5. **The lost-on-reload message** goes through `deliver`. This is wiring only.
+  6. **`admit` owns run ownership.** An admitted run joins `mine` as soon as the write lands, before `refreshStatus`. It isn't added inside `update`'s function, which runs again on a version miss (2.1.306 types).
+  7. **`codexRunning` is removed.** Its test now goes through `liveRuns`.
+  8. **`outcomeOf`** decides a run's end: its status, whether to compare now, after the stop or not at all, its candidate, and its toast. Before this, the review's mutation that mapped a stop to `error` survived every test.
+  9. **The stop wording** is `stopped: cancelled (usually Esc)`, and the candidates read `stopped: …`. `next.signal` also aborts when a hook above settles first or the budget runs out. The live checks above quote the old strings, which were the output at the time.
+
+  Not fixed here:
+  - **Filed as an issue:** Codex's third P2 (held answers aren't scoped to their session, so they survive `/resume` and are lost on a reload), and the consent answer carrying over to another folder on `/resume`.
+  - **Still not covered by any test**, because the kit can't abort an event or reset atoms; the live checks cover them: `next.signal` reaching `runCodex`, the `$.clock.after` comparison, the fallback's stop branch, and the hydration.
+  - **Live check** (2.1.306, the stand-in `codex` under `workspace-write`, consent `ask`):
+    1. Yes, then Esc after the stand-in wrote its file. The toast read `d1 stopped: files changed during this run: 1 (duet-stop-probe.txt)`.
+    2. `/reload-plugins`, then `/clear`, then a second delegation that asked no consent question. Esc on it read `d1 stopped: no files changed by this run`, since the file was unchanged since that run began.
+
+    The file was removed afterwards.
 
