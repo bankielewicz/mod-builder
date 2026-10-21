@@ -1590,8 +1590,9 @@ export const register: Register = (on, raw) => {
     const list = demo ? demoTasks(now) : (await read($, tasks)).filter(t => t.provider === 'codex')
     const at = await read($, selected)
     const mode = await read($, view)
-    // The highlighted run, when it is a real one still running: the Stop key's row (#121). Demo rows are samples.
-    const stoppable = !demo && list[at]?.status === 'running' ? list[at] : undefined
+    // The highlighted run, when it is a real one still running: the Stop key's row (#121). Demo rows are samples, and
+    // the Stats view shows no row at all (Codex, PR #126).
+    const stoppable = !demo && mode !== 'stats' && list[at]?.status === 'running' ? list[at] : undefined
     const width = Math.max(20, e.props.bodyColumns - 2)
     const layout = layoutOf(width)
     const room = rowsThatFit(e.props.scroll.bodyRows)
