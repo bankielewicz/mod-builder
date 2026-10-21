@@ -1877,3 +1877,23 @@ Not exercised live: a red turn that ends in an error, a refusal or an interrupt 
 
 Follow-up #106: the owner's idea that an agent whose context fills retries from a checkpoint, with the
 count set in the pane.
+
+## Change 0.7.2 (2026-10-21)
+
+> Issue #119, step 3. The owner's decisions are in #119's first comment: "File one issue, then fix."
+
+- **Why:** `/clear`, `/resume` and `/branch` reset every atom, and `session.start` doesn't run again. So the pane lost its run: `focus`, `run` and `others` were back at their defaults while the run went on. `classic.SessionStart` fires after that reset with `source` `clear`, `resume` or `fork`; #119's probe confirmed it on 2.1.296 and 2.1.306.
+- **What changes:**
+  - A `classic.SessionStart{source=clear|resume|fork}` hook, with `.catch`, calls `reseed`, `restore`'s view half: it picks the run, sets the focus, and refreshes the also line from the store.
+  - The focused issue is kept in the module (`focusKept`, set by `setFocus` and `begin`), so the run the pane showed comes back, not the default pick.
+  - `reseed` leaves `home`, `sessionId` and the drive alone. The process goes on under a new session id, the run's driver record names the old one, and the ownership checks compare against `sessionId` (`releaseOnEnd` already keeps the run on `clear` and `resume`).
+- **Not changed:**
+  - `activity` refills with the drive's next step, and the demo ends.
+  - Where an organization manages Claude Code, `classic.*` hooks don't run in an installed plugin, so the reset stays there.
+- **What gets touched:** `hooks/register.tsx`, `tests/ui.test.tsx`, `README.md` (the hooks row), this SPEC, and version 0.7.2 in `plugin.json` and the marketplace entry. No logic module changes. The new hook only reads the store and writes issue-forge's own atoms.
+- **TDD:**
+  - **Red** `a2a03b1`: watching state writes, a `classic.SessionStart` with `source: 'clear'` after `status 44` wrote no `focus`, and the test failed with `Received []`. Compaction must write nothing.
+  - **Green** `27395ff`.
+- **Version:** 0.7.2 (patch).
+- **Live check** (2026-10-21, Claude Code 2.1.306). A private tmux session ran `claude --plugin-dir <worktree>/mods/issue-forge` with the installed issue-forge turned off, from a trusted worktree folder of this repo. `/issue-forge status 16` focused #16, a run waiting at publish, and `/issue-forge` opened the pane on it ("also #27 ready"). Esc gave the keyboard back to the prompt. After `/clear`, the pane still showed #16 with `publish waiting for your yes` and `also #27 ready`. Nothing was started, published or stopped.
+
