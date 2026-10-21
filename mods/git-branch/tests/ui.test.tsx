@@ -132,10 +132,12 @@ describe('#119: after /clear', () => {
   test('a band hidden before a reload stays hidden after /clear', async ($, on) => {
     const writes = watch(on)
     const clock = mock.clock(on)
-    // As after a reload: state kept the hide, and this module never ran /git-branch hide.
+    // As after a reload: state kept the hide, and this module never ran /git-branch hide. The store's own version is
+    // kept, or update() misses it and writes twice.
     on('state.get', async (_: any, e: any, next: any) => {
-      if (e.plugin === 'git-branch' && e.key === 'isHidden' && !writes.some(w => w.key === 'isHidden')) return { value: { version: 1, value: true } } as never
-      return next(e)
+      const got = await next(e)
+      if (e.plugin !== 'git-branch' || e.key !== 'isHidden' || writes.some(w => w.key === 'isHidden')) return got
+      return { ...got, value: { ...got.value, value: true } } as never
     })
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
     await clock.settle()
