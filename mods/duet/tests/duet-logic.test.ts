@@ -1194,3 +1194,17 @@ describe('#119: a stopped row in the pane', () => {
     expect(logic.subText(t(''), 80)).toBe('"Check the error handling"')
   })
 })
+
+// Probe (2.1.306): git is refused inside the aborted hook but runs from a $.clock.after callback, so a stopped run that
+// could write is compared just after the stop (the side note on PR #123: Esc keeps Codex's partial edits).
+describe('#119: what a stopped run that could write left behind', () => {
+  test('the comparison made after the stop says what changed, or that nothing did', () => {
+    const before = ' M\tsrc/a.ts\th1'
+    expect(logic.stoppedCandidateOf?.(before, ' M\tsrc/a.ts\th2\n??\tsrc/b.ts\th3')).toBe('stopped with Esc: files changed during this run: 2 (src/a.ts, src/b.ts)')
+    expect(logic.stoppedCandidateOf?.(before, before)).toBe('stopped with Esc: no files changed by this run')
+  })
+
+  test('with no git reading (null), the placeholder stays rather than counting every file as changed', () => {
+    expect(logic.stoppedCandidateOf?.(' M\tsrc/a.ts\th1', null)).toBe(logic.STOPPED_CANDIDATE)
+  })
+})
