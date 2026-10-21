@@ -1024,9 +1024,11 @@ export function launchedRecord(a: { id: string; description: string; prompt: str
 }
 
 /** The message a background run delivers to the main session when it ends. */
-export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string; searchNote?: string }): string {
+export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string; searchNote?: string; isStopped?: boolean }): string {
   const head = `Background agent duet-${a.id} (${a.label})`
   // A failure has no footer to carry the agent search's cut-short note, so it goes on a line of its own.
+  // A stop isn't a failure (#121): it says so, with the stop's own words.
+  if (a.isStopped) return `${head} was stopped on Codex (${a.failure}). It did not run on Claude either.${a.searchNote ? `\n${a.searchNote}` : ''}`
   if (a.failure) return `${head} failed on Codex: ${a.failure}. It did not run on Claude either.${a.searchNote ? `\n${a.searchNote}` : ''}`
   return `${head} finished on Codex · ${a.model || 'default model'} · ${a.sandbox} · ${duration(a.durationMs)} · ${compact(a.tokens)} tok\n\n${a.text}\n\n${a.footer}`
 }
@@ -1051,6 +1053,9 @@ export function retryableDrop(reason: string): boolean {
  */
 export const STOPPED = 'stopped: cancelled (usually Esc)'
 
+/** A run the person stopped with duet's Stop key or `/duet stop <id>` (#121). */
+export const STOPPED_HERE = 'stopped: you stopped it from duet'
+
 /** After Esc the engine refuses process calls, so git reads nothing and a comparison would invent changes. */
 export const STOPPED_CANDIDATE = 'stopped: files not compared'
 
@@ -1072,7 +1077,7 @@ export function outcomeOf(o: { id: string; type: string; failure: string; isStop
   const compare = isReadOnly ? 'none' : o.isStopped ? 'after' : 'now'
   const candidate = isReadOnly ? READ_ONLY_CANDIDATE : o.isStopped ? STOPPED_CANDIDATE : ''
   const status: TaskStatus = o.isStopped ? 'stopped' : o.failure ? 'error' : 'done'
-  const toast = o.isStopped ? `${o.id} ${STOPPED}` : o.failure ? `${o.id} failed on codex: ${o.failure}` : `${o.id} done on codex · ${o.type}`
+  const toast = o.isStopped ? `${o.id} ${o.failure || STOPPED}` : o.failure ? `${o.id} failed on codex: ${o.failure}` : `${o.id} done on codex · ${o.type}`
   return { status, compare, candidate, toast: toast.slice(0, 80) }
 }
 
@@ -1088,8 +1093,9 @@ export function candidateFrom(before: string | null, after: string | null): stri
  * What a `$.process.spawn` error means for a Codex run: after `next.signal` aborted it is the person's stop,
  * never a fallback (#119, probe on 2.1.306); with output already read, a failure; before any, spawn couldn't start.
  */
-export function spawnErrorAction(at: { started: boolean; aborted: boolean }): 'stop' | 'fail' | 'fallback' {
-  if (at.aborted) return 'stop'
+export function spawnErrorAction(at: { started: boolean; aborted: boolean; stopped?: boolean }): 'stop' | 'fail' | 'fallback' {
+  // A stop from duet (#121) ends the loop cleanly; checked here too, so a throw after it never launches a fallback run.
+  if (at.aborted || at.stopped) return 'stop'
   return at.started ? 'fail' : 'fallback'
 }
 
@@ -1351,6 +1357,23 @@ export function layoutOf(columns: number): Layout {
 
 export function kindLabel(t: Task): string {
   return t.kind === 'review' ? `review ${t.subagentType}`.trim() : t.subagentType
+}
+
+/**
+ * What `/duet stop <id>` and the Stop key do (#121): `stop` names the run to stop, or is null with the answer saying why
+ * not. `ways` says how each running run of this module can be stopped: through its stream, or not at all (a one-shot
+ * fallback run has no stream to end); a running row without an entry hasn't reached either yet.
+ */
+export function stopPlan(tasks: Task[], arg: string, ways: ReadonlyMap<string, 'stream' | 'one-shot'>): { stop: string | null; text: string } {
+  const running = tasks.filter(t => t.provider === 'codex' && t.status === 'running')
+  const id = arg.trim().toLowerCase()
+  if (!id) return { stop: null, text: running.length ? `Usage: /duet stop <id>. Running now: ${running.map(t => t.id).join(', ')}.` : 'No Codex run is running.' }
+  const row = running.find(t => t.id === id)
+  if (!row) return { stop: null, text: `${id} isn't running.` }
+  const way = ways.get(id)
+  if (!way) return { stop: null, text: `${id} is still starting; try again in a moment.` }
+  if (way === 'one-shot') return { stop: null, text: `${id} runs as a one-shot fallback and can't be stopped; it ends at its timeout.` }
+  return { stop: id, text: `stopping ${id} (${kindLabel(row)} on Codex); what Codex already wrote stays.` }
 }
 
 /** A task's head line for the given layout, cut to `columns`. */

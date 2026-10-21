@@ -1241,3 +1241,36 @@ describe('#119: outcomeOf, how a Codex run ends', () => {
     expect(end('x'.repeat(200), false, 'read-only')!.toast.length).toBe(80)
   })
 })
+
+// #121 (owner's approval, 2026-10-21): a Stop key and /duet stop <id>. Probe (2.1.306): stream.return() from another
+// dispatch ends the run's loop cleanly with started still false and kills the child; the dispatch isn't aborted.
+describe('#121: stopping a Codex run from duet', () => {
+  const row = (id: string, status: 'running' | 'done', subagentType = 'code-explorer', kind: 'agent' | 'review' = 'agent') =>
+    ({ id, provider: 'codex', kind, subagentType, model: '', status, startedAt: 0, endedAt: null, tokens: 0, description: '', detail: '', envelope: null }) as Task
+  const list = [row('d3', 'running'), row('d2', 'done'), row('d4', 'running', '--base main', 'review'), row('d5', 'running', 'test-writer')]
+  const ways = new Map<string, 'stream' | 'one-shot'>([['d3', 'stream'], ['d4', 'stream'], ['d5', 'one-shot']])
+
+  test('stopPlan: usage, not running, still starting, one-shot, and a stop', () => {
+    expect(logic.stopPlan?.(list, '', ways)).toEqual({ stop: null, text: 'Usage: /duet stop <id>. Running now: d3, d4, d5.' })
+    expect(logic.stopPlan?.([row('d2', 'done')], '', new Map())).toEqual({ stop: null, text: 'No Codex run is running.' })
+    expect(logic.stopPlan?.(list, 'd2', ways)).toEqual({ stop: null, text: "d2 isn't running." })
+    expect(logic.stopPlan?.(list, 'd9', ways)).toEqual({ stop: null, text: "d9 isn't running." })
+    expect(logic.stopPlan?.([row('d7', 'running')], 'd7', new Map())).toEqual({ stop: null, text: 'd7 is still starting; try again in a moment.' })
+    expect(logic.stopPlan?.(list, 'd5', ways)).toEqual({ stop: null, text: "d5 runs as a one-shot fallback and can't be stopped; it ends at its timeout." })
+    expect(logic.stopPlan?.(list, 'd3', ways)).toEqual({ stop: 'd3', text: 'stopping d3 (code-explorer on Codex); what Codex already wrote stays.' })
+    expect(logic.stopPlan?.(list, 'D4', ways)).toEqual({ stop: 'd4', text: 'stopping d4 (review --base main on Codex); what Codex already wrote stays.' })
+  })
+
+  test("the person's stop has its own words, and a spawn error after it is a stop, never a fallback", () => {
+    expect(logic.STOPPED_HERE).toBe('stopped: you stopped it from duet')
+    expect(logic.spawnErrorAction({ started: false, aborted: false, stopped: true } as never)).toBe('stop')
+    expect(logic.spawnErrorAction({ started: true, aborted: false, stopped: true } as never)).toBe('stop')
+  })
+
+  test("the toast and the delivery say which stop it was, and a stopped background run isn't 'failed'", () => {
+    expect(logic.outcomeOf({ id: 'd3', type: 'code-explorer', failure: logic.STOPPED_HERE, isStopped: true, sandbox: 'read-only' }).toast).toBe('d3 stopped: you stopped it from duet')
+    const text = logic.deliveryText({ id: 'd3', label: 'duet:codex-reviewer', model: '', sandbox: 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: logic.STOPPED_HERE, isStopped: true } as never)
+    expect(text).toContain('was stopped on Codex (stopped: you stopped it from duet)')
+    expect(text).not.toContain('failed')
+  })
+})

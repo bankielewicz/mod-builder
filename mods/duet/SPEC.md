@@ -1001,3 +1001,52 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
 
     The file was removed afterwards.
 
+## Change 0.3.4 (2026-10-21)
+
+> Issue #121, widened by the owner, 2026-10-21: "yes - approved. add a stop key along with /duet stop <id>". The pane's Stop key asks first, per the house rule for a stop hotkey, and `/duet stop <id>` stops at once. Stacked on PR #123 (0.3.3).
+
+- **Why:**
+  - Esc stops only a run Claude is waiting on, and it interrupts the whole turn.
+  - A background run or a review can't be stopped at all.
+  - The pane had no Stop key.
+- **The probe this rests on** (2.1.306, a throwaway mod in a private tmux session): a `tool.call` hook waited on a `$.process.spawn` of `sleep 97`, and an `immediate` command called the run's `stream.return()` from another dispatch.
+  - The loop **ended cleanly, with `started` still `false`**, and the child was gone (`pgrep`).
+  - The hook went on: git ran afterwards (exit 0), and the turn wasn't interrupted.
+  - So a stop must be checked right after the loop. Otherwise the clean end with `started` false would be read as "spawn could not start", and the fallback would launch a second Codex run.
+  - The timeout path ends the loop the same way, but it returns before the fallback, so it doesn't share the hole.
+- **What changes:**
+  - **The stopper.** `runCodex` registers a stopper per run (`stoppers`): after `spawn` it holds a function that sets `stopAsked` and calls `stream.return()`; once the one-shot fallback starts it holds `'one-shot'`; and `finally` deletes it. The loop breaks on `stopAsked`, and right after it a stop returns `{ failure: STOPPED_HERE, isStopped: true }`. `spawnErrorAction` gains a `stopped` input, so a throw after a stop is a stop too.
+  - **The command.** `stopPlan` (pure) answers `/duet stop <id>`: with no id, the running ids; then `<id> isn't running.`, `<id> is still starting; try again in a moment.`, `<id> runs as a one-shot fallback and can't be stopped; it ends at its timeout.`, or `stopping <id> (<type> on Codex); what Codex already wrote stays.`
+  - **The key.** The pane shows `x: Stop` while the highlighted row is a running real run (not in the demo). It asks `Stop d3 (<type> on Codex)? What Codex already wrote stays.` with `Stop it` and `Keep it running`, and a dismissed question stops nothing.
+  - **How the run ends.** It ends like an Esc stop: status `stopped`, and a run that could write compares its files from a timer.
+    - Its toast and the waited run's deny text use the stop's own words (`outcomeOf` takes the failure text).
+    - A background run's delivery says `was stopped on Codex (…)`, and so does its output file, not "failed".
+    - A review gets the `stopped` status too.
+- **Not changed:**
+  - `/duet` stays non-immediate (the owner's choice on #119), so a typed `/duet stop` waits for the turn. The README says so.
+  - The one-shot fallback can't be stopped: `$.process.run` takes no signal (2.1.306 types).
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `STOPPED_HERE`, `stopPlan`, `spawnErrorAction`'s `stopped` input, `outcomeOf`'s toast, and `deliveryText`'s `isStopped`.
+  - `hooks/register.tsx`, the tests, `README.md`, this SPEC, and version 0.3.4.
+  - No new reach.
+- **TDD:**
+  - **Red** `b610463`: the logic rules, the command's answers, a one-shot run, the key's question (Keep it running, then Stop it) and no key in the demo. All failed by assertion.
+  - **Green** `e1f2b1a`.
+  - The kit has no stub for `process.spawn`, so its runs take the one-shot path. The stream stop itself is covered by the live check.
+- **Live check** (2.1.306, a private tmux session, the stand-in `codex` on `PATH`, no quota):
+  1. **The key on a waited run, mid-turn:**
+     - `ctrl+x tab` gave the pane the keyboard and `x` asked `Stop d1 (duet:codex-advisor on Codex)? What Codex already wrote stays.` Answering `Stop it` killed the stand-in, and the toast read `d1 stopped: you stopped it from duet`.
+     - Claude read `duet: stopped: you stopped it from duet; the duet:codex-advisor subagent did not finish on Codex.` and the turn went on; it was not interrupted.
+     - The status line read `0 done · 1 stopped`.
+  2. **`/duet stop d2` on a background reviewer, Claude idle:** the answer was `stopping d2 (duet:codex-reviewer on Codex); …` and the stand-in was killed. Claude was then told `Background agent duet-d2 … was stopped on Codex (stopped: you stopped it from duet).`
+  3. **The key on a `workspace-write` implementer that wrote a file:** the toast read `d1 stopped: files changed during this run: 1 (duet-stop-probe.txt)`. The file was removed afterwards.
+- **Version:** 0.3.4 (patch).
+- **PR #126 Codex round 1** (two P2 findings, each checked; the advisor's verdict: fix both here):
+  - **No Stop key in the Stats view.** The Stats view shows no task row, but `list[at]` still named a running run, so the key showed and its question would stop a run no row displays. Reproduced by a kit test (red `71ffd50`), and the key now shows only in the tasks view (green `04ca846`).
+  - **`stream.result` observed after a stop.** The 2.1.306 types say it rejects when the stream closes early, and gotchas.md says to catch it.
+    - **Not reproduced:** headless on 2.1.296 and 2.1.306 (`/duet review`, then `/duet stop d1`, the stand-in `codex`, `--debug-file`), the stop logged only `codex stopped: the op was aborted`, with no unhandled rejection.
+    - **The fix,** for the stop and for the timeout and Esc paths from 0.3.3, which had the same gap: one `.catch` on `stream.result` right after `spawn`. A catch doesn't consume the promise.
+    - **Checked on both builds:** a review that finished still reported its verdict (`d1 review: fake codex answer: hi`), and a stop read `d2 review stopped: you stopped it from duet`.
+    - This is wiring only: the kit has no streaming spawn.
+  - #126 was retargeted from #123's branch to `main` after #123 merged, so it closes #121.
+
