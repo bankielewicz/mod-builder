@@ -993,16 +993,26 @@ async function loadProviderTests($: EngineInterface): Promise<void> {
 }
 
 /** One provider's result into the pane and the shared store, merged over what the store holds now, so another session's result survives (Codex 4298476151). */
-function storeProviderTest($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+function storeProviderTest($: EngineInterface, id: string, result: TestResult | null): Promise<string> {
   return serialized(() => storeProviderTestNow($, id, result))
 }
 
-async function storeProviderTestNow($: EngineInterface, id: string, result: TestResult | null): Promise<void> {
+/**
+ * Writes one provider's result to the store (or drops it, for null), then the pane. Answers '' or why the store refused: a
+ * result the store refused is not kept in the pane either, so nothing counts as tested that a reopen would lose (#117).
+ */
+async function storeProviderTestNow($: EngineInterface, id: string, result: TestResult | null): Promise<string> {
+  let failed = ''
+  try {
+    await (result ? $.store.set(testsKeyOf(id), result) : $.store.delete(testsKeyOf(id)))
+  } catch (err) {
+    failed = safeText(String((err as Error)?.message ?? err).split('\n')[0]!.replace(/^\S+: \$\.store\.\w+(?:\([^)]*\))?: /, ''), [], 80)
+  }
   await update($, provTests, t => {
     const { [id]: _, ...rest } = t
-    return result ? { ...rest, [id]: result } : rest
+    return result && !failed ? { ...rest, [id]: result } : rest
   })
-  await (result ? $.store.set(testsKeyOf(id), result) : $.store.delete(testsKeyOf(id))).catch(() => undefined)
+  return failed
 }
 
 /**
@@ -1026,7 +1036,10 @@ async function writeKeyFile($: EngineInterface, path: string, text: string, secr
  * (`C:/…`) skips it rather than failing every save (the third /code-review on PR #110).
  */
 async function setMode($: EngineInterface, path: string, secret: string): Promise<{ ok: boolean; text: string }> {
-  if (/^[A-Za-z]:\//.test(path)) return { ok: true, text: 'Windows: no chmod' }
+  // Windows by the path's form (a drive, or a UNC share `//server/share`) or by OS=Windows_NT, which Windows sets for every
+  // process; there is no platform field in the API (#117).
+  const isWindows = /^(?:[A-Za-z]:\/|\/\/)/.test(path) || (await $.env.get('OS').catch(() => undefined)) === 'Windows_NT'
+  if (isWindows) return { ok: true, text: 'Windows: no chmod' }
   try {
     const r = await $.process.run(['chmod', '600', path], { timeoutMs: 10_000 })
     return r.exitCode === 0 ? { ok: true, text: 'chmod 600' } : { ok: false, text: `chmod 600 failed: ${safeText(r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`, [secret], 120)}; set the file's permissions yourself` }
@@ -1060,11 +1073,13 @@ async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Pr
     return { failed: `not saved: ${redact(fsReason(err), [key])}` }
   }
   bumpGen(p.id)
-  await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
+  const dropped = await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
   await refreshProviderAuth($)
   const cwd = await $.session.cwd().catch(() => '')
   const shadowed = (await envKey($, p.keyName).catch(() => undefined)) ? p.keyName : ''
-  return { saved: savedNote(mode, keyFileExposed(options.fsScope, cwd, path), shadowed).join('\n') }
+  const lines = savedNote(mode, keyFileExposed(options.fsScope, cwd, path), shadowed)
+  if (dropped) lines.push(`an old test result may still show (${dropped})`)
+  return { saved: lines.join('\n') }
 }
 
 /** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
@@ -1089,9 +1104,9 @@ async function removeKeyNow($: EngineInterface, p: ProviderDef): Promise<string>
     return `not changed: ${redact(fsReason(err), [held])}`
   }
   bumpGen(p.id)
-  await storeProviderTestNow($, p.id, null)
+  const dropped = await storeProviderTestNow($, p.id, null)
   await refreshProviderAuth($)
-  return `${p.id}: key removed from ${KEY_FILE_HOME}.${mode === 'chmod 600' ? '' : ` (${mode})`}`
+  return `${p.id}: key removed from ${KEY_FILE_HOME}.${mode === 'chmod 600' ? '' : ` (${mode})`}${dropped ? ` An old test result may still show (${dropped}).` : ''}`
 }
 
 /** The pane's x: asks first, since a hotkey that deletes must not act on a stray key. */
@@ -1148,7 +1163,7 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
 /** Providers with a test under way in this session: the slot is claimed before any await, so a double start sends one request (Codex 4299426945). */
 const testing = new Set<string>()
 
-async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
+async function testProvider($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string; unsaved?: boolean }> {
   if (testing.has(p.id)) return { ran: false, text: `${p.id}: a test is already running.` }
   testing.add(p.id)
   try {
@@ -1158,7 +1173,7 @@ async function testProvider($: EngineInterface, p: ProviderDef, model: string): 
   }
 }
 
-async function testProviderNow($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string }> {
+async function testProviderNow($: EngineInterface, p: ProviderDef, model: string): Promise<{ ran: boolean; text: string; unsaved?: boolean }> {
   const models0 = model === '' && p.modelsPath !== null
   const ready = await providerReady($, p, models0 ? 'models' : 'probe')
   if (ready.why) return { ran: false, text: ready.why }
@@ -1177,8 +1192,9 @@ async function testProviderNow($: EngineInterface, p: ProviderDef, model: string
       return { ran: false, text: `${p.id}: the key changed during the test; nothing recorded. Run it again.` }
     }
     const result = testOutcome(step, reply, Math.max(0, Date.now() - started), Date.now(), ready.keys, p.modelsNeedKey, keyId(ready.key), ready.base)
-    await storeProviderTest($, p.id, result)
+    const unsaved = await storeProviderTest($, p.id, result)
     recorded = true
+    if (unsaved) return { ran: true, unsaved: true, text: `${p.id}: ${result.note}; result not saved (${unsaved}), so it won't show after a reopen.` }
     return { ran: true, text: `${p.id}: ${result.note}` }
   } catch (err) {
     const note = `✕ internal error (${safeText(String((err as Error)?.message ?? err), ready.keys, 80)})`
@@ -1269,7 +1285,7 @@ async function testHighlighted($: EngineInterface): Promise<void> {
   await update($, provEditing, () => false)
   await update($, provNote, () => '')
   const r = await testProvider($, p, '')
-  if (!r.ran) await update($, provNote, () => r.text)
+  if (!r.ran || r.unsaved) await update($, provNote, () => r.text)
 }
 
 /** Opens the providers pane with the keyboard, its rows refreshed; `rowId` highlights a provider and `edit` opens its key field. */
