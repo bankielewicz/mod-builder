@@ -157,8 +157,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   and the engine kills the child: the loop throws `<plugin>: $.process.spawn(<cmd>) aborted`, and a
   `$.process.run` the hook starts after that rejects `<plugin>: $.process.run(<cmd>) aborted` without
   running. A spawn the same hook started `void` before returning survives Esc and runs until the module
-  unloads. Probed on 2.1.306 (#119) with a throwaway mod holding a Bash call over `sleep` children, in a
-  private tmux session, checked with `pgrep -x sleep`. Not probed on 2.1.296.
+  unloads. After the abort, `update` (state), `read`, `$.ui.toast`, `$.store.set` and `$.fs.write` still
+  work, in the hook and from a `$.clock.after` callback: only new process work is refused. Probed on
+  2.1.306 (#119) with throwaway mods holding a Bash call over `sleep` children, in a private tmux
+  session, checked with `pgrep -x sleep` (`$.fs.write`: duet 0.3.3's live check logged its stopped runs).
+  Not probed on 2.1.296.
 - **[probe]** Under `claude plugin test`, nothing beneath the plugin answers `session.end`: a test that
   fires it needs `on('session.end', ($, e) => ({ sessionId: e.sessionId }))`, as `session.start` needs
   its stub.
