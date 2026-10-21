@@ -109,6 +109,7 @@ const seed = (tests: Record<string, unknown>): Record<string, unknown> => Object
 const everything = (seen: Seen, ...texts: string[]) => [...texts, ...seen.toasts, JSON.stringify([...seen.store]), ...Object.entries(seen.files).filter(([p]) => p !== KEY_FILE).map(([, t]) => t)].join('\n')
 
 describe('/duet provider', () => {
+  // The engine under test runs on Linux and collapses a UNC path's leading `//`, so the file is found by its ending.
   test('#117 A: a UNC home folder is Windows too: the key is saved without chmod', async ($, on) => {
     const seen = engine(on, { noHome: true, env: { USERPROFILE: '\\\\server\\share\\u' }, chmodFail: "'chmod' is not recognized as a command" })
     await start($)
@@ -116,7 +117,7 @@ describe('/duet provider', () => {
     const ui = await mount($)
     await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
     await seen.clock.settle()
-    expect(Object.entries(seen.files).find(([path]) => path.endsWith('//server/share/u/.claude/duet-data/.env'))?.[1]).toBe(`GEMINI_API_KEY=${KEY}\n`)
+    expect(Object.entries(seen.files).find(([path]) => path.endsWith('/server/share/u/.claude/duet-data/.env'))?.[1]).toBe(`GEMINI_API_KEY=${KEY}\n`)
     expect(seen.argv.filter(a => a[0] === 'chmod')).toEqual([])
     expect(await ui.find({ type: 'Text', text: /saved to ~\/.claude\/duet-data\/.env \(Windows: no chmod\) · t tests it/ })).toBeDefined()
     await ui.unmount()
