@@ -70,7 +70,7 @@ describe('ui', () => {
     expect(text).toMatch(/demo tasks/)
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await mount($, surface)
-      for (const re of [/running/, /verdict: changes requested/, /✕ codex: not signed in/, /refused/, /code-explorer/, /spec 3fa9c21/]) {
+      for (const re of [/running/, /verdict: changes requested/, /✕ codex: not signed in/, /refused/, /stopped: you pressed Esc/, /code-explorer/, /spec 3fa9c21/]) {
         expect(await ui.find({ type: 'Text', text: re })).toBeDefined()
       }
       await ui.unmount()
