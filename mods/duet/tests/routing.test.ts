@@ -1551,3 +1551,74 @@ describe('#119: a failed git read after an editing run', () => {
     expect(seen.argv.length).toBe(1)
   })
 })
+
+// #121 (owner's approval, 2026-10-21): /duet stop <id> and the pane's Stop key. Under the kit process.spawn has no stub,
+// so a run takes the one-shot fallback: these pin the answers and the question; the stream stop is a live check.
+describe('#121: /duet stop and the Stop key', () => {
+  const duet = ($: any, args: string) => $.command.run({ command: 'duet', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const pane = ($: any) => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+  const QUESTION = 'Stop d1 (review --uncommitted on Codex)? What Codex already wrote stays.'
+  const ONE_SHOT = "d1 runs as a one-shot fallback and can't be stopped; it ends at its timeout."
+
+  test("with nothing running, /duet stop says so, and an unknown id isn't running", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    engine(on)
+    await start($)
+    expect((await duet($, 'stop')).text).toBe('No Codex run is running.')
+    expect((await duet($, 'stop d9')).text).toBe("d9 isn't running.")
+  })
+
+  test("a running one-shot run is listed, and can't be stopped: the answer says why", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    let release!: () => void
+    let begun!: () => void
+    const started = new Promise<void>(resolve => (begun = resolve))
+    const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: begun })
+    await start($)
+    try {
+      expect((await duet($, 'review')).text).toMatch(/^Codex review started/)
+      await started
+      await seen.clock.settle()
+      expect((await duet($, 'stop')).text).toBe('Usage: /duet stop <id>. Running now: d1.')
+      expect((await duet($, 'stop d1')).text).toBe(ONE_SHOT)
+    } finally {
+      release()
+    }
+  })
+
+  test('the Stop key asks first: Keep it running leaves the run, Stop it answers as /duet stop does', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    let release!: () => void
+    let begun!: () => void
+    const started = new Promise<void>(resolve => (begun = resolve))
+    const o: { codexHold: Promise<void>; onCodex: () => void; answer: string } = { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: () => begun(), answer: 'Keep it running' }
+    const seen = engine(on, o)
+    await start($)
+    try {
+      await duet($, 'review')
+      await started
+      await seen.clock.settle()
+      let ui = await pane($)
+      expect(await ui.find({ key: 'stop' })).toBeDefined()
+      await ui.press({ key: 'stop' })
+      await seen.clock.settle()
+      await ui.unmount()
+      expect(seen.questions).toContain(QUESTION)
+      expect(seen.toasts).not.toContain(ONE_SHOT)
+      o.answer = 'Stop it'
+      ui = await pane($)
+      await ui.press({ key: 'stop' })
+      await seen.clock.settle()
+      await ui.unmount()
+      expect(seen.toasts).toContain(ONE_SHOT)
+    } finally {
+      release()
+    }
+  })
+
+  test('the demo shows no Stop key: its rows are samples', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+    engine(on)
+    await start($)
+    await duet($, 'demo')
+    const ui = await pane($)
+    expect(await ui.find({ key: 'stop' })).toBeUndefined()
+    await ui.unmount()
+  })
+})
