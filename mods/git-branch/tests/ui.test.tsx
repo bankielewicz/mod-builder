@@ -126,4 +126,21 @@ describe('#119: after /clear', () => {
     await clock.settle()
     expect(writes).toEqual([])
   })
+
+  // Codex P2 on PR #127: a reload starts the module afresh and keeps the atoms (live on 2.1.307: hide, a changed
+  // module reloaded, /clear, and the band came back). The kept hide is read at session start.
+  test('a band hidden before a reload stays hidden after /clear', async ($, on) => {
+    const writes = watch(on)
+    const clock = mock.clock(on)
+    // As after a reload: state kept the hide, and this module never ran /git-branch hide.
+    on('state.get', async (_: any, e: any, next: any) => {
+      if (e.plugin === 'git-branch' && e.key === 'isHidden' && !writes.some(w => w.key === 'isHidden')) return { value: { version: 1, value: true } } as never
+      return next(e)
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await clock.settle()
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    await clock.settle()
+    expect(writes.filter(w => w.key === 'isHidden').map(w => w.value)).toEqual([true])
+  })
 })
