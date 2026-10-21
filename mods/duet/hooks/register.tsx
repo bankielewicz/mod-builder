@@ -94,6 +94,8 @@ let rawOptions: unknown = {}
 let ticker: Timer | null = null
 /** Codex runs this module instance started; a running row not in here was cut off by a reload. */
 const mine = new Set<string>()
+/** The consent answer given in this module: /clear, /resume and /branch reset the atom, and it is written back (#119). */
+let consentGiven: 'yes' | 'no' | null = null
 /** Answers Stop dropped, submitted again when the next main turn ends (#119). */
 let held: { text: string; note: string }[] = []
 
@@ -508,6 +510,7 @@ async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
     return consentRefusal(err)
   }
   const ok = answer === YES
+  consentGiven = ok ? 'yes' : 'no'
   await update($, consent, () => (ok ? 'yes' : 'no'))
   return ok ? '' : 'you declined sending this repo to Codex this session'
 }
@@ -1473,6 +1476,13 @@ export const register: Register = (on, raw) => {
     }
     return ran
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the Codex handoff failed unexpectedly; the subagent did not run. See claude --debug.' }))
+
+  // /clear, /resume and /branch reset every atom and don't run session.start; startup and compaction reset nothing (#119).
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    const given = consentGiven
+    if (given) await update($, consent, () => given).catch(() => undefined)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
     const agentId = e.agentId
