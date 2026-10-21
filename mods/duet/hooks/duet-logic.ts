@@ -1033,6 +1033,17 @@ export function deliveryText(a: { id: string; label: string; model: string; sand
 
 export const READ_ONLY_CANDIDATE = 'read-only run: no files changed'
 
+/** The reason of a `$.prompt.submit` answer that queued nothing, else ''. */
+export function dropOf(answer: unknown): string {
+  const drop = (answer as { drop?: unknown } | null | undefined)?.drop
+  return typeof drop === 'string' ? drop : ''
+}
+
+/** A drop the engine gave after Stop, which the next main turn's end may retry (#119); any other drop is another hook's choice. */
+export function retryableDrop(reason: string): boolean {
+  return reason.includes('the session was stopped and nobody has sent input since') || reason.includes('was removed from the queue before it ran')
+}
+
 /** A waited run the person stopped with Esc (#119): the engine killed Codex, so this is neither done nor failed. */
 export const STOPPED = 'stopped: you pressed Esc'
 

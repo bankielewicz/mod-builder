@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, idAfter, liveRuns, spawnErrorAction, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -94,6 +94,8 @@ let rawOptions: unknown = {}
 let ticker: Timer | null = null
 /** Codex runs this module instance started; a running row not in here was cut off by a reload. */
 const mine = new Set<string>()
+/** Answers Stop dropped, submitted again when the next main turn ends (#119). */
+let held: { text: string; note: string }[] = []
 
 // ── Pane, status, ticker ─────────────────────────────────────────────────
 
@@ -607,8 +609,23 @@ async function finishInBackground($: EngineInterface, j: Job, outputFile: string
   } finally {
     mine.delete(j.id)
   }
-  // Never quietly: if the message can't be queued, the toast points at the answer on disk.
-  await $.prompt.submit({ text }).catch(() => $.ui.toast(`${j.id} ended on codex · answer in ${outputFile}`.slice(0, 80)))
+  await deliver($, text, `${j.id} ended on codex · answer in ${outputFile}`)
+}
+
+/**
+ * Hands a finished run's text to the main session. Never quietly: a drop for Stop is kept for the next main
+ * turn's end (#119); any drop or failure toasts `note`, which points at the answer on disk, once.
+ */
+async function deliver($: EngineInterface, text: string, note: string, isRetry = false): Promise<void> {
+  let reason: string
+  try {
+    reason = dropOf(await $.prompt.submit({ text }))
+  } catch (err) {
+    reason = String((err as Error)?.message ?? err) || 'not queued'
+  }
+  if (!reason) return
+  if (retryableDrop(reason)) held.push({ text, note })
+  if (!isRetry) $.ui.toast(note.slice(0, 80))
 }
 
 async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null, signal: AbortSignal): Promise<{ deny: string } | { result: ReturnType<typeof agentResult> | ReturnType<typeof launchedRecord> }> {
@@ -1468,9 +1485,17 @@ export const register: Register = (on, raw) => {
         return rest
       })
       if (taken) void logRun($, claudeTaskOf(taken, e, Date.now())).catch(() => undefined)
-    } else if (await read($, isDemo)) {
-      await update($, isDemo, () => false)
-      await update($, selected, () => 0)
+    } else {
+      if (held.length) {
+        // Emptied first; a retry refused again is kept by deliver for a later turn's end. Detached: a submit resolves only when its turn starts.
+        const due = held
+        held = []
+        for (const d of due) void deliver($, d.text, d.note, true).catch(() => undefined)
+      }
+      if (await read($, isDemo)) {
+        await update($, isDemo, () => false)
+        await update($, selected, () => 0)
+      }
     }
     return next(e)
   })
