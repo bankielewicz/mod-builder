@@ -1208,3 +1208,15 @@ describe('#119: what a stopped run that could write left behind', () => {
     expect(logic.stoppedCandidateOf?.(' M\tsrc/a.ts\th1', null)).toBe(logic.STOPPED_CANDIDATE)
   })
 })
+
+describe('#119: a git read that failed (null) is never a comparison (Codex, PR #123)', () => {
+  test('candidateFrom: either side unread says so; both read compares', () => {
+    expect(logic.candidateFrom?.(' M\ta.ts\th1', null)).toBe('files not compared: git could not read the folder')
+    expect(logic.candidateFrom?.(null, '')).toBe('files not compared: git could not read the folder')
+    expect(logic.candidateFrom?.(' M\ta.ts\th1', ' M\ta.ts\th1')).toBe('no files changed by this run')
+  })
+
+  test('stoppedCandidateOf keeps the placeholder when the reading before the run failed too', () => {
+    expect(logic.stoppedCandidateOf(null, ' M\ta.ts\th1')).toBe(logic.STOPPED_CANDIDATE)
+  })
+})

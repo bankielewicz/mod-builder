@@ -25,7 +25,7 @@ const runLine = (provider: 'codex' | 'claude', type: string, id = 'x') =>
 type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; asked: number; questions: string[]; toasts: string[]; beneath: number; files: Record<string, string>; reads: string[]; listed: string[]; mtimes: Record<string, number>; registered: { name: string; description: string }[]; submitted: string[]; dropped: string[]; maxReads: number; timeouts: (number | undefined)[]; clock: any }
 
 /** Stubs every `$` call the routing path makes; nothing else sits beneath the mod. */
-function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; logGate?: Promise<void>; drops?: string[] } = {}): Seen {
+function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; logGate?: Promise<void>; drops?: string[]; dirty?: string; gitFailAfterCodex?: boolean } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, questions: [], toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], dropped: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
   on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
@@ -105,6 +105,10 @@ function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'
     // `oldGit`: git before 2.31, which has no --path-format.
     if (argv[0] === 'git' && o.oldGit && argv.some(a => a.startsWith('--path-format'))) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unknown option', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git' && argv.includes('--git-common-dir')) return { value: { exitCode: 0, stdout: `${o.gitDirs ?? '/w/.git\n/w/.git'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    // `dirty`: what git status prints before Codex runs; `gitFailAfterCodex`: git status exits 128 once Codex has run (#119).
+    if (argv[0] === 'git' && argv.includes('status') && o.gitFailAfterCodex && seen.argv.length > 0) return { value: { exitCode: 128, stdout: '', stderr: 'fatal: unable to read index', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'git' && argv.includes('status') && o.dirty) return { value: { exitCode: 0, stdout: o.dirty, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'git' && argv.includes('hash-object')) return { value: { exitCode: 0, stdout: argv.slice(argv.indexOf('--') + 1).map((_, i) => `h${i}`).join('\n'), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'git') return { value: { exitCode: 0, stdout: argv.includes('rev-parse') ? 'abc1234\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     seen.argv.push(argv)
     seen.stdin.push(e.init?.stdin ?? '')
@@ -1532,5 +1536,18 @@ describe('#119: the Codex consent answer outlives /clear', () => {
     await start($)
     await $.classic.SessionStart({ source: 'clear' })
     expect(writes.filter(w => w.key === 'consent')).toEqual([])
+  })
+})
+
+// #119, Codex on PR #123: a git read that fails is no reading, not an empty tree, or every file dirty before the run counts as changed by it.
+describe('#119: a failed git read after an editing run', () => {
+  test('records that the files were not compared, not that the dirty ones changed', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow' } }, async ($, on) => {
+    const seen = engine(on, { dirty: ' M a.ts\n M b.ts\n', gitFailAfterCodex: true, agents: { '/home/u/.claude/agents/test-writer.md': '---\nname: test-writer\ndescription: Writes tests.\ntools: Read, Write, Edit, Bash\n---\nWrite tests.' } })
+    await start($)
+    const r: any = await $.tool.call(call({ subagent_type: 'test-writer' }) as never)
+    const text = JSON.stringify(r)
+    expect(text).not.toContain('files changed during this run')
+    expect(text).toContain('files not compared')
+    expect(seen.argv.length).toBe(1)
   })
 })
