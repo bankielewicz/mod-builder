@@ -893,3 +893,35 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **What still works after an abort.** `conventions.md` said every `$` call after the abort rejects. That overstated the probe: only process calls reject. State, store, toast and file writes still work, so recording the stop in the hook's `catch` is viable. The text now says so, and gotchas.md's Esc entry adds the after-abort calls that were probed (#119's probe, duet 0.3.3's live check).
   - **The SPEC template's "after /clear" row** names the managed-settings exception, since the person approves that row.
 
+## Change 0.2.28 (2026-10-21)
+
+> Issue #119, step 4. The owner's decisions (2026-10-21) are in #119's comments: `immediate: true` on "/modlab only", and `/clear`, `/resume` and `/branch` handled per #122's conventions.
+
+- **Why:**
+  - `/clear`, `/resume` and `/branch` reset every atom, and `session.start` doesn't run again, so the pane listed nothing until the next rescan.
+  - The pin's copy in state (`pinned`) was reset while the module's `pin` stayed, so a reload after `/clear` would lose the build's folder.
+  - A `/modlab` typed while Claude was working waited for the turn.
+- **What changes:**
+  1. **A `classic.SessionStart{source=clear|resume|fork}` hook**, with `.catch`, runs `reseed`, detached. It writes `pinned` from the module's `pin` straight through `$.state.set`, since `setPin` skips an unchanged pin, which this is. Then it runs `scan($, false)`, which is single-flight, so a `PostToolBatch` rescan merges into it.
+     - It does nothing before `session.start` has run (`hasStarted`): a resumed startup fires the event first, as probed on 2.1.296 and 2.1.306.
+     - `session.end` already rotates the log on `/clear`, and nothing of it is repeated.
+  2. **`/modlab` registers `immediate: true`.** Every branch opens, closes or fronts the pane, starts the demo (state the turn hooks don't write), selects a mod and scans (single-flight), or fills the prompt box. `/mod-builder`, which sets options (a reload), keeps waiting.
+- **Accepted resets:**
+  - `runs` (a check in progress) shows again when the check finishes. `withProgress` maps only rows already there, and no module state tracks live checks.
+  - `reported` and `building` (a build's stage markers) refill on the next `lab_report`.
+  - `selected` goes back to the default.
+  - These suit a new conversation.
+  - Where an organization manages Claude Code, `classic.*` hooks don't run in an installed plugin, so the reset stays there.
+- **What gets touched:**
+  - `hooks/register.tsx` and `tests/ui.test.tsx`; the harness now records `command.register` calls.
+  - `README.md`: the reach table's hooks and gating rows, render-checked with GitHub's Markdown API.
+  - This SPEC, and version 0.2.28 in `plugin.json` and the marketplace entry.
+  - No logic module change, and no new reach: the hook only writes Mod Lab's own state and reads folders, as a scan does.
+- **TDD:**
+  - **Red** `30fce93`: after a `lab_report` with `path`, a `classic.SessionStart` with `source: 'clear'` wrote no `pinned`, so the test failed with `Received []`. `/modlab`'s `immediate` was `undefined`. Compaction and a resumed startup before `session.start` must write nothing.
+  - **Green** `cc7c231`.
+- **Live check** (2.1.306, a private tmux session with `--plugin-dir` for this branch's Mod Lab and git-branch, and the installed copies turned off):
+  - `/modlab` typed while Claude was still streaming (`Flowing…`) opened the pane at once.
+  - With the pane open, `/clear` left it listing the same four mods.
+- **Version:** 0.2.28 (patch).
+

@@ -58,12 +58,12 @@ table lists everything this one can touch. It is generated from `claude plugin v
 
 | Reach | Detail |
 | --- | --- |
-| Hooks | `session.start`, `command.run{command=git-branch}`, `tool.call{tool=Bash}`, `turn.complete`, `ui.render{component=AbovePrompt}` |
+| Hooks | `session.start`, `classic.SessionStart{source=clear\|resume\|fork}` (0.1.2: after `/clear`, `/resume` and `/branch` a hidden band stays hidden and the branch is read again; not where an organization manages Claude Code, since `classic.*` hooks don't run there), `command.run{command=git-branch}`, `tool.call{tool=Bash}`, `turn.complete`, `ui.render{component=AbovePrompt}` |
 | Processes | `$.process.run`: `git --no-optional-locks status --porcelain=v2 --branch` in the session's cwd (read-only, 5 s timeout) |
 | Files | none written; session state only (`git-branch.snapshot`, `isHidden`, `isDemo`) |
 | Network | none |
 | Model calls | none |
-| Gating hooks | `tool.call{tool=Bash}` with `.catch`; it only reads the result and never blocks |
+| Gating hooks | `tool.call{tool=Bash}` with `.catch`; it only reads the result and never blocks. `classic.SessionStart` with `.catch` (0.1.2); it passes the event on |
 
 ## Development
 

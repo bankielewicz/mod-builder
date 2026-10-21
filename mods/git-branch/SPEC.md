@@ -120,3 +120,22 @@ How to load it (`/plugin install git-branch@claudemod` or `claude --plugin-dir m
 - **Tests:** a refresh during a slow read reports the new branch, after exactly one more read.
 - **Done means:** all tests pass, validate is clean.
 
+## Change 0.1.2 (2026-10-21)
+
+> Issue #119, step 4. For gap 4 the owner chose "Only /modlab" (2026-10-21), so `/git-branch` keeps waiting for the turn: its demo writes `isDemo`, which its own `turn.complete` clears.
+
+- **Why:**
+  - `/clear`, `/resume` and `/branch` reset `snapshot` and `isHidden`, and `session.start` doesn't run again.
+  - The band showed nothing until the next Bash call or turn end.
+  - A band the person hid came back.
+- **What changes:**
+  - A `classic.SessionStart{source=clear|resume|fork}` hook, with `.catch`, writes a kept hide back and reads the branch again (`refresh`, detached). It does nothing before `session.start` has run (`hasStarted`): a resumed startup fires the event first, as probed on 2.1.296 and 2.1.306.
+  - The person's hide or show is kept in the module (`hiddenKept`) through one writer, `setHidden`, used by `hide`, `show` and `demo`.
+  - Keeping the hide across `/clear` is a reversible choice: the issue left it open, and it's the natural reading of "I hid it".
+- **What gets touched:** `hooks/register.tsx`, `tests/ui.test.tsx`, the README's hooks and gating rows (render-checked), this SPEC, and version 0.1.2 in `plugin.json` and the marketplace entry. No new reach.
+- **TDD:**
+  - **Red** `7849661`: after `/git-branch hide`, a `classic.SessionStart` with `source: 'clear'` wrote no `isHidden`, and the test failed with `Received []`. Compaction and a resumed startup must write nothing.
+  - **Green** `2115e2c`.
+- **Live check** (2.1.306, the session above): `/git-branch hide`, then `/clear`, and the band stayed hidden. `/git-branch show`, then `/clear`, and the band was drawn with the branch.
+- **Version:** 0.1.2 (patch).
+
