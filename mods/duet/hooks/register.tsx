@@ -569,6 +569,8 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
       const folded = foldAll(r.stdout)
       return { run: folded, failure: failureOf(folded, r.exitCode, r.stderr) }
     } catch (err2) {
+      // Esc while the one-shot run goes on: the engine aborted it, so this is a stop too (#119).
+      if (spawnErrorAction({ started: false, aborted: signal?.aborted === true }) === 'stop') return { run, failure: STOPPED, isStopped: true }
       return { run, failure: fallbackFailure(String((err2 as Error)?.message ?? err2), Date.now() - fallbackAt, cap) }
     }
   } finally {

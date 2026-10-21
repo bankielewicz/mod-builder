@@ -957,4 +957,10 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
   1. **Esc on a waited run** (`duet:codex-advisor`, the stand-in still silent). The status line read `codex: 0 done · 1 stopped`, and the toast `duet: d1 stopped: you pressed Esc`. The stand-in was gone, and its call log shows one `exec`, with no fallback.
   2. **Consent after `/clear`.** Answered yes once, then `/clear`. The next delegation started Codex with no question.
   3. **A dropped answer.** A background `duet:codex-reviewer` run (40 s) was going, and the turn was stopped with Esc mid-stream. When the stand-in finished, no turn started. After the next message (`Reply only: ok`) and Claude's `ok`, duet's message carrying d3's answer arrived. The toast wasn't caught: it lasts 4 s, and the screen was read after that. The UI test covers it.
+- **Review before Codex** (an advisor pass, 2026-10-21):
+  - **The demo shows every state** (house rule), so it gains a `stopped` row: the demo's ids now run d6 to d1. Red `679b6bb`. Green `eb9cea1` also fixes what the red test found: `subText` showed a stopped row's description, not why it stopped. A stop shows its detail with no ✕ mark. `7ee7578` updates the test that pins the demo's size, which is built to fail first when the demo changes.
+  - **Esc during the one-shot fallback** is a stop too. The fallback's `catch` applies the same `spawnErrorAction` rule. This is wiring only: the kit can't abort an event, and the path is rare (the fallback runs only when streaming can't start).
+  - **Checked on the live check's disk:**
+    - Both stopped runs were logged in their session's `runs.jsonl` (`ok: false`), so `$.fs.write` works after the abort.
+    - After `/clear` the session id changed, so `d1` went into a new session folder, with no file collision.
 
