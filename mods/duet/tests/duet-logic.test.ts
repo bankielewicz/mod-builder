@@ -1142,6 +1142,8 @@ describe('#119: the concurrency limit and row ids hold after /clear', () => {
     expect(logic.idAfter?.([t('d2', 'done')], [])).toBe('d3')
     expect(logic.idAfter?.([t('d7', 'done')], ['d3'])).toBe('d8')
     expect(logic.idAfter?.([], [])).toBe('d1')
+    // An id with no number after its letter counts as 0, so it never blocks the next id.
+    expect(logic.idAfter?.([t('dx', 'done')], ['d'])).toBe('d1')
   })
 })
 

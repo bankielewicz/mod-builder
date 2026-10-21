@@ -912,3 +912,45 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
 - **Done means:** a Windows host with a UNC home folder can store keys; a store that can't be written never leaves a result that looks kept.
 - **Test fixed in its own commit:** the engine under test collapses a UNC path's leading `//` on Linux, so the file is found by its ending.
 
+## Change 0.3.3 (2026-10-21)
+
+> Issue #119, step 2, with the owner's decisions (2026-10-21, #119's first comment):
+> - for the run list after `/clear`, "Cheap guard only": the owner won't `/clear` with runs going, and would press Esc first;
+> - consent: "Keep it";
+> - dropped answers: "(b) Retry + toast";
+> - stopping a background run is #121.
+
+- **Why:** Anthropic's mod docs (`docs/research/Mods/`) describe practices duet didn't follow. The probes on #119 back each change:
+  - `/clear` resets atoms, and `classic.SessionStart` fires after the reset (2.1.296, 2.1.306).
+  - On 2.1.306, Esc kills a waited `$.process.spawn` and makes its loop throw `… aborted`. A `$.process.run` after that rejects at once. State writes, toasts and store writes still work. A `void` spawn survives.
+- **What changes:**
+  1. **The limit and ids after `/clear`.** `admit` counts `liveRuns(rows, mine)`: running Codex rows and this module's runs, each once. A review joins `mine` while it runs. `idAfter` (moved to `duet-logic.ts`) skips `mine`'s ids, so a run that outlived `/clear` keeps its own row.
+  2. **Esc on a waited run.** The Agent hook passes `next.signal` to `routeToCodex`, then `runJob` and `runCodex`. A spawn error after the abort is `spawnErrorAction` `stop`. Before 0.3.3, the "spawn could not start" branch ran when no chunk had come yet: it patched a fallback note, tried a `$.process.run` the engine refuses, and recorded `codex could not start: …`.
+     - The row ends `stopped`. `TaskStatus` gains it, `STATUS_COLOR` gives it the warn colour, and `countsOf` counts it apart from failures.
+     - Its candidate is `STOPPED_CANDIDATE`: after the abort, git reads nothing, and a comparison would invent changes.
+     - The toast reads `<id> stopped: you pressed Esc`.
+     - Stats count a stopped run as not ok, the same as before.
+  3. **A dropped delivery.** `finishInBackground` hands its text to `deliver`. A `{ drop }` for Stop (`retryableDrop`: the engine's two reasons) is kept in `held`, and the next main `turn.complete` empties `held` and resubmits detached. Any other drop or failure toasts `<id> ended on codex · answer in <file>` once. Before 0.3.3, only a rejection toasted, and a drop was lost quietly.
+  4. **Consent after `/clear`.** `ensureConsent` keeps the answer in the module (`consentGiven`). A `classic.SessionStart` hook on `clear`, `resume` and `fork`, with `.catch`, writes it back. Startup and compaction reset nothing, so they are left out.
+- **Not changed:**
+  - The pane's run list still empties after `/clear`, by the owner's choice.
+  - Background runs and reviews pass no signal (#121).
+  - The lost-on-reload delivery in `session.start` keeps its quiet `.catch`: no test can set up a reload's lost row, and a reload isn't a Stop.
+  - Where an organization manages Claude Code, `classic.*` hooks don't run in an installed plugin, so consent resets there.
+- **What gets touched:**
+  - `hooks/duet-logic.ts`: `liveRuns`, `idAfter`, `spawnErrorAction`, `STOPPED`, `STOPPED_CANDIDATE`, `dropOf`, `retryableDrop`, and `countsOf`.
+  - `hooks/register.tsx`, `types/index.d.ts` (`TaskStatus`), and the tests: `duet-logic.test.ts`, plus `routing.test.ts`, whose harness gains a `drops` option.
+  - `README.md`, this SPEC, and version 0.3.3 in `plugin.json` and the marketplace entry.
+  - New reach: one hook, `classic.SessionStart{source=clear|resume|fork}`, which only writes duet's own atom.
+- **TDD:**
+
+  | Part | Red | Green |
+  | :- | :- | :- |
+  | Limit and ids | `eba95bf` | `5b3c04d` |
+  | Stop | `114b495`, `444fefa` | `43daee8` |
+  | Dropped delivery | `1bc1d6c` | `183c3cd` |
+  | Consent | `72f0f88` | `8589e30` |
+
+  Each red failed by assertion. The consent test watches state writes, since the kit can't reset atoms the way `/clear` does.
+- **Version:** 0.3.3 (patch).
+
