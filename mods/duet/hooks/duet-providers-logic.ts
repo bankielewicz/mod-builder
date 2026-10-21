@@ -8,6 +8,8 @@
  * `/duet provider test` has hit them live (SPEC, Change 0.3.0, part A).
  */
 
+import type { ProviderTest } from '../types'
+
 export type ProviderAuth = 'bearer' | 'session' | 'none' | 'cli'
 
 export type ProviderDef = {
@@ -54,7 +56,10 @@ export const PROVIDERS: ProviderDef[] = [
  */
 export const PROVIDER_KEY_NAMES: readonly string[] = PROVIDERS.map(p => p.keyName).filter((n): n is string => n !== null && n !== 'OPENAI_API_KEY' && n !== 'ANTHROPIC_API_KEY')
 
-export const KEY_FILE_NOTE = 'keys live in ~/.claude/duet-data/.env (mode 600), never in the project'
+/** The key file as the pane, notes and answers show it. */
+export const KEY_FILE_SHOWN = '~/.claude/duet-data/.env'
+
+export const KEY_FILE_NOTE = `keys live in ${KEY_FILE_SHOWN} (mode 600), never in the project`
 
 export function providerOf(id: string): ProviderDef | undefined {
   const k = id.trim().toLowerCase()
@@ -65,7 +70,8 @@ export function providerOf(id: string): ProviderDef | undefined {
 export function isAllowedBaseUrl(url: string): boolean {
   // No user:password@ in the authority (Codex 4298476191): the pane and the transcript would show it. No query or
   // fragment (Codex 4298736558): /models would be appended after it.
-  if (/[?#]/.test(url)) return false
+  // Nor whitespace, a control character or a backslash anywhere (#115): WHATWG reads `https://evil.com\.good.com` as host evil.com.
+  if (/[?#\s\\\u0000-\u001f\u007f]/.test(url)) return false
   return /^https:\/\/[^/\s@]+(\/|$)/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(url)
 }
 
@@ -158,16 +164,38 @@ function pathReaches(p: string): boolean {
   return next === undefined || next === '' || globMatches(next, '.env')
 }
 
+/** The home folder's spellings in POSIX shells, PowerShell and cmd, as `~`; backslashes as `/`. */
+const HOME_SPELLINGS = /\$\{HOME\}|\$HOME\b|\$\{env:(?:USERPROFILE|HOME)\}|\$env:(?:USERPROFILE|HOME)\b|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%/gi
+const normPath = (value: string) => value.replace(HOME_SPELLINGS, '~').replace(/\\/g, '/')
+const ROOTED = /^(?:~|\/|\.{1,2}\/|[A-Za-z]:\/)/
+/**
+ * A rooted path inside a word: stops at code punctuation (`,` `]` `}` `)` quotes), keeps whole `{a,b}` and `[…]` groups. A `]`,
+ * `}` or `,` that a later `/` follows in the same run is part of a segment (`/home/u]/…`, `/home/u,team/…`: Codex 4337056082,
+ * 4337185228), not code closing. A word is read both ways (`PATH_IN_WORD_STRICT` stops at every one of them), so a list of
+ * paths (`['/home/u/.claude/duet-data/.env','/b']`) still has its first path read on its own.
+ */
+const PATH_IN_WORD = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[\]},](?=[^\s"'<>|;&(){}[\]]*\/)|[^\s"'<>|;&(),{}[\]])*)/g
+const PATH_IN_WORD_STRICT = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[^\s"'<>|;&(),{}[\]])*)/g
+
 /** A path as a file tool gives it (`$HOME`, `~`, `\`, `//`, `/.`, `..` allowed) reaches the key file or its folder. */
 export function keyPathReaches(path: string): boolean {
-  return pathReaches(path.trim().replace(/\$\{HOME\}|\$HOME/g, '~').replace(/\\/g, '/'))
+  return pathReaches(normPath(path.trim()))
 }
 
-/** A shell word holds a rooted path (`~/`, `/`, `./`, `$HOME/`, `C:\`) that reaches the key file, at its start or after `=`, `:`, `,` or `(`. */
+/** A shell word holds a rooted path (`~/`, `/`, `./`, `$HOME/`, `C:\`) that reaches the key file, at its start or after `=`, `:`, `,`, `(`, `[` or `{`. */
 function wordReaches(value: string): boolean {
-  const norm = value.replace(/\$\{HOME\}|\$HOME/g, '~').replace(/\\/g, '/')
-  for (const m of norm.matchAll(/(?:^|[=:,(])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)[^\s"'<>|;&()]*)/g)) if (pathReaches(m[1]!)) return true
+  const n = normPath(value)
+  for (const re of [PATH_IN_WORD, PATH_IN_WORD_STRICT]) for (const m of n.matchAll(re)) if (pathReaches(m[1]!)) return true
   return false
+}
+
+/**
+ * A quoted word with spaces is a message, unless it is one rooted path (a home folder with a space): no `: `, and no space
+ * that starts another rooted path, as in `/duet keeps keys in ~/.claude/…` (Codex 4337185247).
+ */
+function spacedPathReaches(value: string): boolean {
+  const n = normPath(value).trim()
+  return ROOTED.test(n) && !/:\s/.test(n) && !/\s(?:~|\/|\.{1,2}\/|[A-Za-z]:\/)/.test(n) && pathReaches(n)
 }
 
 /** The command's own name, past `sudo`, `env` and `VAR=value` prefixes. */
@@ -179,6 +207,8 @@ function commandName(cmd: Word[]): string {
 function commandReaches(cmd: Word[], depth: number): boolean {
   const name = commandName(cmd)
   const nameAt = cmd.findIndex(x => baseName(x.value) === name)
+  // From an interpreter on (the command itself, or one it starts: `timeout 5 bash -lc …`), every word is code (#115).
+  const codeFrom = INTERPRETERS.has(name) ? nameAt : cmd.findIndex((x, i) => i > nameAt && INTERPRETERS.has(baseName(x.value)))
   const grepLike = GREP_LIKE.has(name) || (name === 'git' && cmd[nameAt + 1]?.value === 'grep')
   const hasE = cmd.some(x => x.value === '-e' || x.value === '--regexp' || x.value.startsWith('--regexp='))
   let patternSeen = hasE
@@ -190,11 +220,14 @@ function commandReaches(cmd: Word[], depth: number): boolean {
       if (prev === '-e' || prev === '--regexp' || w.value.startsWith('--regexp=')) continue
       if (!patternSeen && !w.value.startsWith('-')) { patternSeen = true; continue }
     }
-    if (!grepLike && PAYLOAD_FLAGS.has(prev)) {
+    if (!grepLike && ((codeFrom >= 0 && k > codeFrom) || PAYLOAD_FLAGS.has(prev))) {
       if (reaches(w.value, depth + 1)) return true
       continue
     }
-    if (w.spaced) continue   // a quoted text with spaces is a message or a pattern
+    if (w.spaced) {   // a quoted text with spaces is a message or a pattern, unless it is a rooted path
+      if (spacedPathReaches(w.value)) return true
+      continue
+    }
     if (wordReaches(w.value)) return true
   }
   return false
@@ -205,8 +238,12 @@ function reaches(text: string, depth: number): boolean {
   if (depth > 3) return true   // payloads nested this deep are refused rather than let through
   let cmd: Word[] = []
   let heredocs: { delim: string; strip: boolean; interpreted: boolean }[] = []
-  const finish = () => {
-    const hit = commandReaches(cmd, depth)
+  // The commands before this one in a pipeline: an interpreter at the end runs what they print (`echo '…' | sh`, #115).
+  let piped: Word[][] = []
+  const finish = (thenPipe = false) => {
+    let hit = commandReaches(cmd, depth)
+    if (!hit && cmd.length && INTERPRETERS.has(commandName(cmd))) hit = piped.some(p => p.some(w => reaches(w.value, depth + 1)))
+    piped = thenPipe ? [...piped, cmd] : []
     cmd = []
     return hit
   }
@@ -230,7 +267,7 @@ function reaches(text: string, depth: number): boolean {
       heredocs = []
     } else if (c === ' ' || c === '\t' || c === '\r') i++
     else if (/[;|&()`]/.test(c)) {
-      if (finish()) return true
+      if (finish(c === '|' && text[i + 1] !== '|' && text[i - 1] !== '|')) return true
       i++
     } else if (c === '#') {
       while (i < text.length && text[i] !== '\n') i++
@@ -248,7 +285,11 @@ function reaches(text: string, depth: number): boolean {
       if (strip) j++
       while (text[j] === ' ' || text[j] === '\t') j++
       const w = readWord(text, j)
-      heredocs.push({ delim: w.word.value, strip, interpreted: INTERPRETERS.has(commandName(cmd)) })
+      // Read by an interpreter: the command itself, or one the rest of the line pipes into (`cat <<'EOF' | bash`, #115).
+      const nl = text.indexOf('\n', w.end)
+      const rest = text.slice(w.end, nl < 0 ? text.length : nl)
+      const pipesIn = [...rest.matchAll(/(?<!\|)\|(?!\|)\s*(?:(?:sudo|env|exec|command|nohup|time)\s+)*([^\s|;&]+)/g)].some(m => INTERPRETERS.has(baseName(m[1]!)))
+      heredocs.push({ delim: w.word.value, strip, interpreted: INTERPRETERS.has(commandName(cmd)) || pipesIn })
       i = w.end
     } else if (c === '<' || c === '>') {
       i++
@@ -274,6 +315,30 @@ function reaches(text: string, depth: number): boolean {
  */
 export function namesKeyFile(text: string): boolean {
   return reaches(text, 0)
+}
+
+/**
+ * True when a search rooted at `path` covers the key file: the folder or below it, a `.claude` folder, the home folder or
+ * anything above it (#115). `~` resolves against `home`; Windows paths compare without case.
+ */
+export function searchCoversKeyFile(path: string, home: string): boolean {
+  const t = path.trim()
+  if (t === '') return false
+  if (namesKeyFolder(t)) return true
+  const norm = (p: string) => {
+    const n = normPath(p.trim()).replace(/\/+$/, '')
+    return n === '' ? '/' : n
+  }
+  const h = home.trim() === '' ? '' : norm(home)
+  let p = norm(t)
+  if (p === '~' || p.startsWith('~/')) p = (h || '~') + p.slice(1)
+  // Any `.claude` folder counts only while the home folder is unknown; with it known, the prefix check below finds the home
+  // one, and a project's own `.claude` is not it (Codex 4337056086).
+  if (p === '/' || (!h && /(?:^|\/)\.claude$/i.test(p))) return true
+  // Windows paths (a drive or a UNC share) compare without case; POSIX ones with it (Codex 4337185238).
+  const keyFolder = `${h || '~'}/.claude/duet-data`
+  const fold = (s: string) => (/^(?:[A-Za-z]:\/|\/\/)/.test(keyFolder) ? s.toLowerCase() : s)
+  return fold(keyFolder).startsWith(`${fold(p)}/`)
 }
 
 /** True when a Grep's or Glob's path, glob or pattern reaches the key file or its folder (a search over the folder reads the file). */
@@ -478,7 +543,8 @@ export type HttpReply = { status: number; ok: boolean; text: string; headers?: R
 export function refusalReason(message: string): string {
   return message.split('\n')[0]!.replace(/^\S+: \$\.http\.fetch(?:\([^)]*\))?(?: failed)?: /, '').trim()
 }
-export type TestResult = { ok: boolean; status: number; ms: number; model: string; note: string; at: number; key: string; host: string }
+/** A key test's outcome: the contract's `ProviderTest`, one shape for the pane, the store and the logic. */
+export type TestResult = ProviderTest
 
 const STATUS_WORD: Record<number, string> = { 400: 'bad request', 401: 'unauthorized', 402: 'payment required', 403: 'forbidden', 404: 'not found', 405: 'not allowed', 429: 'rate limited' }
 
@@ -569,9 +635,10 @@ export function rowWindow(at: number, total: number, bodyRows: number, fixedLine
  * The note after a key is saved: where it went and how to test it; under `codexFsScope: anything` a second line,
  * since Codex can then read the file like any other (SPEC, Change 0.3.0, part C; the owner's note at review).
  */
-export function savedNote(mode: string, exposed: boolean): string[] {
-  const lines = [`saved to ~/.claude/duet-data/.env (${mode}) · t tests it`]
+export function savedNote(mode: string, exposed: boolean, shadowedBy = ''): string[] {
+  const lines = [`saved to ${KEY_FILE_SHOWN} (${mode}) · t tests it`]
   if (exposed) lines.push('Codex can read this file under codexFsScope: anything; project hides it.')
+  if (shadowedBy) lines.push(`${shadowedBy} in your environment wins; unset it to use this key.`)   // the environment wins over the file (#115)
   return lines
 }
 

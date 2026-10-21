@@ -9,7 +9,7 @@
       "name": "mod-builder",
       "source": "./plugins/mod-builder",
       "description": "Spec-first Claude Code mod builder skill plus Mod Lab, a pane/band/status showcase that tracks each mod's build pipeline.",
-      "version": "0.2.25"
+      "version": "0.2.26"
     },
     {
       "name": "git-branch",
@@ -21,7 +21,7 @@
       "name": "duet",
       "source": "./mods/duet",
       "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on; independent Codex reviews; measures every run. Keeps API keys for fourteen model providers (Anthropic, OpenAI, Gemini, xAI, Mistral, DeepSeek, Groq, Together, Fireworks, OpenRouter, Perplexity, Cerebras, Ollama, custom) in a user-level key file and tests them.",
-      "version": "0.3.0"
+      "version": "0.3.1"
     },
     {
       "name": "issue-forge",

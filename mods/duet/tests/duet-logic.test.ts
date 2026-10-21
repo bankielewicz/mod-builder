@@ -5,7 +5,7 @@ import {
   agentResult, appendLog, buildHandoff, candidateOf, hashablePaths, pathsOf, snapshotOf, childEnv, codexArgv, codexLaunch, effectiveSandbox, failureOf, foldAll,
   isInside, isProtectedPath, isRouted, resolveFrom, codexRunning, parentOf, pathDirs, writePathsOf, consentText, fallbackFailure, limitText, BLANKED_ENV, sessionFolderOf, parseAgentFile, parseReviewArgs, parseRoutes, readOptions, reviewArgv, rowText, splitLines,
   footerOf, statsText, summarize, verdictOf,
-  claudeTaskOf, coerceConfigValue, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
+  claudeTaskOf, coerceConfigValue, configText, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
 } from '../hooks/duet-logic'
 import * as logic from '../hooks/duet-logic'
@@ -28,6 +28,22 @@ tools: Read, Grep, Glob
 ---
 
 You are a read-only code explorer.`
+
+describe('0.3.1 (issue #115): /duet config text', () => {
+  test('a refused apiCustomUrl never echoes a password, and names every local host it allows', () => {
+    const r = coerceConfigValue(findConfigField('customurl')!, 'https://bob:hunter2@gw.example.com/v1')
+    expect('error' in r && r.error.includes('hunter2')).toBe(false)
+    expect('error' in r && r.error).toContain('[::1]')
+    expect('error' in r && r.error).toContain('https://***@gw.example.com/v1')
+  })
+
+  test('/duet config list keeps its columns aligned for the wider aliases', () => {
+    const lines = configText({}).split('\n')
+    const at = (field: string) => lines.find(l => l.includes(` ${field} `))!.indexOf(field)
+    expect(at('apiCustomUrl')).toBe(at('codexWritePaths'))
+    expect(at('apiCustomModel')).toBe(at('codexWritePaths'))
+  })
+})
 
 describe('routing and options', () => {
   test('routes parse; unlisted types stay on Claude; default type is general-purpose', () => {

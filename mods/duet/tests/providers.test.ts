@@ -54,6 +54,7 @@ function engine(on: any, o: World = {}): Seen {
   on('tool.call', { tool: 'Glob' }, () => ({ result: { filenames: ['/w/a'], durationMs: 1, numFiles: 1, truncated: false } }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'ran', stderr: '' } }))
   on('tool.call', { tool: 'Read' }, () => ({ result: { type: 'text', file: { filePath: '/w/x', content: 'read', numLines: 1, startLine: 1, totalLines: 1 } } }))
+  on('tool.call', { tool: 'PowerShell' }, () => ({ result: { stdout: 'ran', stderr: '' } }))
   on('fs.exists', ($: any, e: any) => (o.existsDeny ? { deny: 'EIO: network location' } : { value: e.path in seen.files }))
   on('fs.list', () => ({ deny: 'ENOENT' }))
   let chmods = 0
@@ -627,6 +628,58 @@ describe('/duet provider', () => {
     await start($)
     const ui = await $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet-config', props: { ...PANE, scroll: { offset: 0, bodyRows: 14 } }, viewport: { columns: 120, rows: 40 } })
     expect(await ui.find({ type: 'Text', text: /↓ \d+ more \(j\)/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('0.3.1: the PowerShell tool is guarded like Bash', async ($, on) => {
+    engine(on)
+    await start($)
+    const r: any = await $.tool.call({ tool: 'PowerShell', command: 'Get-Content C:\\Users\\u\\.claude\\duet-data\\.env' } as never)
+    expect(r.deny).toMatch(/duet: that file holds API keys/)
+    const ok: any = await $.tool.call({ tool: 'PowerShell', command: 'Get-ChildItem C:\\Users\\u' } as never)
+    expect(ok.deny).toBeUndefined()
+  })
+
+  test('0.3.1: a Grep rooted above the key folder is refused, and so is a Grep with no path in a session started in the home folder', async ($, on) => {
+    engine(on, { cwd: '/home/u' })
+    await start($, '/home/u')
+    for (const input of [{ pattern: 'API_KEY', path: '/home/u/.claude' }, { pattern: 'API_KEY', path: '~' }, { pattern: 'API_KEY' }]) {
+      const r: any = await $.tool.call({ tool: 'Grep', ...input } as never)
+      expect([input, r.deny]).toEqual([input, expect.stringMatching(/duet: that file holds API keys/)])
+    }
+    const ok: any = await $.tool.call({ tool: 'Grep', pattern: 'name:', path: '/home/u/.claude/agents' } as never)
+    expect(ok.deny).toBeUndefined()
+  })
+
+  test('0.3.1: a Grep with no path in a session started in a project passes', async ($, on) => {
+    engine(on)
+    await start($)
+    const ok: any = await $.tool.call({ tool: 'Grep', pattern: 'API_KEY' } as never)
+    expect(ok.deny).toBeUndefined()
+  })
+
+  test('0.3.1: saving a key whose variable is set in the environment says the environment wins', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: '' }, env: { GEMINI_API_KEY: 'AIza-from-env-0123456789abcdef' } })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /GEMINI_API_KEY in your environment wins; unset it to use this key\./ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('0.3.1: Close and a plain /duet provider leave no key field or old note behind', async ($, on) => {
+    engine(on)
+    await start($)
+    await run($, 'provider key google')
+    let ui = await mount($)
+    expect(await ui.find({ type: 'Input', key: 'prov-key' })).toBeDefined()
+    await ui.press({ key: 'prov-close' })
+    await ui.unmount()
+    await run($, 'provider')
+    ui = await mount($)
+    expect(await ui.find({ type: 'Input', key: 'prov-key' })).toBeUndefined()
     await ui.unmount()
   })
 
