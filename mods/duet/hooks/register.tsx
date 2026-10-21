@@ -7,7 +7,7 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, ROLE_PREFIX,
-  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stopPlan, kindLabel, STOPPED_HERE, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -98,6 +98,8 @@ const mine = new Set<string>()
 let consentGiven: 'yes' | 'no' | null = null
 /** Answers Stop dropped, submitted again when the next main turn ends (#119). */
 let held: { text: string; note: string }[] = []
+/** How each running Codex run of this module can be stopped (#121): its stream's stopper, or 'one-shot' (nothing to stop it by). */
+const stoppers = new Map<string, (() => void) | 'one-shot'>()
 
 // ── Pane, status, ticker ─────────────────────────────────────────────────
 
@@ -548,6 +550,12 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
   let timedOut = false
   let started = false
   const stream = $.process.spawn(launch)
+  // The Stop key and /duet stop (#121): ending the stream kills Codex, and the loop ends cleanly (probe, 2.1.306).
+  let stopAsked = false
+  stoppers.set(id, () => {
+    stopAsked = true
+    void stream.return?.(undefined as never)?.catch?.(() => undefined)
+  })
   let elapsed = 0
   const timer = $.clock.every(5000, () => {
     elapsed += 5000
@@ -568,16 +576,18 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
       carry = split.carry
       for (const line of split.lines) run = foldEvent(run, line)
       if (run.text || run.isDone) await patchTask($, id, { tokens: tokensOf(run) })
-      if (timedOut) break
+      if (timedOut || stopAsked) break
     }
+    // Before anything else: a stop ends the loop with started still false, which must not read as 'spawn could not start'.
+    if (stopAsked) return { run, failure: STOPPED_HERE, isStopped: true }
     if (carry.trim()) run = foldEvent(run, carry)
     if (timedOut) return { run, failure: `timed out after ${Math.round(options.timeoutMs / 60_000)}m` }
     const end = await stream.result
     return { run, failure: failureOf(run, end.code, stderr) }
   } catch (err) {
-    const action = spawnErrorAction({ started, aborted: signal?.aborted === true })
-    // Esc: the engine killed Codex and refuses new process calls, so no fallback (#119).
-    if (action === 'stop') return { run, failure: STOPPED, isStopped: true }
+    const action = spawnErrorAction({ started, aborted: signal?.aborted === true, stopped: stopAsked })
+    // Esc: the engine killed Codex and refuses new process calls (#119); a stop from duet (#121): no fallback either way.
+    if (action === 'stop') return { run, failure: stopAsked ? STOPPED_HERE : STOPPED, isStopped: true }
     if (action === 'fail') return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
     // spawn could not start: try a one-shot run (also the path tests exercise)
     const cap = Math.min(options.timeoutMs, FALLBACK_MAX_MS)
@@ -585,6 +595,8 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     const note = fallbackNote(options.timeoutMs)
     if (note) await patchTask($, id, { detail: note }).catch(() => undefined)
     const fallbackAt = Date.now()
+    // A one-shot run has no stream to end, so /duet stop says it can't be stopped (#121).
+    stoppers.set(id, 'one-shot')
     try {
       const r = await $.process.run(launch.argv, { env: launch.env, ...(launch.input !== undefined ? { stdin: launch.input } : {}), timeoutMs: cap })
       const folded = foldAll(r.stdout)
@@ -596,6 +608,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     }
   } finally {
     timer.cancel()
+    stoppers.delete(id)
   }
 }
 
@@ -632,13 +645,36 @@ async function compareAfterStop($: EngineInterface, id: string, before: string |
   $.ui.toast(`${id} ${candidate}`.slice(0, 80))
 }
 
+/** Stops a running Codex run of this module, or says why not (#121): `/duet stop <id>` and the Stop key's yes. */
+function stopRun(list: Task[], arg: string): string {
+  const ways = new Map([...stoppers].map(([id, way]) => [id, way === 'one-shot' ? ('one-shot' as const) : ('stream' as const)]))
+  const plan = stopPlan(list, arg, ways)
+  const stop = plan.stop === null ? undefined : stoppers.get(plan.stop)
+  if (typeof stop === 'function') stop()
+  return plan.text
+}
+
+const STOP_IT = 'Stop it'
+const KEEP_IT = 'Keep it running'
+
+/** The pane's Stop key asks first, as the house rule for a stop hotkey says (#121); a dismissed question stops nothing. */
+async function askStop($: EngineInterface, row: Task): Promise<void> {
+  let answer = ''
+  try {
+    answer = await $.ui.ask(`Stop ${row.id} (${kindLabel(row)} on Codex)? What Codex already wrote stays.`, [STOP_IT, KEEP_IT])
+  } catch {
+    return
+  }
+  if (answer === STOP_IT) $.ui.toast(stopRun(await read($, tasks), row.id).slice(0, 80))
+}
+
 /** A background run: finishes the job, then hands the answer (or the failure) to the main session. */
 async function finishInBackground($: EngineInterface, j: Job, outputFile: string): Promise<void> {
   let text: string
   try {
     const r = await runJob($, j)
-    await $.fs.write(outputFile, r.failure ? `duet ${j.id} failed on Codex: ${r.failure}\n${j.searchNote ? `${j.searchNote}\n` : ''}` : `${r.run.text}\n\n${r.footer}\n`).catch(() => undefined)
-    text = deliveryText({ id: j.id, label: j.type, model: options.model, sandbox: j.sandbox, durationMs: r.endedAt - j.startedAt, tokens: tokensOf(r.run), text: r.run.text, footer: r.footer, failure: r.failure, searchNote: j.searchNote })
+    await $.fs.write(outputFile, r.isStopped ? `duet ${j.id} was stopped on Codex: ${r.failure}\n` : r.failure ? `duet ${j.id} failed on Codex: ${r.failure}\n${j.searchNote ? `${j.searchNote}\n` : ''}` : `${r.run.text}\n\n${r.footer}\n`).catch(() => undefined)
+    text = deliveryText({ id: j.id, label: j.type, model: options.model, sandbox: j.sandbox, durationMs: r.endedAt - j.startedAt, tokens: tokensOf(r.run), text: r.run.text, footer: r.footer, failure: r.failure, searchNote: j.searchNote , ...(r.isStopped ? { isStopped: true } : {})})
   } catch (err) {
     const why = `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})`
     await patchTask($, j.id, { status: 'error', endedAt: Date.now(), detail: why }).catch(() => undefined)
@@ -710,7 +746,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null,
     }
 
     const r = await runJob($, job, signal)
-    if (r.isStopped) return { deny: `duet: ${STOPPED}; the ${type} subagent did not finish on Codex.` }
+    if (r.isStopped) return { deny: `duet: ${r.failure}; the ${type} subagent did not finish on Codex.` }
     if (r.failure) return { deny: `duet: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.${searchNote ? `\n${searchNote}` : ''}` }
     return { result: agentResult({ id, prompt: e.prompt, text: r.run.text, footer: r.footer, durationMs: r.endedAt - startedAt, run: r.run, model: options.model }) }
   } catch (err) {
@@ -763,8 +799,8 @@ async function finishReview($: EngineInterface, task: Task, target: ReviewTarget
   let text = ''
   try {
     await ensureTicker($)
-    const { run, failure } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, ...(await scopeOf($, cwd)), nonce: crypto.randomUUID() }), undefined)
-    done = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
+    const { run, failure, isStopped } = await runCodex($, task.id, reviewArgv(target, options.model, { cwd, ...(await scopeOf($, cwd)), nonce: crypto.randomUUID() }), undefined)
+    done = { ...task, endedAt: Date.now(), tokens: tokensOf(run), status: isStopped ? 'stopped' : failure ? 'error' : 'done', detail: failure || verdictOf(run.text) }
     text = run.text
   } catch (err) {
     // Whatever fails after admission, the row must not stay running and hold a slot.
@@ -773,7 +809,7 @@ async function finishReview($: EngineInterface, task: Task, target: ReviewTarget
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
   if (done.status === 'done') await $.fs.write(`${await sessionDir($)}/review-${task.id}.md`, text)
-  $.ui.toast((done.status === 'error' ? `${task.id} review failed: ${done.detail}` : `${task.id} review: ${done.detail}`).slice(0, 80))
+  $.ui.toast((done.status === 'error' ? `${task.id} review failed: ${done.detail}` : done.status === 'stopped' ? `${task.id} review ${done.detail}` : `${task.id} review: ${done.detail}`).slice(0, 80))
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────
@@ -1452,7 +1488,7 @@ export const register: Register = (on, raw) => {
       }
     }
     await $.command
-      .register({ name: 'duet', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' })
+      .register({ name: 'duet', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' })
       .catch(() => undefined)
     return next(e)
   })
@@ -1479,11 +1515,12 @@ export const register: Register = (on, raw) => {
         const text = /^d\d+$/.test(id) ? await readReview($, id) : ''
         return { text: text || `no saved review for "${id}".` }
       }
+      if (sub === 'stop') return { text: stopRun(await read($, tasks), rest[0] ?? '') }
       if (sub === 'stats') return { text: await showStats($) }
       if (sub === 'routes') return { text: routesText(options) }
       if (sub === 'config') return { text: await configure($, rest) }
       if (sub === 'provider' || sub === 'providers') return { text: await providerCommand($, rest) }
-      if (sub !== '') return { text: 'Usage: /duet [demo | review [--base <branch> | --commit <sha>] | show <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' }
+      if (sub !== '') return { text: 'Usage: /duet [demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' }
       const action = await paneActionOf($)
       if (action === 'show') {
         void bringToFront($).catch(() => undefined)
@@ -1553,6 +1590,8 @@ export const register: Register = (on, raw) => {
     const list = demo ? demoTasks(now) : (await read($, tasks)).filter(t => t.provider === 'codex')
     const at = await read($, selected)
     const mode = await read($, view)
+    // The highlighted run, when it is a real one still running: the Stop key's row (#121). Demo rows are samples.
+    const stoppable = !demo && list[at]?.status === 'running' ? list[at] : undefined
     const width = Math.max(20, e.props.bodyColumns - 2)
     const layout = layoutOf(width)
     const room = rowsThatFit(e.props.scroll.bodyRows)
@@ -1588,6 +1627,7 @@ export const register: Register = (on, raw) => {
         <Box gap={2}>
           <Button key="review" label="Review diff" hotkey="r" variant="primary" onPress={() => void startReview($, { kind: 'uncommitted' }).catch(() => undefined)} />
           <Button key="stats" label={mode === 'stats' ? 'Tasks' : 'Stats'} hotkey="s" plain onPress={() => void toggleStats($).catch(() => undefined)} />
+          {stoppable && <Button key="stop" label="Stop" hotkey="x" plain onPress={() => void askStop($, stoppable).catch(() => undefined)} />}
           <Button key="next" label="Next" hotkey="j" plain onPress={() => void move($, 1).catch(() => undefined)} />
           <Button key="prev" label="Prev" hotkey="k" plain onPress={() => void move($, -1).catch(() => undefined)} />
           <Button key="close" label="Close" hotkey="c" plain onPress={() => void $.ui.close({ id: PANE }).catch(() => undefined)} />
