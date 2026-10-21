@@ -37,6 +37,8 @@ type World = {
   existsDeny?: boolean
   /** ui.open answers isPlaced: false (a narrow window, or a headless run). */
   unplaced?: boolean
+  /** store.set, store.delete or both reject, as a store that can't be written (#117). */
+  storeDeny?: 'set' | 'delete' | 'both'
 }
 type Seen = { fetches: Fetch[]; files: Record<string, string>; argv: string[][]; opened: any[]; toasts: string[]; store: Map<string, unknown>; asked: number; closed: string[]; events: string[]; clock: ReturnType<typeof mock.clock> }
 
@@ -75,8 +77,8 @@ function engine(on: any, o: World = {}): Seen {
     return r instanceof Promise ? r.then(answerOf) : answerOf(r)
   })
   on('store.get', ($: any, e: any) => ({ value: seen.store.get(e.key) }))
-  on('store.set', ($: any, e: any) => (seen.store.set(e.key, e.value), { value: undefined }))
-  on('store.delete', ($: any, e: any) => (seen.store.delete(e.key), { value: undefined }))
+  on('store.set', ($: any, e: any) => (o.storeDeny === 'set' || o.storeDeny === 'both' ? { deny: 'EIO: store write failed' } : (seen.store.set(e.key, e.value), { value: undefined })))
+  on('store.delete', ($: any, e: any) => (o.storeDeny === 'delete' || o.storeDeny === 'both' ? { deny: 'EIO: store write failed' } : (seen.store.delete(e.key), { value: undefined })))
   on('ui.open', ($: any, e: any) => (seen.opened.push({ ...e }), { value: { isPlaced: !o.unplaced } }))
   on('ui.close', ($: any, e: any) => (seen.closed.push(e.id), { value: undefined }))
   on('ui.panes', () => ({ value: [] }))
@@ -107,6 +109,58 @@ const seed = (tests: Record<string, unknown>): Record<string, unknown> => Object
 const everything = (seen: Seen, ...texts: string[]) => [...texts, ...seen.toasts, JSON.stringify([...seen.store]), ...Object.entries(seen.files).filter(([p]) => p !== KEY_FILE).map(([, t]) => t)].join('\n')
 
 describe('/duet provider', () => {
+  // The engine under test runs on Linux and collapses a UNC path's leading `//`, so the file is found by its ending.
+  test('#117 A: a UNC home folder is Windows too: the key is saved without chmod', async ($, on) => {
+    const seen = engine(on, { noHome: true, env: { USERPROFILE: '\\\\server\\share\\u' }, chmodFail: "'chmod' is not recognized as a command" })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(Object.entries(seen.files).find(([path]) => path.endsWith('/server/share/u/.claude/duet-data/.env'))?.[1]).toBe(`GEMINI_API_KEY=${KEY}\n`)
+    expect(seen.argv.filter(a => a[0] === 'chmod')).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /saved to ~\/.claude\/duet-data\/.env \(Windows: no chmod\) · t tests it/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('#117 A: OS=Windows_NT skips chmod whatever the home path looks like (POSIX hosts: the chmod-order test)', async ($, on) => {
+    const seen = engine(on, { env: { OS: 'Windows_NT' }, chmodFail: "'chmod' is not recognized as a command" })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($)
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(seen.files[KEY_FILE]).toBe(`GEMINI_API_KEY=${KEY}\n`)
+    expect(seen.argv.filter(a => a[0] === 'chmod')).toEqual([])
+    await ui.unmount()
+  })
+
+  test('#117 B: a test result the store refuses is named in the answer and the pane, and not counted as tested', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, storeDeny: 'set' })
+    await start($)
+    const text = await run($, 'provider test google')
+    expect(text).toMatch(/^google: ok \d+ms · 2 models; result not saved \(EIO: store write failed\), so it won't show after a reopen\.$/)
+    await run($, 'provider key google')
+    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })
+    await ui.press({ key: 'prov-test' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /result not saved \(EIO: store write failed\)/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /1 keys · 0 tested/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('#117 B: a key saved while the store refuses to drop the old result says the old result may still show', async ($, on) => {
+    const seen = engine(on, { files: { [KEY_FILE]: '' }, storeDeny: 'delete' })
+    await start($)
+    await run($, 'provider key google')
+    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })
+    await ui.input({ key: 'prov-key', text: KEY, kind: 'submit' })
+    await seen.clock.settle()
+    expect(await ui.find({ type: 'Text', text: /an old test result may still show \(EIO: store write failed\)/ })).toBeDefined()
+    await ui.unmount()
+    expect(await run($, 'provider remove google')).toBe('google: key removed from ~/.claude/duet-data/.env. An old test result may still show (EIO: store write failed).')
+  })
+
   test('list: each provider with its sign-in and last test; the file and the environment are both read; the key itself is never printed', async ($, on) => {
     const seen = engine(on, { files: { [KEY_FILE]: `# mine\nGEMINI_API_KEY=${KEY}\n` }, env: { XAI_API_KEY: XAI } })
     await start($)
