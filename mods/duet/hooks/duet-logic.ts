@@ -1152,12 +1152,10 @@ export function lostOnReload(tasks: Task[], mine: ReadonlySet<string>, now: numb
   return { tasks: next, lost }
 }
 
-/** Codex runs in flight of any kind (routed agents and reviews): what the concurrency limit admits against. */
-export function codexRunning(tasks: Task[]): number {
-  return tasks.filter(t => t.provider === 'codex' && t.status === 'running').length
-}
-
-/** Running Codex rows and the runs this module started, each once: /clear empties the rows while those runs go on (#119). */
+/**
+ * Codex runs in flight of any kind (routed agents and reviews), what the concurrency limit admits against: running
+ * Codex rows and the runs this module started, each once. /clear empties the rows while those runs go on (#119).
+ */
 export function liveRuns(tasks: Task[], mine: ReadonlySet<string>): number {
   const ids = new Set(mine)
   for (const t of tasks) if (t.provider === 'codex' && t.status === 'running') ids.add(t.id)
