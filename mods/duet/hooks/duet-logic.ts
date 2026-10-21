@@ -325,7 +325,7 @@ export function configText(raw: unknown): string {
     const v = o[f.field] ?? f.fallback
     const shown = v === '' ? '(empty)' : String(v)
     const capped = f.field === 'timeoutMinutes' && Number(v) * 60_000 > FALLBACK_MAX_MS ? '   (a one-shot fallback run stops at 10 minutes)' : ''
-    return `  ${f.alias.padEnd(8)} ${f.field.padEnd(15)} ${shown}${f.choices ? `   [${f.choices.join(' | ')}]` : ''}${capped}`
+    return `  ${f.alias.padEnd(11)} ${f.field.padEnd(15)} ${shown}${f.choices ? `   [${f.choices.join(' | ')}]` : ''}${capped}`
   })
   return ['duet config', ...rows, CONFIG_USAGE].join('\n')
 }
@@ -349,7 +349,8 @@ export function coerceConfigValue(f: ConfigField, text: string): { value: string
     const w = parseWritePaths(t)
     if (typeof w.error === 'string') return { error: w.error }
   }
-  if (f.field === 'apiCustomUrl' && t !== '' && !isAllowedBaseUrl(t)) return { error: `apiCustomUrl takes an https:// URL, or http:// to localhost or 127.0.0.1, got "${t}".` }
+  // The refusal never shows a password the URL carried (#115).
+  if (f.field === 'apiCustomUrl' && t !== '' && !isAllowedBaseUrl(t)) return { error: `apiCustomUrl takes an https:// URL, or http:// to localhost, 127.0.0.1 or [::1], with no user:password@, query, fragment, space or backslash; got "${t.replace(/\/\/[^/@\s]*@/, '//***@')}".` }
   return { value: t }
 }
 

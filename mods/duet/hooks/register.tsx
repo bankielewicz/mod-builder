@@ -11,7 +11,7 @@ import {
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
-  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, safeText, savedNote, testOutcome, testText, upsertEnvLine,
 } from './duet-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
@@ -1061,7 +1061,8 @@ async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Pr
   await storeProviderTestNow($, p.id, null)   // a new key is untested (Codex 4297835973)
   await refreshProviderAuth($)
   const cwd = await $.session.cwd().catch(() => '')
-  return { saved: savedNote(mode, keyFileExposed(options.fsScope, cwd, path)).join('\n') }
+  const shadowed = (await envKey($, p.keyName).catch(() => undefined)) ? p.keyName : ''
+  return { saved: savedNote(mode, keyFileExposed(options.fsScope, cwd, path), shadowed).join('\n') }
 }
 
 /** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
@@ -1216,6 +1217,20 @@ async function openModelList($: EngineInterface, p: ProviderDef): Promise<void> 
   await update($, provModelsState, () => (r.error ? r.error : 'idle'))
 }
 
+/** Whether a Grep rooted at `path` (the session folder when empty) covers the key file. */
+async function grepCoversKeyFile($: EngineInterface, path: string): Promise<boolean> {
+  const where = path.trim() || (await $.session.cwd().catch(() => ''))
+  return searchCoversKeyFile(where, await homeDir($).catch(() => ''))
+}
+
+/** c: the pane closes, and its field, list and note go with it (#115). */
+async function closeProvidersPane($: EngineInterface): Promise<void> {
+  await update($, provEditing, () => false)
+  await update($, provListing, () => '')
+  await update($, provNote, () => '')
+  await $.ui.close({ id: PROVIDERS_PANE })
+}
+
 async function highlightedProvider($: EngineInterface): Promise<ProviderDef> {
   return PROVIDERS[Math.min(await read($, provAt), PROVIDERS.length - 1)] ?? PROVIDERS[0]!
 }
@@ -1262,10 +1277,11 @@ async function openProvidersPane($: EngineInterface, rowId = '', edit = false): 
   if (rowId) {
     const at = PROVIDERS.findIndex(p => p.id === rowId)
     if (at >= 0) await update($, provAt, () => at)
-    await update($, provListing, () => '')
-    await update($, provNote, () => '')
-    await update($, provEditing, () => edit && Boolean(PROVIDERS[at]?.keyName))
   }
+  // Every open starts clean: no field, list or note left from an earlier one (#115).
+  await update($, provListing, () => '')
+  await update($, provNote, () => '')
+  await update($, provEditing, () => edit && Boolean(PROVIDERS.find(p => p.id === rowId)?.keyName))
   const opened = await $.ui.open({ ...PROVIDERS_PANE_ARGS, focus: true })
   if (edit) await $.ui.focus({ requestId: PROVIDERS_PANE, key: 'prov-key' }).catch(() => undefined)
   if (!opened.isPlaced) {
@@ -1586,17 +1602,21 @@ export const register: Register = (on, raw) => {
   const KEY_FILE_DENY = 'duet: that file holds API keys; it is not read into the conversation. /duet provider manages them.'
   on('prompt.mention', { path: /duet-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
     .catch(() => ({ deny: KEY_FILE_DENY }))
-  on('tool.call', { tool: 'Bash' }, ($, e, next) => (namesKeyFile(String((e as unknown as { command?: unknown }).command ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
+  // Bash and PowerShell (#115): one matcher; this build's tool types name neither PowerShell, Grep nor Glob.
+  on('tool.call', { tool: /^(?:Bash|PowerShell)$/ }, ($, e, next) => (namesKeyFile(String((e as unknown as { command?: unknown }).command ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
     .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
   on('tool.call', { tool: 'Read' }, ($, e, next) => (keyPathReaches(String((e as unknown as { file_path?: unknown }).file_path ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
     .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
   // A Grep over the key file, or over its folder, reads it too; a Glob there lists it.
   // Grep and Glob through one matcher: this build lays neither tool, and naming them as strings needed hand-declared tool
   // types that would collide with a build that does. Grep's `pattern` is what it searches for; Glob's is a path pattern.
-  on('tool.call', { tool: /^(?:Grep|Glob)$/ }, ($, e, next) => {
+  on('tool.call', { tool: /^(?:Grep|Glob)$/ }, async ($, e, next) => {
     const g = e as unknown as { tool?: unknown; path?: unknown; glob?: unknown; pattern?: unknown }
     const paths = [g.path, g.glob, g.tool === 'Glob' ? g.pattern : undefined].map(v => String(v ?? ''))
-    return paths.some(namesKeyFolder) ? { deny: KEY_FILE_DENY } : next(e)
+    if (paths.some(namesKeyFolder)) return { deny: KEY_FILE_DENY }
+    // A Grep reads contents: rooted above the key folder (or with no path, in the session folder) it reads the key file (#115).
+    if (g.tool === 'Grep' && (await grepCoversKeyFile($, String(g.path ?? '')))) return { deny: KEY_FILE_DENY }
+    return next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
 
   on('ui.render', { component: 'Pane', requestId: PROVIDERS_PANE }, async ($, e) => {
@@ -1679,7 +1699,7 @@ export const register: Register = (on, raw) => {
           <Button key="prov-remove" label="Remove" hotkey="x" plain onPress={() => void highlightedProvider($).then(p => removeKeyAsked($, p)).catch(() => undefined)} />
           <Button key="prov-next" label="Down" hotkey="j" plain onPress={() => void moveProvider($, 1).catch(() => undefined)} />
           <Button key="prov-prev" label="Up" hotkey="k" plain onPress={() => void moveProvider($, -1).catch(() => undefined)} />
-          <Button key="prov-close" label="Close" hotkey="c" plain onPress={() => void $.ui.close({ id: PROVIDERS_PANE }).catch(() => undefined)} />
+          <Button key="prov-close" label="Close" hotkey="c" plain onPress={() => void closeProvidersPane($).catch(() => undefined)} />
         </Box>
         <Text dimColor wrap="truncate">{`e enter key  t test  m models  x remove  j/k  c close  ·  ${KEY_FILE_HOME} (600)`}</Text>
       </Box>
