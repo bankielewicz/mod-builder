@@ -1160,3 +1160,10 @@ describe('#119: a Codex run the person stopped with Esc', () => {
     expect(logic.countsOf([t('d1', 'stopped'), t('d2', 'done'), t('d3', 'error')])).toBe('1 done · 1 stopped · 1 failed')
   })
 })
+
+describe('#119: a stopped run makes no file comparison', () => {
+  // After the abort the engine refuses process calls, so git status reads '' and a comparison would invent changes.
+  test('its candidate says the files were not compared', () => {
+    expect(logic.STOPPED_CANDIDATE).toBe('stopped with Esc: files not compared')
+  })
+})
