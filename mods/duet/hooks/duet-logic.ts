@@ -1054,8 +1054,16 @@ export const STOPPED_CANDIDATE = 'stopped with Esc: files not compared'
  * A stopped run that could write, compared just after the stop from outside the aborted hook (#119): what changed
  * since the run began, or the placeholder when git gave no reading (`null`), so a failed read isn't every file changed.
  */
-export function stoppedCandidateOf(before: string, after: string | null): string {
-  return after === null ? STOPPED_CANDIDATE : `stopped with Esc: ${candidateOf(before, after)}`
+export function stoppedCandidateOf(before: string | null, after: string | null): string {
+  return before === null || after === null ? STOPPED_CANDIDATE : `stopped with Esc: ${candidateOf(before, after)}`
+}
+
+/** An editing run's candidate when git couldn't read the folder before or after it (#119, Codex on PR #123). */
+export const UNREAD_CANDIDATE = 'files not compared: git could not read the folder'
+
+/** What an editing run changed; a failed git read (`null`) is no reading, not an empty tree. */
+export function candidateFrom(before: string | null, after: string | null): string {
+  return before === null || after === null ? UNREAD_CANDIDATE : candidateOf(before, after)
 }
 
 /**

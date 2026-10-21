@@ -2,12 +2,12 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import {
-  agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, candidateOf, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
+  agentResult, appendLog, buildHandoff, coerceConfigValue, configText, findConfigField, modelsText, modelWarning, parseModelCatalog, pickable, planDraft, storedText, CONFIG_FIELDS, CONFIG_USAGE, MODELS_ARGV, childEnv, codexArgv, codexLaunch, countsOf, demoTasks, effectiveSandbox,
   EMPTY_RUN, EMPTY_TEXT, envelopeLines, failureOf, foldAll, foldEvent, footerOf, layoutOf, moved,
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, READ_ONLY_CANDIDATE, ROLE_PREFIX,
-  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stoppedCandidateOf, candidateFrom, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
 } from './duet-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
 import {
@@ -482,14 +482,28 @@ async function baseCommit($: EngineInterface): Promise<string> {
   return (await git($, ['rev-parse', '--short', 'HEAD'])) || 'none'
 }
 
-/** The dirty tree with each file's content hash, for comparing before and after an editing run. */
-async function porcelain($: EngineInterface): Promise<string> {
-  const status = await git($, ['status', '--porcelain', '--untracked-files=all'])
+/** git's output, or null when git failed or couldn't start: a failed read is no reading, not an empty tree (#119). */
+async function gitRead($: EngineInterface, args: string[]): Promise<string | null> {
+  try {
+    const r = await $.process.run(['git', '--no-optional-locks', ...args], { timeoutMs: 10_000 })
+    // Trim only the end: `git status --porcelain` lines start with a meaningful space.
+    return r.exitCode === 0 ? r.stdout.replace(/\s+$/, '') : null
+  } catch {
+    return null
+  }
+}
+
+/** The dirty tree with each file's content hash, for comparing before and after an editing run; null when git can't read it. */
+async function porcelain($: EngineInterface): Promise<string | null> {
+  const status = await gitRead($, ['status', '--porcelain', '--untracked-files=all'])
+  if (status === null) return null
   const paths = hashablePaths(status).slice(0, 500)
   const hashes: Record<string, string> = {}
   if (paths.length) {
-    const out = (await git($, ['hash-object', '--', ...paths])).split('\n')
-    paths.forEach((path, at) => (hashes[path] = out[at] ?? ''))
+    const out = await gitRead($, ['hash-object', '--', ...paths])
+    if (out === null) return null
+    const lines = out.split('\n')
+    paths.forEach((path, at) => (hashes[path] = lines[at] ?? ''))
   }
   return snapshotOf(status, hashes)
 }
@@ -583,7 +597,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
 type AgentCall = { subagent_type?: string; prompt: string; description: string }
 
 /** One admitted Codex run, everything its finish needs. */
-type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; searchNote: string; sandbox: Sandbox; baseSha: string; before: string; prompt: string; envelope: Envelope; startedAt: number; task: Task }
+type Job = Scope & { id: string; type: string; cwd: string; writePaths: string[] | undefined; dropped: string[]; searchNote: string; sandbox: Sandbox; baseSha: string; before: string | null; prompt: string; envelope: Envelope; startedAt: number; task: Task }
 type Finished = { run: Run; failure: string; footer: string; endedAt: number; isStopped?: true }
 
 /** Runs Codex for an admitted job and records the outcome: row, log line, toast. */
@@ -591,7 +605,7 @@ async function runJob($: EngineInterface, j: Job, signal?: AbortSignal): Promise
   const { run, failure, isStopped } = await runCodex($, j.id, codexArgv({ sandbox: j.sandbox, model: options.model, cwd: j.cwd, fsScope: j.fsScope, home: j.home, writePaths: j.writePaths, reads: j.reads, nonce: crypto.randomUUID() }), j.prompt, signal)
   const endedAt = Date.now()
   // A read-only run can't write, so a before/after comparison would only credit Claude's own edits to Codex.
-  const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : isStopped ? STOPPED_CANDIDATE : candidateOf(j.before, await porcelain($))
+  const cand = j.sandbox === 'read-only' ? READ_ONLY_CANDIDATE : isStopped ? STOPPED_CANDIDATE : candidateFrom(j.before, await porcelain($))
   const done: Task = { ...j.task, envelope: { ...j.envelope, candidate: cand }, endedAt, tokens: tokensOf(run), status: isStopped ? 'stopped' : failure ? 'error' : 'done', detail: failure }
   await putTask($, done)
   await logRun($, done).catch(() => undefined)
@@ -603,9 +617,8 @@ async function runJob($: EngineInterface, j: Job, signal?: AbortSignal): Promise
 }
 
 /** Puts on a stopped run's row the files Codex changed before Esc, and says so; the placeholder stays when git can't read the folder. */
-async function compareAfterStop($: EngineInterface, id: string, before: string): Promise<void> {
-  const inside = (await git($, ['rev-parse', '--is-inside-work-tree'])) === 'true'
-  const candidate = stoppedCandidateOf(before, inside ? await porcelain($) : null)
+async function compareAfterStop($: EngineInterface, id: string, before: string | null): Promise<void> {
+  const candidate = stoppedCandidateOf(before, await porcelain($))
   if (candidate === STOPPED_CANDIDATE) return
   await update($, tasks, list => list.map(t => (t.id === id && t.envelope ? { ...t, envelope: { ...t.envelope, candidate } } : t)))
   $.ui.toast(`${id} ${candidate}`.slice(0, 80))
