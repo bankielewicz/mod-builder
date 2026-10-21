@@ -1123,3 +1123,24 @@ describe('paneAction: one rule for a bare pane command (#31)', () => {
     expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet')).toBe('close')
   })
 })
+
+// #119 gap 1 (the owner's cheap guard): /clear empties the tasks atom while the runs this module started go on.
+describe('#119: the concurrency limit and row ids hold after /clear', () => {
+  const t = (id: string, status: 'running' | 'done', provider: 'codex' | 'claude' = 'codex', kind: 'agent' | 'review' = 'agent') =>
+    ({ id, provider, kind, subagentType: 'x', model: '', status, startedAt: 0, endedAt: null, tokens: 0, description: '', detail: '', envelope: null }) as Task
+
+  test('liveRuns counts running Codex rows and the runs this module started, each once', () => {
+    const list = [t('d1', 'running'), t('d2', 'done'), t('d3', 'running', 'codex', 'review'), t('c1', 'running', 'claude')]
+    expect(logic.liveRuns?.(list, new Set(['d1', 'd3']))).toBe(2)
+    // After /clear the list is empty and two runs are still going.
+    expect(logic.liveRuns?.([], new Set(['d1', 'd3']))).toBe(2)
+    expect(logic.liveRuns?.(list, new Set())).toBe(2)
+  })
+
+  test('idAfter skips the ids of runs still going, so a run that outlived /clear keeps its own row', () => {
+    expect(logic.idAfter?.([], ['d4'])).toBe('d5')
+    expect(logic.idAfter?.([t('d2', 'done')], [])).toBe('d3')
+    expect(logic.idAfter?.([t('d7', 'done')], ['d3'])).toBe('d8')
+    expect(logic.idAfter?.([], [])).toBe('d1')
+  })
+})
