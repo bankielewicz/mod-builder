@@ -73,15 +73,17 @@ Code, `classic.*` hooks don't run in a plugin a person installs, and the reset s
 - **Long work a hook waits on** (a process, a model call, a poll) stops when the event is abandoned,
   as when the person presses Esc. Pass `next.signal` to each call that takes one (`$.clock.sleep`,
   `$.model.complete`'s options). A `$.process.spawn` the hook waits on is ended by the engine when the
-  signal aborts, and every `$` call after that rejects `… aborted` (`gotchas.md`). So in the `catch`,
-  check `next.signal.aborted` and record a stop the person asked for, not a failure, and start no
-  fallback. Work started with `void` survives Esc: give it a stop command.
+  signal aborts, and a process call after that rejects `… aborted`, while state, store, toast and file
+  writes still work (`gotchas.md`). So in the `catch`, check `next.signal.aborted`, record a stop the
+  person asked for (not a failure), and start no fallback process. Work started with `void` survives
+  Esc: give it a stop command.
 - **`$.prompt.submit` resolves `{ drop }` rather than rejecting** when it can't queue the prompt:
   `the session was stopped and nobody has sent input since` until the person's next input after Stop,
   or `the prompt was removed from the queue before it ran` for one queued at Stop. Retry only those
-  two: keep the text in a top-level `let`, and in `turn.complete` empty it first, then submit it
-  detached (`void submit($, text).catch(…)`, never awaited: the call resolves only when the new turn
-  starts). A retry refused again keeps the text for the next `turn.complete`. Any other `drop` is
+  two: queue each such text in a top-level list (several jobs can finish while submits are refused),
+  and in `turn.complete` take the whole queue, empty it, then submit each item detached
+  (`void submit($, text).catch(…)`, never awaited: the call resolves only when the new turn starts).
+  A retry refused again goes back on the queue for the next `turn.complete`. Any other `drop` is
   another hook's choice: report it (a toast naming where the text is saved) and don't retry it. Never
   lose the text quietly.
 
