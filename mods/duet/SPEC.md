@@ -1041,4 +1041,12 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
   2. **`/duet stop d2` on a background reviewer, Claude idle:** the answer was `stopping d2 (duet:codex-reviewer on Codex); …` and the stand-in was killed. Claude was then told `Background agent duet-d2 … was stopped on Codex (stopped: you stopped it from duet).`
   3. **The key on a `workspace-write` implementer that wrote a file:** the toast read `d1 stopped: files changed during this run: 1 (duet-stop-probe.txt)`. The file was removed afterwards.
 - **Version:** 0.3.4 (patch).
+- **PR #126 Codex round 1** (two P2 findings, each checked; the advisor's verdict: fix both here):
+  - **No Stop key in the Stats view.** The Stats view shows no task row, but `list[at]` still named a running run, so the key showed and its question would stop a run no row displays. Reproduced by a kit test (red `71ffd50`), and the key now shows only in the tasks view (green `04ca846`).
+  - **`stream.result` observed after a stop.** The 2.1.306 types say it rejects when the stream closes early, and gotchas.md says to catch it.
+    - **Not reproduced:** headless on 2.1.296 and 2.1.306 (`/duet review`, then `/duet stop d1`, the stand-in `codex`, `--debug-file`), the stop logged only `codex stopped: the op was aborted`, with no unhandled rejection.
+    - **The fix,** for the stop and for the timeout and Esc paths from 0.3.3, which had the same gap: one `.catch` on `stream.result` right after `spawn`. A catch doesn't consume the promise.
+    - **Checked on both builds:** a review that finished still reported its verdict (`d1 review: fake codex answer: hi`), and a stop read `d2 review stopped: you stopped it from duet`.
+    - This is wiring only: the kit has no streaming spawn.
+  - #126 was retargeted from #123's branch to `main` after #123 merged, so it closes #121.
 
