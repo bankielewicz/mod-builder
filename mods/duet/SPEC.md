@@ -963,4 +963,9 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
   - **Checked on the live check's disk:**
     - Both stopped runs were logged in their session's `runs.jsonl` (`ok: false`), so `$.fs.write` works after the abort.
     - After `/clear` the session id changed, so `d1` went into a new session folder, with no file collision.
+- **What a stop leaves behind** (a side note on PR #123: Esc keeps Codex's partial edits).
+  - **Probe** (2.1.306, a throwaway mod in a private tmux session): after the abort, `$.process.run(git)` is refused inside the hook (`… aborted`) but runs from a `$.clock.after` callback, at 0 ms and at 1.5 s.
+  - **Change:** a stopped run that could write gets `STOPPED_CANDIDATE` first. A 0 ms timer then runs `compareAfterStop`: `git rev-parse --is-inside-work-tree`, then the same porcelain snapshot. `stoppedCandidateOf(before, after)` writes `stopped with Esc: <what changed>` on the row and toasts it. With no git reading, the placeholder stays, so a failed read isn't counted as every file changed.
+  - **Commits:** red `797917e`, green `e5d9852`. The README says Esc undoes nothing and to check `git status`.
+  - **Live check:** a stand-in `codex` under `workspace-write` (`duet:codex-implementer`) wrote one file and hung, and Esc followed. The toast read `d1 stopped with Esc: files changed during this run: 1 (duet-stop-probe.txt)`, and the stand-in was gone. The file was removed afterwards, which left the worktree clean.
 
