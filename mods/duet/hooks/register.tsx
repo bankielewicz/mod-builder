@@ -648,13 +648,13 @@ async function finishInBackground($: EngineInterface, j: Job, outputFile: string
  * turn's end (#119); any drop or failure toasts `note`, which points at the answer on disk, once.
  */
 async function deliver($: EngineInterface, text: string, note: string, isRetry = false): Promise<void> {
-  let reason: string
+  let reason: string | null
   try {
     reason = dropOf(await $.prompt.submit({ text }))
   } catch (err) {
     reason = String((err as Error)?.message ?? err) || 'not queued'
   }
-  if (!reason) return
+  if (reason === null) return
   if (retryableDrop(reason)) held.push({ text, note })
   if (!isRetry) $.ui.toast(note.slice(0, 80))
 }

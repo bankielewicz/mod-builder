@@ -1033,10 +1033,11 @@ export function deliveryText(a: { id: string; label: string; model: string; sand
 
 export const READ_ONLY_CANDIDATE = 'read-only run: no files changed'
 
-/** The reason of a `$.prompt.submit` answer that queued nothing, else ''. */
-export function dropOf(answer: unknown): string {
-  const drop = (answer as { drop?: unknown } | null | undefined)?.drop
-  return typeof drop === 'string' ? drop : ''
+/** The reason of a `$.prompt.submit` answer that queued nothing, or null when it was queued; an empty or odd reason is still a drop. */
+export function dropOf(answer: unknown): string | null {
+  if (answer === null || typeof answer !== 'object' || !('drop' in answer)) return null
+  const drop = (answer as { drop: unknown }).drop
+  return typeof drop === 'string' && drop !== '' ? drop : 'dropped with no reason'
 }
 
 /** A drop the engine gave after Stop, which the next main turn's end may retry (#119); any other drop is another hook's choice. */
