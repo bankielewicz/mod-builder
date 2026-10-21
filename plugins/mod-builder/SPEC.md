@@ -852,3 +852,29 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - CLAUDE.md says a `.test.ts` not named `*-logic.test.ts` runs only under `claude plugin test`.
 - **Not taken:** pinning the code-from-strings message. The error class (`EvalError`) is pinned instead: the message is the engine's wording, the class is the claim.
 - **Codex round 2 (on `ca8315f`):** the `import()` fixture imported `node:fs` by name, so a loader that allowed `import()` but refused that name would still have read as refused. It now builds its specifier at run time (Codex 4296355708). A run cut short by an error or a signal, or one that exited 0, could still have passed on partial output; `runVerdict` fails it (Codex 4296355718). Red `8d8bb18`, green `7713be0`.
+
+## Change 0.2.27 (2026-10-21)
+
+> For issue #119, the owner's decisions (2026-10-21): "File one issue, then fix", with the build skill's conventions and archetype templates first, then duet, issue-forge and Mod Lab; `immediate: true` on "/modlab + /git-branch", with `/duet`, `/issue-forge` and `/mod-builder config` waiting for the turn. The full decisions are in #119's first comment.
+
+- **Why:** Anthropic's mod docs (`docs/research/Mods/`, PR #120) describe four practices the build skill didn't teach: seeding atoms again after `/clear`, `/resume` and `/branch`; passing `next.signal` to long work a hook waits on; handling `$.prompt.submit`'s `{ drop }`; and `immediate: true` for a command that may run mid-turn.
+- **The probe this rests on** (2026-10-21, Claude Code 2.1.296, installed as CI does, and 2.1.306; a throwaway mod in the session scratchpad, run headless with `claude -p --input-format stream-json`, a throwaway `CLAUDE_CONFIG_DIR` and a placeholder key, so no model call):
+  - `$.command.register({ …, immediate: true })` resolves `{ command }` on both, and the command runs.
+  - `on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, …)` loads, and validate lists it as a gating hook without `.catch`.
+  - An atom set to 42 in `session.start` reads 0 after `/clear`, and 0 inside the `classic.SessionStart` hook, which fired with `source: 'clear'`.
+- **What changes:**
+  1. `references/conventions.md`:
+     - State: the `/clear` rule, with the `classic.SessionStart` hook and its `.catch`, and why the archetypes' atoms are right to reset.
+     - Hooks: `next.signal` for long work a hook waits on, and `$.prompt.submit`'s `{ drop }` treated as a failure.
+     - Commands: when to set `immediate: true`.
+  2. `references/gotchas.md`: the probe above, as two `[probe]` entries.
+  3. `templates/SPEC.template.md`: HOUSE rows "mid-turn" and "after /clear".
+  4. The pane-command and band archetypes register their command with `immediate: true`. Their branches only show something: pane-command opens, closes or fronts the pane and fills it with demo items, and band shows or hides the band or draws a demo. The other archetypes leave it off. Guard's demo asks a question, which would compete with the turn's own. Watcher's `reset` changes what it counts. Command-only records and clears notes.
+- **Not changed:**
+  - No archetype gains a `classic.SessionStart` hook. None copies anything into atoms at `session.start`, and their atoms count this conversation only.
+  - Mod Lab's own commands are #119's later step.
+- **What gets touched:** the two references, the SPEC template, the pane-command and band archetypes' `register.tsx.tpl` and `ui.test.tsx.tpl`, this SPEC, and the version in `plugin.json` and the marketplace entry. No new reach.
+- **Tests:** each of the two templates' UI tests records the `command.register` call and expects `[['<name>', true]]`.
+  - **Red:** pane-command `8ea387e`, band `a86f0e3`. Scaffolded, each fails with `Received [["check-…", undefined]]`.
+  - **Green:** each registration gains `immediate: true`.
+- **Version:** 0.2.27 (patch: docs and one template field).

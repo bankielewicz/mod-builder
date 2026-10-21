@@ -37,6 +37,22 @@ Write the chosen value into the SPEC so the person can override it at approval.
 
 Use atoms over raw `$.state.get/set`. `claude plugin validate` checks atom refs against the contract.
 
+**After `/clear`, `/resume` and `/branch`** every atom is back at its initial value, and `session.start`
+doesn't run again (`gotchas.md`). Whatever `session.start` copies into atoms, from `$.store`, disk or
+module state, a `classic.SessionStart` hook copies again:
+
+```ts
+on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+  await seed($).catch(() => undefined)
+  return next(e)
+}).catch(($, e, next) => next(e))
+```
+
+`startup` and `compact` reset nothing, so the matcher leaves them out. Validate counts the hook as
+gating, hence the `.catch`. Atoms that only count this conversation (a turn's tools, the watcher's
+stats) are right to reset, so the archetypes have no such hook. Where an organization manages Claude
+Code, `classic.*` hooks don't run in a plugin a person installs, and the reset stays.
+
 ## Hooks
 
 - `register.tsx` reads top to bottom: imports, constants, atoms (literal `plugin`/`key`), module
@@ -54,6 +70,15 @@ Use atoms over raw `$.state.get/set`. `claude plugin validate` checks atom refs 
   A deny reason is addressed to Claude and starts with `<name>:`.
 - **Background work** is `void work($).catch(() => undefined)`. Never leave a floating promise:
   tests fail at teardown.
+- **Long work a hook waits on** (a process, a model call, a poll) stops when the event is abandoned,
+  as when the person presses Esc. Pass `next.signal` to each call that takes one (`$.clock.sleep`,
+  `$.model.complete`'s options). A `$.process.spawn` request takes none (2.1.306 types), so end its
+  stream when the signal aborts. Background work has no event to abandon: give it a stop command.
+- **`$.prompt.submit` resolves `{ drop }` rather than rejecting** when it can't queue the prompt:
+  `the session was stopped and nobody has sent input since` until the person's next input after Stop,
+  or `the prompt was removed from the queue before it ran` for one queued at Stop. Treat a `drop` as a
+  failure: keep the text and submit it again from `turn.complete`, and never lose it quietly (a toast
+  naming where the text is saved).
 
 ## Commands
 
@@ -73,6 +98,13 @@ on('command.run', { command: NAME }, async ($, e) => {
 ```
 
 - Every mod has a `demo` subcommand that shows every state.
+- **`immediate: true`** in the registration lets a command typed mid-turn run at once rather than wait
+  for the turn to end. It covers every subcommand, and the hook must not assume the turn's state. Set it
+  only when every branch only shows something: it opens, closes or fronts a pane, shows or hides what the
+  mod draws, or reads. Leave it off a command with a branch that starts work (a run, a review), asks a
+  question, changes what the mod counts or saves, sets an option (`$.config.set` on the plugin's own
+  option reloads the plugin) or makes a billed call. The pane-command and band archetypes set it; guard
+  (its demo asks), watcher (`reset`) and command-only (it records notes) don't.
 - A bare pane command reads `paneAction(await $.ui.panes(), NAME)` (a pure rule in the mod's logic
   module; the pane-command archetype has it) rather than a saved flag. Three states: `open` when the
   pane isn't listed, `close` when the surface shows it (`isShown`), and `show` when it is open as a
