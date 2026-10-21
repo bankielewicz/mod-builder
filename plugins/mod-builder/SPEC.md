@@ -876,5 +876,6 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **What gets touched:** the two references, the SPEC template, the pane-command and band archetypes' `register.tsx.tpl` and `ui.test.tsx.tpl`, this SPEC, and the version in `plugin.json` and the marketplace entry. No new reach.
 - **Tests:** each of the two templates' UI tests records the `command.register` call and expects `[['<name>', true]]`.
   - **Red:** pane-command `8ea387e`, band `a86f0e3`. Scaffolded, each fails with `Received [["check-…", undefined]]`.
-  - **Green:** each registration gains `immediate: true`.
+  - **Green** `6864e42`: each registration gains `immediate: true`.
+- **Live check** (2.1.306, a private tmux session, `claude --plugin-dir <pane-command scaffold>`): a turn was still running ("Pontificating… (34s)") when `/check-pane` was typed, and the pane opened at once, before the turn ended.
 - **Version:** 0.2.27 (patch: docs and one template field).
