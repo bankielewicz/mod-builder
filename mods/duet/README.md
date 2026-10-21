@@ -185,4 +185,4 @@ claude plugin validate .
 claude plugin test .
 ```
 
-Built on Claude Code 2.1.296 and codex-cli 0.162.1; 0.2.9 checked on Claude Code 2.1.300; 0.3.0 built on Claude Code 2.1.301 with codex-cli 0.163.0. Written spec-first with `/mod-builder:build`; see `SPEC.md`.
+Built on Claude Code 2.1.296 and codex-cli 0.162.1; 0.2.9 checked on Claude Code 2.1.300; 0.3.0 built on Claude Code 2.1.301 with codex-cli 0.163.0. 0.3.3 checked on Claude Code 2.1.306. Written spec-first with `/mod-builder:build`; see `SPEC.md`.

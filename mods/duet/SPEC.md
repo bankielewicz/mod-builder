@@ -953,4 +953,8 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
 
   Each red failed by assertion. The consent test watches state writes, since the kit can't reset atoms the way `/clear` does.
 - **Version:** 0.3.3 (patch).
+- **Live check** (2026-10-21, Claude Code 2.1.306). A private tmux session ran `claude --plugin-dir <worktree>/mods/duet` with the installed duet turned off. A stand-in `codex` first on `PATH` read its input, slept, then printed three JSONL lines, so no Codex quota was used:
+  1. **Esc on a waited run** (`duet:codex-advisor`, the stand-in still silent). The status line read `codex: 0 done · 1 stopped`, and the toast `duet: d1 stopped: you pressed Esc`. The stand-in was gone, and its call log shows one `exec`, with no fallback.
+  2. **Consent after `/clear`.** Answered yes once, then `/clear`. The next delegation started Codex with no question.
+  3. **A dropped answer.** A background `duet:codex-reviewer` run (40 s) was going, and the turn was stopped with Esc mid-stream. When the stand-in finished, no turn started. After the next message (`Reply only: ok`) and Claude's `ok`, duet's message carrying d3's answer arrived. The toast wasn't caught: it lasts 4 s, and the screen was read after that. The UI test covers it.
 
