@@ -923,5 +923,8 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Live check** (2.1.306, a private tmux session with `--plugin-dir` for this branch's Mod Lab and git-branch, and the installed copies turned off):
   - `/modlab` typed while Claude was still streaming (`Flowing…`) opened the pane at once.
   - With the pane open, `/clear` left it listing the same four mods.
+- **Carried over from PR #122's branch.** Two docs commits were pushed there after #122 had merged, so they never reached `main`: `4e97fdc` and `b0b833c`. They arrive here.
+  - `classic.SessionStart` fires before `session.start` at startup and at `claude --continue` (`source: resume`), probed on 2.1.296 and 2.1.306. gotchas.md gains it as `[probe]`, and the `/clear` convention says to skip the reseed when the module hasn't started (as Mod Lab and git-branch now do).
+  - After an Esc stop, process calls work again from `$.clock.after(0, …)`, though `git` is refused in the aborted hook (probe, 2.1.306). gotchas.md and conventions.md say so, and duet 0.3.3 uses it.
 - **Version:** 0.2.28 (patch).
 

@@ -150,6 +150,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   .catch: classic.SessionStart{source=clear|resume|fork}`). Probed on 2.1.296 and 2.1.306 (#119): a
   throwaway mod set an atom to 42 in `session.start`; headless `claude -p --input-format stream-json`
   with `/probe-state`, `/clear`, `/probe-state` read 42, then 0, and 0 inside the hook.
+- **[probe]** `classic.SessionStart` fires **before** `session.start` at startup (`source: startup`) and
+  at a resumed startup, `claude --continue` (`source: resume`). A `{ source: ['clear', 'resume',
+  'fork'] }` hook therefore runs once before the module's `session.start` has set anything up. Probed on
+  2.1.296 and 2.1.306 (PR #124 review) with a throwaway mod logging both events, run headless twice in
+  one folder: `classic:startup > session.start`, then `classic:resume > session.start`.
 - **[probe]** `$.command.register` accepts `immediate: true` on 2.1.296 and 2.1.306: it resolves
   `{ command }` and the command runs. A build that refused the field would lose the command behind the
   house `.catch(() => {})`. Whether 2.1.296 runs it mid-turn wasn't probed (#119).
@@ -158,7 +163,9 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `$.process.run` the hook starts after that rejects `<plugin>: $.process.run(<cmd>) aborted` without
   running. A spawn the same hook started `void` before returning survives Esc and runs until the module
   unloads. After the abort, `update` (state), `read`, `$.ui.toast`, `$.store.set` and `$.fs.write` still
-  work, in the hook and from a `$.clock.after` callback: only new process work is refused. Probed on
+  work, in the hook and from a `$.clock.after` callback: only new process work is refused, and only in
+  the aborted hook. A `$.process.run` from a `$.clock.after` callback, at 0 ms or later, runs (duet
+  0.3.3 runs `git status` there to name what a stopped Codex run changed). Probed on
   2.1.306 (#119) with throwaway mods holding a Bash call over `sleep` children, in a private tmux
   session, checked with `pgrep -x sleep` (`$.fs.write`: duet 0.3.3's live check logged its stopped runs).
   Not probed on 2.1.296.
