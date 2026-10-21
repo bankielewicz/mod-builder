@@ -133,7 +133,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
+import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -176,6 +176,10 @@ let isInteractive = true
 let home = ''
 /** This session's id, read once at session start: what a run's driver names (Change 0.3.0). */
 let sessionId = ''
+/** The issue the pane shows, kept in the module: /clear, /resume and /branch reset focusAtom (#119). */
+let focusKept: number | null = null
+/** The drive's activity line, kept in the module for the same reason (#119). */
+let activityKept: Activity | null = null
 /**
  * A drive: its run, the run's store key and issue, whether it was stopped or handed off, and its generation. A new
  * drive of the same run (a hand-off, then a resume) has a new one, so the old drive's step in flight fails every
@@ -451,7 +455,9 @@ async function rememberAgents($: EngineInterface, run: Run, refs: readonly strin
 
 async function setActivity($: EngineInterface, label: string | null): Promise<void> {
   const since = await $.clock.now()
-  await update($, activityAtom, () => (label ? { label, since } : null))
+  const activity = label ? { label, since } : null
+  activityKept = activity
+  await update($, activityAtom, () => activity)
 }
 
 /**
@@ -1461,14 +1467,29 @@ async function lineCtx($: EngineInterface): Promise<LineContext> {
 
 /** The pane shows this run: the one a command named or acted on (Change 0.3.0). */
 async function setFocus($: EngineInterface, run: Run | null): Promise<void> {
-  await update($, focusAtom, () => run?.issue ?? null)
+  await writeFocus($, run?.issue ?? null)
   await update($, runAtom, () => run)
 }
 
+/** The only writer of the focus: the atom and the module's copy, which /clear's reseed reads (#119). */
+async function writeFocus($: EngineInterface, issue: number | null): Promise<void> {
+  focusKept = issue
+  await update($, focusAtom, () => issue)
+}
+
+/** The pane shows the run `focus` names, or the default pick, and the also line leaves it out. */
+async function showPicked($: EngineInterface, at: Repo, runs: Run[], focus: number | null): Promise<void> {
+  const pick = pickRun(runs, { issue: null, focus, root: at.root, needActive: false })
+  const shown = pick.kind === 'run' ? pick.run : null
+  await setFocus($, shown)
+  // The focus is passed, not re-read: a dispatch's state reads may not see its own writes (gotchas.md, Codex on PR #124).
+  await refreshOthers($, at.repo, runs, shown?.issue ?? null)
+}
+
 /** The also line, and the shown run as stored now: other sessions write the store too. */
-async function refreshOthers($: EngineInterface, repo: string, known?: Run[]): Promise<void> {
+async function refreshOthers($: EngineInterface, repo: string, known?: Run[], shownIssue?: number | null): Promise<void> {
   const runs = known ?? (await runsOf($, repo))
-  const focus = await read($, focusAtom)
+  const focus = shownIssue !== undefined ? shownIssue : await read($, focusAtom)
   const shown = focus === null ? undefined : runs.find(r => r.issue === focus)
   if (shown) await update($, runAtom, () => shown)
   const ctx = await lineCtx($)
@@ -1584,7 +1605,7 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   const now = await $.clock.now()
   const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now, ghRepo), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
   const run = advance(fresh, { type: 'drive', session: sessionId }, now)
-  await update($, focusAtom, () => issue)
+  await writeFocus($, issue)
   const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
   await prune($, at.repo)
@@ -1863,9 +1884,22 @@ async function restore($: EngineInterface): Promise<void> {
   const stored: string[] = []
   for (const key of repoAgentsKeys(await $.store.keys(), at.repo)) stored.push(...(((await $.store.get(key)) as string[] | undefined) ?? []))
   knownRefs = new Set([...stored, ...runs.flatMap(refsOf)])
-  const pick = pickRun(runs, { issue: null, focus: await read($, focusAtom), root: at.root, needActive: false })
-  await setFocus($, pick.kind === 'run' ? pick.run : null)
-  await refreshOthers($, at.repo, runs)
+  await showPicked($, at, runs, await read($, focusAtom))
+}
+
+/**
+ * After /clear, /resume or /branch every atom is back at its default and session.start doesn't run: the pane's run,
+ * its focus and the also line come back from the store (#119). The drive and `sessionId` are the module's and stay:
+ * the process goes on under a new session id, and the run's driver record names the old one.
+ */
+async function reseed($: EngineInterface): Promise<void> {
+  // A resumed startup fires this before session.start (probed on 2.1.296 and 2.1.306): restore() seeds the pane there.
+  if (!sessionId) return
+  const kept = activityKept
+  if (kept) await update($, activityAtom, () => kept)
+  const at = await repoOf($)
+  if (!at) return
+  await showPicked($, at, await runsOf($, at.repo), focusKept)
 }
 
 /** At session end (not /clear or /resume: the process goes on), the run this session drives is let go. */
@@ -1900,6 +1934,14 @@ export const register: Register = (on, raw) => {
     await restore($).catch(() => undefined)
     return next(e)
   })
+
+  // /clear, /resume and /branch reset every atom; startup and compaction reset nothing (#119). A resumed startup
+  // (claude --continue) also fires source resume, before session.start: reseed skips it.
+  // Detached: two git calls and a store scan needn't hold the new conversation's start (PR #124 review).
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    void reseed($).catch(() => undefined)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // Change 0.3.0: a session that ends lets go of the run it drives, so another can resume it without a take-over.
   on('session.end', async ($, e, next) => {

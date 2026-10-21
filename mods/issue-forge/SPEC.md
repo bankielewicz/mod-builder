@@ -1877,3 +1877,32 @@ Not exercised live: a red turn that ends in an error, a refusal or an interrupt 
 
 Follow-up #106: the owner's idea that an agent whose context fills retries from a checkpoint, with the
 count set in the pane.
+
+## Change 0.7.2 (2026-10-21)
+
+> Issue #119, step 3. The owner's decisions are in #119's first comment: "File one issue, then fix."
+
+- **Why:** `/clear`, `/resume` and `/branch` reset every atom, and `session.start` doesn't run again. So the pane lost its run: `focus`, `run` and `others` were back at their defaults while the run went on. `classic.SessionStart` fires after that reset with `source` `clear`, `resume` or `fork`. #119's probe confirmed it for `/clear` on 2.1.296 and 2.1.306. `/resume` and `/branch` follow Anthropic's docs and weren't run: neither is available headless.
+- **What changes:**
+  - A `classic.SessionStart{source=clear|resume|fork}` hook, with `.catch`, calls `reseed`, `restore`'s view half: it picks the run, sets the focus, and refreshes the also line from the store.
+  - The focused issue is kept in the module (`focusKept`, set by `setFocus` and `begin`), so the run the pane showed comes back, not the default pick.
+  - `reseed` leaves `home`, `sessionId` and the drive alone. The process goes on under a new session id, the run's driver record names the old one, and the ownership checks compare against `sessionId` (`releaseOnEnd` already keeps the run on `clear` and `resume`).
+- **Not changed:**
+  - `activity` refills with the drive's next step, and the demo ends.
+  - Where an organization manages Claude Code, `classic.*` hooks don't run in an installed plugin, so the reset stays there.
+- **What gets touched:** `hooks/register.tsx`, `tests/ui.test.tsx`, `README.md` (the hooks row), this SPEC, and version 0.7.2 in `plugin.json` and the marketplace entry. No logic module changes. The new hook reads the store, runs `git rev-parse --show-toplevel` and `--git-common-dir` through `repoOf` (as every command does), and writes issue-forge's own atoms.
+- **TDD:**
+  - **Red** `a2a03b1`: watching state writes, a `classic.SessionStart` with `source: 'clear'` after `status 44` wrote no `focus`, and the test failed with `Received []`. Compaction must write nothing.
+  - **Green** `27395ff`.
+- **Version:** 0.7.2 (patch).
+- **Live check** (2026-10-21, Claude Code 2.1.306). A private tmux session ran `claude --plugin-dir <worktree>/mods/issue-forge` with the installed issue-forge turned off, from a trusted worktree folder of this repo. `/issue-forge status 16` focused #16, a run waiting at publish, and `/issue-forge` opened the pane on it ("also #27 ready"). Esc gave the keyboard back to the prompt. After `/clear`, the pane still showed #16 with `publish waiting for your yes` and `also #27 ready`. Nothing was started, published or stopped.
+- **PR #124 review round 1** (a `/code-review` at xhigh and Codex, 2026-10-21; each finding checked):
+  - **A resumed startup.** `classic.SessionStart` fires before `session.start` at startup (`source: startup`) and at `claude --continue` (`source: resume`). Probed on 2.1.296 and 2.1.306 with a throwaway mod run headless twice in one folder. So `reseed` ran with `sessionId` and the cwd unset. It now returns when `sessionId` is empty, since `restore` seeds there.
+  - **The activity line** of a running gate is kept in the module (`activityKept`, set by `setActivity`, the only writer) and written back.
+  - **The also line** gets the shown issue passed in, not re-read. Codex said a dispatch's reads don't see its own writes. On 2.1.306 the re-read already worked (the review's probe, and the new test passes on the kit), so this guards other builds.
+  - **One focus writer** (`writeFocus`) and one `showPicked`, shared by `restore` and `reseed`.
+  - **`reseed` is detached**, so two git calls and a store scan don't hold the new conversation's start.
+  - **The tests** move into the "parallel runs" `describe` and share its fixtures, and cover: the also line, `resume` and `fork`, a resumed startup (no writes, no git), and the activity.
+  - **Red** `21ee1e0`. `7c9c376` fixes a guessed label in the activity test. **Green** `eca8710`. **Refactor** `e4967a0`, and `4aa4e73` types the test's sources.
+  - **README:** the hooks row escapes its pipes, which had split the table cell, and stops claiming `/resume` and `/branch` were run here. The gating-hooks and processes rows name the new hook.
+

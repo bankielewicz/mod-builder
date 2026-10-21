@@ -1799,6 +1799,84 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect((await run($, 'status 16')).text).toContain('lcovPath /cov/lcov.info is shared by every run and #40 is running')
     expect(w.spawned).toEqual([])
   })
+
+  // #119 gap 1: /clear, /resume and /branch reset every atom, and session.start doesn't run again. The pane's run comes back.
+  describe('#119: the pane shows its run again after /clear', () => {
+    const RUNS = () => ({ [key(44)]: blocked44({ repo: `${ROOT}/.git`, startedAt: 1 }), [key(52)]: blocked44({ id: '52-1', issue: 52, repo: `${ROOT}/.git`, startedAt: 2 }) })
+    const watch = (on: any) => {
+      const writes: { key: string; value: any }[] = []
+      on('state.set', ($: any, e: any, next: any) => (writes.push({ key: e.key, value: e.value }), next(e)))
+      on('classic.SessionStart', () => ({}))
+      return writes
+    }
+    const pane = (writes: { key: string; value: any }[]) => writes.filter(w => w.key === 'focus' || w.key === 'run' || w.key === 'others' || w.key === 'activity')
+
+    test('a classic.SessionStart after /clear writes the focused run back; one after compaction writes nothing', async ($, on) => {
+      const writes = watch(on)
+      const w = engine(on, {}, RUNS())
+      await start($)
+      expect((await run($, 'status 44')).text).toContain('blocked at gateG')
+      writes.length = 0
+      await $.classic.SessionStart({ source: 'compact' })
+      await w.clock.settle()
+      expect(writes.filter(w => w.key === 'focus' || w.key === 'run')).toEqual([])
+      await $.classic.SessionStart({ source: 'clear' })
+      await until(w, () => writes.some(x => x.key === 'others'), 'the also line written back')
+      expect(writes.filter(w => w.key === 'focus').map(w => w.value)).toEqual([44])
+      expect(writes.filter(w => w.key === 'run').map(w => w.value?.issue)).toContain(44)
+      expect(writes.some(w => w.key === 'others')).toBe(true)
+    })
+
+    test('the also line written back names the other run and leaves out the shown one (Codex, PR #124)', async ($, on) => {
+      const writes = watch(on)
+      const w = engine(on, {}, RUNS())
+      await start($)
+      await run($, 'status 44')
+      writes.length = 0
+      await $.classic.SessionStart({ source: 'clear' })
+      await until(w, () => writes.some(x => x.key === 'others'), 'the also line written back')
+      const others = writes.filter(x => x.key === 'others').at(-1)!.value as { issue: number }[]
+      expect(others.map(o => o.issue)).toEqual([52])
+    })
+
+    for (const source of ['resume', 'fork'] as const) {
+      test(`after ${source === 'fork' ? '/branch (source fork)' : '/resume'} it writes the focus back too`, async ($, on) => {
+        const writes = watch(on)
+        const w = engine(on, {}, RUNS())
+        await start($)
+        await run($, 'status 44')
+        writes.length = 0
+        await $.classic.SessionStart({ source })
+        await until(w, () => writes.some(x => x.key === 'focus'), `the focus written back after ${source}`)
+        expect(writes.filter(x => x.key === 'focus').map(x => x.value)).toEqual([44])
+      })
+    }
+
+    // Probed on 2.1.296 and 2.1.306: classic.SessionStart fires before session.start at startup (source startup) and at
+    // claude --continue (source resume). There restore() seeds the pane, so the hook does nothing.
+    test('at a resumed startup, before session.start, it does nothing: no git, no writes (PR #124 review)', async ($, on) => {
+      const writes = watch(on)
+      const w = engine(on, {}, RUNS())
+      await $.classic.SessionStart({ source: 'resume' })
+      await w.clock.settle()
+      expect(pane(writes)).toEqual([])
+      expect(w.argv.filter(a => a[0] === 'git')).toEqual([])
+    })
+
+    test('a run in progress gets its activity line back (PR #124 review)', async ($, on) => {
+      const writes = watch(on)
+      const w = engine(on, { baseProfile: WORKTREE, spawnHold: held() })
+      await start($)
+      await run($, '16')
+      await until(w, () => w.spawned.length === 1, "#16's red agent")
+      const shown = writes.filter(x => x.key === 'activity').at(-1)!.value
+      expect(shown?.label).toBeDefined()
+      writes.length = 0
+      await $.classic.SessionStart({ source: 'clear' })
+      await until(w, () => writes.some(x => x.key === 'activity'), 'the activity written back')
+      expect(writes.filter(x => x.key === 'activity').at(-1)!.value).toEqual(shown)
+    })
+  })
 })
 
 // Issue #25: an issue URL, and each run pinned to one GitHub repository. The pinned repository is `Run.ghRepo`
@@ -3570,3 +3648,4 @@ describe('new plugins are mod-builder\'s (Change 0.7.0)', () => {
     expect(w.spawned).toEqual([])
   })
 })
+
