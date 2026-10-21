@@ -178,7 +178,10 @@ async function nextId($: EngineInterface): Promise<string> {
   return idAfter(await read($, tasks), mine)
 }
 
-/** Admits a run under the concurrency limit, its row added in the same write: the row, or null at the limit. */
+/**
+ * Admits a run under the concurrency limit, its row added in the same write: the row, or null at the limit. An admitted
+ * run joins `mine` here, the one place, as soon as the write lands (not in `update`'s function, which may run again).
+ */
 async function admit($: EngineInterface, make: (id: string) => Task): Promise<Task | null> {
   let admitted: Task | null = null
   await update($, tasks, list => {
@@ -186,8 +189,10 @@ async function admit($: EngineInterface, make: (id: string) => Task): Promise<Ta
     admitted = liveRuns(list, mine) < options.maxConcurrent ? t : null
     return admitted ? [t, ...list] : list
   })
+  const row = admitted as Task | null
+  if (row) mine.add(row.id)
   await refreshStatus($)
-  return admitted
+  return row
 }
 
 // ── Files ────────────────────────────────────────────────────────────────
@@ -678,7 +683,6 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null,
   }
 
   const id = task.id
-  mine.add(id)
   let handedOff = false
   try {
     const { def, isCut, note: searchNote } = role ? { def: roleDef(role), isCut: false, note: '' } : await agentDef($, cwd, type)
@@ -746,7 +750,6 @@ async function startReview($: EngineInterface, target: ReviewTarget): Promise<Re
   if (blocked) return refuse(blocked)
   const admitted = await admit($, rowOf)
   if (!admitted) return refuse(limitText(liveRuns(await read($, tasks), mine), options.maxConcurrent))
-  mine.add(admitted.id)
   void finishReview($, admitted, target, cwd)
     .catch(() => undefined)
     .finally(() => mine.delete(admitted.id))
