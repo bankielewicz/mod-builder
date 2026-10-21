@@ -1179,11 +1179,17 @@ describe('#119: which prompt drops are retried', () => {
     expect(logic.retryableDrop?.('')).toBe(false)
   })
 
-  test('dropOf reads the reason of a { drop } answer, and nothing else', () => {
+  test('dropOf reads the reason of a { drop } answer; anything else is no drop (null)', () => {
     expect(logic.dropOf?.({ drop: 'why' })).toBe('why')
-    expect(logic.dropOf?.({ text: 'sent' })).toBe('')
-    expect(logic.dropOf?.(undefined)).toBe('')
-    expect(logic.dropOf?.({ drop: 7 })).toBe('')
+    expect(logic.dropOf?.({ text: 'sent' })).toBe(null)
+    expect(logic.dropOf?.(undefined)).toBe(null)
+  })
+
+  // PR #123 review: an empty or odd reason is still a drop, so the answer must not be lost quietly.
+  test('an empty or non-string drop reason is still a drop', () => {
+    expect(logic.dropOf?.({ drop: '' })).toBe('dropped with no reason')
+    expect(logic.dropOf?.({ drop: 7 })).toBe('dropped with no reason')
+    expect(logic.retryableDrop?.('dropped with no reason')).toBe(false)
   })
 })
 
