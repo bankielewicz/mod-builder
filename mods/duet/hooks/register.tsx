@@ -514,6 +514,8 @@ async function porcelain($: EngineInterface): Promise<string | null> {
 async function ensureConsent($: EngineInterface, cwd: string): Promise<string> {
   if (options.consent === 'allow') return ''
   const now = await read($, consent)
+  // An answer from before a reload: the atom kept it, the module didn't (Codex, PR #123).
+  if (now === 'yes' || now === 'no') consentGiven = now
   if (now === 'yes') return ''
   if (now === 'no') return 'you declined sending this repo to Codex this session'
   let answer = ''
@@ -1414,6 +1416,9 @@ export const register: Register = (on, raw) => {
   options = readOptions(raw)
 
   on('session.start', async ($, e, next) => {
+    // A reload keeps the consent atom and restarts the module: copy the answer back, so /clear can restore it (Codex, PR #123).
+    const answered = await read($, consent).catch(() => 'unasked' as const)
+    if (answered === 'yes' || answered === 'no') consentGiven = answered
     // Rows still running that this module didn't start were cut off by a reload: say so, never quietly.
     let lost: Task[] = []
     await update($, tasks, list => {
