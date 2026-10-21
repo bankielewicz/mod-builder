@@ -78,9 +78,12 @@ Code, `classic.*` hooks don't run in a plugin a person installs, and the reset s
   fallback. Work started with `void` survives Esc: give it a stop command.
 - **`$.prompt.submit` resolves `{ drop }` rather than rejecting** when it can't queue the prompt:
   `the session was stopped and nobody has sent input since` until the person's next input after Stop,
-  or `the prompt was removed from the queue before it ran` for one queued at Stop. Treat a `drop` as a
-  failure: keep the text and submit it again from `turn.complete`, and never lose it quietly (a toast
-  naming where the text is saved).
+  or `the prompt was removed from the queue before it ran` for one queued at Stop. Retry only those
+  two: keep the text in a top-level `let`, and in `turn.complete` empty it first, then submit it
+  detached (`void submit($, text).catch(…)`, never awaited: the call resolves only when the new turn
+  starts). A retry refused again keeps the text for the next `turn.complete`. Any other `drop` is
+  another hook's choice: report it (a toast naming where the text is saved) and don't retry it. Never
+  lose the text quietly.
 
 ## Commands
 
