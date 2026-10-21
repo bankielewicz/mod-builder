@@ -1167,3 +1167,20 @@ describe('#119: a stopped run makes no file comparison', () => {
     expect(logic.STOPPED_CANDIDATE).toBe('stopped with Esc: files not compared')
   })
 })
+
+describe('#119: which prompt drops are retried', () => {
+  test('only the two the engine gives after Stop', () => {
+    expect(logic.retryableDrop?.('the session was stopped and nobody has sent input since')).toBe(true)
+    expect(logic.retryableDrop?.('the prompt was removed from the queue before it ran')).toBe(true)
+    expect(logic.retryableDrop?.('duet: $.prompt.submit: the command was removed from the queue before it ran')).toBe(true)
+    expect(logic.retryableDrop?.('a policy hook held it')).toBe(false)
+    expect(logic.retryableDrop?.('')).toBe(false)
+  })
+
+  test('dropOf reads the reason of a { drop } answer, and nothing else', () => {
+    expect(logic.dropOf?.({ drop: 'why' })).toBe('why')
+    expect(logic.dropOf?.({ text: 'sent' })).toBe('')
+    expect(logic.dropOf?.(undefined)).toBe('')
+    expect(logic.dropOf?.({ drop: 7 })).toBe('')
+  })
+})
