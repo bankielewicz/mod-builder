@@ -171,7 +171,8 @@ describe('/ensemble provider', () => {
     expect(text).toMatch(/xai\s+xAI Grok\s+key …9f3e from env\s+untested/)
     expect(text).toMatch(/codex\s+Codex CLI \(tools\)\s+codex login/)
     expect(text).toMatch(/ollama\s+Ollama \(local\)\s+localhost:11434/)
-    expect(text).toMatch(/custom\s+Custom endpoint\s+no URL set/)
+    // #129: no custom endpoint row.
+    expect(text).not.toMatch(/Custom endpoint/)
     expect(text).toContain('~/.claude/ensemble-data/.env')
     expect(everything(seen, text)).not.toContain(KEY)
     expect(everything(seen, text)).not.toContain(XAI)
@@ -310,7 +311,8 @@ describe('/ensemble provider', () => {
     expect(await run($, 'provider test nope')).toContain('unknown provider "nope"')
     expect(await run($, 'provider test codex')).toContain('codex signs in with codex login')
     expect(await run($, 'provider test anthropic')).toContain('anthropic signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key')
-    expect(await run($, 'provider test custom')).toContain('no URL set')
+    // #129: custom is not a provider any more.
+    expect(await run($, 'provider test custom')).toContain('unknown provider "custom"')
     expect(seen.fetches).toEqual([])
   })
 
@@ -574,12 +576,6 @@ describe('/ensemble provider', () => {
     await ui.unmount()
   })
 
-  test('Codex 4299362999: a custom result stored for another base URL shows as untested', { options: { apiCustomUrl: 'https://gw.example.com/v1' } }, async ($, on) => {
-    engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, store: seed({ custom: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…cdef', host: 'https://old.example/v1' } }) })
-    await start($)
-    expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+key …cdef from env · gw.example.com\s+untested/)
-  })
-
   test('Codex 4299426945: two tests of one provider started together send one request', async ($, on) => {
     let release: (r: Reply) => void = () => undefined
     const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, fetch: () => new Promise<Reply>(res => { release = res }) })
@@ -785,15 +781,6 @@ describe('/ensemble provider', () => {
     expect(Object.keys(stored).sort()).toEqual(['google', 'xai'])
   })
 
-  test('the custom provider at a local http URL needs no key (LM Studio, Codex 4298736595); a remote one does', { options: { apiCustomUrl: 'http://localhost:1234/v1' } }, async ($, on) => {
-    const seen = engine(on)
-    await start($)
-    expect(await run($, 'provider test custom')).toMatch(/custom: ok \d+ms · 2 models/)
-    expect(seen.fetches[0]!.url).toBe('http://localhost:1234/v1/models')
-    expect(seen.fetches[0]!.init.headers.Authorization).toBeUndefined()
-    expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+no key · localhost:1234/)
-  })
-
   test('under codexFsScope project the saved note still warns when the session folder holds the key file (Codex 4298736579)', { options: { codexFsScope: 'project' } }, async ($, on) => {
     const seen = engine(on, { files: { [KEY_FILE]: '' }, cwd: '/home/u' })
     await start($, '/home/u')
@@ -852,18 +839,4 @@ describe('/ensemble provider', () => {
     expect(other.deny).toBeUndefined()
   })
 
-  test('the custom endpoint: its URL must be https or local, and its row names the host', { options: { apiCustomUrl: 'https://gw.example.com/v1/', apiCustomModel: 'my-model' } }, async ($, on) => {
-    ;(on as any)('config.list', () => ({ value: ['apiCustomUrl', 'apiCustomModel'].map(f => ({ key: `ensemble.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'ensemble' }, isLocked: false })) }))
-    const sets: unknown[] = []
-    ;(on as any)('config.set', ($: any, e: any) => (sets.push([e.key, e.value]), { value: e.value }))
-    const seen = engine(on, { env: { DUET_CUSTOM_API_KEY: 'ck-test-0123456789abcdef' }, fetch: url => (url.endsWith('/models') ? MODELS : PROBE) })
-    await start($)
-    expect(await run($, 'provider list')).toMatch(/custom\s+Custom endpoint\s+key …cdef from env · gw.example.com/)
-    expect(await run($, 'provider test custom')).toMatch(/custom: ok/)
-    expect(seen.fetches[0]!.url).toBe('https://gw.example.com/v1/models')
-    expect(await run($, 'config customurl http://evil.example.com/v1')).toContain('apiCustomUrl takes an https:// URL, or http:// to localhost')
-    expect(sets).toEqual([])
-    expect(await run($, 'config custommodel llama3:8b')).toContain('apiCustomModel = llama3:8b')
-    expect(await run($, 'config list')).toContain('customurl')
-  })
 })

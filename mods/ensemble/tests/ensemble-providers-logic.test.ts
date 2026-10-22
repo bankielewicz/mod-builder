@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import {
-  PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, detailLinesThatFit, isAllowedBaseUrl, isLocalBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
+  PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, detailLinesThatFit, isAllowedBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
   keyFileExposed, keyId, keyPathReaches, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, searchCoversKeyFile, serializeEnv, testOutcome, testText, upsertEnvLine,
 } from '../hooks/ensemble-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
@@ -13,11 +13,11 @@ describe('providers as data', () => {
     const ids = PROVIDERS.map(p => p.id)
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids).not.toContain('claude')
-    for (const id of ['anthropic', 'openai', 'codex', 'google', 'xai', 'mistral', 'deepseek', 'groq', 'together', 'fireworks', 'openrouter', 'perplexity', 'cerebras', 'ollama', 'custom']) expect(ids).toContain(id)
+    for (const id of ['anthropic', 'openai', 'codex', 'google', 'xai', 'mistral', 'deepseek', 'groq', 'together', 'fireworks', 'openrouter', 'perplexity', 'cerebras', 'ollama']) expect(ids).toContain(id)
     for (const p of PROVIDERS) {
       expect(p.name.length).toBeGreaterThan(0)
-      if (p.id !== 'custom' && p.id !== 'codex') expect(isAllowedBaseUrl(p.baseUrl)).toBe(true)
-      if (p.id !== 'custom' && p.id !== 'ollama' && p.id !== 'codex') expect(p.defaultModel.length).toBeGreaterThan(0)
+      if (p.id !== 'codex') expect(isAllowedBaseUrl(p.baseUrl)).toBe(true)
+      if (p.id !== 'ollama' && p.id !== 'codex') expect(p.defaultModel.length).toBeGreaterThan(0)
     }
     expect(providerOf('anthropic')!.auth).toBe('session')
     expect(providerOf('anthropic')!.keyName).toBe('ANTHROPIC_API_KEY')
@@ -26,16 +26,18 @@ describe('providers as data', () => {
     expect(providerOf('perplexity')!.modelsPath).toBeNull()
     expect(providerOf('google')!.baseUrl).toBe('https://generativelanguage.googleapis.com/v1beta/openai')
     expect(providerOf('nope')).toBeUndefined()
+    // #129: no custom endpoint; the provider table's own rows only.
+    expect(providerOf('custom')).toBeUndefined()
   })
 
   test('the key names ensemble stores are the exact list the env tests pass through to Codex; none of them is blanked', () => {
     expect([...PROVIDER_KEY_NAMES].sort()).toEqual([...PROVIDER_KEYS].sort())
     expect(PROVIDER_KEY_NAMES).not.toContain('OPENAI_API_KEY')
     expect(PROVIDER_KEY_NAMES).toContain('GEMINI_API_KEY')
-    expect(PROVIDER_KEY_NAMES).toContain('DUET_CUSTOM_API_KEY')
+    expect(PROVIDER_KEY_NAMES).not.toContain('DUET_CUSTOM_API_KEY')
   })
 
-  test('base URLs: the table, the custom option, or none; only https or a local http endpoint is allowed', () => {
+  test('base URLs: the table\'s, checked; only https or a local http endpoint is allowed', () => {
     expect(isAllowedBaseUrl('https://api.x.ai/v1')).toBe(true)
     expect(isAllowedBaseUrl('http://localhost:11434/v1')).toBe(true)
     expect(isAllowedBaseUrl('http://127.0.0.1:8080/v1')).toBe(true)
@@ -48,13 +50,9 @@ describe('providers as data', () => {
     expect(isAllowedBaseUrl('https://gw.example/v1?tenant=a')).toBe(false)
     expect(isAllowedBaseUrl('https://gw.example/v1#x')).toBe(false)
     expect(isAllowedBaseUrl('http://localhost:1234/v1?x')).toBe(false)
-    expect(isLocalBaseUrl('http://localhost:1234/v1')).toBe(true)
-    expect(isLocalBaseUrl('https://gw.example.com/v1')).toBe(false)
     expect(isAllowedBaseUrl('')).toBe(false)
-    expect(baseUrlOf(providerOf('custom')!, { customUrl: 'https://my-gw.example.com/v1/' })).toBe('https://my-gw.example.com/v1')
-    expect(baseUrlOf(providerOf('custom')!, { customUrl: '' })).toBe('')
-    expect(baseUrlOf(providerOf('custom')!, { customUrl: 'http://evil.example.com/v1' })).toBe('')
-    expect(baseUrlOf(providerOf('groq')!, { customUrl: 'https://ignored' })).toBe('https://api.groq.com/openai/v1')
+    expect(baseUrlOf(providerOf('groq')!)).toBe('https://api.groq.com/openai/v1')
+    expect(baseUrlOf(providerOf('ollama')!)).toBe('http://localhost:11434/v1')
   })
 })
 
@@ -467,15 +465,12 @@ describe('pane text', () => {
   })
 
   test('auth and test columns', () => {
-    expect(authTextOf(providerOf('anthropic')!, { key: '', source: 'none' }, '')).toBe('signed-in')
-    expect(authTextOf(providerOf('anthropic')!, { key: KEY, source: 'file' }, '')).toBe('key …a1b2')
-    expect(authTextOf(providerOf('google')!, { key: KEY, source: 'env' }, '')).toBe('key …a1b2 from env')
-    expect(authTextOf(providerOf('google')!, { key: '', source: 'none' }, '')).toBe('no key')
-    expect(authTextOf(providerOf('codex')!, { key: '', source: 'none' }, '')).toBe('codex login')
-    expect(authTextOf(providerOf('ollama')!, { key: '', source: 'none' }, '')).toBe('localhost:11434')
-    expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, '')).toBe('no URL set')
-    expect(authTextOf(providerOf('custom')!, { key: KEY, source: 'file' }, 'https://gw.example.com/v1')).toBe('key …a1b2 · gw.example.com')
-    expect(authTextOf(providerOf('custom')!, { key: '', source: 'none' }, 'https://gw.example.com/v1')).toBe('no key · gw.example.com')
+    expect(authTextOf(providerOf('anthropic')!, { key: '', source: 'none' })).toBe('signed-in')
+    expect(authTextOf(providerOf('anthropic')!, { key: KEY, source: 'file' })).toBe('key …a1b2')
+    expect(authTextOf(providerOf('google')!, { key: KEY, source: 'env' })).toBe('key …a1b2 from env')
+    expect(authTextOf(providerOf('google')!, { key: '', source: 'none' })).toBe('no key')
+    expect(authTextOf(providerOf('codex')!, { key: '', source: 'none' })).toBe('codex login')
+    expect(authTextOf(providerOf('ollama')!, { key: '', source: 'none' })).toBe('localhost:11434')
     expect(testText(undefined)).toBe('untested')
     expect(testText({ ok: true, status: 200, ms: 412, model: 'gemini-2.5-pro', note: 'ok 412ms gemini-2.5-pro', at: 1, key: '', host: '' })).toBe('ok 412ms gemini-2.5-pro')
     expect(testText('running')).toBe('testing…')

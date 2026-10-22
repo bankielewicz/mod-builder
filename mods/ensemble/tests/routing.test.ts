@@ -1464,7 +1464,7 @@ describe('0.3.0: provider keys are never blanked for Codex (the owner\'s decisio
     await $.tool.call(call() as never)
     await seen.clock.advance(1000)   // the run answers in the background; Codex starts after the call returns
     const env = seen.env[0]!
-    for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY', 'DUET_CUSTOM_API_KEY']) expect([k, env[k]]).toEqual([k, undefined])
+    for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY']) expect([k, env[k]]).toEqual([k, undefined])
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.OPENAI_API_KEY).toBeUndefined()
   })

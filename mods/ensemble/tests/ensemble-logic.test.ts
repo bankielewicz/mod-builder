@@ -30,18 +30,16 @@ tools: Read, Grep, Glob
 You are a read-only code explorer.`
 
 describe('0.3.1 (issue #115): /ensemble config text', () => {
-  test('a refused apiCustomUrl never echoes a password, and names every local host it allows', () => {
-    const r = coerceConfigValue(findConfigField('customurl')!, 'https://bob:hunter2@gw.example.com/v1')
-    expect('error' in r && r.error.includes('hunter2')).toBe(false)
-    expect('error' in r && r.error).toContain('[::1]')
-    expect('error' in r && r.error).toContain('https://***@gw.example.com/v1')
-  })
-
   test('/ensemble config list keeps its columns aligned for the wider aliases', () => {
     const lines = configText({}).split('\n')
     const at = (field: string) => lines.find(l => l.includes(` ${field} `))!.indexOf(field)
-    expect(at('apiCustomUrl')).toBe(at('codexWritePaths'))
-    expect(at('apiCustomModel')).toBe(at('codexWritePaths'))
+    for (const field of ['codexAgents', 'codexSandbox', 'codexModel', 'maxConcurrent', 'timeoutMinutes', 'codexConsent', 'codexRunMode', 'codexFsScope']) {
+      expect(at(field)).toBe(at('codexWritePaths'))
+    }
+    // #129: the custom endpoint's two options are gone.
+    expect(lines.some(l => l.includes('apiCustom'))).toBe(false)
+    expect(findConfigField('customurl')).toBeUndefined()
+    expect(findConfigField('custommodel')).toBeUndefined()
   })
 })
 
