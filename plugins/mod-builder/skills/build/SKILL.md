@@ -138,9 +138,12 @@ appends, so an earlier run's lines would pass or fail this one.
   to the debug log only.
 
 A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off.
-The run uses each option's default, plus any `pluginConfigs."<name>@inline"` entry in
-`~/.claude/settings.json`. A demo that needs an option passes it:
-`--settings '{"pluginConfigs":{"<name>@inline":{"options":{…}}}}'`.
+The run reads options from user settings, `--settings` and managed settings, under
+`pluginConfigs."<name>"` or `pluginConfigs."<name>@inline"` (the log's own line names them). Where
+none is set, the log says `every option is its default`. A demo that needs an option passes it:
+`--settings '{"pluginConfigs":{"<name>@inline":{"options":{…}}}}'`. Which source wins when
+managed settings also set it hasn't been probed, so read the options the log reports before trusting
+the result.
 
 Typecheck. During a build the mod has never loaded in an interactive session, so its
 `tsconfig.json` (which extends `.claude-plugin/types/`) has nothing to extend yet. Instead, copy
