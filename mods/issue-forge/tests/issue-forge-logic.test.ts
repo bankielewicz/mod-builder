@@ -2514,4 +2514,9 @@ describe('PR #136 review round 2: a refused commit', () => {
       next: "see the commit hook's output (git commit in the run's folder): it may have refused the commit, or changed files and failed, as pre-commit does",
     })
   })
+
+  test("git's own refusal (fatal or error) isn't blamed on a hook: it stays the unexpected block", () => {
+    expect(refused('R', 'git commit failed: fatal: empty ident name (for <u@h>) not allowed')).toEqual({ reason: 'unexpected: git commit failed: fatal: empty ident name (for <u@h>) not allowed', next: 'see /issue-forge status' })
+    expect(refused('F', 'git commit failed: error: pathspec')).toMatchObject({ reason: 'unexpected: git commit failed: error: pathspec' })
+  })
 })

@@ -32,6 +32,7 @@ import {
   cleanupLine,
   commitFields,
   commitMessage,
+  commitRefused,
   commonDirOf,
   coverageLine,
   demoRun,
@@ -599,6 +600,20 @@ async function headAndTree($: EngineInterface, root: string): Promise<{ head: st
  * and `commit` when this call made it: nothing to commit means HEAD's tree is the tested one already.
  */
 async function commitAll($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | { commit?: string; head: string }> {
+  // A lock that outlasts the retries, or a commit a hook failed, comes back as a block, so the gate's result is kept (round 2).
+  try {
+    return await commitTested($, run, message, gate, tested)
+  } catch (err) {
+    if (err instanceof Locked) return block(err.message, err.next)
+    if (err instanceof Error && err.message.startsWith('git commit failed:')) {
+      const refused = commitRefused(gate, err.message)
+      return block(refused.reason, refused.next)
+    }
+    throw err
+  }
+}
+
+async function commitTested($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | { commit?: string; head: string }> {
   await stillOwned($, run)
   const root = workOf(run)
   const before = treeDrift(gate, tested, await indexTree($, run, root))

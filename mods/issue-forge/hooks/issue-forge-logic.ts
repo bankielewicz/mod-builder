@@ -315,6 +315,18 @@ export function commitFields(text: string): { tree: string; parents: string[] } 
   return { tree: valueOf('tree')[0] ?? '', parents: valueOf('parent') }
 }
 
+/**
+ * A `git commit` that failed after the gate passed (PR #136 review round 2): a commit hook is the likely cause. git's own
+ * refusal (`fatal:` or `error:`: an identity, a broken ref) isn't a hook's, so it stays the unexpected block it was.
+ */
+export function commitRefused(gate: 'R' | 'G' | 'F', message: string): { reason: string; next: string } {
+  if (/^git commit failed: (?:fatal|error):/.test(message)) return { reason: `unexpected: ${message}`, next: 'see /issue-forge status' }
+  return {
+    reason: `gate ${gate} passed, but ${message}`,
+    next: "see the commit hook's output (git commit in the run's folder): it may have refused the commit, or changed files and failed, as pre-commit does",
+  }
+}
+
 /** Another commit moved the branch during a gate's commit: HEAD's parent isn't the HEAD from before it (PR #136 review round 2). */
 export function branchMoved(gate: 'R' | 'G' | 'F', before: string, head: string, parent: string): { reason: string; next: string } {
   return {
