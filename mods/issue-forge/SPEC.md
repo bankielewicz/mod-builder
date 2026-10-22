@@ -1937,3 +1937,26 @@ count set in the pane.
 - **TDD:** red `85a93ec` (2 of 454 failed, by assertion), green `46b4001`.
 - **Version:** 0.7.4 (patch).
 
+## Change 0.7.5 (2026-10-22)
+
+> Issue #101 (Codex P1 on PR #88): "A gate judges one index, then commits whatever the index holds when `git commit` runs. The two can differ." The owner, 2026-10-22: a change to a mod goes through `/mod-builder:edit`.
+
+- **Why:** gates R, G and F stage with `git add -A`, run the tests (G and F also coverage and the checks, which can take minutes) and then commit whatever the index holds. A path that another process stages in that window lands in the commit untested, and so does the index that another `git add` leaves when its lock is the one the commit's retries (#28) waited for, or a pre-commit hook that rewrites and re-stages. Gate G's last look, `unstagedOf`, reads only the Y column of `git status`, so a path someone else staged (X set, Y blank) passes it.
+- **What changes:**
+  - Each gate records the tree it tests: `git write-tree` right after `git add -A`, before any test runs (the tested tree).
+  - **Before the commit**, `git write-tree` again. A different tree blocks the gate with nothing committed: `the index changed after gate <X> tested it (tested <tree>, now <tree>)`, next `see what was staged since (git diff --cached --stat <tested tree>) and unstage what isn't the run's`.
+  - **After the commit**, `git rev-parse HEAD^{tree}`. If it isn't the tested tree (another process staged during a lock wait, or a hook re-staged), the gate blocks with the commit made: `commit <sha> holds a tree gate <X> didn't test (<tree>, tested <tree>)`, next `see what wasn't tested (git diff <tested tree> HEAD); if it isn't the run's, git reset --soft HEAD~1`. Nothing is reset by issue-forge.
+  - Both blocks can be resumed. Resume runs the gate again from `git add -A`, so it tests what the index holds then, the commit included, and a passing gate keeps HEAD.
+  - A replay after a reload, with nothing staged, is unchanged: the index's tree is HEAD's and the tested one, and HEAD stands.
+  - `git write-tree` takes `.git/index.lock` (probe below), so it goes through `gitWrite` and its lock retries (#28). `rev-parse` takes no lock.
+  - **Not chosen:** committing the tested tree directly with `git commit-tree` and `git update-ref`. That skips the repository's commit hooks and its signing configuration, and issue-forge runs in other people's repositories. A pre-commit hook that rewrites and re-stages is itself a case of this issue, which `git commit` plus the after-commit check catches.
+  - **Not changed here:** gate R still has no Y-column look; a red phase's first test run can write files (new snapshots), so such a check is its own change. Gate G keeps its `unstagedOf` look. The stash paths (G's behaviour-only return, F's rejected refactor) commit nothing.
+- **What gets touched:** `hooks/issue-forge-logic.ts` (a pure function for the two block texts), `hooks/register.tsx` (`commitAll` and the three gates), the logic and UI tests, `README.md` (the Processes row gains `write-tree` and `rev-parse HEAD^{tree}`; the "Built on" line names this change's build), `docs/specs/issue-forge.md` §3 steps 4 to 6, `plugin.json`, the marketplace entry and this SPEC. Per gate that commits: two more `git write-tree` calls and one `git rev-parse`, in the run's folder; no new reach.
+- **Probe** (git 2.53.0, 2026-10-22, a throwaway repository): with `.git/index.lock` present, `git write-tree` exits 128 with `fatal: Unable to create '…/.git/index.lock': File exists.`, which `lockPathOf` already reads; the index's entries were as before.
+- **Tests:**
+  - Logic: equal trees give no block, before or after the commit; a tree that changed before the commit gives the first text (the gate, both short trees); one that differs after gives the second (the commit, both trees, `git reset --soft HEAD~1`).
+  - UI, gate G: `write-tree` answers a new tree at its second call, so the gate blocks at gateG with the first text and makes no `git commit` call. HEAD's tree differs after the commit, so it blocks with the second text and makes no reset. A resume after that block runs the gate again and passes with HEAD. A `write-tree` that meets a held `index.lock` waits and tries again, as `add` does.
+  - UI, gate R: the before-the-commit block, and a replay with nothing staged that keeps HEAD.
+  - UI, gate F: the before-the-commit block.
+- **Done means:** a gate commits only the tree it tested, or blocks, saying what changed and where to look.
+- **Version:** 0.7.5 (patch).
