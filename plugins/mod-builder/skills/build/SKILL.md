@@ -157,8 +157,8 @@ tests inside a session with `CLAUDE_CONFIG_DIR=$(mktemp -d)` if they touch real 
 Load it live, in one of two ways:
 - **A new session with `claude --plugin-dir <mods>/<name>`** (fastest). Its hooks module reloads
   when a file in it is saved, and the transcript's reload line names the mod. `reload failed, the
-  previous version stays loaded:` is a failure: the old version is still the one running. A change
-  to a skill or other component loads at `/reload-plugins`.
+  previous version stays loaded:` is a failure: the old version is still the one running (docs, not
+  observed). A change to a skill or other component loads at `/reload-plugins` (docs, not observed).
 - **Install it once** from the marketplace (Share) with `/plugin install <name>@<marketplace>`. From
   a marketplace added from a local folder it loads in place, and `/reload-plugins` picks up later
   edits (it prints `re-read from its folder`). From a GitHub or other remote marketplace it is a copy
@@ -196,7 +196,7 @@ those results stale: run Verify again (and report Validate and Test again) befor
        `/reload-plugins`;
      - with `--plugin-dir`: a save reloads the hooks module, and the transcript's reload line names
        the mod. `reload failed, the previous version stays loaded:` means the old code still runs.
-       `/reload-plugins` loads the rest.
+       `/reload-plugins` loads the rest. Both are from the docs, not observed.
 
      `/plugin`'s Installed tab shows which copy loaded: the row `<name>  Plugin  inline` is a
      `--plugin-dir` copy, and an installed copy's row names its marketplace. The row's details give
