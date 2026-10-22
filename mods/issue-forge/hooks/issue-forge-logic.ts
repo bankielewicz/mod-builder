@@ -291,12 +291,13 @@ export function unstagedOf(porcelainZ: string): string[] {
 /**
  * A gate commits only the tree it tested (#101, Change 0.7.5). `tested` is the index's tree when the gate staged, and `seen`
  * the index's tree just before the commit or, with `commit`, the tree of the commit made. Null when they are the same tree.
+ * The reason shows short trees; the commands to run name the whole tested tree, which no repository finds ambiguous.
  */
 export function treeDrift(gate: 'R' | 'G' | 'F', tested: string, seen: string, commit?: string): { reason: string; next: string } | null {
   if (seen === tested) return null
   const [t, s] = [tested.slice(0, 7), seen.slice(0, 7)]
-  if (commit === undefined) return { reason: `the index changed after gate ${gate} tested it (tested ${t}, now ${s})`, next: `see what was staged since (git diff --cached --stat ${t}) and unstage what isn't the run's` }
-  return { reason: `commit ${commit.slice(0, 7)} holds a tree gate ${gate} didn't test (${s}, tested ${t})`, next: `see what wasn't tested (git diff ${t} HEAD); if it isn't the run's, git reset --soft HEAD~1` }
+  if (commit === undefined) return { reason: `the index changed after gate ${gate} tested it (tested ${t}, now ${s})`, next: `see what was staged since (git diff --cached --stat ${tested}) and unstage what isn't the run's` }
+  return { reason: `commit ${commit.slice(0, 7)} holds a tree gate ${gate} didn't test (${s}, tested ${t})`, next: `see what wasn't tested (git diff ${tested} HEAD); if it isn't the run's, git reset --soft HEAD~1` }
 }
 
 /**
