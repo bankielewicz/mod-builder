@@ -40,8 +40,9 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
      because the marketplace row stays enabled while an inline copy replaces it. The person sees it
      in `/plugin` (the `mods active` line and the Installed tab), so if the request doesn't say,
      ask in step 1's batch.
-     - Such a folder runs as `<name>@inline`. It reloads when the person saves a file in it, or when
-       a turn in which you saved files ends.
+     - Such a folder runs as `<name>@inline`. Its hooks module reloads when the person saves a file
+       in it, or when a turn in which you saved files ends. Its skills, agents and other components
+       load their changes at `/reload-plugins`.
      - Each reload runs `register` again, so module variables reset, while `$.state` and `$.store`
        stay.
      - The folder is a protected path, so in the `default` and `acceptEdits` modes each of your edits
@@ -101,8 +102,9 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
    - **An in-place install:** `/reload-plugins`, which prints `re-read from its folder`.
    - **A copy of one version:** the change pushed to the marketplace and `claude plugin update <id>`,
      which ends with `Restart to apply changes.`, then `/reload-plugins`.
-   - **A `--plugin-dir` session:** it reloads at once, and the transcript's reload line names the
-     mod. `reload failed, the previous version stays loaded:` means the old code is still running.
+   - **A `--plugin-dir` session:** the hooks module reloads at once, and the transcript's reload
+     line names the mod. `reload failed, the previous version stays loaded:` means the old code is
+     still running. An edited skill or other component loads at `/reload-plugins`.
 
    If you edited a folder the person's copy doesn't read, such as a git worktree, say that the edit
    reaches that copy only once the change is in the folder that `readFromFolder` names. `/plugin`'s
