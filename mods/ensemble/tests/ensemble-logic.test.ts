@@ -1276,8 +1276,8 @@ describe('#121: stopping a Codex run from ensemble', () => {
 // #128: duet became ensemble. A mod can't move or delete files ($.fs has no rename or delete), so the person moves
 // ~/.claude/duet-data, and a toast at start says how (the owner's choice on #128). The host puts "ensemble: " first.
 describe('#128: the note on duet\'s old data folder', () => {
-  const note = (hasOld: boolean, hasNew: boolean) =>
-    ((logic as Record<string, unknown>).migrationNoteOf as ((o: boolean, n: boolean) => string | null) | undefined)?.(hasOld, hasNew)
+  const note = (hasOld: boolean, hasNew: boolean, bothKeyFiles = false) =>
+    ((logic as Record<string, unknown>).migrationNoteOf as ((o: boolean, n: boolean, k: boolean) => string | null) | undefined)?.(hasOld, hasNew, bothKeyFiles)
 
   test('only the old folder: how to move it', () => {
     expect(note(true, false)).toBe('your data and API keys now live in ~/.claude/ensemble-data. Move duet\'s: mv ~/.claude/duet-data ~/.claude/ensemble-data')
@@ -1285,6 +1285,13 @@ describe('#128: the note on duet\'s old data folder', () => {
 
   test('both folders: copy without overwriting, then delete the old one (PR #130 review: mv would nest it)', () => {
     expect(note(true, true)).toBe('~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data')
+  })
+
+  // PR #130 review round 2 (Codex 4347084033): cp -an leaves the new .env as it is, so deleting the old folder would lose
+  // duet's keys. With a .env in both, the key lines are merged by hand before the old folder goes.
+  test('both folders, each with a .env: copy the rest, merge the key lines by hand, then delete', () => {
+    expect(note(true, true, true)).toBe('~/.claude/duet-data and ~/.claude/ensemble-data both hold a .env: copy the rest with cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, add duet\'s key lines to ensemble\'s .env by hand (or /ensemble provider key <id>), then delete ~/.claude/duet-data')
+    expect((note(true, true, true) ?? '').length).toBeLessThanOrEqual(260)
   })
 
   test('no old folder: nothing to say', () => {

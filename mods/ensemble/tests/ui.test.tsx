@@ -298,6 +298,15 @@ describe('#128: the toast about duet\'s old data folder', () => {
     expect(await start($, on, [OLD, DATA])).toContain('~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data')
   })
 
+  // PR #130 review round 2 (Codex 4347084033): which folder holds a .env is checked, never read.
+  test('both folders, each with a .env: the toast says to merge the key lines by hand before deleting', async ($, on) => {
+    expect(await start($, on, [OLD, DATA, `${OLD}/.env`, `${DATA}/.env`])).toContain('~/.claude/duet-data and ~/.claude/ensemble-data both hold a .env: copy the rest with cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, add duet\'s key lines to ensemble\'s .env by hand (or /ensemble provider key <id>), then delete ~/.claude/duet-data')
+  })
+
+  test('both folders, a .env only in the old one: cp -an carries it, so the toast stays', async ($, on) => {
+    expect(await start($, on, [OLD, DATA, `${OLD}/.env`])).toContain('~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data')
+  })
+
   test('no old folder: no toast about it', async ($, on) => {
     expect((await start($, on, [DATA])).filter(t => t.includes('duet-data'))).toEqual([])
   })
