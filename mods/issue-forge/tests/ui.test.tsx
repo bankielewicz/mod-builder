@@ -3605,7 +3605,8 @@ describe('new plugins are mod-builder\'s (Change 0.7.0)', () => {
     await run($, 'resume')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
     const reads = w.calls.filter(c => c.argv.includes('--diff-filter=A')).map(c => c.argv.join(' '))
-    expect(reads).toEqual(['git diff --cached --no-renames --name-only --diff-filter=A -z base0'])
+    // Since PR #136 review round 1 (Codex 4350587243) the read diffs the tested tree (tree1 here) instead of the index.
+    expect(reads).toEqual(['git diff --no-renames --name-only --diff-filter=A -z base0 tree1'])
   })
 
   test("a manifest on the base branch's tip isn't the run's new plugin: someone else's, merged in, doesn't block (owner, after PR #103's review)", async ($, on) => {
