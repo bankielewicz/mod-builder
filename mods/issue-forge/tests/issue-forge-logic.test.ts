@@ -533,7 +533,7 @@ describe('state (§7.4)', () => {
       expect(r.redAnswer ?? '').toBe('')
     }
     expect(advance(red, { type: 'agentDone', answer: '- test x fails', reason: 'answer' }, 1).redAnswer).toBe('- test x fails')
-    // An answer another plugin gave in-line (ensemble's Codex) has no turn, so no reason.
+    // An answer another plugin gave in-line (a Codex router's, say) has no turn, so no reason.
     expect(advance(red, { type: 'agentDone', answer: '- test y fails' }, 1).redAnswer).toBe('- test y fails')
   })
 
@@ -1147,7 +1147,7 @@ describe('review of PR #41', () => {
     expect(routedRedBlock('issue-forge:red', true)).toBeNull()
     expect(routedRedBlock('general-purpose', false)).toBeNull()
     expect(routedRedBlock('general-purpose', true)).toEqual({
-      reason: "redAgentType general-purpose can't work in a worktree: another plugin (ensemble's Codex) runs it in the session's folder",
+      reason: "redAgentType general-purpose can't work in a worktree: a plugin that routes it elsewhere (to Codex, say) may run it in the session's folder",
       next: 'set redAgentType to issue-forge:red (a red on Codex needs "workspace": "here" and a clean checkout on the base)',
     })
   })
@@ -2412,13 +2412,13 @@ describe('PR #103 review: the guard refusal outlives a drive write computed befo
   })
 })
 
-// #128: duet became ensemble, and its in-line answers' agent ids went from duet-<n> to ensemble-<n>. No duet- alias:
-// the owner chose to end the old names at the rename.
+// #128: duet became ensemble, whose in-line answers' agent ids were ensemble-<n>. The ensemble mod has since left this repo
+// (tag ensemble-0.4.0); the id test stays, by the owner's choice to keep issue-forge's routing support as it is.
 describe('#128: an agent another plugin answered in-line', () => {
   const inline = (agentId: string, model: string) =>
     ((logic as Record<string, unknown>).isInlineAnswer as ((a: string, m: string) => boolean) | undefined)?.(agentId, model)
 
-  test("ensemble's Codex answers in-line: its ensemble-<n> ids, and any codex model", () => {
+  test('an in-line answer: any codex model, and the removed ensemble mod\'s ensemble-<n> ids', () => {
     expect(inline('ensemble-d3', 'claude')).toBe(true)
     expect(inline('a1', 'codex-mini')).toBe(true)
   })
