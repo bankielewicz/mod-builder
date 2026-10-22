@@ -140,6 +140,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   written before the dispatch's first `get` read the new value on that first `get`; an atom first read
   after another atom's `get` and its own write read the old value. So decide whether to wait for a scan
   before the first read: from module state, or from what the hook itself holds.
+- **[probe]** The moment lasts only while the hook is open. Work it leaves running (`void work($)`) reads
+  live once the hook has returned, `/clear`'s reset included. Probed on 2.1.296 and 2.1.307 (PR #127)
+  with a throwaway mod: a command read an atom set to 5 and left a read waiting on a gate; after `/clear`
+  the waiting read got 0, and without `/clear` it got a value written after the command. `claude plugin
+  test` (2.1.307) does the same: a scan pass queued on a returned hook's `$` read a later write.
 - **[d.ts]** `session.end` also fires on `/clear` and `/resume` (`e.reason` `clear`, `resume`), and
   the process goes on under a new `$.session.id()`. A mod that lets go of something at session end
   checks the reason; its background work keeps running.
@@ -320,6 +325,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
   the footer as `<plugin>: <text>`. The host adds the prefix, so don't repeat the plugin's name.
 - **[probe]** A `--plugin-dir` session hot-reloads after an edit (`<plugin>: reloaded (N hooks…)`).
   Atoms survive the reload, and module variables and pane focus don't.
+- **[probe]** `/reload-plugins` reloads only a module whose content changed. An unchanged one is kept as
+  loaded, module variables included (`hooks modules unchanged, kept as loaded` in the debug log), and a
+  `touch` doesn't count. So a module variable that keeps a copy of an atom (git-branch's `hiddenKept`) is
+  read back from the atom in `session.start`, or the reload after a plugin update loses it. Probed on
+  2.1.307 (PR #127) with git-branch: hide, a one-line edit, `/reload-plugins`, `/clear`.
 - **[probe]** A row computed at scan time goes stale while a run streams. Anything that changes
   during a run (status, time) has to be read from the live run when drawing.
 - **[probe]** `$.session.cwd()` follows `/cd` and not the person's `!cd`. Probed on 2.1.296 with Mod Lab's

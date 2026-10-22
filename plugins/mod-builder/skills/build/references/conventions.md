@@ -51,7 +51,9 @@ on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e,
 `startup` and `compact` reset nothing, so the matcher leaves them out. A resumed startup
 (`claude --continue`) fires `resume` too, before `session.start` (`gotchas.md`): `seed` must skip it
 when the module hasn't started (a module variable `session.start` sets), since `session.start` seeds
-there. Validate counts the hook as gating, hence the `.catch`. Atoms that only count this conversation (a turn's tools, the watcher's
+there. A choice kept in module state for `seed` to write back (git-branch's hide, Mod Lab's pin) is read
+from its atom in `session.start`: a reload starts the module afresh and keeps the atoms (`gotchas.md`).
+Validate counts the hook as gating, hence the `.catch`. Atoms that only count this conversation (a turn's tools, the watcher's
 stats) are right to reset, so the archetypes have no such hook. Where an organization manages Claude
 Code, `classic.*` hooks don't run in a plugin a person installs, and the reset stays.
 

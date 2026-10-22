@@ -137,5 +137,11 @@ How to load it (`/plugin install git-branch@claudemod` or `claude --plugin-dir m
   - **Red** `7849661`: after `/git-branch hide`, a `classic.SessionStart` with `source: 'clear'` wrote no `isHidden`, and the test failed with `Received []`. Compaction and a resumed startup must write nothing.
   - **Green** `2115e2c`.
 - **Live check** (2.1.306, the session above): `/git-branch hide`, then `/clear`, and the band stayed hidden. `/git-branch show`, then `/clear`, and the band was drawn with the branch.
+- **PR #127 Codex round 1** (2026-10-21):
+  - **P2, a hide from before a reload** (Codex 4342486245): fixed. A reload starts the module afresh and keeps the atoms, so `hiddenKept` was false while `isHidden` was true, and the next `/clear` drew the band. `session.start` now reads `isHidden` into `hiddenKept`.
+    - Reproduced live on 2.1.307: `/git-branch hide`, a one-line edit to `register.tsx` and `/reload-plugins`, then `/clear`, and the band came back.
+    - `/reload-plugins` alone doesn't reproduce it: an unchanged module is kept as loaded (`hooks modules unchanged, kept as loaded`), module variables included. A changed one reloads, as after this repo's fast-forward of the main folder.
+    - **Red** `e98e37e`. Its `state.get` stub answered with a version the kit's store didn't hold, so `update()` wrote twice; fixed in `b27f0c7`, still red without the change. **Green** `ef4fcd7`.
+    - Live check after the fix (2.1.307): hide, two content reloads (each ran `session.start`), `/clear`, and the band stayed hidden.
 - **Version:** 0.1.2 (patch).
 

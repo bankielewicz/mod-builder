@@ -926,5 +926,12 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **Carried over from PR #122's branch.** Two docs commits were pushed there after #122 had merged, so they never reached `main`: `4e97fdc` and `b0b833c`. They arrive here.
   - `classic.SessionStart` fires before `session.start` at startup and at `claude --continue` (`source: resume`), probed on 2.1.296 and 2.1.306. gotchas.md gains it as `[probe]`, and the `/clear` convention says to skip the reseed when the module hasn't started (as Mod Lab and git-branch now do).
   - After an Esc stop, process calls work again from `$.clock.after(0, …)`, though `git` is refused in the aborted hook (probe, 2.1.306). gotchas.md and conventions.md say so, and duet 0.3.3 uses it.
+- **PR #127 Codex round 1** (2026-10-21):
+  - **P2, a `/clear` during a scan** (Codex 4342486253): closed as moot, by probe. The concern: `reseed` merges into a scan in flight, every pass of which reads through the first caller's `$`, and a dispatch's reads are fixed at its first `get` (gotchas.md), so they would read the state from before the reset.
+    - A dispatch's moment holds only while its hook is open: work it leaves running reads live once it has returned, `/clear`'s reset included. Probed on 2.1.296 and 2.1.307 with a throwaway mod: a command read an atom set to 5 and left a read waiting on a gate; after `/clear` the waiting read got 0.
+    - The kit agrees (`claude plugin test`, 2.1.307): with a scan held mid-read, a pass queued on the returned tool batch's `$` read a report written after that `$`'s first `get`. That test went green with no change, so it isn't kept.
+    - Left as is: a hook still awaiting a scan when `/clear` comes would read pre-reset state. `lab_report` awaits one on its Spec and moved-folder paths, during a tool call; whether `/clear` can run then wasn't probed.
+  - git-branch takes the round's other P2 (Change 0.1.2 there).
+  - gotchas.md gains both probes: the moment ends with the hook, and `/reload-plugins` reloads only a changed module.
 - **Version:** 0.2.28 (patch).
 
