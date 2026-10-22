@@ -3847,3 +3847,18 @@ describe('PR #136 review round 1: the commit a gate keeps', () => {
     expect(storedOf(store).refactorCommit).toBe(undefined)
   })
 })
+
+// PR #136 review round 1, finding 3, in the drive: gate G's checks passed, then the index changed before the commit.
+describe('PR #136 review round 1: the gate record beside a block', () => {
+  test("gate G's passing result and test tail are kept with its before-the-commit block", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateG') }
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], trees: ['1111111aaaa', '2222222bbbb'], storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
+    const stored = (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+    expect(stored.step).toBe('blocked')
+    expect(stored.gates?.G?.passed).toBe(true)
+    expect(stored.lastTestTail).toBe('all pass')
+  })
+})

@@ -2465,3 +2465,18 @@ describe('#101: the tree a gate tested', () => {
     expect(kept('c2', undefined)).toBe('c2')
   })
 })
+
+// PR #136 review round 1, finding 3: a block from the commit step keeps the gate's result, so the status shows the passing
+// checks beside the block, not an earlier attempt's failure.
+describe('PR #136 review round 1: a block keeps the gate it ends', () => {
+  test('a block that carries the gate records it, under the step, with its test tail, before blocking', () => {
+    const r = advance(run({ step: 'gateG', lastGate: failG('G'), gates: { G: failG('G') } }), { type: 'block', reason: 'the index changed after gate G tested it', next: 'n', gate: pass('G'), testTail: 'all pass' }, 1)
+    expect(r).toMatchObject({ step: 'blocked', lastGate: pass('G'), gates: { G: pass('G') }, lastTestTail: 'all pass' })
+    expect(r.blocked).toMatchObject({ at: 'gateG', reason: 'the index changed after gate G tested it' })
+  })
+
+  test('a block without a gate leaves the gate record as it was', () => {
+    const r = advance(run({ step: 'gateF', lastGate: failG('F'), gates: { F: failG('F') } }), { type: 'block', reason: 'r', next: 'n' }, 1)
+    expect(r).toMatchObject({ step: 'blocked', lastGate: failG('F'), gates: { F: failG('F') } })
+  })
+})
