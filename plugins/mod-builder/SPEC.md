@@ -1034,5 +1034,35 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Live check:** point 2's command, with the installed copies left enabled, run with `--plugin-dir <worktree>/mods/issue-forge` and with `--plugin-dir <worktree>/plugins/mod-builder` (`/modlab demo`). Each answered, and each log has `Plugin "<name>" from --plugin-dir overrides installed version` and `hooks module <name>@inline loaded`, with none of the failure lines.
   - **The check catches a wrong copy:** a first run, given a relative `--plugin-dir` from the wrong folder, also answered the demo. Its log had `[WARN] Plugin path does not exist: …/mods/issue-forge (ENOENT), skipping` and `hooks module issue-forge@claudemod loaded`, and no `@inline` line. The installed copy had answered, and only the log showed it.
 - **Follow-up #141:** edit's step 0.1 finds a mod only in `<mods>/`. A marketplace entry under another folder, like `./plugins/mod-builder`, can't go through the skill as written, and Mod Lab ignores its path. The owner chose to file it (2026-10-22, "File an issue (Recommended)"), and it isn't part of this change.
+- **PR #142 review round 1** (2026-10-22). Codex reviewed `ed0ee34`, and a `/code-review` run reviewed `87345f4`. The owner asked to check each finding against the advisor and to reproduce it. All probes ran on 2.1.308.
+  - **Codex P1 (4353504729), "`/plugin` can't tell which copy won": partly a false positive.**
+    - The review run's interactive probe shows the Installed tab does tell. A `--plugin-dir` copy is the row `issue-forge  Plugin  inline`, with details `issue-forge @ inline` and `Version: 0.7.5`, and no `@claudemod` row appears. The loading reference's "row stays enabled" is about `claude plugin list`, which step 0.4 already says can't tell.
+    - What was real: the hand-offs cited the `mods active` line, which names mods only. They now cite the Installed tab row (`e8c13ed`).
+  - **Codex P2 (4353504735), the reused debug log: reproduced, and worse.**
+    - A seeded line stayed first after a 560-line run.
+    - The review run showed the worse case: after a passing run, a rerun with a wrong `--plugin-dir` found the old `@inline loaded` line and passed.
+    - The fix: `rm -f` the log before the run, and `Plugin path does not exist` fails the check (`63a598d`).
+  - **Codex P2 (4353504744), managed settings: reproduced as an omission.**
+    - The engine's log line names "user, --settings or managed settings" and both keys `"<name>"` and `"<name>@inline"`. The smoke test now says so (`bc42e2a`).
+    - Which source wins when managed settings also set an option wasn't probed, and the text says that.
+  - **The review run's other findings, taken:**
+    - **A policy refusal comes after `loaded`.** The pass rule now needs the `plugin.register: <name> (user, <name>@inline), … admitted` line, and the `--plugin-dir <path> is one plugin` line naming the folder built (`e13f5f5`).
+    - **The reload cases had drifted across four copies.** Build's hand-off holds the one copy: the remote case gains the version pin and `/reload-plugins`. Edit's hand-off points there and adds the installed-plus-`--plugin-dir` case and the not-loaded case (`ebd43e5`).
+    - **`readFromFolder` is absent, not `null`, for a copied plugin** (confirmed with a raw JSON read). Step 0.4 now also:
+      - takes this marketplace's row when the name has several;
+      - reads `enabled` and `folderVersion`;
+      - names `--plugin-url` and `CLAUDE_CODE_PLUGIN_DIRS`.
+
+      The probe record above is corrected in place (`ba4104b`).
+    - **Docs-only claims are tagged "docs, not observed":** `reload failed` keeps the old version, and skills load at `/reload-plugins` (`fe7fefe`).
+    - **Two templates promised the same unconditional reload:** `templates/SPEC.template.md:106` and `templates/README.template.md:38` (`2413f5b`). This adds those two files to What gets touched.
+    - **`references/gotchas.md`** gains the probed loading facts (`3f32851`). This file is added to What gets touched too.
+  - **Rejected:** reading `/proc/<pid>/cmdline` to find `--plugin-dir`. It's Linux-only and fragile, and not a practice for the skill to teach. Only its point about the other two ways to load a plugin inline was taken.
+  - **QA after the round** (2.1.308):
+    - The repository and `plugins/mod-builder` validate.
+    - 357 of 357 tests pass, the archetype check passes, and the typecheck exits 0.
+    - The sandbox check passes, with the canary list matching gotchas.md.
+    - **Live check with a fresh log:** `hooks module issue-forge@inline loaded`, `plugin.register: issue-forge (user, issue-forge@inline), judged by core alone: admitted` and `--plugin-dir <worktree>/mods/issue-forge is one plugin` each appear once, and none of the failure lines.
+    - **The same run with `--plugin-dir <worktree>/mods/no-such-mod`:** the demo still answered, from the installed copy. The log had no `@inline loaded` and one `Plugin path does not exist`, so the check fails it.
 - **Version:** 0.2.29 (patch: skill text).
 
