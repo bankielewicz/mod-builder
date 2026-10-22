@@ -78,6 +78,8 @@ type World = {
   commitTree?: string
   /** `git rev-parse HEAD` (PR #136 review: a HEAD another process moved); absent, c<number of commits>. */
   revParseHead?: string
+  /** `log.showSignature` is on: as git 2.53 does for a signed commit, `git log` prints the check's line first (unless --no-show-signature). */
+  showSignature?: boolean
   /** The profile in the checkout the session started in; absent, PROFILE. */
   localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
@@ -364,7 +366,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (s === 'rev-parse HEAD^{tree}') return ok(`${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
     // HEAD and its tree from one commit object (PR #136 review, Codex 4350587226).
-    if (s === 'log -1 --format=%H %T') return ok(`c${world.commits.length} ${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
+    if (a[0] === 'log' && a.includes('--format=%H %T')) {
+      const signature = world.showSignature && !a.includes('--no-show-signature') ? 'Good "git" signature for p@p with ED25519 key SHA256:HhRJ4R0iwBQK9sEH4vryn4kTqmD6h4b9weroZ7BY0so\n' : ''
+      return ok(`${signature}c${world.commits.length} ${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
+    }
     // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
     if (s === 'rev-parse --git-path index.lock' || s === 'rev-parse --path-format=absolute --git-path index.lock') {
       if (world.isLockGoneOnLookup) world.lockFile = false
@@ -3945,5 +3950,19 @@ describe('PR #136 review round 1: gates R and F', () => {
     await until(w, () => isBlocked(w) || w.asked.length > 0, 'a block or the push question')
     expect(firstOf(w, isGit('add -A'))).toBeLessThan(firstOf(w, isGit('write-tree')))
     expect(firstOf(w, isGit('write-tree'))).toBeLessThan(firstOf(w, a => a[0] === 't'))
+  })
+})
+
+// PR #136 review round 1, a probe on git 2.53: with log.showSignature on, git log prints a signature line before the format's
+// output, so the read of HEAD and its tree turns signature checking off for itself.
+describe('PR #136 review round 1: log.showSignature', () => {
+  test('gate G commits and goes on in a repository that shows commit signatures in git log', async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], showSignature: true, spawnHold: new Promise<void>(() => undefined) }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'refactor or a block')
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    expect(w.commits.length).toBe(1)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
   })
 })
