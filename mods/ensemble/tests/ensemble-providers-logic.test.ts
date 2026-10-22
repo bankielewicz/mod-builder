@@ -28,7 +28,7 @@ describe('providers as data', () => {
     expect(providerOf('nope')).toBeUndefined()
   })
 
-  test('the key names duet stores are the exact list the env tests pass through to Codex; none of them is blanked', () => {
+  test('the key names ensemble stores are the exact list the env tests pass through to Codex; none of them is blanked', () => {
     expect([...PROVIDER_KEY_NAMES].sort()).toEqual([...PROVIDER_KEYS].sort())
     expect(PROVIDER_KEY_NAMES).not.toContain('OPENAI_API_KEY')
     expect(PROVIDER_KEY_NAMES).toContain('GEMINI_API_KEY')
@@ -60,39 +60,39 @@ describe('providers as data', () => {
 
 describe('key file', () => {
   test('the file lives under the home folder, never the project', () => {
-    expect(keyFileOf('/home/u')).toBe('/home/u/.claude/duet-data/.env')
-    expect(keyFileOf('C:\\Users\\u')).toBe('C:/Users/u/.claude/duet-data/.env')
+    expect(keyFileOf('/home/u')).toBe('/home/u/.claude/ensemble-data/.env')
+    expect(keyFileOf('C:\\Users\\u')).toBe('C:/Users/u/.claude/ensemble-data/.env')
     // Codex 4297835997 (P1): with no home folder there is no key file; never a path under the project.
     expect(keyFileOf('')).toBe('')
     expect(keyFileOf('  ')).toBe('')
   })
 
   test('a command or path that names the key file is recognised, on either separator; look-alikes are not', () => {
-    for (const text of ['cat ~/.claude/duet-data/.env', 'cat /home/u/.claude/duet-data/.env | head', 'type C:\\Users\\u\\.claude\\duet-data\\.env', '/home/u/.claude/duet-data/.env']) expect([text, namesKeyFile(text)]).toEqual([text, true])
-    for (const text of ['cat .env', 'cat duet-data/.env.bak', 'cat duet-data/.environment', '']) expect([text, namesKeyFile(text)]).toEqual([text, false])
+    for (const text of ['cat ~/.claude/ensemble-data/.env', 'cat /home/u/.claude/ensemble-data/.env | head', 'type C:\\Users\\u\\.claude\\ensemble-data\\.env', '/home/u/.claude/ensemble-data/.env']) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    for (const text of ['cat .env', 'cat ensemble-data/.env.bak', 'cat ensemble-data/.environment', '']) expect([text, namesKeyFile(text)]).toEqual([text, false])
     // A rooted path to the file or its folder counts wherever it stands: quoted, in a -c payload, through $HOME, ${HOME} or ~,
     // with // or /. in it, or a wildcard or the folder itself (a read of the folder reads the file). An unrooted mention
     // (a grep pattern), a heredoc body and a comment do not: this repo's docs name the path all the time.
     for (const text of [
-      'cat "~/.claude/duet-data/.env"', "cat '/home/u/.claude/duet-data/.env'", 'cat ~/.claude/duet-data/../duet-data/.env',
-      'cat "$HOME/.claude/duet-data/.env"', 'cat "${HOME}/.claude/duet-data/.env"', 'bash -c "cat ~/.claude/duet-data/.env"', "sh -c 'cat ~/.claude/duet-data/.env'",
-      "python3 -c \"open('/home/u/.claude/duet-data/.env').read()\"", 'cat ~/.claude/duet-data//.env', 'cat ~/.claude/duet-data/./.env', 'cat ~/.claude/duet-data/*',
-      'grep -r API_KEY ~/.claude/duet-data', 'ls ~/.claude/duet-data', 'cd ~/.claude/duet-data && cat .env',
+      'cat "~/.claude/ensemble-data/.env"', "cat '/home/u/.claude/ensemble-data/.env'", 'cat ~/.claude/ensemble-data/../ensemble-data/.env',
+      'cat "$HOME/.claude/ensemble-data/.env"', 'cat "${HOME}/.claude/ensemble-data/.env"', 'bash -c "cat ~/.claude/ensemble-data/.env"', "sh -c 'cat ~/.claude/ensemble-data/.env'",
+      "python3 -c \"open('/home/u/.claude/ensemble-data/.env').read()\"", 'cat ~/.claude/ensemble-data//.env', 'cat ~/.claude/ensemble-data/./.env', 'cat ~/.claude/ensemble-data/*',
+      'grep -r API_KEY ~/.claude/ensemble-data', 'ls ~/.claude/ensemble-data', 'cd ~/.claude/ensemble-data && cat .env',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     for (const text of [
-      'grep -n "duet-data/.env" README.md', 'grep -n duet-data/.env README.md', "cat > README.md <<'EOF'\nkeys live in ~/.claude/duet-data/.env (600)\nEOF", 'echo hi # ~/.claude/duet-data/.env',
-      'cat <<EOF > SPEC.md\n- the file ~/.claude/duet-data/.env\nEOF\nls', 'ls ~/.claude/duet-data-old', 'ls ~/.claude',
+      'grep -n "ensemble-data/.env" README.md', 'grep -n ensemble-data/.env README.md', "cat > README.md <<'EOF'\nkeys live in ~/.claude/ensemble-data/.env (600)\nEOF", 'echo hi # ~/.claude/ensemble-data/.env',
+      'cat <<EOF > SPEC.md\n- the file ~/.claude/ensemble-data/.env\nEOF\nls', 'ls ~/.claude/ensemble-data-old', 'ls ~/.claude',
       // A message that names the path is text, not a read: this repo's commits and PR comments name it all the time.
-      'git commit -m "docs: ~/.claude/duet-data/.env"',
+      'git commit -m "docs: ~/.claude/ensemble-data/.env"',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
     // A Grep's path or glob: the file, or its folder.
-    for (const text of ['/home/u/.claude/duet-data', '~/.claude/duet-data/', '**/duet-data/.env', 'C:\\Users\\u\\.claude\\duet-data']) expect([text, namesKeyFolder(text)]).toEqual([text, true])
-    for (const text of ['/w', '/home/u/.claude', '~/.claude/duet-data-old', '']) expect([text, namesKeyFolder(text)]).toEqual([text, false])
-    expect(KEY_FILE_NOTE).toContain('~/.claude/duet-data/.env')
+    for (const text of ['/home/u/.claude/ensemble-data', '~/.claude/ensemble-data/', '**/ensemble-data/.env', 'C:\\Users\\u\\.claude\\ensemble-data']) expect([text, namesKeyFolder(text)]).toEqual([text, true])
+    for (const text of ['/w', '/home/u/.claude', '~/.claude/ensemble-data-old', '']) expect([text, namesKeyFolder(text)]).toEqual([text, false])
+    expect(KEY_FILE_NOTE).toContain('~/.claude/ensemble-data/.env')
   })
 
   test('parse: export prefix, quotes, comments, CRLF, = in a value', () => {
-    const text = ['# duet keys', 'export GEMINI_API_KEY="AIza=abc"', "XAI_API_KEY='xai-1'", 'GROQ_API_KEY=gsk_2 # trailing', '', 'MISTRAL_API_KEY=a=b=c', 'broken line', ' SPACED = v ', 'EMPTY='].join('\r\n')
+    const text = ['# ensemble keys', 'export GEMINI_API_KEY="AIza=abc"', "XAI_API_KEY='xai-1'", 'GROQ_API_KEY=gsk_2 # trailing', '', 'MISTRAL_API_KEY=a=b=c', 'broken line', ' SPACED = v ', 'EMPTY='].join('\r\n')
     expect(parseEnvFile(text)).toEqual({ GEMINI_API_KEY: 'AIza=abc', XAI_API_KEY: 'xai-1', GROQ_API_KEY: 'gsk_2', MISTRAL_API_KEY: 'a=b=c', SPACED: 'v', EMPTY: '' })
     expect(parseEnvFile('')).toEqual({})
   })
@@ -257,10 +257,10 @@ describe('requests and replies', () => {
     // A model name with a line break is cleaned before it reaches the note.
     expect(testOutcome('probe', { status: 200, ok: true, text: '{"model":"m\\nINJECTED","choices":[{"message":{"content":"ok"}}]}' }, 20, at).note).toBe('ok 20ms mINJECTED · 1 token')
     // A refusal before any reply (the host refused the request).
-    expect(testOutcome('models', { refused: 'duet: $.http.fetch: nonessential traffic is disabled' }, 0, at).note).toBe('✕ not sent: nonessential traffic is disabled')
+    expect(testOutcome('models', { refused: 'ensemble: $.http.fetch: nonessential traffic is disabled' }, 0, at).note).toBe('✕ not sent: nonessential traffic is disabled')
     // Wordings seen on 2.1.301: a policy refusal, and a connection that failed (ollama not running).
-    expect(refusalReason('duet: $.http.fetch(http://localhost:11434/v1/models) failed: ECONNREFUSED: Unable to connect. Is the computer able to access the url?')).toBe('ECONNREFUSED: Unable to connect. Is the computer able to access the url?')
-    expect(refusalReason('duet: $.http.fetch: nonessential traffic is disabled')).toBe('nonessential traffic is disabled')
+    expect(refusalReason('ensemble: $.http.fetch(http://localhost:11434/v1/models) failed: ECONNREFUSED: Unable to connect. Is the computer able to access the url?')).toBe('ECONNREFUSED: Unable to connect. Is the computer able to access the url?')
+    expect(refusalReason('ensemble: $.http.fetch: nonessential traffic is disabled')).toBe('nonessential traffic is disabled')
     expect(refusalReason('something else\nmore')).toBe('something else')
   })
 })
@@ -284,7 +284,7 @@ describe('provider text: cleaned, redacted, then cut', () => {
     expect(leaks(JSON.stringify(parseModelsReply(JSON.stringify({ data: [{ id: 'm'.repeat(115) + LONG }] }), [LONG])))).toBe(false)
     expect(leaks(testOutcome('probe', { status: 200, ok: true, text: JSON.stringify({ model: 'n'.repeat(55) + LONG, choices: [{ message: { content: 'ok' } }] }) }, 1, 1, [LONG]).note)).toBe(false)
     expect(leaks(testOutcome('probe', { status: 429, ok: false, text: '', headers: { 'retry-after': 'r'.repeat(30) + LONG } }, 1, 1, [LONG]).note)).toBe(false)
-    const refused = testOutcome('models', { refused: 'duet: $.http.fetch: \u001b[2J' + 'w'.repeat(300) + LONG }, 1, 1, [LONG]).note
+    const refused = testOutcome('models', { refused: 'ensemble: $.http.fetch: \u001b[2J' + 'w'.repeat(300) + LONG }, 1, 1, [LONG]).note
     expect(refused.includes('\u001b')).toBe(false)
     expect(refused.length).toBeLessThanOrEqual(140)
     expect(leaks(refused)).toBe(false)
@@ -311,38 +311,38 @@ describe('provider text: cleaned, redacted, then cut', () => {
     expect(maskKey('lm-studio')).toBe(maskKey('other-key'))   // why the mask could not tell them apart
   })
 
-  test('the guard: interpreter heredocs, quoted #, globs, case, dd and brace forms count; other duet-data folders, messages and grep patterns do not', () => {
+  test('the guard: interpreter heredocs, quoted #, globs, case, dd and brace forms count; other ensemble-data folders, messages and grep patterns do not', () => {
     for (const text of [
-      'echo "x #"; cat ~/.claude/duet-data/.env', "python3 - <<'EOF'\nprint(open('/home/u/.claude/duet-data/.env').read())\nEOF", 'bash <<EOF\ncat ~/.claude/duet-data/.env\nEOF',
-      'cat ~/.claude/duet-data/.e*', 'cat $HOME/.claude/DUET-DATA/.env', 'cat ~/.claude/duet-data/{.env,x}', 'dd if=/home/u/.claude/duet-data/.env', 'cat ~/.claude/x/../duet-data/.env',
-      'grep -rn API_KEY ~/.claude/duet-data',
+      'echo "x #"; cat ~/.claude/ensemble-data/.env', "python3 - <<'EOF'\nprint(open('/home/u/.claude/ensemble-data/.env').read())\nEOF", 'bash <<EOF\ncat ~/.claude/ensemble-data/.env\nEOF',
+      'cat ~/.claude/ensemble-data/.e*', 'cat $HOME/.claude/ENSEMBLE-DATA/.env', 'cat ~/.claude/ensemble-data/{.env,x}', 'dd if=/home/u/.claude/ensemble-data/.env', 'cat ~/.claude/x/../ensemble-data/.env',
+      'grep -rn API_KEY ~/.claude/ensemble-data',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     for (const text of [
-      'ls /work/duet-data', 'git -C /work/duet-data status', 'cat /work/duet-data/.env', 'git commit -m "docs: keys live in ~/.claude/duet-data/.env"',
-      'gh pr comment 110 --body "keys live in ~/.claude/duet-data/.env (600)"', 'rg "\\.claude/duet-data" mods', "grep -n '~/.claude/duet-data/.env' README.md",
-      'cat ~/.claude/duet-data/sessions/s1/d1.out.md', 'cat ~/.claude/duet-data/*.md', 'cat <<EOF\n~/.claude/duet-data/.env\nEOF',
+      'ls /work/ensemble-data', 'git -C /work/ensemble-data status', 'cat /work/ensemble-data/.env', 'git commit -m "docs: keys live in ~/.claude/ensemble-data/.env"',
+      'gh pr comment 110 --body "keys live in ~/.claude/ensemble-data/.env (600)"', 'rg "\\.claude/ensemble-data" mods', "grep -n '~/.claude/ensemble-data/.env' README.md",
+      'cat ~/.claude/ensemble-data/sessions/s1/d1.out.md', 'cat ~/.claude/ensemble-data/*.md', 'cat <<EOF\n~/.claude/ensemble-data/.env\nEOF',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
-    expect(namesKeyFolder('/work/duet-data')).toBe(false)
+    expect(namesKeyFolder('/work/ensemble-data')).toBe(false)
     // A payload that reaches nothing passes; a glob that is not a valid class counts, to be safe.
     expect(namesKeyFile('bash -c "echo hi"')).toBe(false)
-    expect(namesKeyFile('cat ~/.claude/duet-data/[')).toBe(true)
+    expect(namesKeyFile('cat ~/.claude/ensemble-data/[')).toBe(true)
   })
 
   test('the guard: a here-string an interpreter reads counts, and a payload nested past four levels is refused rather than let through', () => {
-    expect(namesKeyFile('bash <<< "cat ~/.claude/duet-data/.env"')).toBe(true)
-    expect(namesKeyFile('cat <<< "keys live in ~/.claude/duet-data/.env"')).toBe(false)
+    expect(namesKeyFile('bash <<< "cat ~/.claude/ensemble-data/.env"')).toBe(true)
+    expect(namesKeyFile('cat <<< "keys live in ~/.claude/ensemble-data/.env"')).toBe(false)
     const nest = (cmd: string, n: number): string => (n === 0 ? cmd : nest(`bash -c "${cmd.replace(/[\\"]/g, m => '\\' + m)}"`, n - 1))
-    expect(namesKeyFile(nest('cat ~/.claude/duet-data/.env', 3))).toBe(true)
+    expect(namesKeyFile(nest('cat ~/.claude/ensemble-data/.env', 3))).toBe(true)
     expect(namesKeyFile(nest('echo hi', 6))).toBe(true)
     expect(namesKeyFile(nest('echo hi', 2))).toBe(false)
   })
 
   test('the guard\'s tokenizer: unclosed quotes, escapes, -e patterns, git grep, operators, <<- heredocs, redirections, odd whitespace', () => {
     for (const text of [
-      "cat '~/.claude/duet-data/.env", 'echo "a \\"b\\" c"; cat ~/.claude/duet-data/.env', 'cat \\~/.claude/duet-data/.env', 'git grep KEY ~/.claude/duet-data',
-      'cat ~/.claude/duet-data/.env; ls', 'bash <<-EOF\n\tcat ~/.claude/duet-data/.env\n\tEOF', 'cat ~/.claude/duet-data/.env >> /tmp/x', 'ls\f~/.claude/duet-data',
+      "cat '~/.claude/ensemble-data/.env", 'echo "a \\"b\\" c"; cat ~/.claude/ensemble-data/.env', 'cat \\~/.claude/ensemble-data/.env', 'git grep KEY ~/.claude/ensemble-data',
+      'cat ~/.claude/ensemble-data/.env; ls', 'bash <<-EOF\n\tcat ~/.claude/ensemble-data/.env\n\tEOF', 'cat ~/.claude/ensemble-data/.env >> /tmp/x', 'ls\f~/.claude/ensemble-data',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
-    for (const text of ["grep -e '~/.claude/duet-data/.env' README.md", 'grep --regexp=~/.claude/duet-data/.env README.md', 'echo hi >&2', 'ls \\']) expect([text, namesKeyFile(text)]).toEqual([text, false])
+    for (const text of ["grep -e '~/.claude/ensemble-data/.env' README.md", 'grep --regexp=~/.claude/ensemble-data/.env README.md', 'echo hi >&2', 'ls \\']) expect([text, namesKeyFile(text)]).toEqual([text, false])
     expect(parseModelsReply('{"data":[{"name":"x"},{"id":"y"}]}')).toEqual({ ids: ['y'], hasMore: false })
     expect(parseChatReply('{"error":"plain words"}')).toEqual({ error: 'plain words' })
     expect(testOutcome('probe', { status: 404, ok: false, text: '' }, 1, 1).note).toBe('✕ 404 not found')
@@ -352,52 +352,52 @@ describe('provider text: cleaned, redacted, then cut', () => {
 describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', () => {
   test('a path followed by code punctuation, inside lists or objects, still reaches the key file', () => {
     for (const text of [
-      `node -e "console.log(require('fs').readFileSync('/home/u/.claude/duet-data/.env', 'utf8'))"`,
-      `python3 -c 'print(open("/home/u/.claude/duet-data/.env","r").read())'`,
-      `python3 -c "import subprocess; subprocess.run(['cat','/home/u/.claude/duet-data/.env'])"`,
-      `node -e "x({path: '/home/u/.claude/duet-data/.env'})"`,
-      'cat ~/.claude/duet-data/{.env,x}',
+      `node -e "console.log(require('fs').readFileSync('/home/u/.claude/ensemble-data/.env', 'utf8'))"`,
+      `python3 -c 'print(open("/home/u/.claude/ensemble-data/.env","r").read())'`,
+      `python3 -c "import subprocess; subprocess.run(['cat','/home/u/.claude/ensemble-data/.env'])"`,
+      `node -e "x({path: '/home/u/.claude/ensemble-data/.env'})"`,
+      'cat ~/.claude/ensemble-data/{.env,x}',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
   })
 
   test('every argument of an interpreter is code, and so is text piped into one: -lc, -ec, -ic, -p, -r, eval, echo | sh, a heredoc piped to bash', () => {
     for (const text of [
-      "bash -lc 'cat ~/.claude/duet-data/.env'", "sh -ec 'cat ~/.claude/duet-data/.env'", "zsh -ic 'cat ~/.claude/duet-data/.env'",
-      `node -p "require('fs').readFileSync('/home/u/.claude/duet-data/.env','utf8')"`, `php -r 'echo file_get_contents("/home/u/.claude/duet-data/.env");'`,
-      "eval 'cat ~/.claude/duet-data/.env'", "echo 'cat ~/.claude/duet-data/.env' | sh", "cat <<'EOF' | bash\ncat ~/.claude/duet-data/.env\nEOF",
-      "timeout 5 bash -lc 'cat ~/.claude/duet-data/.env'",
+      "bash -lc 'cat ~/.claude/ensemble-data/.env'", "sh -ec 'cat ~/.claude/ensemble-data/.env'", "zsh -ic 'cat ~/.claude/ensemble-data/.env'",
+      `node -p "require('fs').readFileSync('/home/u/.claude/ensemble-data/.env','utf8')"`, `php -r 'echo file_get_contents("/home/u/.claude/ensemble-data/.env");'`,
+      "eval 'cat ~/.claude/ensemble-data/.env'", "echo 'cat ~/.claude/ensemble-data/.env' | sh", "cat <<'EOF' | bash\ncat ~/.claude/ensemble-data/.env\nEOF",
+      "timeout 5 bash -lc 'cat ~/.claude/ensemble-data/.env'",
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     for (const text of [
-      "echo 'keys live in ~/.claude/duet-data/.env' | tee notes.md", "echo 'cat ~/.claude/duet-data/.env' > notes.md", 'cp -r src dst',
-      "printf 'a' || sh -c 'echo ok'", "cat <<'EOF' > notes.md\ncat ~/.claude/duet-data/.env\nEOF",
+      "echo 'keys live in ~/.claude/ensemble-data/.env' | tee notes.md", "echo 'cat ~/.claude/ensemble-data/.env' > notes.md", 'cp -r src dst',
+      "printf 'a' || sh -c 'echo ok'", "cat <<'EOF' > notes.md\ncat ~/.claude/ensemble-data/.env\nEOF",
     ]) expect([text, namesKeyFile(text)]).toEqual([text, false])
   })
 
   test('Codex 4337056082: a ] or } inside a path segment does not end the path; one that closes code still does', () => {
-    for (const text of ["cat '/home/u]/.claude/duet-data/.env'", "cat '/home/u}/.claude/duet-data/.env'", 'cat /home/u]/.claude/duet-data/.env', 'cat /home/u]x/.claude/duet-data/.env'])
+    for (const text of ["cat '/home/u]/.claude/ensemble-data/.env'", "cat '/home/u}/.claude/ensemble-data/.env'", 'cat /home/u]/.claude/ensemble-data/.env', 'cat /home/u]x/.claude/ensemble-data/.env'])
       expect([text, namesKeyFile(text)]).toEqual([text, true])
     // A comma still ends the path, so a list of two paths does not run together.
-    expect(namesKeyFile(`python3 -c "x = ['/home/u/.claude/duet-data/.env','/b']"`)).toBe(true)
+    expect(namesKeyFile(`python3 -c "x = ['/home/u/.claude/ensemble-data/.env','/b']"`)).toBe(true)
   })
 
   test('a quoted rooted path with a space is a path, not a message; a message that starts with a slash is still a message', () => {
-    for (const text of [`cat "C:/Users/John Smith/.claude/duet-data/.env"`, `cat '/home/u/my files/.claude/duet-data/.env'`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
-    expect(namesKeyFile('git commit -m "/duet: keys live in ~/.claude/duet-data/.env"')).toBe(false)
+    for (const text of [`cat "C:/Users/John Smith/.claude/ensemble-data/.env"`, `cat '/home/u/my files/.claude/ensemble-data/.env'`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    expect(namesKeyFile('git commit -m "/ensemble: keys live in ~/.claude/ensemble-data/.env"')).toBe(false)
     // A file tool's path whose last segment is not a valid glob counts, to be safe (a shell word stops before the bracket).
-    expect(keyPathReaches('/home/u/.claude/duet-data/[')).toBe(true)
+    expect(keyPathReaches('/home/u/.claude/ensemble-data/[')).toBe(true)
   })
 
   test('Codex 4337185228: a comma inside a home segment does not end the path; a list of paths still reads both', () => {
-    for (const text of ["cat '/home/u,team/.claude/duet-data/.env'", 'cat /home/u,team/.claude/duet-data/.env', "cat '/home/a,b,c/.claude/duet-data/.env'",
-      `python3 -c "x = ['/home/u/.claude/duet-data/.env','/b']"`, `python3 -c "x = ['/b','/home/u/.claude/duet-data/.env']"`, `node -e "fs.readFileSync('/home/u/.claude/duet-data/.env', 'utf8')"`,
+    for (const text of ["cat '/home/u,team/.claude/ensemble-data/.env'", 'cat /home/u,team/.claude/ensemble-data/.env', "cat '/home/a,b,c/.claude/ensemble-data/.env'",
+      `python3 -c "x = ['/home/u/.claude/ensemble-data/.env','/b']"`, `python3 -c "x = ['/b','/home/u/.claude/ensemble-data/.env']"`, `node -e "fs.readFileSync('/home/u/.claude/ensemble-data/.env', 'utf8')"`,
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
     expect(namesKeyFile(`python3 -c "x = ['/home/u/.claude/agents','/tmp/.env']"`)).toBe(false)
   })
 
   test('Codex 4337185247: a quoted message that starts with a slash and names the path later is a message; a spaced home path is still a path', () => {
-    for (const text of ["git commit -m '/duet keeps keys in ~/.claude/duet-data/.env'", 'git commit -m "/duet keeps keys in /home/u/.claude/duet-data/.env"', "gh pr comment 116 --body '/duet provider: see C:/Users/u/.claude/duet-data/.env'"])
+    for (const text of ["git commit -m '/ensemble keeps keys in ~/.claude/ensemble-data/.env'", 'git commit -m "/ensemble keeps keys in /home/u/.claude/ensemble-data/.env"', "gh pr comment 116 --body '/ensemble provider: see C:/Users/u/.claude/ensemble-data/.env'"])
       expect([text, namesKeyFile(text)]).toEqual([text, false])
-    for (const text of [`cat '/home/John Smith/.claude/duet-data/.env'`, `cat "C:/Users/John Smith/.claude/duet-data/.env"`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
+    for (const text of [`cat '/home/John Smith/.claude/ensemble-data/.env'`, `cat "C:/Users/John Smith/.claude/ensemble-data/.env"`]) expect([text, namesKeyFile(text)]).toEqual([text, true])
   })
 
   test('Codex 4337185238: POSIX search roots compare with their case; Windows ones without', () => {
@@ -410,13 +410,13 @@ describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', ()
 
   test('Windows spellings: backslash paths, $env:USERPROFILE, %USERPROFILE%', () => {
     for (const text of [
-      'Get-Content C:\\Users\\u\\.claude\\duet-data\\.env', 'Get-Content "$env:USERPROFILE\\.claude\\duet-data\\.env"', 'Get-Content ${env:HOME}/.claude/duet-data/.env',
-      'type %USERPROFILE%\\.claude\\duet-data\\.env',
+      'Get-Content C:\\Users\\u\\.claude\\ensemble-data\\.env', 'Get-Content "$env:USERPROFILE\\.claude\\ensemble-data\\.env"', 'Get-Content ${env:HOME}/.claude/ensemble-data/.env',
+      'type %USERPROFILE%\\.claude\\ensemble-data\\.env',
     ]) expect([text, namesKeyFile(text)]).toEqual([text, true])
   })
 
   test('a search rooted above the key folder covers the key file; one beside it does not', () => {
-    for (const [path, want] of [['/home/u/.claude', true], ['~/.claude', true], ['/home/u', true], ['/home', true], ['/', true], ['/home/u/.claude/duet-data', true],
+    for (const [path, want] of [['/home/u/.claude', true], ['~/.claude', true], ['/home/u', true], ['/home', true], ['/', true], ['/home/u/.claude/ensemble-data', true],
       ['/home/u/.claude/agents', false], ['/w', false], ['', false], ['/home/user2', false]] as const) expect([path, searchCoversKeyFile(path, '/home/u')]).toEqual([path, want])
     expect(searchCoversKeyFile('C:\\Users\\U', 'C:/Users/u')).toBe(true)
     // Codex 4337056086: a project's own .claude folder is not the home one; with the home folder unknown, any .claude still counts.
@@ -431,8 +431,8 @@ describe('0.3.1 (issue #115): guard gaps, custom URL checks, the saved note', ()
   })
 
   test('the saved note says when the same variable in the environment wins over the file', () => {
-    expect(savedNote('chmod 600', false, 'GEMINI_API_KEY')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it', 'GEMINI_API_KEY in your environment wins; unset it to use this key.'])
-    expect(savedNote('chmod 600', false, '')).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it'])
+    expect(savedNote('chmod 600', false, 'GEMINI_API_KEY')).toEqual(['saved to ~/.claude/ensemble-data/.env (chmod 600) · t tests it', 'GEMINI_API_KEY in your environment wins; unset it to use this key.'])
+    expect(savedNote('chmod 600', false, '')).toEqual(['saved to ~/.claude/ensemble-data/.env (chmod 600) · t tests it'])
   })
 })
 
@@ -444,18 +444,18 @@ describe('pane text', () => {
   })
 
   test('the saved note warns when Codex can read the key file: under codexFsScope anything, or under project when the session folder holds it (Codex 4298736579)', () => {
-    expect(savedNote('chmod 600', true)).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it', 'Codex can read this file under codexFsScope: anything; project hides it.'])
-    expect(savedNote('chmod 600', false)).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600) · t tests it'])
-    expect(savedNote('chmod 600 failed: EPERM; set the file\'s permissions yourself', false)).toEqual(['saved to ~/.claude/duet-data/.env (chmod 600 failed: EPERM; set the file\'s permissions yourself) · t tests it'])
-    expect(keyFileExposed('anything', '/w', '/home/u/.claude/duet-data/.env')).toBe(true)
-    expect(keyFileExposed('project', '/w', '/home/u/.claude/duet-data/.env')).toBe(false)
-    expect(keyFileExposed('project', '/home/u', '/home/u/.claude/duet-data/.env')).toBe(true)
-    expect(keyFileExposed('project', '/home/u/.claude/', '/home/u/.claude/duet-data/.env')).toBe(true)
-    expect(keyFileExposed('project', '/home/user2', '/home/u/.claude/duet-data/.env')).toBe(false)
+    expect(savedNote('chmod 600', true)).toEqual(['saved to ~/.claude/ensemble-data/.env (chmod 600) · t tests it', 'Codex can read this file under codexFsScope: anything; project hides it.'])
+    expect(savedNote('chmod 600', false)).toEqual(['saved to ~/.claude/ensemble-data/.env (chmod 600) · t tests it'])
+    expect(savedNote('chmod 600 failed: EPERM; set the file\'s permissions yourself', false)).toEqual(['saved to ~/.claude/ensemble-data/.env (chmod 600 failed: EPERM; set the file\'s permissions yourself) · t tests it'])
+    expect(keyFileExposed('anything', '/w', '/home/u/.claude/ensemble-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '/w', '/home/u/.claude/ensemble-data/.env')).toBe(false)
+    expect(keyFileExposed('project', '/home/u', '/home/u/.claude/ensemble-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '/home/u/.claude/', '/home/u/.claude/ensemble-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '/home/user2', '/home/u/.claude/ensemble-data/.env')).toBe(false)
     expect(keyFileExposed('project', '/w', '')).toBe(false)
     // An unknown session folder is not a reason to warn; a Windows path compares without case.
-    expect(keyFileExposed('project', '', '/home/u/.claude/duet-data/.env')).toBe(false)
-    expect(keyFileExposed('project', 'C:\\Users\\U', 'c:/users/u/.claude/duet-data/.env')).toBe(true)
+    expect(keyFileExposed('project', '', '/home/u/.claude/ensemble-data/.env')).toBe(false)
+    expect(keyFileExposed('project', 'C:\\Users\\U', 'c:/users/u/.claude/ensemble-data/.env')).toBe(true)
   })
 
   test('the row window keeps the highlighted row in view and never shrinks under 3 rows (seen live: a 14-row pane scrolled the header out)', () => {
@@ -490,7 +490,7 @@ describe('pane text', () => {
     // Narrow: id, auth and test only.
     expect(providerRowText({ p: providerOf('google')!, auth: 'key …a1b2', test: 'ok', used: false }, 50)).toBe('  google     key …a1b2          ok')
     const text = providersText([{ p: providerOf('google')!, auth: 'key …a1b2', test: 'untested', used: false }], 2, 1)
-    expect(text).toContain('duet providers · 2 keys · 1 tested')
+    expect(text).toContain('ensemble providers · 2 keys · 1 tested')
     expect(text).toContain('google')
     expect(text).toContain(KEY_FILE_NOTE)
     expect(text).not.toContain(KEY)

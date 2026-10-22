@@ -533,7 +533,7 @@ describe('state (§7.4)', () => {
       expect(r.redAnswer ?? '').toBe('')
     }
     expect(advance(red, { type: 'agentDone', answer: '- test x fails', reason: 'answer' }, 1).redAnswer).toBe('- test x fails')
-    // An answer another plugin gave in-line (duet's Codex) has no turn, so no reason.
+    // An answer another plugin gave in-line (ensemble's Codex) has no turn, so no reason.
     expect(advance(red, { type: 'agentDone', answer: '- test y fails' }, 1).redAnswer).toBe('- test y fails')
   })
 
@@ -2409,5 +2409,23 @@ describe('PR #103 review: the guard refusal outlives a drive write computed befo
     expect(withRefusal(null, spawned)).toEqual(spawned)
     const other = { ...spawned, newPlugin: 'mods/y/.claude-plugin/plugin.json' } as Run
     expect(withRefusal(stored, other).newPlugin).toBe('mods/y/.claude-plugin/plugin.json')
+  })
+})
+
+// #128: duet became ensemble, and its in-line answers' agent ids went from duet-<n> to ensemble-<n>. No duet- alias:
+// the owner chose to end the old names at the rename.
+describe('#128: an agent another plugin answered in-line', () => {
+  const inline = (agentId: string, model: string) =>
+    ((logic as Record<string, unknown>).isInlineAnswer as ((a: string, m: string) => boolean) | undefined)?.(agentId, model)
+
+  test("ensemble's Codex answers in-line: its ensemble-<n> ids, and any codex model", () => {
+    expect(inline('ensemble-d3', 'claude')).toBe(true)
+    expect(inline('a1', 'codex-mini')).toBe(true)
+  })
+
+  test('a Claude agent, or an old duet- id, is waited for', () => {
+    expect(inline('a1', 'claude')).toBe(false)
+    expect(inline('duet-d3', 'claude')).toBe(false)
+    expect(inline('', 'codex-mini')).toBe(false)
   })
 })
