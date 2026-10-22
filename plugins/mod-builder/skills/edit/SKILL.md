@@ -26,17 +26,21 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
    stage as build's step 0 describes. Scaffold isn't redone; it stays green.
 4. **Which copy runs.** Two answers decide what makes your edit run. Note both for step 4 and the
    hand-off.
-   - **How it's installed.** Run `claude plugin list --json` and find the mod's id
-     (`<name>@<marketplace>`).
-     - `readFromFolder` is set (the text form prints `Read from:`): the mod was installed from a
-       marketplace added from a local folder, and it loads in place. Edits to *that* folder load at
-       `/reload-plugins` or the next session. If you're editing another folder, such as a git
-       worktree, the installed copy keeps running the other folder's code.
-     - `readFromFolder` is null: the mod is a copy of one version, under `installPath`. An edit reaches
-       it only after the version is bumped, the marketplace holds the change (pushed), and
-       `claude plugin update <id>` or `/plugin` updates it. Then `/reload-plugins` loads it.
-     - No id: the mod isn't installed.
-   - **Whether this session loaded it with `--plugin-dir`.** The install records can't tell you,
+   - **How it's installed.** Run `claude plugin list --json` and find the mod's row: an `id` of
+     `<entry name>@<marketplace>`, where the entry name is the marketplace's name for it. The same
+     name can have more than one row, such as `@synced`, so take the one from this marketplace.
+     - `enabled` is false: nothing of it runs.
+     - The row has a `readFromFolder` key (the text form prints `Read from:`): the mod was installed
+       from a marketplace added from a local folder, and it loads in place. Edits to *that* folder
+       load at `/reload-plugins` or the next session. If you're editing another folder, such as a
+       git worktree, the installed copy keeps running the other folder's code. `folderVersion` is the
+       folder's version now, and `version` is the one recorded at install.
+     - The row has no `readFromFolder` key: the mod is a copy of one version, under `installPath`. An
+       edit reaches it only after the version is bumped, the marketplace holds the change (pushed),
+       and `claude plugin update <id>` or `/plugin` updates it. Then `/reload-plugins` loads it.
+     - No row: the mod isn't installed.
+   - **Whether this session loaded it with `--plugin-dir`**, or the same way through `--plugin-url`
+     or `CLAUDE_CODE_PLUGIN_DIRS`. The install records can't tell you,
      because the marketplace row stays enabled while an inline copy replaces it. The person sees it
      in `/plugin`'s Installed tab: a `--plugin-dir` copy is the row `<name>  Plugin  inline`, and an
      installed copy's row names its marketplace. The `mods active` line names mods only. If the

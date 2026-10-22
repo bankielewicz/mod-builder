@@ -948,7 +948,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **The probes this rests on** (2026-10-22, Claude Code 2.1.308):
   - `claude plugin list --json`:
     - `mod-builder@claudemod`, `git-branch@claudemod` and `issue-forge@claudemod` carry `readFromFolder`, which is the main folder's path, and `folderVersion`.
-    - `blast-radius@claude-code-mods` and `code-review@claude-plugins-official` carry `readFromFolder: null` and an `installPath` under `~/.claude/plugins/cache/<marketplace>/<name>/<version>`.
+    - `blast-radius@claude-code-mods` and `code-review@claude-plugins-official` have no `readFromFolder` key and an `installPath` under `~/.claude/plugins/cache/<marketplace>/<name>/<version>`. An earlier version of this line said `readFromFolder: null`. That was a misreading: a Python `.get()` printed `None` for the missing key. Corrected in review round 1.
     - The text form prints `Read from: <folder>` for the first kind, and no such line for the second.
   - `/reload-plugins` in this session printed "`issue-forge@claudemod` re-read from its folder: `mods/issue-forge`".
   - `claude -p --debug-file <log> --plugin-dir mods/issue-forge "/issue-forge demo"` ran from this branch's worktree with the installed `issue-forge@claudemod` left enabled.
@@ -984,7 +984,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   1. **Edit step 0, a new point: which copy runs.** Two questions decide what makes edited code run, and the step records the answers for step 4 and the hand-off.
      - **How the mod is installed.** `claude plugin list --json` reads the install records. Find the mod's id:
        - **`readFromFolder` is set** (the text form shows `Read from:`). The mod was installed from a marketplace added from a local folder, and it loads in place from that folder. Edits to that folder load at `/reload-plugins` or the next session. When the folder being edited isn't `readFromFolder`, such as a git worktree, the installed copy keeps running the other folder's code.
-       - **`readFromFolder` is null.** The mod is a copy of one version, under `installPath`. An edit reaches it only after all of this:
+       - **No `readFromFolder` key.** The mod is a copy of one version, under `installPath`. An edit reaches it only after all of this:
          - the version is bumped;
          - the marketplace holds the change (pushed);
          - `claude plugin update <id>` or `/plugin` updates it;
