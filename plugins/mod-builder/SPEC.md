@@ -955,37 +955,62 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - The demo answered.
     - The log has `Plugin "issue-forge" from --plugin-dir overrides installed version` and `hooks module issue-forge@inline loaded (worker, environment 1, tier user); events: …`.
     - It has no module line for `issue-forge@claudemod`.
+    - The `loaded` line (log line 230) comes before `plugin.register: issue-forge (user, issue-forge@inline), judged by core alone: admitted` (line 266). So the `loaded` line alone doesn't show that no policy refused the mod.
+    - Line 128: `no pluginConfigs["issue-forge" or "issue-forge@inline"].options in user, --settings or managed settings …; every option is its default`.
 - **The documents this rests on:**
+  - `docs/research/Mods/Mods-overview.md:118-120`: `/plugin`'s `mods active` line names the mods the session loaded.
   - `docs/research/Mods/Create-a-mod.md`:
-    - `:246-254`: change a mod in a session started with `--plugin-dir`, which is a protected path.
-    - `:355`: the README names the version tested with.
+    - `:43-45`: `/plugin`'s Installed tab lists a loaded mod.
+    - `:238`: a `--plugin-dir` folder hot-reloads when a file in it is saved, and each reload runs `register` again, so module variables reset.
+    - `:246-254`: change a mod in a session started with `--plugin-dir`, which is a protected path. Files Claude saves during its turn reload when the turn ends.
+    - `:258`: Claude Code writes `.claude-plugin/types/` into a mod it loads from `--plugin-dir` in an interactive session.
+    - `:355`: "your README is the place to say which Claude Code version you tested with".
     - `:357`: an installed copy is cached by version.
   - `docs/research/Mods/Test and troubleshoot/Troubleshoot-a-mod.md`:
+    - `:19`: in a `claude -p` run, "A refusal by another mod goes to the debug log only".
+    - `:75`: the built-in guard's refusal, `mods are limited to your organization's by policy (allowManagedModsOnly)`.
+    - `:125-129`: `<mod>: <event> hook skipped: <reason>`, for a hook that threw, timed out or returned the wrong shape.
     - `:264-268`: edits to an installed copy don't take effect.
+    - `:270-274`: module variables reset at each reload.
     - `:282-304`: the debug log's `hooks module <name>@inline loaded` line, and `reload failed, the previous version stays loaded:`.
+  - `docs/research/Mods/Test and troubleshoot/Mods-reference.md`:
+    - `:384`: a `--plugin-dir` mod's options come from `pluginConfigs."<name>@inline"`.
+    - `:399`: `--plugin-dir` "reloads its hooks module when you save".
+  - `docs/research/Mods/Test and troubleshoot/Test-a-mod.md:394`: a policy mod's refusal reads `<mod>: refused by <policy mod>: <reason>`.
   - The live "Plugin loading reference" (https://code.claude.com/docs/en/plugins/loading, read 2026-10-22, not saved under `docs/research/`):
     - **"In-place and copied plugins":** a relative-path plugin in a marketplace added from a local path loads in place. Edits take effect at the next session start or `/reload-plugins`, with no version bump. Every other marketplace plugin is copied into `cache/<marketplace>/<plugin>/<version>/`, and that copy loads.
     - **"Name conflicts":** an enabled `--plugin-dir` plugin replaces a same-named installed marketplace plugin silently. The exception is a plugin whose id managed settings name: then `--plugin-dir copy of "<name>" ignored: plugin is locked by managed settings`.
 - **What changes:**
-  1. **Edit step 0, a new point: which copy runs.** Run `claude plugin list --json` and find the mod's id. There are three cases, each with what makes edited code run. The step records which case applies, for step 4 and the hand-off.
-     - **`readFromFolder` is set** (the text form shows `Read from:`). The mod was installed from a marketplace added from a local folder, and it loads in place from that folder.
-       - Edits to that folder load at `/reload-plugins` or the next session.
-       - When the folder being edited isn't `readFromFolder`, such as a git worktree, the installed copy keeps running the other folder's code.
-     - **`readFromFolder` is null.** The mod is a copy of one version, under `installPath`. An edit reaches it only after all of this:
-       - the version is bumped;
-       - the marketplace holds the change (pushed);
-       - `claude plugin update <id>` or `/plugin` updates it;
-       - `/reload-plugins` runs.
-     - **The mod isn't installed, or the session loads it with `--plugin-dir`.** It runs as `<name>@inline`, loaded in place, and an interactive session reloads it when a turn that changed it ends.
+  1. **Edit step 0, a new point: which copy runs.** Two questions decide what makes edited code run, and the step records the answers for step 4 and the hand-off.
+     - **How the mod is installed.** `claude plugin list --json` reads the install records. Find the mod's id:
+       - **`readFromFolder` is set** (the text form shows `Read from:`). The mod was installed from a marketplace added from a local folder, and it loads in place from that folder. Edits to that folder load at `/reload-plugins` or the next session. When the folder being edited isn't `readFromFolder`, such as a git worktree, the installed copy keeps running the other folder's code.
+       - **`readFromFolder` is null.** The mod is a copy of one version, under `installPath`. An edit reaches it only after all of this:
+         - the version is bumped;
+         - the marketplace holds the change (pushed);
+         - `claude plugin update <id>` or `/plugin` updates it;
+         - `/reload-plugins` runs.
+       - **No id.** The mod isn't installed.
+     - **Whether this session loaded it with `--plugin-dir`.** The install records can't tell. Per the loading reference, the marketplace row stays enabled while an inline copy replaces it.
+       - The person can see it in `/plugin`: the `mods active` line and the Installed tab. When the request doesn't say, ask it in step 1's batch.
+       - A `.claude-plugin/types/` folder in the mod shows only that an interactive `--plugin-dir` session loaded it at some time.
+       - When the session does load it that way, it runs as `<name>@inline`, loaded in place. It reloads when the person saves a file in it, and files Claude saves reload when Claude's turn ends. Each reload runs `register` again, so module variables reset, while `$.state` and `$.store` stay.
        - The folder is a protected path, so in the `default` and `acceptEdits` modes each edit Claude makes to it asks for approval.
-  2. **Build step 4, which edit reuses: the live smoke test writes a debug log.**
+  2. **Build step 4, which edit reuses: the live smoke test writes a debug log.** A `claude -p` run prints a refusal by another mod only there (Troubleshoot :19).
      - The command: `claude -p --debug-file <scratchpad>/<name>-debug.log --plugin-dir <mods>/<name> "/<name> demo"`.
-     - It passes only when the log has `hooks module <name>@inline loaded`, and no `did not load`, `not loaded` or `ignored` line for the mod.
+     - It passes only when the log has `hooks module <name>@inline loaded`, and has none of these lines for the mod:
+       - `did not load`, `not loaded`, or `ignored`;
+       - `hook skipped` (a hook such as `session.start` threw, timed out or returned the wrong shape, while the demo command can still answer);
+       - `refused`.
      - A `--plugin-dir` copy replaces an installed one of the same name, so the installed copy needn't be turned off.
-     - In an interactive session started with `--plugin-dir`, the transcript's reload line is the same check. A `reload failed, the previous version stays loaded:` line is a failure, because the old version is still the one running. This is from the docs only: it needs an interactive hot reload, and wasn't probed.
-  3. **The three `/reload-plugins` sentences.** They say, without conditions, that a reload picks up edits: build's step 4 (`:136-138`), build's hand-off (`:160`) and edit's hand-off (`:72-73`). Each now names what loads the new version in the person's case, from point 1.
+     - **Options:** the run uses each option's default, plus any `pluginConfigs."<name>@inline"` entry in `~/.claude/settings.json`. A demo that depends on an option passes it: `--settings '{"pluginConfigs":{"<name>@inline":{"options":{…}}}}'`.
+     - **Interactive sessions:** in one started with `--plugin-dir`, the transcript's reload line is the same check. A `reload failed, the previous version stays loaded:` line is a failure, because the old version is still the one running. This comes from the docs only: it needs an interactive hot reload, and wasn't probed.
+  3. **The three `/reload-plugins` sentences.** They say, without conditions, that a reload picks up edits: build's step 4 (`:136-138`), build's hand-off (`:160`) and edit's hand-off (`:72-73`). Each now names, for the person's case from point 1, what loads the new version and how the person sees that it loaded:
+     - **In place:** `/reload-plugins` prints `re-read from its folder` (probed this session), and `/plugin`'s `mods active` line names the mod.
+     - **A cached copy:** `claude plugin update <id>`, which ends with `Restart to apply changes.` (loading reference), then `/reload-plugins`, then `/plugin`.
+     - **`--plugin-dir`:** the transcript's reload line. `reload failed, the previous version stays loaded:` means the old code is still running.
   4. **Edit step 5.2: refresh the README's "Built on Claude Code <version>" line.**
-     - Keep the build it names, and add the new version and the build its Verify ran on, as in `Built on Claude Code 2.1.296; 0.1.3 checked on 2.1.308.`
+     - Keep the build it names, and add the new version with what ran on the build this change was checked on: the tests, the `-p` demo, or an interactive session.
+     - Example: `Built on Claude Code 2.1.296; 0.1.3's tests and demo ran on 2.1.308.` This follows Create-a-mod :355 ("tested with"), and says what ran, as PR #136's review asked of issue-forge's README.
      - `references/conventions.md:171` says the same.
      - The README template (`templates/README.template.md:71`) is unchanged, since a new build has one build to name.
 - **Not changed:**
@@ -1001,6 +1026,6 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - No code changes, so there is no red or green step.
   - QA: `claude plugin validate .`, validate and test for `plugins/mod-builder`, the archetype check (the build skill changes) and the typecheck.
   - The live check is point 2's command, run on 2.1.308 against this branch's `mods/issue-forge` at the PR head.
-- **Open, for the owner:** edit's step 0.1 finds a mod only in `<mods>/`. A marketplace entry under another folder, like `./plugins/mod-builder`, can't go through the skill as written, and Mod Lab ignores its path.
+- **Follow-up #141:** edit's step 0.1 finds a mod only in `<mods>/`. A marketplace entry under another folder, like `./plugins/mod-builder`, can't go through the skill as written, and Mod Lab ignores its path. The owner chose to file it (2026-10-22, "File an issue (Recommended)"), and it isn't part of this change.
 - **Version:** 0.2.29 (patch: skill text).
 
