@@ -7,30 +7,30 @@ import {
   parseReviewArgs, pickAgent, readOptions, reviewArgv, routesText, rowsThatFit, rowText, runLineOf,
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, ROLE_PREFIX,
-  paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stopPlan, kindLabel, STOPPED_HERE, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
-} from './duet-logic'
-import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+  migrationNoteOf, paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stopPlan, kindLabel, STOPPED_HERE, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
+} from './ensemble-logic'
+import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './ensemble-logic'
 import {
-  KEY_FILE_SHOWN, NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  KEY_FILE_SHOWN, NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, safeText, savedNote, testOutcome, testText, upsertEnvLine,
-} from './duet-providers-logic'
-import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
+} from './ensemble-providers-logic'
+import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './ensemble-providers-logic'
 import type { ProviderTest } from '../types'
 
 /**
- * Duet: delegates chosen subagent types and its own `duet:` roles to Codex,
+ * Ensemble: delegates chosen subagent types and its own `ensemble:` roles to Codex,
  * runs independent Codex reviews, and measures every run. Archetype: pane +
  * command, with a tool.call {tool:'Agent'} hook in guard form that answers
  * routed calls: read-only runs at once (the answer arrives later through
  * $.prompt.submit), editing runs in the foreground.
  */
 
-const PANE = 'duet'
+const PANE = 'ensemble'
 /** The main pane as every open asks for it; bringing it to the front adds only `focus`. */
-const PANE_ARGS = { id: PANE, title: 'Duet', columns: 76 }
-const CONFIG_PANE = 'duet-config'
+const PANE_ARGS = { id: PANE, title: 'Ensemble', columns: 76 }
+const CONFIG_PANE = 'ensemble-config'
 const SHOW_TEXT = 'Bringing the pane to the front; it takes the keyboard if your prompt is empty (Esc gives it back).'
-const STILL_BEHIND_TOAST = 'Duet is still behind another tab: ctrl+x tab, then again until it shows.'
+const STILL_BEHIND_TOAST = 'Ensemble is still behind another tab: ctrl+x tab, then again until it shows.'
 /** How long after asking for the front the pane is read again (#31). */
 const FRONT_CHECK_MS = 500
 const COLORS = { accent: '#D97757', success: '#7FB685', warn: '#E0B15A', error: '#E06C6C' } as const
@@ -38,39 +38,41 @@ const STATUS_COLOR = { running: COLORS.accent, done: COLORS.success, error: COLO
 const YES = 'Yes, send to Codex'
 const NO = 'No'
 
-const tasks = atom({ plugin: 'duet', key: 'tasks' } as const, [])
-const selected = atom({ plugin: 'duet', key: 'selected' } as const, 0)
-const view = atom({ plugin: 'duet', key: 'view' } as const, 'tasks')
-const consent = atom({ plugin: 'duet', key: 'consent' } as const, 'unasked')
-const statsAtom = atom({ plugin: 'duet', key: 'statsText' } as const, '')
-const nowAtom = atom({ plugin: 'duet', key: 'now' } as const, 0)
-const isDemo = atom({ plugin: 'duet', key: 'isDemo' } as const, false)
-const draftAtom = atom({ plugin: 'duet', key: 'configDraft' } as const, {} as Record<string, string>)
-const noteAtom = atom({ plugin: 'duet', key: 'configNote' } as const, '')
-const savingAtom = atom({ plugin: 'duet', key: 'configSaving' } as const, false)
-const cfgAt = atom({ plugin: 'duet', key: 'configAt' } as const, 0)
-const editingAtom = atom({ plugin: 'duet', key: 'configEditing' } as const, '')
-const modelsAtom = atom({ plugin: 'duet', key: 'configModels' } as const, [] as CodexModel[])
-const modelsStateAtom = atom({ plugin: 'duet', key: 'configModelsState' } as const, 'idle')
-const pickingAtom = atom({ plugin: 'duet', key: 'configPicking' } as const, false)
-const reopenAtom = atom({ plugin: 'duet', key: 'configReopenAt' } as const, 0)
-const claudePending = atom({ plugin: 'duet', key: 'claudePending' } as const, {} as Record<string, ClaudePending>)
-// /duet provider (0.3.0): the pane's rows, the open key field, the model list, the last note; never a key itself.
-const PROVIDERS_PANE = 'duet-providers'
-const PROVIDERS_PANE_ARGS = { id: PROVIDERS_PANE, title: 'Duet providers', columns: 76 }
-/** One store key per provider (`duet:providers:tests:<id>`): `$.store` is shared live by every session and the last write to a key wins (CLAUDE.md; Codex 4298476151). */
-const testsKeyOf = (id: string) => `duet:providers:tests:${id}`
+const tasks = atom({ plugin: 'ensemble', key: 'tasks' } as const, [])
+const selected = atom({ plugin: 'ensemble', key: 'selected' } as const, 0)
+const view = atom({ plugin: 'ensemble', key: 'view' } as const, 'tasks')
+const consent = atom({ plugin: 'ensemble', key: 'consent' } as const, 'unasked')
+const statsAtom = atom({ plugin: 'ensemble', key: 'statsText' } as const, '')
+const nowAtom = atom({ plugin: 'ensemble', key: 'now' } as const, 0)
+const isDemo = atom({ plugin: 'ensemble', key: 'isDemo' } as const, false)
+const draftAtom = atom({ plugin: 'ensemble', key: 'configDraft' } as const, {} as Record<string, string>)
+const noteAtom = atom({ plugin: 'ensemble', key: 'configNote' } as const, '')
+const savingAtom = atom({ plugin: 'ensemble', key: 'configSaving' } as const, false)
+const cfgAt = atom({ plugin: 'ensemble', key: 'configAt' } as const, 0)
+const editingAtom = atom({ plugin: 'ensemble', key: 'configEditing' } as const, '')
+const modelsAtom = atom({ plugin: 'ensemble', key: 'configModels' } as const, [] as CodexModel[])
+const modelsStateAtom = atom({ plugin: 'ensemble', key: 'configModelsState' } as const, 'idle')
+const pickingAtom = atom({ plugin: 'ensemble', key: 'configPicking' } as const, false)
+const reopenAtom = atom({ plugin: 'ensemble', key: 'configReopenAt' } as const, 0)
+const claudePending = atom({ plugin: 'ensemble', key: 'claudePending' } as const, {} as Record<string, ClaudePending>)
+// /ensemble provider (0.3.0): the pane's rows, the open key field, the model list, the last note; never a key itself.
+const PROVIDERS_PANE = 'ensemble-providers'
+const PROVIDERS_PANE_ARGS = { id: PROVIDERS_PANE, title: 'Ensemble providers', columns: 76 }
+/** One store key per provider (`ensemble:providers:tests:<id>`): `$.store` is shared live by every session and the last write to a key wins (CLAUDE.md; Codex 4298476151). */
+const testsKeyOf = (id: string) => `ensemble:providers:tests:${id}`
 const KEY_FILE_HOME = KEY_FILE_SHOWN
-const provAt = atom({ plugin: 'duet', key: 'providerAt' } as const, 0)
-const provEditing = atom({ plugin: 'duet', key: 'providerEditing' } as const, false)
-const provListing = atom({ plugin: 'duet', key: 'providerListing' } as const, '')
-const provModels = atom({ plugin: 'duet', key: 'providerModels' } as const, [] as string[])
-const provModelsState = atom({ plugin: 'duet', key: 'providerModelsState' } as const, 'idle')
-const provNote = atom({ plugin: 'duet', key: 'providerNote' } as const, '')
-const provAuth = atom({ plugin: 'duet', key: 'providerAuth' } as const, {} as Record<string, string>)
-const provTests = atom({ plugin: 'duet', key: 'providerTests' } as const, {} as Record<string, ProviderTest | 'running'>)
-const provFileError = atom({ plugin: 'duet', key: 'providerFileError' } as const, '')
-const provKeyIds = atom({ plugin: 'duet', key: 'providerKeyIds' } as const, {} as Record<string, string>)
+const provAt = atom({ plugin: 'ensemble', key: 'providerAt' } as const, 0)
+const provEditing = atom({ plugin: 'ensemble', key: 'providerEditing' } as const, false)
+const provListing = atom({ plugin: 'ensemble', key: 'providerListing' } as const, '')
+const provModels = atom({ plugin: 'ensemble', key: 'providerModels' } as const, [] as string[])
+const provModelsState = atom({ plugin: 'ensemble', key: 'providerModelsState' } as const, 'idle')
+const provNote = atom({ plugin: 'ensemble', key: 'providerNote' } as const, '')
+const provAuth = atom({ plugin: 'ensemble', key: 'providerAuth' } as const, {} as Record<string, string>)
+const provTests = atom({ plugin: 'ensemble', key: 'providerTests' } as const, {} as Record<string, ProviderTest | 'running'>)
+const provFileError = atom({ plugin: 'ensemble', key: 'providerFileError' } as const, '')
+const provKeyIds = atom({ plugin: 'ensemble', key: 'providerKeyIds' } as const, {} as Record<string, string>)
+// The old-folder toast once a session: an atom survives the reload a /config write causes (PR #130 review).
+const oldDataNoted = atom({ plugin: 'ensemble', key: 'oldDataNoted' } as const, false)
 // Saves, removals and test results are read-modify-write sequences on shared files; this session's go one at a time.
 let keyChain: Promise<unknown> = Promise.resolve()
 /** Per provider, a count bumped by every save, removal and test start: a test whose count moved on records nothing (Codex 4298989626). */
@@ -105,7 +107,7 @@ const stoppers = new Map<string, (() => void) | 'one-shot'>()
 
 async function openPane($: EngineInterface): Promise<void> {
   const opened = await $.ui.open(PANE_ARGS)
-  if (!opened.isPlaced) $.ui.toast('Duet needs a wider window. Widen it to see the pane, or watch the status line.')
+  if (!opened.isPlaced) $.ui.toast('Ensemble needs a wider window. Widen it to see the pane, or watch the status line.')
 }
 
 async function paneActionOf($: EngineInterface): Promise<ReturnType<typeof paneAction>> {
@@ -204,8 +206,26 @@ async function homeDir($: EngineInterface): Promise<string> {
   return (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
 }
 
+/** At start, a toast on duet's old data folder while it is there (#128), once a session. Nothing is moved or read. */
+async function noteOldData($: EngineInterface): Promise<void> {
+  if (await read($, oldDataNoted).catch(() => false)) return
+  const home = await homeDir($)
+  if (!home) return
+  const hasOld = await $.fs.exists(`${home}/.claude/duet-data`).catch(() => false)
+  const hasNew = hasOld && (await $.fs.exists(await dataDir($)).catch(() => false))
+  // Whether each folder holds a .env: existence only, never a read (round 2, Codex 4347084033).
+  const bothKeyFiles =
+    hasNew &&
+    (await $.fs.exists(`${home}/.claude/duet-data/.env`).catch(() => false)) &&
+    (await $.fs.exists(`${await dataDir($)}/.env`).catch(() => false))
+  const note = migrationNoteOf(hasOld, hasNew, bothKeyFiles)
+  if (!note) return
+  await update($, oldDataNoted, () => true).catch(() => undefined)
+  $.ui.toast(note, { timeoutMs: 15_000 })
+}
+
 async function dataDir($: EngineInterface): Promise<string> {
-  return `${(await homeDir($)) || '.'}/.claude/duet-data`
+  return `${(await homeDir($)) || '.'}/.claude/ensemble-data`
 }
 
 /** This session's own folder, for per-task files and its run log: ids restart at d1 in every session. */
@@ -247,7 +267,7 @@ async function readIfThere($: EngineInterface, path: string): Promise<string | u
 async function appendRun($: EngineInterface, task: Task): Promise<void> {
   const path = `${await sessionDir($)}/runs.jsonl`
   const text = (await readIfThere($, path)) ?? (await readIfThere($, path))
-  if (text === undefined) throw new Error(`duet: ${path} could not be read, so this run is not logged`)
+  if (text === undefined) throw new Error(`ensemble: ${path} could not be read, so this run is not logged`)
   await $.fs.write(path, appendLog(text, runLineOf(task)))
 }
 
@@ -271,9 +291,9 @@ async function readRunLogs($: EngineInterface): Promise<string[]> {
   return texts.map(text => text ?? '')
 }
 
-/** How many folders deep below a `.claude/agents` folder duet's own search goes. */
+/** How many folders deep below a `.claude/agents` folder ensemble's own search goes. */
 const AGENT_DEPTH = 8
-/** How many `.md` files duet's own search reads per `.claude/agents` folder. */
+/** How many `.md` files ensemble's own search reads per `.claude/agents` folder. */
 const AGENT_FILES = 500
 /** How many agent files, or run logs for stats, are read at once: enough to overlap the reads, few enough to stay far from the open-file limit. */
 const AGENT_READS = 16
@@ -381,7 +401,7 @@ function pruneAgentCache(dir: string, listed: Set<string>): void {
 /** What Claude reads when a lookup reached a limit: a definition past it was never read, so the one used may not be Claude's. */
 function cutText(type: string, cut: AgentCut): string {
   const limits = [...(cut.depth ? [`${AGENT_DEPTH} folders deep`] : []), ...(cut.files ? [`${AGENT_FILES} .md files in one .claude/agents folder`] : [])]
-  return limits.length ? `duet: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, so Claude may use a different one, and duet ran this agent read-only.` : ''
+  return limits.length ? `ensemble: the search for the ${type} agent definition was cut short at ${limits.join(' and ')}; a definition past that was not read, so Claude may use a different one, and ensemble ran this agent read-only.` : ''
 }
 
 /**
@@ -553,7 +573,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
   // `result` rejects when the stream closes early (a stop, the timeout, Esc) and only the normal end awaits it, so it is
   // observed here; a catch doesn't consume it (gotchas.md's HookStream entry; Codex on PR #126).
   void stream.result?.catch?.(() => undefined)
-  // The Stop key and /duet stop (#121): ending the stream kills Codex, and the loop ends cleanly (probe, 2.1.306).
+  // The Stop key and /ensemble stop (#121): ending the stream kills Codex, and the loop ends cleanly (probe, 2.1.306).
   let stopAsked = false
   stoppers.set(id, () => {
     stopAsked = true
@@ -589,7 +609,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     return { run, failure: failureOf(run, end.code, stderr) }
   } catch (err) {
     const action = spawnErrorAction({ started, aborted: signal?.aborted === true, stopped: stopAsked })
-    // Esc: the engine killed Codex and refuses new process calls (#119); a stop from duet (#121): no fallback either way.
+    // Esc: the engine killed Codex and refuses new process calls (#119); a stop from ensemble (#121): no fallback either way.
     if (action === 'stop') return { run, failure: stopAsked ? STOPPED_HERE : STOPPED, isStopped: true }
     if (action === 'fail') return { run, failure: `codex stopped: ${String((err as Error)?.message ?? err).split('\n')[0]}` }
     // spawn could not start: try a one-shot run (also the path tests exercise)
@@ -598,7 +618,7 @@ async function runCodex($: EngineInterface, id: string, argv: string[], input: s
     const note = fallbackNote(options.timeoutMs)
     if (note) await patchTask($, id, { detail: note }).catch(() => undefined)
     const fallbackAt = Date.now()
-    // A one-shot run has no stream to end, so /duet stop says it can't be stopped (#121).
+    // A one-shot run has no stream to end, so /ensemble stop says it can't be stopped (#121).
     stoppers.set(id, 'one-shot')
     try {
       const r = await $.process.run(launch.argv, { env: launch.env, ...(launch.input !== undefined ? { stdin: launch.input } : {}), timeoutMs: cap })
@@ -648,7 +668,7 @@ async function compareAfterStop($: EngineInterface, id: string, before: string |
   $.ui.toast(`${id} ${candidate}`.slice(0, 80))
 }
 
-/** Stops a running Codex run of this module, or says why not (#121): `/duet stop <id>` and the Stop key's yes. */
+/** Stops a running Codex run of this module, or says why not (#121): `/ensemble stop <id>` and the Stop key's yes. */
 function stopRun(list: Task[], arg: string): string {
   const ways = new Map([...stoppers].map(([id, way]) => [id, way === 'one-shot' ? ('one-shot' as const) : ('stream' as const)]))
   const plan = stopPlan(list, arg, ways)
@@ -676,10 +696,10 @@ async function finishInBackground($: EngineInterface, j: Job, outputFile: string
   let text: string
   try {
     const r = await runJob($, j)
-    await $.fs.write(outputFile, r.isStopped ? `duet ${j.id} was stopped on Codex: ${r.failure}\n` : r.failure ? `duet ${j.id} failed on Codex: ${r.failure}\n${j.searchNote ? `${j.searchNote}\n` : ''}` : `${r.run.text}\n\n${r.footer}\n`).catch(() => undefined)
+    await $.fs.write(outputFile, r.isStopped ? `ensemble ${j.id} was stopped on Codex: ${r.failure}\n` : r.failure ? `ensemble ${j.id} failed on Codex: ${r.failure}\n${j.searchNote ? `${j.searchNote}\n` : ''}` : `${r.run.text}\n\n${r.footer}\n`).catch(() => undefined)
     text = deliveryText({ id: j.id, label: j.type, model: options.model, sandbox: j.sandbox, durationMs: r.endedAt - j.startedAt, tokens: tokensOf(r.run), text: r.run.text, footer: r.footer, failure: r.failure, searchNote: j.searchNote , ...(r.isStopped ? { isStopped: true } : {})})
   } catch (err) {
-    const why = `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})`
+    const why = `ensemble failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})`
     await patchTask($, j.id, { status: 'error', endedAt: Date.now(), detail: why }).catch(() => undefined)
     text = deliveryText({ id: j.id, label: j.type, model: options.model, sandbox: j.sandbox, durationMs: 0, tokens: 0, text: '', footer: '', failure: why })
   } finally {
@@ -712,7 +732,7 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null,
 
   const refuse = async (why: string) => {
     await addRefused($, id => ({ ...rowOf(id), status: 'refused', endedAt: Date.now(), detail: why }))
-    return { deny: `duet: ${why}; the ${type} subagent did not run.` }
+    return { deny: `ensemble: ${why}; the ${type} subagent did not run.` }
   }
 
   const blocked = await ensureConsent($, cwd)
@@ -742,18 +762,18 @@ async function routeToCodex($: EngineInterface, e: AgentCall, role: Role | null,
 
     if (runsInBackground(options, uncut, type, role)) {
       const outputFile = `${await sessionDir($)}/${id}.out.md`
-      await $.fs.write(outputFile, `duet ${id} (${type}) is running on Codex; its answer arrives as a message when it ends.\n`).catch(() => undefined)
+      await $.fs.write(outputFile, `ensemble ${id} (${type}) is running on Codex; its answer arrives as a message when it ends.\n`).catch(() => undefined)
       handedOff = true
       void finishInBackground($, job, outputFile).catch(() => undefined)
       return { result: launchedRecord({ id, description: e.description, prompt: e.prompt, outputFile, model: options.model }) }
     }
 
     const r = await runJob($, job, signal)
-    if (r.isStopped) return { deny: `duet: ${r.failure}; the ${type} subagent did not finish on Codex.` }
-    if (r.failure) return { deny: `duet: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.${searchNote ? `\n${searchNote}` : ''}` }
+    if (r.isStopped) return { deny: `ensemble: ${r.failure}; the ${type} subagent did not finish on Codex.` }
+    if (r.failure) return { deny: `ensemble: the Codex handoff failed (${r.failure}); the ${type} subagent did not run on Claude either.${searchNote ? `\n${searchNote}` : ''}` }
     return { result: agentResult({ id, prompt: e.prompt, text: r.run.text, footer: r.footer, durationMs: r.endedAt - startedAt, run: r.run, model: options.model }) }
   } catch (err) {
-    await patchTask($, id, { status: 'error', endedAt: Date.now(), detail: `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }).catch(() => undefined)
+    await patchTask($, id, { status: 'error', endedAt: Date.now(), detail: `ensemble failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }).catch(() => undefined)
     throw err
   } finally {
     if (!handedOff) mine.delete(id)
@@ -807,7 +827,7 @@ async function finishReview($: EngineInterface, task: Task, target: ReviewTarget
     text = run.text
   } catch (err) {
     // Whatever fails after admission, the row must not stay running and hold a slot.
-    done = { ...task, endedAt: Date.now(), status: 'error', detail: `duet failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }
+    done = { ...task, endedAt: Date.now(), status: 'error', detail: `ensemble failed unexpectedly (${String((err as Error)?.message ?? err).split('\n')[0]})` }
   }
   await putTask($, done)
   void logRun($, done).catch(() => undefined)
@@ -849,17 +869,17 @@ async function move($: EngineInterface, by: number): Promise<void> {
 
 /** Writes one option through the `/config` row's writer: '' once written, else why not. */
 async function writeField($: EngineInterface, f: ConfigField, value: string | number): Promise<string> {
-  const row = (await $.config.list()).find(r => r.key.endsWith(`.${f.field}`) && r.key.startsWith('duet'))
-  if (!row) return `the ${f.field} row is not in /config; use /plugin to configure duet.`
+  const row = (await $.config.list()).find(r => r.key.endsWith(`.${f.field}`) && r.key.startsWith('ensemble'))
+  if (!row) return `the ${f.field} row is not in /config; use /plugin to configure ensemble.`
   const r = await $.config.set({ key: row.key, value })
   return r.deny ?? ''
 }
 
-/** `/duet config` opens the pane; `/duet config list` prints every option; `/duet config <field> <value>` changes one. */
+/** `/ensemble config` opens the pane; `/ensemble config list` prints every option; `/ensemble config <field> <value>` changes one. */
 async function configure($: EngineInterface, words: string[]): Promise<string> {
   const [name, ...value] = words
   if (name === undefined) {
-    const opened = await $.ui.open({ id: CONFIG_PANE, title: 'Duet config', columns: 76, focus: true })
+    const opened = await $.ui.open({ id: CONFIG_PANE, title: 'Ensemble config', columns: 76, focus: true })
     return opened.isPlaced ? 'Config pane opened: j/k move, e changes, s saves.' : `${configText(rawOptions)}\n(The window is too narrow for the config pane.)`
   }
   if (name.toLowerCase() === 'list') return configText(rawOptions)
@@ -875,7 +895,7 @@ async function configure($: EngineInterface, words: string[]): Promise<string> {
   const deny = await writeField($, f, coerced.value)
   if (deny) return `not changed: ${deny}`
   const warning = f === MODEL_FIELD && coerced.value !== '' && !(await fetchModels($)) ? modelWarning(String(coerced.value), await read($, modelsAtom)) : ''
-  return `${f.field} = ${coerced.value === '' ? '(empty)' : coerced.value}. duet reloads with it.${warning ? `\nNote: ${warning}` : ''}`
+  return `${f.field} = ${coerced.value === '' ? '(empty)' : coerced.value}. ensemble reloads with it.${warning ? `\nNote: ${warning}` : ''}`
 }
 
 /**
@@ -911,11 +931,11 @@ async function saveDraft($: EngineInterface): Promise<void> {
 /**
  * Each write reloads the module, and a reload can drop the pane or the keys
  * it held. Reopens it if gone and puts the keys back on it, so the next
- * option can be edited without running /duet config again.
+ * option can be edited without running /ensemble config again.
  */
 async function restorePane($: EngineInterface): Promise<void> {
   const isUp = await $.ui.panes().then(ps => ps.some(p => p.id === CONFIG_PANE), () => false)
-  if (!isUp) await $.ui.open({ id: CONFIG_PANE, title: 'Duet config', columns: 76, focus: true }).catch(() => undefined)
+  if (!isUp) await $.ui.open({ id: CONFIG_PANE, title: 'Ensemble config', columns: 76, focus: true }).catch(() => undefined)
   await $.ui.focus({ requestId: CONFIG_PANE, key: 'cfg-change' }).catch(() => undefined)
 }
 
@@ -994,7 +1014,7 @@ async function readReview($: EngineInterface, id: string): Promise<string> {
   return readText($, `${await sessionDir($)}/review-${id}.md`)
 }
 
-// ── /duet provider: keys, tests, the pane (0.3.0) ────────────────────────
+// ── /ensemble provider: keys, tests, the pane (0.3.0) ────────────────────────
 
 /** A provider key from the process environment. `$.env.get` takes a literal name, so each is spelled out. */
 async function envKey($: EngineInterface, name: string): Promise<string | undefined> {
@@ -1011,7 +1031,6 @@ async function envKey($: EngineInterface, name: string): Promise<string | undefi
     case 'OPENROUTER_API_KEY': return $.env.get('OPENROUTER_API_KEY')
     case 'PERPLEXITY_API_KEY': return $.env.get('PERPLEXITY_API_KEY')
     case 'CEREBRAS_API_KEY': return $.env.get('CEREBRAS_API_KEY')
-    case 'DUET_CUSTOM_API_KEY': return $.env.get('DUET_CUSTOM_API_KEY')
     default: return undefined
   }
 }
@@ -1045,7 +1064,7 @@ async function readKeyFile($: EngineInterface): Promise<{ file: Record<string, s
 /** Every provider's key and where it came from, and the key file's trouble if any. The values stay in this call; only masks reach `$.state`. */
 async function keySources($: EngineInterface): Promise<{ sources: Record<string, KeySource>; fileError: string }> {
   const { file, error } = await readKeyFile($)
-  // The environment reads are independent: one round of them, not fifteen in a row.
+  // The environment reads are independent: one round of them, not one after another.
   const fromEnv = await Promise.all(PROVIDERS.map(p => (p.keyName ? envKey($, p.keyName).catch(() => undefined) : Promise.resolve(undefined))))
   const sources: Record<string, KeySource> = {}
   PROVIDERS.forEach((p, i) => {
@@ -1054,7 +1073,7 @@ async function keySources($: EngineInterface): Promise<{ sources: Record<string,
   return { sources, fileError: error }
 }
 
-/** The values to redact from anything duet shows or writes. */
+/** The values to redact from anything ensemble shows or writes. */
 function keyValues(sources: Record<string, KeySource>): string[] {
   return Object.values(sources).map(k => k.key).filter(Boolean)
 }
@@ -1065,7 +1084,7 @@ async function refreshProviderAuth($: EngineInterface): Promise<Record<string, K
   const auth: Record<string, string> = {}
   const ids: Record<string, string> = {}
   for (const p of PROVIDERS) {
-    auth[p.id] = authTextOf(p, sources[p.id]!, options.customUrl)
+    auth[p.id] = authTextOf(p, sources[p.id]!)
     ids[p.id] = keyId(sources[p.id]!.key)
   }
   await update($, provAuth, () => auth)
@@ -1175,7 +1194,7 @@ async function saveKeyNow($: EngineInterface, p: ProviderDef, value: string): Pr
   return { saved: lines.join('\n') }
 }
 
-/** Removes a provider's line from the key file. A key in the environment is not duet's to remove. */
+/** Removes a provider's line from the key file. A key in the environment is not ensemble's to remove. */
 function removeKey($: EngineInterface, p: ProviderDef): Promise<string> {
   return serialized(() => removeKeyNow($, p))
 }
@@ -1237,15 +1256,14 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
   const { sources, fileError } = await keySources($)
   const keys = keyValues(sources)
   const k = sources[p.id]!
-  if (p.auth === 'cli') return { why: `${p.id} signs in with codex login; duet does not test it.`, key: '', base: '', keys }
-  const base = baseUrlOf(p, { customUrl: options.customUrl })
-  if (p.id === 'custom' && base === '') return { why: `${p.id}: no URL set. Set apiCustomUrl (https://, or http:// to localhost) in /duet config first.`, key: '', base, keys }
-  // A provider that takes no key (ollama), a public model list, or a custom server on this machine (LM Studio) needs none (Codex 4298736545, 4298736595).
-  const takesKey = (p.auth === 'bearer' || p.auth === 'session') && !(p.id === 'custom' && isLocalBaseUrl(base))
+  if (p.auth === 'cli') return { why: `${p.id} signs in with codex login; ensemble does not test it.`, key: '', base: '', keys }
+  const base = baseUrlOf(p)
+  // A provider that takes no key (ollama) or a public model list needs none (Codex 4298736545, 4298736595).
+  const takesKey = p.auth === 'bearer' || p.auth === 'session'
   const needsKey = takesKey && k.key === '' && !(op === 'models' && !p.modelsNeedKey)
   if (needsKey && fileError !== '') return { why: `${p.id}: ${fileError}; fix the file, or set ${p.keyName}.`, key: '', base, keys }
-  if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
-  if (p.auth === 'bearer' && needsKey) return { why: `${p.id}: no key. Press e on its row in /duet provider, or set ${p.keyName}.`, key: '', base, keys }
+  if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.5.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
+  if (p.auth === 'bearer' && needsKey) return { why: `${p.id}: no key. Press e on its row in /ensemble provider, or set ${p.keyName}.`, key: '', base, keys }
   return { why: '', key: k.key, base, keys }
 }
 
@@ -1277,7 +1295,7 @@ async function testProviderNow($: EngineInterface, p: ProviderDef, model: string
     const started = Date.now()
     const models = models0 ? modelsRequest(p, ready.key, ready.base) : null
     const step = models ? 'models' : 'probe'
-    const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
+    const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || ''))
     if (provGen.get(p.id) !== gen) {
       // The key was saved or removed while the request was out: this reply says nothing about the key now stored.
       await storeProviderTest($, p.id, null)
@@ -1400,22 +1418,21 @@ async function openProvidersPane($: EngineInterface, rowId = '', edit = false): 
     if (edit && p?.keyName) return `No pane could be shown here: set ${p.keyName} in your environment, or add a line ${p.keyName}=<key> to ${KEY_FILE_HOME} (mode 600).`
     return `${await providersListText($)}\n(The pane could not be shown here: a narrow window or a headless run. Keys go in your environment or ${KEY_FILE_HOME}.)`
   }
-  return 'Duet providers pane opened: j/k move, e enters a key, t tests it, m lists models, x removes a key, c closes.'
+  return 'Ensemble providers pane opened: j/k move, e enters a key, t tests it, m lists models, x removes a key, c closes.'
 }
 
 async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; keys: number; tested: number }> {
   const auth = await read($, provAuth)
   const tests = await read($, provTests)
   const keyIds = await read($, provKeyIds)
-  // `used` marks a provider a route uses; routes arrive in 0.4.0 with the mark's legend, so no row is marked yet.
+  // `used` marks a provider a route uses; routes arrive in 0.5.0 with the mark's legend, so no row is marked yet.
   // A stored result vouches only for the key it tested: its fingerprint must be the current key's, `none` for no key (Codex 4298989626, 4299537610).
   const current = (id: string, t: ProviderTest | 'running' | undefined) => {
     if (t === undefined || t === 'running') return t
     if ((t.key ?? '') !== (keyIds[id] ?? 'none')) return undefined
-    if (id === 'custom' && (t.host ?? '') !== baseUrlOf(providerOf('custom')!, { customUrl: options.customUrl })) return undefined   // the endpoint moved (Codex 4299362999)
     return t
   }
-  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
+  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
   const keys = rows.filter(r => r.auth.startsWith('key ')).length
   // Only results that are still current count (Codex 4299537623).
   const tested = PROVIDERS.filter(p => p.auth !== 'cli' && (t => t !== undefined && t !== 'running')(current(p.id, tests[p.id]))).length
@@ -1430,9 +1447,9 @@ async function providersListText($: EngineInterface): Promise<string> {
   return providersText(rows, keys, tested) + (fileError ? `\n⚠ ${fileError}; only keys from the environment are used` : '')
 }
 
-const PROVIDER_USAGE = 'Usage: /duet provider [list | key <id> | test <id> [model] | models <id> | remove <id>]   ids: ' + PROVIDERS.map(p => p.id).join(', ')
+const PROVIDER_USAGE = 'Usage: /ensemble provider [list | key <id> | test <id> [model] | models <id> | remove <id>]   ids: ' + PROVIDERS.map(p => p.id).join(', ')
 
-/** `/duet provider …`. A key is never taken from the command line: it would land in the transcript. */
+/** `/ensemble provider …`. A key is never taken from the command line: it would land in the transcript. */
 async function providerCommand($: EngineInterface, words: string[]): Promise<string> {
   const [sub = '', id = '', ...rest] = words
   const verb = sub.toLowerCase()
@@ -1442,8 +1459,8 @@ async function providerCommand($: EngineInterface, words: string[]): Promise<str
   const p = providerOf(id)
   if (!p) return `unknown provider "${id}". ${PROVIDER_USAGE}`
   if (verb === 'key') {
-    if (rest.length) return `duet: a key typed into the prompt is already in your transcript and shell history; rotate it. Nothing was stored. Use the pane's field (/duet provider key ${p.id}, then type it there) or edit ${KEY_FILE_HOME}.`
-    if (!p.keyName) return p.auth === 'cli' ? 'codex signs in with codex login; duet keeps no key for it.' : `${p.id} takes no key.`
+    if (rest.length) return `ensemble: a key typed into the prompt is already in your transcript and shell history; rotate it. Nothing was stored. Use the pane's field (/ensemble provider key ${p.id}, then type it there) or edit ${KEY_FILE_HOME}.`
+    if (!p.keyName) return p.auth === 'cli' ? 'codex signs in with codex login; ensemble keeps no key for it.' : `${p.id} takes no key.`
     return openProvidersPane($, p.id, true)
   }
   if (verb === 'test') return (await testProvider($, p, rest.join(' ').trim())).text
@@ -1474,7 +1491,7 @@ export const register: Register = (on, raw) => {
       for (const t of lost) {
         void logRun($, t).catch(() => undefined)
         // Through deliver: a drop after Stop is retried and any other is toasted, never lost quietly (PR #123 review).
-        if (t.kind === 'agent') void deliver($, deliveryText({ id: t.id, label: t.subagentType, model: t.model, sandbox: t.envelope?.sandbox ?? 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: t.detail }), `${t.id} was cut off by a reload; /duet show ${t.id}`).catch(() => undefined)
+        if (t.kind === 'agent') void deliver($, deliveryText({ id: t.id, label: t.subagentType, model: t.model, sandbox: t.envelope?.sandbox ?? 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: t.detail }), `${t.id} was cut off by a reload; /ensemble show ${t.id}`).catch(() => undefined)
       }
     }
     for (const r of rolesFor(options.sandbox)) {
@@ -1491,12 +1508,14 @@ export const register: Register = (on, raw) => {
       }
     }
     await $.command
-      .register({ name: 'duet', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' })
-      .catch(() => undefined)
+      .register({ name: 'ensemble', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' })
+      // A name the engine refuses (a built-in took it) is said, not swallowed: the reason duet became ensemble (#128, PR #130 review).
+      .catch((err: unknown) => $.ui.toast(`/ensemble was not added: ${String((err as Error)?.message ?? err).split('\n')[0]!.replace(/^\S+: \$\.command\.register: /, '')}`, { timeoutMs: 15_000 }))
+    void noteOldData($).catch(() => undefined)
     return next(e)
   })
 
-  on('command.run', { command: 'duet' }, async ($, e) => {
+  on('command.run', { command: 'ensemble' }, async ($, e) => {
     try {
       const [word = '', ...rest] = e.args.trim().split(/\s+/)
       const sub = word.toLowerCase()
@@ -1508,10 +1527,10 @@ export const register: Register = (on, raw) => {
       }
       if (sub === 'review') {
         const target = parseReviewArgs(rest.join(' '))
-        if (!target) return { text: 'Usage: /duet review [--base <branch> | --commit <sha>]  (default: uncommitted changes)' }
+        if (!target) return { text: 'Usage: /ensemble review [--base <branch> | --commit <sha>]  (default: uncommitted changes)' }
         const { started, reason } = await startReview($, target)
         if (!started) return { text: `Codex review not started: ${reason}` }
-        return { text: 'Codex review started (read-only). Its verdict lands in the pane and a toast; /duet show <id> prints it in full.' }
+        return { text: 'Codex review started (read-only). Its verdict lands in the pane and a toast; /ensemble show <id> prints it in full.' }
       }
       if (sub === 'show') {
         const id = rest[0] ?? ''
@@ -1523,21 +1542,21 @@ export const register: Register = (on, raw) => {
       if (sub === 'routes') return { text: routesText(options) }
       if (sub === 'config') return { text: await configure($, rest) }
       if (sub === 'provider' || sub === 'providers') return { text: await providerCommand($, rest) }
-      if (sub !== '') return { text: 'Usage: /duet [demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' }
+      if (sub !== '') return { text: 'Usage: /ensemble [demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' }
       const action = await paneActionOf($)
       if (action === 'show') {
         void bringToFront($).catch(() => undefined)
         return { text: SHOW_TEXT }
       }
       void (action === 'close' ? $.ui.close({ id: PANE }) : openPane($)).catch(() => undefined)
-      return { text: action === 'close' ? 'Closed. /duet to reopen.' : `Opened. ${routesText(options)}` }
+      return { text: action === 'close' ? 'Closed. /ensemble to reopen.' : `Opened. ${routesText(options)}` }
     } catch {
       return { text: 'something went wrong; see claude --debug.' }
     }
   })
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    // duet: roles always go to Codex (main loop only); codexAgents types unless named, isolated or nested.
+    // ensemble: roles always go to Codex (main loop only); codexAgents types unless named, isolated or nested.
     const route = routeOf(options, e)
     if (route.to === 'deny') return { deny: route.reason }
     if (route.to === 'codex') return routeToCodex($, e, route.role, next.signal)
@@ -1551,7 +1570,7 @@ export const register: Register = (on, raw) => {
       else void measureClaude($, e, ran.result, startedAt).catch(() => undefined)
     }
     return ran
-  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the Codex handoff failed unexpectedly; the subagent did not run. See claude --debug.' }))
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'ensemble: the Codex handoff failed unexpectedly; the subagent did not run. See claude --debug.' }))
 
   // /clear, /resume and /branch reset every atom and don't run session.start; startup and compaction reset nothing (#119).
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
@@ -1601,7 +1620,7 @@ export const register: Register = (on, raw) => {
     const room = rowsThatFit(e.props.scroll.bodyRows)
     drawnRows = room
     const focused = e.props.isFocused
-    const head = layout === 'compact' ? 'DUET' : 'D U E T'
+    const head = layout === 'compact' ? 'ENSEMBLE' : 'E N S E M B L E'
     const counts = list.length ? countsOf(list) : ''
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -1648,7 +1667,7 @@ export const register: Register = (on, raw) => {
       return (
         <Box flexDirection="column" paddingX={1}>
           <Text>{configText(rawOptions)}</Text>
-          <Text dimColor>This surface draws no fields: change one with /duet config field value.</Text>
+          <Text dimColor>This surface draws no fields: change one with /ensemble config field value.</Text>
         </Box>
       )
     }
@@ -1676,7 +1695,7 @@ export const register: Register = (on, raw) => {
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
-          <Text color={COLORS.accent} bold={e.props.isFocused}>DUET CONFIG</Text>
+          <Text color={COLORS.accent} bold={e.props.isFocused}>ENSEMBLE CONFIG</Text>
           <Text dimColor>{saving ? 'saving…' : isDirty ? 'unsaved changes' : 'saved'}</Text>
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
@@ -1734,14 +1753,15 @@ export const register: Register = (on, raw) => {
   })
 
   // The key file is never read into the conversation: not through an @-mention, a Bash command that names it, or the Read tool.
-  const KEY_FILE_DENY = 'duet: that file holds API keys; it is not read into the conversation. /duet provider manages them.'
-  on('prompt.mention', { path: /duet-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
+  const KEY_FILE_DENY = 'ensemble: that file holds API keys; it is not read into the conversation. /ensemble provider manages them.'
+  // duet's old folder too, while it is there (PR #130 review, Codex 4344331748).
+  on('prompt.mention', { path: /(?:duet|ensemble)-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
     .catch(() => ({ deny: KEY_FILE_DENY }))
   // Bash and PowerShell (#115): one matcher; this build's tool types name neither PowerShell, Grep nor Glob.
   on('tool.call', { tool: /^(?:Bash|PowerShell)$/ }, ($, e, next) => (namesKeyFile(String((e as unknown as { command?: unknown }).command ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: 'ensemble: the key-file check failed; ask the person before retrying.' }))
   on('tool.call', { tool: 'Read' }, ($, e, next) => (keyPathReaches(String((e as unknown as { file_path?: unknown }).file_path ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))
-    .catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+    .catch(($, e, next) => (next.called ? next(e) : { deny: 'ensemble: the key-file check failed; ask the person before retrying.' }))
   // A Grep over the key file, or over its folder, reads it too; a Glob there lists it.
   // Grep and Glob through one matcher: this build lays neither tool, and naming them as strings needed hand-declared tool
   // types that would collide with a build that does. Grep's `pattern` is what it searches for; Glob's is a path pattern.
@@ -1752,7 +1772,7 @@ export const register: Register = (on, raw) => {
     // A Grep reads contents: rooted above the key folder (or with no path, in the session folder) it reads the key file (#115).
     if (g.tool === 'Grep' && (await grepCoversKeyFile($, String(g.path ?? '')))) return { deny: KEY_FILE_DENY }
     return next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'duet: the key-file check failed; ask the person before retrying.' }))
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'ensemble: the key-file check failed; ask the person before retrying.' }))
 
   on('ui.render', { component: 'Pane', requestId: PROVIDERS_PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
@@ -1763,7 +1783,7 @@ export const register: Register = (on, raw) => {
       return (
         <Box flexDirection="column" paddingX={1}>
           <Text>{providersText(rows, keys, tested)}</Text>
-          <Text dimColor>{`enter keys with /duet provider key <id> from a terminal, or edit ${KEY_FILE_HOME}`}</Text>
+          <Text dimColor>{`enter keys with /ensemble provider key <id> from a terminal, or edit ${KEY_FILE_HOME}`}</Text>
         </Box>
       )
     }
@@ -1792,7 +1812,7 @@ export const register: Register = (on, raw) => {
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
-          <Text color={COLORS.accent} bold={focused}>DUET PROVIDERS</Text>
+          <Text color={COLORS.accent} bold={focused}>ENSEMBLE PROVIDERS</Text>
           <Text dimColor>{`${keys} keys · ${tested} tested`}</Text>
         </Box>
         <Text dimColor>{'─'.repeat(width)}</Text>
@@ -1809,14 +1829,14 @@ export const register: Register = (on, raw) => {
                 {modelsState === 'fetching' && <Text dimColor>{`asking ${r.p.id} for its models…`}</Text>}
                 {modelsState !== 'fetching' && modelsState !== 'idle' && <Text color={COLORS.warn}>{modelsState.slice(0, width - 4)}</Text>}
                 {models.slice(0, listed).map(m => <Text key={`prov-model-${r.p.id}-${m}`} dimColor>{m.slice(0, width - 4)}</Text>)}
-                {models.length > listed && <Text dimColor>{`… ${models.length - listed} more: /duet provider models ${r.p.id}`}</Text>}
+                {models.length > listed && <Text dimColor>{`… ${models.length - listed} more: /ensemble provider models ${r.p.id}`}</Text>}
               </Box>
             )}
           </Box>
         ) })}
         {below > 0 && <Text dimColor>{`  ↓ ${below} more (j)`}</Text>}
         <Text dimColor>{'─'.repeat(width)}</Text>
-        <Text dimColor wrap="truncate">{`routes  advisor, reviewer, review, implementer, routed types → codex (apiRoutes arrive in 0.4.0)`}</Text>
+        <Text dimColor wrap="truncate">{`routes  advisor, reviewer, review, implementer, routed types → codex (apiRoutes arrive in 0.5.0)`}</Text>
         {editing && (
           <Box flexDirection="column">
             <Input key="prov-key" label={`${sel.keyName} (${sel.name})`} value="" submitLabel="save" autoFocus placeholder="paste the key"

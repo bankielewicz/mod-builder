@@ -1357,13 +1357,13 @@ export function readdWorktreeCommand(workRoot: string, branch: string): string {
 }
 
 /**
- * A red type that isn't the mod's own is spawned unnamed so duet may route it to Codex, which runs in the
+ * A red type that isn't the mod's own is spawned unnamed so ensemble may route it to Codex, which runs in the
  * session's folder whatever the spawn says: in a worktree run it would edit the wrong checkout.
  */
 export function routedRedBlock(redAgentType: string, isWorktree: boolean): { reason: string; next: string } | null {
   if (!isWorktree || redAgentType.startsWith(`${NAME}:`)) return null
   return {
-    reason: `redAgentType ${redAgentType} can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder`,
+    reason: `redAgentType ${redAgentType} can't work in a worktree: another plugin (ensemble's Codex) runs it in the session's folder`,
     next: `set redAgentType to ${NAME}:red (a red on Codex needs "workspace": "here" and a clean checkout on the base)`,
   }
 }
@@ -1562,7 +1562,15 @@ export function stashApplyArgv(stash: StashRef): string[] {
   return ['git', 'stash', 'apply', stash.sha]
 }
 
-/** The agent name a spawn of the mod's own type carries (duet leaves named calls on Claude). */
+/**
+ * Whether another plugin answered a spawn in-line, so it has no loop and no turn.complete (C0): ensemble's Codex, by its
+ * `ensemble-<n>` id or a codex model (#128: duet's `duet-<n>` ids end with the rename).
+ */
+export function isInlineAnswer(agentId: string, model: string): boolean {
+  return !!agentId && (model.startsWith('codex') || agentId.startsWith('ensemble-'))
+}
+
+/** The agent name a spawn of the mod's own type carries (ensemble leaves named calls on Claude). */
 export function agentName(run: Run, phase: Phase): string {
   // Counted from the agents the run has started, not its attempts (a resume resets those), so a name never repeats.
   return `issue-forge-${run.issue}-${phase}-${run.agents.filter(a => a.phase === phase).length + 1}`

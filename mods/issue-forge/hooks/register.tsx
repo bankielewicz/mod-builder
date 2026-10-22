@@ -14,6 +14,7 @@ import {
   advance,
   afterBlock,
   agentName,
+  isInlineAnswer,
   agentsKey,
   agentPrompt,
   badgeOf,
@@ -1044,7 +1045,7 @@ function waitForAnswer(agentId: string): Promise<AgentTurn> {
   })
 }
 
-/** A phase: spawn its agent (named, so duet leaves it on Claude) and wait for its turn.complete. */
+/** A phase: spawn its agent (named, so ensemble leaves it on Claude) and wait for its turn.complete. */
 async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Promise<RunEvent | null> {
   const redTestPaths = which === 'green' && run.redCommit ? splitZ(await gitOut($, workOf(run), ['diff', '--name-only', '-z', run.mergeBase, run.redCommit])) : undefined
   const prompt = phasePrompt(which, run, promptExtraOf(which, run, redTestPaths))
@@ -1060,8 +1061,8 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   const baseManifests = [...(await manifestsAt($, workOf(run), run.mergeBase)), ...(await manifestsAt($, workOf(run), baseRefOf(run)))]
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
   const agentId = spawned.agentId
-  // An agent another plugin answered in-line (duet's Codex) has no loop and no turn.complete (C0).
-  const isInline = !!agentId && (spawned.model.startsWith('codex') || agentId.startsWith('duet-'))
+  // An agent another plugin answered in-line (ensemble's Codex) has no loop and no turn.complete (C0).
+  const isInline = !!agentId && isInlineAnswer(agentId, spawned.model)
   // Wait before any other await, so a fast agent's turn.complete finds its waiter.
   const answer = agentId && !isInline ? waitForAnswer(agentId) : null
   void answer?.catch(() => undefined)

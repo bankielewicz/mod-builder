@@ -1,11 +1,10 @@
 /**
- * Duet's rules, free of `$` so tests can call them: routing, custom-agent
+ * Ensemble's rules, free of `$` so tests can call them: routing, custom-agent
  * definitions, the handoff envelope, Codex argv/env, the JSONL fold, the
  * Agent result Claude reads, the run log and the pane's text.
  */
 
 import type { ClaudePending, CodexModel, Envelope, Provider, Sandbox, Task, TaskStatus } from '../types'
-import { isAllowedBaseUrl } from './duet-providers-logic'
 
 export type { ClaudePending, CodexModel, Envelope, Sandbox, Task, TaskStatus }
 
@@ -24,15 +23,12 @@ export type Options = {
   runModes: RunModes
   fsScope: FsScope
   writePaths: WritePaths
-  /** The `custom` provider's base URL (0.3.0), '' when unset or not allowed. */
-  customUrl: string
-  customModel: string
 }
 
 /** `codexWritePaths`: project folders per agent type, or the error a malformed value gives (every agent then writes nothing). */
 export type WritePaths = Record<string, string[]> | { error: string }
 
-/** `codexFsScope`: `project` confines Codex's filesystem to a duet profile; `anything` leaves Codex's own sandbox as it was. */
+/** `codexFsScope`: `project` confines Codex's filesystem to an ensemble profile; `anything` leaves Codex's own sandbox as it was. */
 export type FsScope = 'project' | 'anything'
 
 /** Whether a Codex run makes Claude wait for it or answers later. */
@@ -40,20 +36,20 @@ export type RunMode = 'wait' | 'background'
 /** `codexRunMode`: the default for `codexAgents` types, and per-type overrides (roles by any of their names). */
 export type RunModes = { fallback: RunMode; overrides: Record<string, RunMode> }
 
-const ROLE_ALIASES: Record<string, string> = { advisor: 'duet:codex-advisor', reviewer: 'duet:codex-reviewer', implementer: 'duet:codex-implementer' }
+const ROLE_ALIASES: Record<string, string> = { advisor: 'ensemble:codex-advisor', reviewer: 'ensemble:codex-reviewer', implementer: 'ensemble:codex-implementer' }
 
 function modeWord(w: string): RunMode | null {
   const t = w.trim().toLowerCase()
   return t === 'background' || t === 'bg' || t === 'async' ? 'background' : t === 'wait' || t === 'foreground' || t === 'sync' ? 'wait' : null
 }
 
-/** `advisor`, `codex-advisor` and `duet:codex-advisor` all name the advisor role; any other type stays as typed. */
+/** `advisor`, `codex-advisor` and `ensemble:codex-advisor` all name the advisor role; any other type stays as typed. */
 export function typeKey(name: string): string {
   const t = name.trim()
   const low = t.toLowerCase()
   if (ROLE_ALIASES[low]) return ROLE_ALIASES[low]!
-  if (/^codex-(advisor|reviewer|implementer)$/.test(low)) return `duet:${low}`
-  if (/^duet:codex-(advisor|reviewer|implementer)$/.test(low)) return low
+  if (/^codex-(advisor|reviewer|implementer)$/.test(low)) return `ensemble:${low}`
+  if (/^ensemble:codex-(advisor|reviewer|implementer)$/.test(low)) return low
   return t
 }
 
@@ -133,8 +129,6 @@ export function readOptions(raw: unknown): Options {
     fsScope: o.codexFsScope === 'project' ? 'project' : 'anything',
     writePaths: parseWritePaths(String(o.codexWritePaths ?? '')),
     runModes: ((m) => ('error' in m ? { fallback: 'background' as const, overrides: Object.create(null) as Record<string, RunMode> } : m))(parseRunModes(String(o.codexRunMode ?? 'background'))),
-    customUrl: ((u) => (isAllowedBaseUrl(u) ? u.replace(/\/+$/, '') : ''))(String(o.apiCustomUrl ?? '').trim()),
-    customModel: String(o.apiCustomModel ?? '').trim(),
   }
 }
 
@@ -153,7 +147,7 @@ function typeOverrides(o: Options): string {
   return Object.entries(o.runModes.overrides).filter(([k]) => !k.startsWith(ROLE_PREFIX)).map(([k, m]) => `${k} ${SAY[m]}`).join(', ')
 }
 
-/** `/duet` and `/duet routes`: the routes, what they skip, how each runs, the roles, and the limits. */
+/** `/ensemble` and `/ensemble routes`: the routes, what they skip, how each runs, the roles, and the limits. */
 export function routesText(o: Options): string {
   const list = o.routes === '*' ? 'every subagent type' : o.routes.size ? [...o.routes].join(', ') : 'nothing routed'
   const more = typeOverrides(o)
@@ -175,7 +169,7 @@ export function routesLines(o: Options): [string, string] {
 
 // ── Codex roles (registered agent types) ─────────────────────────────────
 
-export const ROLE_PREFIX = 'duet:'
+export const ROLE_PREFIX = 'ensemble:'
 
 export type Role = { name: string; mode: RunMode; description: string; prompt: string; tools: string[]; editing: boolean }
 
@@ -227,12 +221,12 @@ export const ROLES: Role[] = [
   },
 ]
 
-/** The roles duet registers: the implementer only where Codex may edit. */
+/** The roles ensemble registers: the implementer only where Codex may edit. */
 export function rolesFor(sandbox: Sandbox): Role[] {
   return ROLES.filter(r => !r.editing || sandbox === 'workspace-write')
 }
 
-/** The role a `subagent_type` names (`duet:codex-advisor`, or the bare name), else null. */
+/** The role a `subagent_type` names (`ensemble:codex-advisor`, or the bare name), else null. */
 export function roleOf(subagentType: string | undefined): Role | null {
   const t = subagentType?.trim() ?? ''
   if (!t.startsWith(ROLE_PREFIX)) return null
@@ -250,7 +244,7 @@ export type AgentCallShape = { subagent_type?: string; name?: string; team_name?
 export type Route = { to: 'codex'; role: Role | null } | { to: 'claude' } | { to: 'deny'; reason: string }
 
 /**
- * Where an Agent call goes. A `duet:` role always goes to Codex (its name is
+ * Where an Agent call goes. A `ensemble:` role always goes to Codex (its name is
  * the explicit choice), but never from inside a subagent or isolated. A type
  * in `codexAgents` goes to Codex unless the call is named, isolated or nested.
  */
@@ -258,8 +252,8 @@ export function routeOf(o: Options, e: AgentCallShape): Route {
   const role = roleOf(e.subagent_type)
   if (role) {
     const label = ROLE_PREFIX + role.name
-    if (e.agentId) return { to: 'deny', reason: `duet: Codex roles run only from the main session; the ${label} subagent did not run.` }
-    if (e.isolation) return { to: 'deny', reason: `duet: Codex roles can't run isolated (worktree/remote); the ${label} subagent did not run.` }
+    if (e.agentId) return { to: 'deny', reason: `ensemble: Codex roles run only from the main session; the ${label} subagent did not run.` }
+    if (e.isolation) return { to: 'deny', reason: `ensemble: Codex roles can't run isolated (worktree/remote); the ${label} subagent did not run.` }
     return { to: 'codex', role }
   }
   if (e.agentId || e.name || e.team_name || e.isolation || !isRouted(o.routes, e.subagent_type)) return { to: 'claude' }
@@ -271,7 +265,7 @@ export function runsInBackground(o: Options, sandbox: Sandbox, type: string, rol
   return sandbox === 'read-only' && modeOf(o, type, role) === 'background'
 }
 
-// ── /duet config ─────────────────────────────────────────────────────────
+// ── /ensemble config ─────────────────────────────────────────────────────────
 
 export type ConfigField = { field: string; alias: string; kind: 'text' | 'number'; choices?: string[]; fallback: string | number; help: string }
 
@@ -286,8 +280,6 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'codexRunMode', alias: 'mode', kind: 'text', fallback: 'background', help: 'wait or background for codexAgents types, then overrides: advisor=background, Explore=wait (editing runs always wait)' },
   { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked through `codex exec` on Codex 0.162.1, Linux only (on macOS, the Codex source makes /tmp readable and writable, even under read-only), re-check after upgrading' },
   { field: 'codexWritePaths', alias: 'paths', kind: 'text', fallback: '', help: 'with scope project and workspace-write: red-test-writer=tests;test, impl=src limits a named agent to those project folders; empty = whole project' },
-  { field: 'apiCustomUrl', alias: 'customurl', kind: 'text', fallback: '', help: 'the custom provider\'s OpenAI-compatible base URL (https://, or http:// to localhost), e.g. https://my-gateway.example.com/v1' },
-  { field: 'apiCustomModel', alias: 'custommodel', kind: 'text', fallback: '', help: 'the custom provider\'s default model id' },
 ]
 
 /** A field's stored value as text, its default when unset. */
@@ -311,14 +303,14 @@ export function planDraft(raw: unknown, draft: Record<string, string>): DraftPla
   return plan
 }
 
-export const CONFIG_USAGE = 'Usage: /duet config [<field> <value>]   fields: ' + CONFIG_FIELDS.map(f => `${f.alias}`).join(', ') + '   ("" clears a text field)'
+export const CONFIG_USAGE = 'Usage: /ensemble config [<field> <value>]   fields: ' + CONFIG_FIELDS.map(f => `${f.alias}`).join(', ') + '   ("" clears a text field)'
 
 export function findConfigField(name: string): ConfigField | undefined {
   const n = name.trim().toLowerCase()
   return CONFIG_FIELDS.find(f => f.field.toLowerCase() === n || f.alias === n)
 }
 
-/** `/duet config` with no field: every option, its stored value or default. */
+/** `/ensemble config` with no field: every option, its stored value or default. */
 export function configText(raw: unknown): string {
   const o = (raw ?? {}) as Record<string, unknown>
   const rows = CONFIG_FIELDS.map(f => {
@@ -327,7 +319,7 @@ export function configText(raw: unknown): string {
     const capped = f.field === 'timeoutMinutes' && Number(v) * 60_000 > FALLBACK_MAX_MS ? '   (a one-shot fallback run stops at 10 minutes)' : ''
     return `  ${f.alias.padEnd(11)} ${f.field.padEnd(15)} ${shown}${f.choices ? `   [${f.choices.join(' | ')}]` : ''}${capped}`
   })
-  return ['duet config', ...rows, CONFIG_USAGE].join('\n')
+  return ['ensemble config', ...rows, CONFIG_USAGE].join('\n')
 }
 
 /** The value text after the field, checked against the field: `{ value }` or `{ error }`. */
@@ -349,8 +341,6 @@ export function coerceConfigValue(f: ConfigField, text: string): { value: string
     const w = parseWritePaths(t)
     if (typeof w.error === 'string') return { error: w.error }
   }
-  // The refusal never shows a password the URL carried (#115).
-  if (f.field === 'apiCustomUrl' && t !== '' && !isAllowedBaseUrl(t)) return { error: `apiCustomUrl takes an https:// URL, or http:// to localhost, 127.0.0.1 or [::1], with no user:password@, query, fragment, space or backslash; got "${t.replace(/\/\/[^/@\s]*@/, '//***@')}".` }
   return { value: t }
 }
 
@@ -406,10 +396,10 @@ export function modelWarning(slug: string, models: CodexModel[]): string {
   return `"${s}" is not in Codex's model list${close ? `; did you mean ${near.slug}?` : '.'}`
 }
 
-/** `/duet config models`: the catalog as text. */
+/** `/ensemble config models`: the catalog as text. */
 export function modelsText(models: CodexModel[], current: string): string {
   const rows = models.map(m => `  ${m.slug === current ? '✓' : ' '} ${m.slug.padEnd(26)} ${m.name}${m.isHidden ? ' (hidden)' : ''}${m.description ? ` · ${m.description}` : ''}`)
-  return ['Codex models (codex debug models)', ...rows, `Set one: /duet config model <slug>   ("" uses Codex's default${current === '' ? ', the current setting' : ''})`].join('\n')
+  return ['Codex models (codex debug models)', ...rows, `Set one: /ensemble config model <slug>   ("" uses Codex's default${current === '' ? ', the current setting' : ''})`].join('\n')
 }
 
 // ── Custom agents (.claude/agents, by Claude's discovery rules) ──────────
@@ -421,7 +411,7 @@ export type AgentDef = {
   tools: string[] | null
   /** The `disallowedTools` value as a list. */
   disallowed?: string[]
-  /** `tools` or `disallowedTools` is in a form duet doesn't read (a block scalar, an unclosed `[`, a continued line): read-only. */
+  /** `tools` or `disallowedTools` is in a form ensemble doesn't read (a block scalar, an unclosed `[`, a continued line): read-only. */
   isToolsUnread?: boolean
   body: string
 }
@@ -452,7 +442,7 @@ function uncommented(value: string): string {
 }
 
 /**
- * A list value duet reads as written: no block scalar, mapping, anchor, alias or tag, a `[`
+ * A list value ensemble reads as written: no block scalar, mapping, anchor, alias or tag, a `[`
  * closes on its line, and a quoted value ends at its closing quote.
  */
 const isReadable = (value: string): boolean =>
@@ -573,9 +563,9 @@ export function sessionFolderOf(sessionId: string): string {
  * Whether an agent may edit. A definition: its `tools` (none listed means
  * every tool) minus `disallowedTools` must keep an edit tool. No definition
  * found: only Claude's `general-purpose` agent edits; anything unresolved
- * (a built-in like Explore or Plan, a plugin's agent, a file duet can't find)
+ * (a built-in like Explore or Plan, a plugin's agent, a file ensemble can't find)
  * is read-only, so a lookup miss never raises the sandbox. So is a definition
- * whose `tools` or `disallowedTools` duet couldn't read.
+ * whose `tools` or `disallowedTools` ensemble couldn't read.
  */
 export function canEdit(def: AgentDef | null, type: string = DEFAULT_TYPE): boolean {
   if (!def) return type === DEFAULT_TYPE
@@ -585,8 +575,8 @@ export function canEdit(def: AgentDef | null, type: string = DEFAULT_TYPE): bool
 }
 
 /**
- * An agent can only lower the sandbox, never raise it. A search cut short by duet's limits runs read-only:
- * a definition past them, which Claude reads, may forbid the edits that duet's pick allows.
+ * An agent can only lower the sandbox, never raise it. A search cut short by ensemble's limits runs read-only:
+ * a definition past them, which Claude reads, may forbid the edits that ensemble's pick allows.
  */
 export function effectiveSandbox(configured: Sandbox, def: AgentDef | null, type: string = DEFAULT_TYPE, isSearchCut = false): Sandbox {
   return configured === 'workspace-write' && !isSearchCut && canEdit(def, type) ? 'workspace-write' : 'read-only'
@@ -623,7 +613,7 @@ export function consentText(cwd: string, sandbox: Sandbox, keyFile?: string): st
 export function consentRefusal(err: unknown): string {
   const message = String((err as { message?: unknown } | undefined)?.message ?? err)
   if (message.includes('$.ui.ask: no answer')) return 'the consent question was dismissed; it is asked again next time'
-  return 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
+  return 'nobody could be asked to allow sending this repo to Codex (set ensemble codexConsent to allow for headless runs)'
 }
 
 /** Rules the handoff asks Codex to follow. A request to the model: only the sandbox enforces anything. */
@@ -655,7 +645,7 @@ export function buildHandoff(args: {
     role: args.def ? args.subagentType : '',
   }
   const lines = [
-    '# Handoff from Claude Code (duet)',
+    '# Handoff from Claude Code (ensemble)',
     '',
     `- Task ID: ${args.id}`,
     `- Spec version: ${envelope.specVersion}`,
@@ -710,7 +700,7 @@ function tomlString(s: string): string {
  */
 function profileName(nonce = ''): string {
   const suffix = nonce.replace(/[^A-Za-z0-9]/g, '')
-  return suffix ? `duet-mod-fs-scope-${suffix}` : 'duet-mod-fs-scope'
+  return suffix ? `ensemble-mod-fs-scope-${suffix}` : 'ensemble-mod-fs-scope'
 }
 
 /** An absolute path: `/…`, `\…` or a drive letter. */
@@ -746,7 +736,7 @@ export function resolveFrom(cwd: string, path: string): string {
 type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[]; reads?: string[]; nonce?: string }
 
 /**
- * The two `-c` overrides that make a `duet` permission profile the default (SPEC, Change 0.2.6): Codex's
+ * The two `-c` overrides that make an `ensemble` permission profile the default (SPEC, Change 0.2.6): Codex's
  * built-in minimal set and the project are readable, nothing else is, and `/tmp` and files outside
  * are not mounted. Under workspace-write the project is writable, or only the `writePaths` folders
  * inside it when any are given; a folder outside the project is dropped. Codex's install folder is
@@ -790,7 +780,7 @@ export function codexArgv(o: { sandbox: Sandbox; model: string; cwd: string } & 
 
 export type ReviewTarget = { kind: 'uncommitted' } | { kind: 'base'; ref: string } | { kind: 'commit'; ref: string }
 
-/** `/duet review` args → a target; null when they don't parse. */
+/** `/ensemble review` args → a target; null when they don't parse. */
 export function parseReviewArgs(args: string): ReviewTarget | null {
   const words = args.trim().split(/\s+/).filter(Boolean)
   if (words.length === 0) return { kind: 'uncommitted' }
@@ -871,7 +861,7 @@ export const BLANKED_ENV = [
   'AZURE_PASSWORD',
   // Azure managed identity (App Service, Functions): the token endpoint's secret header
   'IDENTITY_HEADER',
-  // Not the API provider keys duet stores (0.3.0, the owner's decision at review): a key duet keeps lives in its file,
+  // Not the API provider keys ensemble stores (0.3.0, the owner's decision at review): a key ensemble keeps lives in its file,
   // which blanking a variable does nothing about, and one set in the shell is the person's own credential for Codex too.
 ] as const
 export function childEnv(): Record<string, string> {
@@ -922,7 +912,7 @@ export function foldEvent(run: Run, line: string): Run {
       // Only a failed command whose output has a line starting with bwrap's message counts; a diff or a file quoting it does not.
       const isFailed = item.type === 'command_execution' && item.exit_code !== 0
       const unrunnable = isFailed ? String(item.aggregated_output ?? '').match(/^bwrap: execvp (\S+): No such file or directory$/m) : null
-      if (unrunnable && !run.failure) return { ...run, failure: `Codex could not run ${unrunnable[1]} inside its sandbox: under codexFsScope project its install folder must be readable, and duet grants only the folder of the codex on PATH and $CODEX_HOME/packages.` }
+      if (unrunnable && !run.failure) return { ...run, failure: `Codex could not run ${unrunnable[1]} inside its sandbox: under codexFsScope project its install folder must be readable, and ensemble grants only the folder of the codex on PATH and $CODEX_HOME/packages.` }
       return run
     }
     case 'turn.completed': {
@@ -976,19 +966,19 @@ export function tokensOf(run: Run): number {
 
 // ── The Agent result Claude reads ────────────────────────────────────────
 
-export const ONE_SHOT = 'one-shot run: start a new duet task to follow up'
+export const ONE_SHOT = 'one-shot run: start a new ensemble task to follow up'
 
 /** The result's last line; `dropped` names the codexWritePaths folders Codex could not write. */
 export function footerOf(t: { id: string; model: string; sandbox: Sandbox; base: string; candidate: string; dropped?: string[] }): string {
   const dropped = t.dropped?.length ? ` · not writable: ${t.dropped.join(', ')} (missing, outside the project, or in .git, .codex or .agents)` : ''
-  return `[duet ${t.id} · codex${t.model ? ` ${t.model}` : ''} · sandbox ${t.sandbox} · base ${t.base} · ${t.candidate || 'no files changed by this run'}${dropped} · ${ONE_SHOT}]`
+  return `[ensemble ${t.id} · codex${t.model ? ` ${t.model}` : ''} · sandbox ${t.sandbox} · base ${t.base} · ${t.candidate || 'no files changed by this run'}${dropped} · ${ONE_SHOT}]`
 }
 
 /** The Agent tool's `completed` record, answered for Codex's run. */
 export function agentResult(a: { id: string; prompt: string; text: string; footer: string; durationMs: number; run: Run; model: string }) {
   return {
     status: 'completed' as const,
-    agentId: `duet-${a.id}`,
+    agentId: `ensemble-${a.id}`,
     agentType: 'codex',
     prompt: a.prompt,
     content: [{ type: 'text' as const, text: `${a.text}\n\n${a.footer}` }],
@@ -1013,7 +1003,7 @@ export function agentResult(a: { id: string; prompt: string; text: string; foote
 export function launchedRecord(a: { id: string; description: string; prompt: string; outputFile: string; model: string }) {
   return {
     status: 'async_launched' as const,
-    agentId: `duet-${a.id}`,
+    agentId: `ensemble-${a.id}`,
     description: a.description,
     prompt: a.prompt,
     outputFile: a.outputFile,
@@ -1025,7 +1015,7 @@ export function launchedRecord(a: { id: string; description: string; prompt: str
 
 /** The message a background run delivers to the main session when it ends. */
 export function deliveryText(a: { id: string; label: string; model: string; sandbox: Sandbox; durationMs: number; tokens: number; text: string; footer: string; failure: string; searchNote?: string; isStopped?: boolean }): string {
-  const head = `Background agent duet-${a.id} (${a.label})`
+  const head = `Background agent ensemble-${a.id} (${a.label})`
   // A failure has no footer to carry the agent search's cut-short note, so it goes on a line of its own.
   // A stop isn't a failure (#121): it says so, with the stop's own words.
   if (a.isStopped) return `${head} was stopped on Codex (${a.failure}). It did not run on Claude either.${a.searchNote ? `\n${a.searchNote}` : ''}`
@@ -1053,8 +1043,8 @@ export function retryableDrop(reason: string): boolean {
  */
 export const STOPPED = 'stopped: cancelled (usually Esc)'
 
-/** A run the person stopped with duet's Stop key or `/duet stop <id>` (#121). */
-export const STOPPED_HERE = 'stopped: you stopped it from duet'
+/** A run the person stopped with ensemble's Stop key or `/ensemble stop <id>` (#121). */
+export const STOPPED_HERE = 'stopped: you stopped it from ensemble'
 
 /** After Esc the engine refuses process calls, so git reads nothing and a comparison would invent changes. */
 export const STOPPED_CANDIDATE = 'stopped: files not compared'
@@ -1094,7 +1084,7 @@ export function candidateFrom(before: string | null, after: string | null): stri
  * never a fallback (#119, probe on 2.1.306); with output already read, a failure; before any, spawn couldn't start.
  */
 export function spawnErrorAction(at: { started: boolean; aborted: boolean; stopped?: boolean }): 'stop' | 'fail' | 'fallback' {
-  // A stop from duet (#121) ends the loop cleanly; checked here too, so a throw after it never launches a fallback run.
+  // A stop from ensemble (#121) ends the loop cleanly; checked here too, so a throw after it never launches a fallback run.
   if (at.aborted || at.stopped) return 'stop'
   return at.started ? 'fail' : 'fallback'
 }
@@ -1161,7 +1151,21 @@ export function verdictOf(text: string): string {
 
 // ── Reloads and Claude's background runs ─────────────────────────────────
 
-export const LOST = 'lost when duet reloaded'
+/**
+ * The note on duet's old data folder (#128). duet became ensemble, and a mod can't move or delete a file ($.fs has no
+ * rename or delete), so the person moves it. Once ensemble-data exists, mv would put duet-data inside it, so the note
+ * says to copy without overwriting, then delete the old folder (PR #130 review).
+ */
+export function migrationNoteOf(hasOld: boolean, hasNew: boolean, bothKeyFiles = false): string | null {
+  if (!hasOld) return null
+  if (!hasNew) return "your data and API keys now live in ~/.claude/ensemble-data. Move duet's: mv ~/.claude/duet-data ~/.claude/ensemble-data"
+  // cp -an keeps an existing .env as it is, so with one in each folder duet's key lines are merged by hand (round 2, Codex 4347084033).
+  return bothKeyFiles
+    ? "~/.claude/duet-data and ~/.claude/ensemble-data both hold a .env: copy the rest with cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, add duet's key lines to ensemble's .env by hand (or /ensemble provider key <id>), then delete ~/.claude/duet-data"
+    : '~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data'
+}
+
+export const LOST = 'lost when ensemble reloaded'
 
 /** Running tasks this module did not start were cut off by a reload: marked error, and returned. */
 export function lostOnReload(tasks: Task[], mine: ReadonlySet<string>, now: number): { tasks: Task[]; lost: Task[] } {
@@ -1319,9 +1323,10 @@ export function summarize(log: string): StatRow[] {
 }
 
 export function statsText(rows: StatRow[]): string {
-  if (!rows.length) return 'No runs recorded yet. Routed subagents and /duet review are logged as they finish.'
-  const head = 'provider · type'.padEnd(34) + 'runs'.padStart(5) + 'ok'.padStart(6) + 'median'.padStart(9) + 'tokens'.padStart(9)
-  return [head, ...rows.map(r => r.key.slice(0, 33).padEnd(34) + String(r.runs).padStart(5) + `${r.okPct}%`.padStart(6) + duration(r.medianMs).padStart(9) + compact(r.medianTokens).padStart(9))].join('\n')
+  if (!rows.length) return 'No runs recorded yet. Routed subagents and /ensemble review are logged as they finish.'
+  // The key column fits codex · ensemble:codex-implementer (34) with room (PR #130 review).
+  const head = 'provider · type'.padEnd(39) + 'runs'.padStart(5) + 'ok'.padStart(6) + 'median'.padStart(9) + 'tokens'.padStart(9)
+  return [head, ...rows.map(r => r.key.slice(0, 38).padEnd(39) + String(r.runs).padStart(5) + `${r.okPct}%`.padStart(6) + duration(r.medianMs).padStart(9) + compact(r.medianTokens).padStart(9))].join('\n')
 }
 
 // ── Pane text ────────────────────────────────────────────────────────────
@@ -1360,14 +1365,14 @@ export function kindLabel(t: Task): string {
 }
 
 /**
- * What `/duet stop <id>` and the Stop key do (#121): `stop` names the run to stop, or is null with the answer saying why
+ * What `/ensemble stop <id>` and the Stop key do (#121): `stop` names the run to stop, or is null with the answer saying why
  * not. `ways` says how each running run of this module can be stopped: through its stream, or not at all (a one-shot
  * fallback run has no stream to end); a running row without an entry hasn't reached either yet.
  */
 export function stopPlan(tasks: Task[], arg: string, ways: ReadonlyMap<string, 'stream' | 'one-shot'>): { stop: string | null; text: string } {
   const running = tasks.filter(t => t.provider === 'codex' && t.status === 'running')
   const id = arg.trim().toLowerCase()
-  if (!id) return { stop: null, text: running.length ? `Usage: /duet stop <id>. Running now: ${running.map(t => t.id).join(', ')}.` : 'No Codex run is running.' }
+  if (!id) return { stop: null, text: running.length ? `Usage: /ensemble stop <id>. Running now: ${running.map(t => t.id).join(', ')}.` : 'No Codex run is running.' }
   const row = running.find(t => t.id === id)
   if (!row) return { stop: null, text: `${id} isn't running.` }
   const way = ways.get(id)
@@ -1384,8 +1389,8 @@ export function rowText(t: Task, now: number, columns: number): string {
     layout === 'compact'
       ? [t.id, t.provider, t.status, elapsed]
       : layout === 'medium'
-        ? [t.id.padEnd(4), t.provider.padEnd(7), kindLabel(t).slice(0, 18).padEnd(18), t.status.padEnd(8), elapsed]
-        : [t.id.padEnd(4), t.provider.padEnd(7), (t.model || 'default').slice(0, 12).padEnd(12), kindLabel(t).slice(0, 20).padEnd(20), t.status.padEnd(8), elapsed.padStart(7), compact(t.tokens).padStart(6) + ' tok']
+        ? [t.id.padEnd(4), t.provider.padEnd(7), kindLabel(t).slice(0, 22).padEnd(22), t.status.padEnd(8), elapsed]
+        : [t.id.padEnd(4), t.provider.padEnd(7), (t.model || 'default').slice(0, 12).padEnd(12), kindLabel(t).slice(0, 24).padEnd(24), t.status.padEnd(8), elapsed.padStart(7), compact(t.tokens).padStart(6) + ' tok']
   const text = parts.join(layout === 'compact' ? ' ' : ' ')
   return text.length > columns ? `${text.slice(0, Math.max(0, columns - 1))}…` : text
 }
@@ -1417,17 +1422,17 @@ export function rowsThatFit(bodyRows: number): number {
   return Math.max(1, Math.min(8, Math.floor((bodyRows - 6) / 2)))
 }
 
-export const EMPTY_TEXT = 'No Codex tasks yet. Route a subagent type in /config → duet, or run /duet review.'
+export const EMPTY_TEXT = 'No Codex tasks yet. Route a subagent type in /config → ensemble, or run /ensemble review.'
 
-/** One task in each state, for `/duet demo`. */
+/** One task in each state, for `/ensemble demo`. */
 export function demoTasks(now: number): Task[] {
   const base = { model: 'gpt-5-codex', endedAt: null, envelope: null, detail: '', tokens: 0 }
   const env: Envelope = { specVersion: '3fa9c21', base: '45798a0', candidate: 'no files changed', sandbox: 'read-only', scope: '/work/app', role: 'code-explorer' }
   return [
     { ...base, id: 'd6', provider: 'codex', kind: 'agent', subagentType: 'code-explorer', status: 'running', startedAt: now - 72_000, tokens: 38_000, description: 'Find every caller of parseConfig and list risky ones', envelope: env },
     { ...base, id: 'd5', provider: 'codex', kind: 'review', subagentType: '--base main', status: 'done', startedAt: now - 400_000, endedAt: now - 240_000, tokens: 61_000, description: 'review --base main', detail: 'verdict: changes requested (1 high, 2 medium, 0 low)' },
-    { ...base, id: 'd4', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'done', startedAt: now - 900_000, endedAt: now - 780_000, tokens: 24_000, description: 'Summarise README.md', envelope: { ...env, role: '', candidate: 'no files changed' } },
-    { ...base, id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'duet:codex-advisor', status: 'stopped', startedAt: now - 960_000, endedAt: now - 950_000, tokens: 2_000, description: 'Check the error handling', detail: STOPPED, envelope: { ...env, candidate: STOPPED_CANDIDATE } },
+    { ...base, id: 'd4', provider: 'codex', kind: 'agent', subagentType: 'ensemble:codex-advisor', status: 'done', startedAt: now - 900_000, endedAt: now - 780_000, tokens: 24_000, description: 'Summarise README.md', envelope: { ...env, role: '', candidate: 'no files changed' } },
+    { ...base, id: 'd3', provider: 'codex', kind: 'agent', subagentType: 'ensemble:codex-advisor', status: 'stopped', startedAt: now - 960_000, endedAt: now - 950_000, tokens: 2_000, description: 'Check the error handling', detail: STOPPED, envelope: { ...env, candidate: STOPPED_CANDIDATE } },
     { ...base, id: 'd2', provider: 'codex', kind: 'agent', subagentType: 'Explore', status: 'error', startedAt: now - 1_000_000, endedAt: now - 996_000, description: 'Map the auth flow', detail: 'codex: not signed in. Run `codex login`, then retry.' },
     { ...base, id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'test-writer', status: 'refused', startedAt: now - 1_100_000, endedAt: now - 1_100_000, description: 'Add tests for the parser', detail: 'limit: 2 Codex runs already running' },
   ]

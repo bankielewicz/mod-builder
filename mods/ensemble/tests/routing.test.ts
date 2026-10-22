@@ -15,7 +15,7 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
-const DATA = '/home/u/.claude/duet-data'
+const DATA = '/home/u/.claude/ensemble-data'
 /** The shared log that sessions wrote before each kept its own. */
 const LEGACY_LOG = `${DATA}/runs.jsonl`
 const logOf = (session: string) => `${DATA}/sessions/${session}/runs.jsonl`
@@ -28,7 +28,7 @@ type Seen = { argv: string[][]; stdin: string[]; env: Record<string, string>[]; 
 function engine(on: any, o: { answer?: string; codex?: 'ok' | 'missing' | 'fail'; agents?: Record<string, string>; beneath?: unknown; env?: Record<string, string>; real?: Record<string, string | null>; kinds?: Record<string, 'file' | 'dir' | 'other'>; gitDirs?: string; oldGit?: boolean; denyEnv?: string; cwd?: string; top?: string | null; gitAt?: string[]; links?: string[]; unreadable?: string[]; flaky?: string[]; hold?: (path: string) => number; askDeny?: string; noAsk?: boolean; askHold?: Promise<void>; codexHold?: Promise<void>; onCodex?: () => void; noSessionId?: boolean; missingText?: string; logGate?: Promise<void>; drops?: string[]; dirty?: string; gitFailAfterCodex?: boolean } = {}): Seen {
   const seen: Seen = { argv: [], stdin: [], env: [], asked: 0, questions: [], toasts: [], beneath: 0, files: { ...(o.agents ?? {}) }, reads: [], listed: [], mtimes: {}, registered: [], submitted: [], dropped: [], maxReads: 0, timeouts: [], clock: null }
   seen.clock = mock.clock(on)
-  on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `duet:${e.name}` } }))
+  on('agent.register', ($: any, e: any) => (seen.registered.push({ name: e.name, description: e.description }), { value: { agent: `ensemble:${e.name}` } }))
   // A drop answers the prompt in Claude Code's place while o.drops lasts, as after Stop (#119).
   on('prompt.submit', ($: any, e: any) => (o.drops?.length ? (seen.dropped.push(e.text), { drop: o.drops.shift() }) : (seen.submitted.push(e.text), { text: e.text })))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer, usage: e.usage }))
@@ -153,7 +153,7 @@ describe('routing', () => {
     expect(seen.beneath).toBe(0)
     expect(seen.asked).toBe(1)
     expect(r.text ?? JSON.stringify(r.result)).toContain('Found 3 callers.')
-    expect(JSON.stringify(r.result)).toContain('[duet d1 · codex · sandbox read-only · base abc1234')
+    expect(JSON.stringify(r.result)).toContain('[ensemble d1 · codex · sandbox read-only · base abc1234')
     const argv = seen.argv[0]!
     expect(argv.slice(0, 2)).toEqual(['codex', 'exec'])
     expect(argv).toContain('approval_policy="never"')
@@ -269,23 +269,23 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     expect(seen.asked).toBe(0)
   })
 
-  test('a duet: role goes to Codex even when named, with its role instructions, read-only', { options: { codexAgents: '', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'background, reviewer=wait' } }, async ($, on) => {
+  test('an ensemble: role goes to Codex even when named, with its role instructions, read-only', { options: { codexAgents: '', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'background, reviewer=wait' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
-    const r: any = await $.tool.call(call({ subagent_type: 'duet:codex-reviewer', name: 'rev' }) as never)
+    const r: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer', name: 'rev' }) as never)
     expect(seen.beneath).toBe(0)
     expect(r.result.status).toBe('completed')
-    expect(seen.stdin[0]).toContain('## Role instructions (duet:codex-reviewer)')
+    expect(seen.stdin[0]).toContain('## Role instructions (ensemble:codex-reviewer)')
     expect(seen.stdin[0]).toContain('You are an adversarial reviewer.')
     const argv = seen.argv[0]!
     expect(argv[argv.indexOf('-s') + 1]).toBe('read-only')
   })
 
-  test('a duet: role is refused from inside a subagent or isolated, and never reaches Claude', { options: { codexConsent: 'allow' } }, async ($, on) => {
+  test('an ensemble: role is refused from inside a subagent or isolated, and never reaches Claude', { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
-    const nested: any = await $.tool.call(call({ subagent_type: 'duet:codex-advisor', agentId: 'sub-1' }) as never)
-    const isolated: any = await $.tool.call(call({ subagent_type: 'duet:codex-advisor', isolation: 'worktree' }) as never)
+    const nested: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-advisor', agentId: 'sub-1' }) as never)
+    const isolated: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-advisor', isolation: 'worktree' }) as never)
     expect(nested.deny ?? nested.text).toMatch(/only from the main session/)
     expect(isolated.deny ?? isolated.text).toMatch(/can't run isolated/)
     expect(seen.beneath).toBe(0)
@@ -311,34 +311,34 @@ describe('0.2.0: roles, background runs, honest routing', () => {
   test('a background run answers async_launched at once, then delivers its answer as a prompt', { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
-    const r: any = await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    const r: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer' }) as never)
     expect(r.result.status).toBe('async_launched')
-    expect(r.result.agentId).toBe('duet-d1')
-    expect(r.result.outputFile).toBe('/home/u/.claude/duet-data/sessions/s1/d1.out.md')
+    expect(r.result.agentId).toBe('ensemble-d1')
+    expect(r.result.outputFile).toBe('/home/u/.claude/ensemble-data/sessions/s1/d1.out.md')
     expect(r.result.canContinueAgent).toBe(false)
     expect(seen.beneath).toBe(0)
     await seen.clock.settle()
     expect(seen.submitted.length).toBe(1)
-    expect(seen.submitted[0]).toContain('Background agent duet-d1 (duet:codex-reviewer) finished on Codex')
+    expect(seen.submitted[0]).toContain('Background agent ensemble-d1 (ensemble:codex-reviewer) finished on Codex')
     expect(seen.submitted[0]).toContain('Found 3 callers.')
-    expect(seen.submitted[0]).toContain('[duet d1 · codex · sandbox read-only · base abc1234 · read-only run: no files changed')
-    expect(seen.files['/home/u/.claude/duet-data/sessions/s1/d1.out.md']).toContain('Found 3 callers.')
+    expect(seen.submitted[0]).toContain('[ensemble d1 · codex · sandbox read-only · base abc1234 · read-only run: no files changed')
+    expect(seen.files['/home/u/.claude/ensemble-data/sessions/s1/d1.out.md']).toContain('Found 3 callers.')
   })
 
   test('a failed background run is delivered as a failure, never quietly', { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on, { codex: 'missing' })
     await start($)
-    const r: any = await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    const r: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer' }) as never)
     expect(r.result.status).toBe('async_launched')
     await seen.clock.settle()
-    expect(seen.submitted[0]).toMatch(/duet-d1 \(duet:codex-reviewer\) failed on Codex: codex not found on PATH.*did not run on Claude either/)
+    expect(seen.submitted[0]).toMatch(/ensemble-d1 \(ensemble:codex-reviewer\) failed on Codex: codex not found on PATH.*did not run on Claude either/)
   })
 
   test('roles wait or not by default: advisor waits, reviewer is background', { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
-    const advisor: any = await $.tool.call(call({ subagent_type: 'duet:codex-advisor' }) as never)
-    const reviewer: any = await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    const advisor: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-advisor' }) as never)
+    const reviewer: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer' }) as never)
     expect(advisor.result.status).toBe('completed')
     expect(reviewer.result.status).toBe('async_launched')
     await seen.clock.settle()
@@ -349,7 +349,7 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     await start($)
     const r: any = await $.tool.call(call() as never)
     expect(r.result.canContinueAgent).toBe(false)
-    expect(JSON.stringify(r.result)).toContain('one-shot run: start a new duet task to follow up')
+    expect(JSON.stringify(r.result)).toContain('one-shot run: start a new ensemble task to follow up')
   })
 
   test('an editing run always waits, even in background mode', { options: { codexAgents: 'test-writer', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'background' } }, async ($, on) => {
@@ -384,7 +384,7 @@ describe('review admission', () => {
   test('a review counts against maxConcurrent, so at the limit it is refused and Codex never runs', { options: { maxConcurrent: 0, codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
     await start($)
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv).toEqual([])
   })
@@ -392,7 +392,7 @@ describe('review admission', () => {
   test("a review blanks cloud-provider credentials in Codex's env and leaves what Codex needs", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
     await start($)
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
     const env = seen.env[0]!
@@ -405,11 +405,11 @@ describe('review admission', () => {
     const seen = engine(on, o)
     await start($)
     o.denyEnv = 'HOME'
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv).toEqual([])
     o.denyEnv = undefined
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv.length).toBe(1)
     expect(seen.argv[0]!.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
@@ -422,8 +422,8 @@ describe('review admission', () => {
     const started = new Promise<void>(resolve => (begun = resolve))
     const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: begun })
     await start($)
-    const review = () => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-    const pane = () => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+    const review = () => $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    const pane = () => $.ui.mount({ plugin: 'ensemble', surface: 'terminal', component: 'Pane', requestId: 'ensemble', props: { title: 'Ensemble', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
     try {
       // Which of the two is admitted is the engine's order; one starts and one is refused either way.
       const answers = (await Promise.all([review(), review()])).map(r => r.text)
@@ -459,8 +459,8 @@ describe('review admission', () => {
   })
 })
 
-describe('issue 5: /duet review answers for what happened', () => {
-  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+describe('issue 5: /ensemble review answers for what happened', () => {
+  const review = ($: any) => $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
 
   test('at the concurrency limit the answer says not started and names the limit; Codex never runs and the refusal toast stays', { options: { maxConcurrent: 0, codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
@@ -490,7 +490,7 @@ describe('issue 5: /duet review answers for what happened', () => {
     await start($)
     const { text } = await review($)
     await seen.clock.advance(1000)
-    expect(text).toMatch(/^Codex review not started: nobody could be asked to allow sending this repo to Codex \(set duet codexConsent to allow for headless runs\)/)
+    expect(text).toMatch(/^Codex review not started: nobody could be asked to allow sending this repo to Codex \(set ensemble codexConsent to allow for headless runs\)/)
     expect(text).not.toMatch(/review started/)
     expect(seen.asked).toBe(1)
     expect(seen.argv).toEqual([])
@@ -521,7 +521,7 @@ describe('issue 5: /duet review answers for what happened', () => {
 })
 
 describe('PR #52 review: a dismissed consent dialog says so', () => {
-  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const review = ($: any) => $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
   const ESC = "The user doesn't want to proceed with this tool use. The tool use was rejected"
 
   test('Esc on the consent dialog answers not started because it was dismissed, not because nobody could be asked; Codex never runs and the next review asks again', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
@@ -539,8 +539,8 @@ describe('PR #52 review: a dismissed consent dialog says so', () => {
 })
 
 describe('PR #52 review: the allowed case and the pane button go through the same gate', () => {
-  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-  const pane = ($: any) => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+  const review = ($: any) => $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const pane = ($: any) => $.ui.mount({ plugin: 'ensemble', surface: 'terminal', component: 'Pane', requestId: 'ensemble', props: { title: 'Ensemble', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
 
   test('with codexConsent allow nobody is asked, the answer says started and Codex runs', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
@@ -585,9 +585,9 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     '/w/.claude/agents/code-explorer.md': EXPLORER,
   }
   const scoped = { codexAgents: 'red-test-writer, impl-writer, code-explorer', codexSandbox: 'workspace-write', codexFsScope: 'project', codexWritePaths: 'red-test-writer=tests;test', codexConsent: 'allow', codexRunMode: 'wait' }
-  // These find duet's profile whether or not its name carries a per-run nonce; the nonce test checks the name itself.
-  const filesystem = (argv: string[]) => argv.find(a => /^permissions\.duet-mod-fs-scope(-[A-Za-z0-9]+)?\.filesystem=/.test(a)) ?? ''
-  const namesProfile = (argv: string[]) => argv.some(a => /^default_permissions="duet-mod-fs-scope(-[A-Za-z0-9]+)?"$/.test(a))
+  // These find ensemble's profile whether or not its name carries a per-run nonce; the nonce test checks the name itself.
+  const filesystem = (argv: string[]) => argv.find(a => /^permissions\.ensemble-mod-fs-scope(-[A-Za-z0-9]+)?\.filesystem=/.test(a)) ?? ''
+  const namesProfile = (argv: string[]) => argv.some(a => /^default_permissions="ensemble-mod-fs-scope(-[A-Za-z0-9]+)?"$/.test(a))
   const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
 
   test('an agent named in codexWritePaths may write only those folders; the rest of the project and the Codex install folder are read', { options: scoped }, async ($, on) => {
@@ -668,7 +668,7 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     const seen = engine(on, { agents, gitDirs: '/main/.git/worktrees/w\n/main/.git' })
     await start($)
     await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv.length).toBe(2)
     for (const argv of seen.argv) {
@@ -725,13 +725,13 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
     await start($)
     await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
     await $.tool.call(call({ subagent_type: 'impl-writer' }) as never)
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     expect(seen.argv.length).toBe(3)
     const names = seen.argv.map(argv => (argv.find(a => a.startsWith('default_permissions=')) ?? '').slice('default_permissions="'.length, -1))
     expect(new Set(names).size).toBe(3)
     seen.argv.forEach((argv, at) => {
-      expect(names[at]).toMatch(/^duet-mod-fs-scope-[A-Za-z0-9]{16,}$/)
+      expect(names[at]).toMatch(/^ensemble-mod-fs-scope-[A-Za-z0-9]{16,}$/)
       expect(argv.some(a => a.startsWith(`permissions.${names[at]}.filesystem=`))).toBe(true)
     })
   })
@@ -739,7 +739,7 @@ describe('issue 3 part B: codexFsScope reaches the Codex runs', () => {
   test('a review runs read-only under the same profile, with the session folder as the project', { options: { codexFsScope: 'project', codexConsent: 'allow' } }, async ($: any, on: any) => {
     const seen = engine(on)
     await start($)
-    await $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+    await $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
     await seen.clock.advance(1000)
     const argv = seen.argv[0]!
     expect(argv.slice(0, 3)).toEqual(['codex', 'exec', 'review'])
@@ -927,7 +927,7 @@ describe('issue 4: a custom agent is found by Claude\'s discovery rules', () => 
     expect(seen.stdin[0]).not.toContain('Too deep.')
   })
 
-  test('a definition 8 folders down is read and one 9 down is not: duet\'s own cap, since Claude reads deeper (PR #43 review)', { options }, async ($, on) => {
+  test('a definition 8 folders down is read and one 9 down is not: ensemble\'s own cap, since Claude reads deeper (PR #43 review)', { options }, async ($, on) => {
     const eight = '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8'
     const seen = engine(on, { cwd: IN, agents: { [`${eight}/reader.md`]: agent('reader', READS, 'Eight deep.'), [`${eight}/9/editor.md`]: agent('editor', READS, 'Nine deep.'), '/home/u/.claude/agents/editor.md': agent('editor', EDITS, 'User level.') } })
     await start($, IN)
@@ -1094,13 +1094,13 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
   })
 
   test('a search cut short runs the agent read-only, since a definition past the limit may forbid edits, and the note says so (PR #48 review)', { options }, async ($, on) => {
-    // Claude reads this read-only general-purpose definition 9 folders down; duet stops at 8, and its fallback, the built-in, edits.
+    // Claude reads this read-only general-purpose definition 9 folders down; ensemble stops at 8, and its fallback, the built-in, edits.
     const seen = engine(on, { cwd: IN, agents: { '/w/pkg/.claude/agents/1/2/3/4/5/6/7/8/9/gp.md': agent('general-purpose', READS, 'Nine deep.') } })
     await start($, IN)
     const text = await resultText($, 'general-purpose')
     expect(seen.stdin[0]).not.toContain('Nine deep.')
     expect(sandboxOf(seen.argv[0])).toBe('read-only')
-    expect(text.split('\n').find(line => line.startsWith('duet: the search'))).toMatch(/read-only/)
+    expect(text.split('\n').find(line => line.startsWith('ensemble: the search'))).toMatch(/read-only/)
   })
 
   test('a search that the 8-folder limit cut short says so in the run\'s result, naming the limit; one that reached no limit does not', { options }, async ($, on) => {
@@ -1219,7 +1219,7 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
     expect(launched.result.status).toBe('async_launched')
     await seen.clock.settle()
     expect(seen.submitted.length).toBe(1)
-    expect(seen.submitted[0]).toMatch(/duet-d\d \(bgreader\) failed on Codex: codex not found on PATH/)
+    expect(seen.submitted[0]).toMatch(/ensemble-d\d \(bgreader\) failed on Codex: codex not found on PATH/)
     expect(seen.submitted[0]).toMatch(/the search for the bgreader agent definition was cut short at 8 folders deep/)
     const outFile = seen.files[launched.result.outputFile]
     expect(outFile).toMatch(/failed on Codex: codex not found on PATH/)
@@ -1229,8 +1229,8 @@ describe('issue 44: agent discovery follow-ups from the PR #43 review', () => {
 
 describe('issue 6: a running fallback run says the engine stops it at 10 minutes', () => {
   const NOTE = /fallback: stops at 10m \(timeoutMinutes 20\)/
-  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-  const pane = ($: any) => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+  const review = ($: any) => $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const pane = ($: any) => $.ui.mount({ plugin: 'ensemble', surface: 'terminal', component: 'Pane', requestId: 'ensemble', props: { title: 'Ensemble', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
 
   /** A Codex run held in flight: `started` settles once its process.run is called, `release` lets it finish. */
   function held() {
@@ -1275,7 +1275,7 @@ describe('issue 6: a running fallback run says the engine stops it at 10 minutes
 
 describe('issue 7: each session keeps its own run log', () => {
   const OPTS = { codexAgents: 'general-purpose', codexRunMode: 'wait' } as const
-  const stats = ($: any) => $.command.run({ command: 'duet', args: 'stats', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const stats = ($: any) => $.command.run({ command: 'ensemble', args: 'stats', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
   const rowOf = (text: string, key: string) => text.split('\n').find(l => l.startsWith(key)) ?? ''
 
   test('a finished run leaves the legacy log and another session\'s log byte for byte as they were', { options: OPTS }, async ($, on) => {
@@ -1315,7 +1315,7 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(seen.files[logOf('unknown')] ?? '').toContain('"provider":"codex"')
   })
 
-  test('/duet stats counts the legacy log, other sessions\' logs and this session\'s, and skips a session with no log or an unreadable one', { options: OPTS, }, async ($, on) => {
+  test('/ensemble stats counts the legacy log, other sessions\' logs and this session\'s, and skips a session with no log or an unreadable one', { options: OPTS, }, async ($, on) => {
     const seen = engine(on, { unreadable: [logOf('s3')] })
     seen.files[LEGACY_LOG] = runLine('codex', 'Explore')
     seen.files[logOf('s2')] = runLine('claude', 'Explore') + runLine('claude', 'Explore')
@@ -1329,7 +1329,7 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(rowOf(text, 'codex · general-purpose')).toMatch(/^codex · general-purpose\s+1\s/)
   })
 
-  test('/duet stats works with sessions\' logs alone, when no legacy log exists', { options: OPTS }, async ($, on) => {
+  test('/ensemble stats works with sessions\' logs alone, when no legacy log exists', { options: OPTS }, async ($, on) => {
     const seen = engine(on)
     seen.files[logOf('s2')] = runLine('claude', 'Explore')
     await start($)
@@ -1339,7 +1339,7 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(rowOf(text, 'codex · general-purpose')).toMatch(/^codex · general-purpose\s+1\s/)
   })
 
-  test('PR #67 review (Codex P2): /duet stats reads the session logs at most 16 at a time and counts every one', { options: OPTS }, async ($, on) => {
+  test('PR #67 review (Codex P2): /ensemble stats reads the session logs at most 16 at a time and counts every one', { options: OPTS }, async ($, on) => {
     const seen = engine(on, { hold: () => 3 })
     for (let i = 0; i < 40; i++) seen.files[logOf(`p${i}`)] = runLine('claude', 'Explore')
     await start($)
@@ -1399,7 +1399,7 @@ describe('issue 7: each session keeps its own run log', () => {
     expect(JSON.parse(own[0] ?? '{}').provider).toBe('codex')
   })
 
-  test('PR #67 review: /duet stats reads a missing log once even when the engine words it without ENOENT', { options: OPTS }, async ($, on) => {
+  test('PR #67 review: /ensemble stats reads a missing log once even when the engine words it without ENOENT', { options: OPTS }, async ($, on) => {
     const seen = engine(on, { missingText: 'no such file or directory' })
     seen.files[`${DATA}/sessions/s4/review-d1.md`] = 'a session that logged nothing'
     seen.files[logOf('s2')] = runLine('claude', 'Explore')
@@ -1432,12 +1432,12 @@ describe('issue 8: run-log appends within a session are serialized', () => {
 })
 
 describe('0.3.0: the consent question names the provider key file where Codex can read it', () => {
-  test('under codexFsScope anything (the default) the question names ~/.claude/duet-data/.env', { options: { codexAgents: 'general-purpose' } }, async ($, on) => {
+  test('under codexFsScope anything (the default) the question names ~/.claude/ensemble-data/.env', { options: { codexAgents: 'general-purpose' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
     await $.tool.call(call() as never)
     expect(seen.questions.length).toBe(1)
-    expect(seen.questions[0]).toContain('your provider key file ~/.claude/duet-data/.env')
+    expect(seen.questions[0]).toContain('your provider key file ~/.claude/ensemble-data/.env')
   })
 
   test('under codexFsScope project the key file is hidden, so the question does not name it', { options: { codexAgents: 'general-purpose', codexFsScope: 'project' } }, async ($, on) => {
@@ -1453,7 +1453,7 @@ describe('0.3.0: the consent question names the provider key file where Codex ca
     await start($, '/home/u')
     await $.tool.call(call() as never)
     expect(seen.questions.length).toBe(1)
-    expect(seen.questions[0]).toContain('your provider key file ~/.claude/duet-data/.env')
+    expect(seen.questions[0]).toContain('your provider key file ~/.claude/ensemble-data/.env')
   })
 })
 
@@ -1464,7 +1464,7 @@ describe('0.3.0: provider keys are never blanked for Codex (the owner\'s decisio
     await $.tool.call(call() as never)
     await seen.clock.advance(1000)   // the run answers in the background; Codex starts after the call returns
     const env = seen.env[0]!
-    for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY', 'DUET_CUSTOM_API_KEY']) expect([k, env[k]]).toEqual([k, undefined])
+    for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY']) expect([k, env[k]]).toEqual([k, undefined])
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.OPENAI_API_KEY).toBeUndefined()
   })
@@ -1474,13 +1474,13 @@ describe('0.3.0: provider keys are never blanked for Codex (the owner\'s decisio
 // #119 gap 3: after Stop, $.prompt.submit resolves { drop } and queues nothing (the owner's option b: retry at turn.complete, toast as the fallback).
 describe('#119: a background answer that Stop dropped', () => {
   const STOPPED_DROP = 'the session was stopped and nobody has sent input since'
-  const OUT = '/home/u/.claude/duet-data/sessions/s1/d1.out.md'
+  const OUT = '/home/u/.claude/ensemble-data/sessions/s1/d1.out.md'
   const turnEnds = ($: any, agentId?: string) => $.turn.complete({ turnId: 't', answer: '', durationMs: 0, isAborted: false, usage: null, ...(agentId ? { agentId } : {}) })
 
   test('is kept, named in a toast, and submitted again when the next main turn ends', { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on, { drops: [STOPPED_DROP] })
     await start($)
-    await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer' }) as never)
     await seen.clock.settle()
     expect(seen.dropped.length).toBe(1)
     expect(seen.submitted.length).toBe(0)
@@ -1492,14 +1492,14 @@ describe('#119: a background answer that Stop dropped', () => {
     await turnEnds($)
     await seen.clock.settle()
     expect(seen.submitted.length).toBe(1)
-    expect(seen.submitted[0]).toContain('Background agent duet-d1 (duet:codex-reviewer) finished on Codex')
+    expect(seen.submitted[0]).toContain('Background agent ensemble-d1 (ensemble:codex-reviewer) finished on Codex')
     expect(seen.files[OUT]).toContain('Found 3 callers.')
   })
 
   test("another hook's drop is not retried: the toast points at the answer on disk", { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on, { drops: ['a policy hook held it'] })
     await start($)
-    await $.tool.call(call({ subagent_type: 'duet:codex-reviewer' }) as never)
+    await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer' }) as never)
     await seen.clock.settle()
     expect(seen.toasts.some(t => t.includes('answer in'))).toBe(true)
     await turnEnds($)
@@ -1511,7 +1511,7 @@ describe('#119: a background answer that Stop dropped', () => {
 
 // #119 gap 1, the owner's choice: the consent answer outlives /clear, /resume and /branch, which reset every atom.
 describe('#119: the Codex consent answer outlives /clear', () => {
-  const review = ($: any) => $.command.run({ command: 'duet', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const review = ($: any) => $.command.run({ command: 'ensemble', args: 'review', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
 
   test('a classic.SessionStart after /clear writes the answer back; one after compaction writes nothing', { options: { codexConsent: 'ask' } }, async ($: any, on: any) => {
     const writes: { key: string; value: unknown }[] = []
@@ -1552,19 +1552,19 @@ describe('#119: a failed git read after an editing run', () => {
   })
 })
 
-// #121 (owner's approval, 2026-10-21): /duet stop <id> and the pane's Stop key. Under the kit process.spawn has no stub,
+// #121 (owner's approval, 2026-10-21): /ensemble stop <id> and the pane's Stop key. Under the kit process.spawn has no stub,
 // so a run takes the one-shot fallback: these pin the answers and the question; the stream stop is a live check.
-describe('#121: /duet stop and the Stop key', () => {
-  const duet = ($: any, args: string) => $.command.run({ command: 'duet', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
-  const pane = ($: any) => $.ui.mount({ plugin: 'duet', surface: 'terminal', component: 'Pane', requestId: 'duet', props: { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
+describe('#121: /ensemble stop and the Stop key', () => {
+  const ensemble = ($: any, args: string) => $.command.run({ command: 'ensemble', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  const pane = ($: any) => $.ui.mount({ plugin: 'ensemble', surface: 'terminal', component: 'Pane', requestId: 'ensemble', props: { title: 'Ensemble', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 120, rows: 40 } })
   const QUESTION = 'Stop d1 (review --uncommitted on Codex)? What Codex already wrote stays.'
   const ONE_SHOT = "d1 runs as a one-shot fallback and can't be stopped; it ends at its timeout."
 
-  test("with nothing running, /duet stop says so, and an unknown id isn't running", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+  test("with nothing running, /ensemble stop says so, and an unknown id isn't running", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
     engine(on)
     await start($)
-    expect((await duet($, 'stop')).text).toBe('No Codex run is running.')
-    expect((await duet($, 'stop d9')).text).toBe("d9 isn't running.")
+    expect((await ensemble($, 'stop')).text).toBe('No Codex run is running.')
+    expect((await ensemble($, 'stop d9')).text).toBe("d9 isn't running.")
   })
 
   test("a running one-shot run is listed, and can't be stopped: the answer says why", { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
@@ -1574,17 +1574,17 @@ describe('#121: /duet stop and the Stop key', () => {
     const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: begun })
     await start($)
     try {
-      expect((await duet($, 'review')).text).toMatch(/^Codex review started/)
+      expect((await ensemble($, 'review')).text).toMatch(/^Codex review started/)
       await started
       await seen.clock.settle()
-      expect((await duet($, 'stop')).text).toBe('Usage: /duet stop <id>. Running now: d1.')
-      expect((await duet($, 'stop d1')).text).toBe(ONE_SHOT)
+      expect((await ensemble($, 'stop')).text).toBe('Usage: /ensemble stop <id>. Running now: d1.')
+      expect((await ensemble($, 'stop d1')).text).toBe(ONE_SHOT)
     } finally {
       release()
     }
   })
 
-  test('the Stop key asks first: Keep it running leaves the run, Stop it answers as /duet stop does', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
+  test('the Stop key asks first: Keep it running leaves the run, Stop it answers as /ensemble stop does', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
     let release!: () => void
     let begun!: () => void
     const started = new Promise<void>(resolve => (begun = resolve))
@@ -1592,7 +1592,7 @@ describe('#121: /duet stop and the Stop key', () => {
     const seen = engine(on, o)
     await start($)
     try {
-      await duet($, 'review')
+      await ensemble($, 'review')
       await started
       await seen.clock.settle()
       let ui = await pane($)
@@ -1621,7 +1621,7 @@ describe('#121: /duet stop and the Stop key', () => {
     const seen = engine(on, { codexHold: new Promise<void>(resolve => (release = resolve)), onCodex: begun })
     await start($)
     try {
-      await duet($, 'review')
+      await ensemble($, 'review')
       await started
       await seen.clock.settle()
       let ui = await pane($)
@@ -1640,7 +1640,7 @@ describe('#121: /duet stop and the Stop key', () => {
   test('the demo shows no Stop key: its rows are samples', { options: { codexConsent: 'allow' } }, async ($: any, on: any) => {
     engine(on)
     await start($)
-    await duet($, 'demo')
+    await ensemble($, 'demo')
     const ui = await pane($)
     expect(await ui.find({ key: 'stop' })).toBeUndefined()
     await ui.unmount()

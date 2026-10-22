@@ -1,4 +1,6 @@
-# Duet: SPEC
+# Ensemble: SPEC
+
+> Named duet until 0.4.0 (#128). The changes before 0.4.0 keep duet's names, as they were written.
 
 > An orchestration mod that delegates work between Claude Code and Codex. A setting assigns
 > subagent types to Codex; when Claude spawns one of those, Codex does the work instead and its
@@ -1049,4 +1051,71 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
     - **Checked on both builds:** a review that finished still reported its verdict (`d1 review: fake codex answer: hi`), and a stop read `d2 review stopped: you stopped it from duet`.
     - This is wiring only: the kit has no streaming spawn.
   - #126 was retargeted from #123's branch to `main` after #123 merged, so it closes #121.
+
+## Change 0.4.0 (2026-10-22)
+
+> Issue #128, the owner's choices (2026-10-22, on the issue): rename duet to ensemble; the person moves `~/.claude/duet-data`; the old `duet:` names end at the rename; options are entered again; version 0.4.0, with #111 moved to 0.5.0. Issue #129, the owner's choices: remove the whole `custom` provider, inside this change.
+
+- **Why:**
+  - Anthropic is releasing a product named Duet (the owner, 2026-10-21).
+  - `$.command.register` throws for a name a built-in command holds (`docs/research/Mods/Build/Use-the-mods-API.md`), and duet registered `/duet` behind `.catch(() => undefined)`. A built-in `/duet` would have taken the command with no message.
+  - The custom provider's key (#129): the owner did not ask for a custom endpoint. Claude added it in Change 0.3.0's provider table (`1454957`), and it was used only by the key test.
+- **What changes:**
+  1. **The name, everywhere it is used:**
+     - the plugin, its `/ensemble` command, the panes (`ensemble`, `ensemble-config`, `ensemble-providers`) and the `$.state` atoms;
+     - the roles (`ensemble:codex-advisor`, `-reviewer`, `-implementer`) and the agent ids (`ensemble-<n>`);
+     - the data folder (`~/.claude/ensemble-data/`) and the key-file guard's patterns;
+     - the store keys (`ensemble:providers:tests:<id>`), the config rows (`ensemble.<field>`) and every message.
+     - Files: `mods/ensemble/`, `hooks/ensemble-logic.ts`, `hooks/ensemble-providers-logic.ts` and their tests.
+  2. **No migration code.** A mod can't move or delete a file (`$.fs` has no rename or delete). `migrationNoteOf` (pure) and a detached check at `session.start` raise a 15-second toast, once a session: the `mv` command while only `~/.claude/duet-data` is there; once both folders are, copy without overwriting (`cp -an`) and then delete the old one; and when both hold a `.env`, merge duet's key lines by hand first (round 2). Nothing is read from either folder, and the key-file guard covers both while the old one exists (review round 1, below).
+  3. **No custom provider (#129):** its row, `DUET_CUSTOM_API_KEY`, `apiCustomUrl` and `apiCustomModel` are gone. `isLocalBaseUrl` goes too, and `baseUrlOf(p)` and `authTextOf(p, k)` lose their custom argument. `isAllowedBaseUrl` still checks every table URL.
+  4. **Routes are promised for 0.5.0**, not 0.4.0, in the signed-in key test's reason and the providers pane (#111 moved).
+  5. **issue-forge 0.7.3:** `isInlineAnswer` (pure) treats an `ensemble-<n>` id, or a codex model, as answered in-line. The `duet-` prefix ends. The routed-red refusal and the `redAgentType` text name ensemble.
+- **Not changed:**
+  - this SPEC's earlier changes, `gotchas.md` and `conventions.md` attributions, and the mod-builder test fixtures that use `duet` as a sample name;
+  - the stored test result's `host` field, still written;
+  - the code paths themselves, apart from the custom provider.
+- **What gets touched:**
+  - this mod's files, `README.md` (a "Moving from duet" section, the options and reach rows) and this SPEC;
+  - `mods/issue-forge` (logic, register, tests, README, SPEC, 0.7.3);
+  - the marketplace entries, and the repo docs that describe the mod as it is.
+  - Reach: one new `$.fs.exists` pair at start; the custom endpoint's host and key variable are gone.
+- **TDD:**
+  - **Move** `2d81262`: the folder and files only, 374 tests pass.
+  - **Red** `199760b`: the tests say ensemble, plus `migrationNoteOf`, the toast, and issue-forge's `isInlineAnswer`.
+    - 202 of 382 failed: 86 by assertion and 115 as the kit's "no implementation for command.run/ui.render" (nothing answered `/ensemble` yet).
+    - 1 TypeError. None was an import or syntax error.
+  - **Red** `dc5b0e3`: issue-forge's refusal names ensemble.
+  - **Test fix** `8a293d9`: ensemble's key-file path is 4 characters longer, so the unreadable-file test mounts 130 columns.
+  - **Green** `91d349d`.
+  - **Red** `87ec656` and **green** `5e81bae`: no custom provider (5 failed by assertion).
+  - **Red** `a35893b` and **green** `2a70363`: routes in 0.5.0 (2 failed by assertion).
+- **Version:** 0.4.0 (minor: renames break installs, saved options and type names).
+- **PR #130 review round 1** (2026-10-22): Codex's two P1s plus a `/code-review` of 12 findings that included them, each reproduced on this branch. The advisor's call: fix ten here, correct one in issue-forge's SPEC, acknowledge one.
+  - **Codex 4344331748 (P1), the old key file unguarded:** fixed. The path checks and the `@`-mention matcher take `(?:duet|ensemble)-data`.
+    - The same probe, through `keyPathReaches`, `namesKeyFile`, `namesKeyFolder` and `searchCoversKeyFile`: on main, `duet-data` true and `ensemble-data` false; here both true, and `other-data` false.
+    - Kit-checked only: no live probe against a real key file.
+    - Not extended to a folder nested by `mv` (`ensemble-data/duet-data/.env`): the guard is a tripwire (the owner's stopping rule), and the instructions now avoid the nesting.
+  - **Codex 4344331752 (P1), the root README's install cell:** fixed; it reads `ensemble@claudemod`, then `/ensemble demo`.
+  - **`mv` nests the folder once `ensemble-data` exists:** the both-folders toast and the README say `cp -an …/. …/` and then delete; the README says to move before any run.
+  - **Role names cut:** "ensemble:" is four characters longer than "duet:". The stats key column is now 38 wide, a medium row's type label 22 and a wide one's 24.
+  - **The toast at every reload** (each `/config` write reloads the module): once a session, through an `oldDataNoted` atom, which a reload keeps.
+  - **A refused `/ensemble` was swallowed by `.catch(() => undefined)`:** a toast now names it.
+  - **Docs:**
+    - the README's `D U E T` sketch, the providers paragraph's "(0.4.0)" (now 0.5.0), and the README and Store row's base URL (recorded, not read since 0.4.0);
+    - "a ensemble" changed to "an ensemble" in the option text, the README, two comments and three test names;
+    - a stale "fifteen" comment.
+  - **The `host` field:** kept and still written, now documented as not read.
+  - **issue-forge's `isInlineAnswer`:** the `codex` model test already caught ensemble's answers, so its SPEC reason is corrected. The function stays, tested.
+  - **Red with 115 non-assertion failures (`199760b`):** acknowledged. A stub `/ensemble` hook in that commit would have made them assertion failures; the commits stand.
+  - **Commits:** red `3361a8c` (9 of 383 failed, all by assertion); green `679ec3a` (guard), `92f4ce6` (toast text), `c42a448` (widths), `d32018b` (once a session), `98c51d9` (registration notice).
+- **PR #130 review round 2** (Codex at `e4e5ebe`, 2026-10-22):
+  - **Codex 4347084033 (P1), keys lost when both folders hold a `.env`:** fixed.
+    - The cause: `cp -an` leaves an existing `.env` as it is, so "copy, then delete" would discard duet's keys. Reproduced with fake files: after `cp -an`, the new `.env` held only its own line.
+    - The fix: `migrationNoteOf` takes a third input, both key files present. Its note says to add duet's key lines by hand, or with `/ensemble provider key <id>`, before deleting the old folder.
+    - `noteOldData` checks the two `.env` files' existence only, and only when both folders exist. They are never read: no key-merging code, by the owner's choice on #128.
+    - `-n` stays: ensemble writes run files under `sessions/<id>/`, so `.env` is the only clash it guards against, and GNU's `--update=none` isn't portable.
+    - Red `782a7a0` (2 of 386 failed, by assertion), green `8924ea6`.
+  - **Codex 4347084029 (P2), the reach table showed the old matcher:** the Hooks and Gating rows now show `prompt.mention{path=/(?:duet|ensemble)-data[\\/]\.env$/}` and duet's old folder. The Files row gains the two `.env` existence checks. Render-checked with GitHub's Markdown API: 13 rows, two cells each.
+  - README step 2 lists the three cases.
 

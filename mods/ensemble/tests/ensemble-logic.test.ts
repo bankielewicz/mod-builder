@@ -7,8 +7,8 @@ import {
   footerOf, statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, configText, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
-} from '../hooks/duet-logic'
-import * as logic from '../hooks/duet-logic'
+} from '../hooks/ensemble-logic'
+import * as logic from '../hooks/ensemble-logic'
 import type { Task } from '../types'
 import { BLANKED, PASSED_THROUGH } from './env-names'
 
@@ -29,19 +29,17 @@ tools: Read, Grep, Glob
 
 You are a read-only code explorer.`
 
-describe('0.3.1 (issue #115): /duet config text', () => {
-  test('a refused apiCustomUrl never echoes a password, and names every local host it allows', () => {
-    const r = coerceConfigValue(findConfigField('customurl')!, 'https://bob:hunter2@gw.example.com/v1')
-    expect('error' in r && r.error.includes('hunter2')).toBe(false)
-    expect('error' in r && r.error).toContain('[::1]')
-    expect('error' in r && r.error).toContain('https://***@gw.example.com/v1')
-  })
-
-  test('/duet config list keeps its columns aligned for the wider aliases', () => {
+describe('0.3.1 (issue #115): /ensemble config text', () => {
+  test('/ensemble config list keeps its columns aligned for the wider aliases', () => {
     const lines = configText({}).split('\n')
     const at = (field: string) => lines.find(l => l.includes(` ${field} `))!.indexOf(field)
-    expect(at('apiCustomUrl')).toBe(at('codexWritePaths'))
-    expect(at('apiCustomModel')).toBe(at('codexWritePaths'))
+    for (const field of ['codexAgents', 'codexSandbox', 'codexModel', 'maxConcurrent', 'timeoutMinutes', 'codexConsent', 'codexRunMode', 'codexFsScope']) {
+      expect(at(field)).toBe(at('codexWritePaths'))
+    }
+    // #129: the custom endpoint's two options are gone.
+    expect(lines.some(l => l.includes('apiCustom'))).toBe(false)
+    expect(findConfigField('customurl')).toBeUndefined()
+    expect(findConfigField('custommodel')).toBeUndefined()
   })
 })
 
@@ -150,10 +148,10 @@ describe('codex process', () => {
 
 describe('agent result', () => {
   test('has every field of the Agent completed record', () => {
-    const r = agentResult({ id: 'd1', prompt: 'p', text: 'ok', footer: '[duet d1 · codex]', durationMs: 1234.6, run: foldAll(REAL_JSONL), model: '' })
+    const r = agentResult({ id: 'd1', prompt: 'p', text: 'ok', footer: '[ensemble d1 · codex]', durationMs: 1234.6, run: foldAll(REAL_JSONL), model: '' })
     expect(r.status).toBe('completed')
-    expect(r.agentId).toBe('duet-d1')
-    expect(r.content[0]?.text).toBe('ok\n\n[duet d1 · codex]')
+    expect(r.agentId).toBe('ensemble-d1')
+    expect(r.content[0]?.text).toBe('ok\n\n[ensemble d1 · codex]')
     expect(r.totalDurationMs).toBe(1235)
     expect(r.totalTokens).toBe(22064)
     expect(r.totalToolUseCount).toBe(0)
@@ -224,8 +222,8 @@ describe('Codex model catalog', () => {
 
 describe('0.2.0 rules', () => {
   const opts = (raw: Record<string, unknown> = {}) => readOptions({ codexAgents: '*', ...raw })
-  const advisor = roleOf('duet:codex-advisor')
-  const reviewer = roleOf('duet:codex-reviewer')
+  const advisor = roleOf('ensemble:codex-advisor')
+  const reviewer = roleOf('ensemble:codex-reviewer')
 
   test('routeOf: roles go to Codex even named; codexAgents types skip named, isolated and nested calls', () => {
     const o = opts()
@@ -233,18 +231,18 @@ describe('0.2.0 rules', () => {
     expect(routeOf(o, { subagent_type: 'general-purpose', isolation: 'worktree' })).toEqual({ to: 'claude' })
     expect(routeOf(o, { subagent_type: 'general-purpose', agentId: 'a1' })).toEqual({ to: 'claude' })
     expect(routeOf(o, { subagent_type: 'general-purpose' })).toEqual({ to: 'codex', role: null })
-    expect(routeOf(readOptions({ codexAgents: '' }), { subagent_type: 'duet:codex-reviewer', name: 'r' })).toEqual({ to: 'codex', role: reviewer })
-    expect(routeOf(o, { subagent_type: 'duet:codex-advisor', agentId: 'a1' })).toMatchObject({ to: 'deny' })
-    expect(routeOf(o, { subagent_type: 'duet:codex-advisor', isolation: 'remote' })).toMatchObject({ to: 'deny' })
-    expect(roleOf('duet:nope')).toBeNull()
+    expect(routeOf(readOptions({ codexAgents: '' }), { subagent_type: 'ensemble:codex-reviewer', name: 'r' })).toEqual({ to: 'codex', role: reviewer })
+    expect(routeOf(o, { subagent_type: 'ensemble:codex-advisor', agentId: 'a1' })).toMatchObject({ to: 'deny' })
+    expect(routeOf(o, { subagent_type: 'ensemble:codex-advisor', isolation: 'remote' })).toMatchObject({ to: 'deny' })
+    expect(roleOf('ensemble:nope')).toBeNull()
     expect(roleOf('codex-advisor')).toBeNull()
   })
 
   test('routesText states the exceptions, each role mode, and drops them when nothing is routed', () => {
-    expect(routesText(opts())).toBe('codex ← every subagent type (named, isolated and nested calls stay on Claude), background · roles duet:codex-advisor (waits), duet:codex-reviewer (background) · sandbox read-only · max 2')
-    expect(routesText(readOptions({ codexAgents: '' }))).toBe('codex ← nothing routed · roles duet:codex-advisor (waits), duet:codex-reviewer (background) · sandbox read-only · max 2')
+    expect(routesText(opts())).toBe('codex ← every subagent type (named, isolated and nested calls stay on Claude), background · roles ensemble:codex-advisor (waits), ensemble:codex-reviewer (background) · sandbox read-only · max 2')
+    expect(routesText(readOptions({ codexAgents: '' }))).toBe('codex ← nothing routed · roles ensemble:codex-advisor (waits), ensemble:codex-reviewer (background) · sandbox read-only · max 2')
     const w = readOptions({ codexAgents: 'Explore', codexSandbox: 'workspace-write', codexRunMode: 'wait, Plan=background, advisor=background' })
-    expect(routesText(w)).toBe('codex ← Explore (named, isolated and nested calls stay on Claude), waits; Plan background · roles duet:codex-advisor (background), duet:codex-reviewer (background), duet:codex-implementer (waits) · sandbox workspace-write · max 2 · editing runs wait')
+    expect(routesText(w)).toBe('codex ← Explore (named, isolated and nested calls stay on Claude), waits; Plan background · roles ensemble:codex-advisor (background), ensemble:codex-reviewer (background), ensemble:codex-implementer (waits) · sandbox workspace-write · max 2 · editing runs wait')
   })
 
   test('routesLines fit the pane: routes with exceptions, then roles and limits', () => {
@@ -258,10 +256,10 @@ describe('0.2.0 rules', () => {
 
   test('parseRunModes: a default and overrides; role aliases; bad parts named', () => {
     expect(parseRunModes('')).toEqual({ fallback: 'background', overrides: {} })
-    expect(parseRunModes('wait, advisor=background, Explore=wait')).toEqual({ fallback: 'wait', overrides: { 'duet:codex-advisor': 'background', Explore: 'wait' } })
+    expect(parseRunModes('wait, advisor=background, Explore=wait')).toEqual({ fallback: 'wait', overrides: { 'ensemble:codex-advisor': 'background', Explore: 'wait' } })
     expect(parseRunModes('foreground')).toEqual({ fallback: 'wait', overrides: {} })
-    expect(typeKey('codex-reviewer')).toBe('duet:codex-reviewer')
-    expect(typeKey('Duet:Codex-Reviewer')).toBe('duet:codex-reviewer')
+    expect(typeKey('codex-reviewer')).toBe('ensemble:codex-reviewer')
+    expect(typeKey('Ensemble:Codex-Reviewer')).toBe('ensemble:codex-reviewer')
     expect(typeKey('general-purpose')).toBe('general-purpose')
     expect(parseRunModes('later')).toEqual({ error: 'codexRunMode: "later" is not wait or background.' })
     expect(parseRunModes('advisor=soon')).toEqual({ error: 'codexRunMode: "advisor=soon" needs wait or background after =.' })
@@ -283,14 +281,14 @@ describe('0.2.0 rules', () => {
 
   test('modeOf and runsInBackground: override, then role, then default; an editing run never', () => {
     const o = readOptions({ codexRunMode: 'background, Explore=wait' })
-    expect(modeOf(o, 'duet:codex-advisor', advisor)).toBe('wait')
-    expect(modeOf(o, 'duet:codex-reviewer', reviewer)).toBe('background')
+    expect(modeOf(o, 'ensemble:codex-advisor', advisor)).toBe('wait')
+    expect(modeOf(o, 'ensemble:codex-reviewer', reviewer)).toBe('background')
     expect(modeOf(o, 'Explore', null)).toBe('wait')
     expect(modeOf(o, 'general-purpose', null)).toBe('background')
-    expect(modeOf(readOptions({ codexRunMode: 'background, advisor=background' }), 'duet:codex-advisor', advisor)).toBe('background')
+    expect(modeOf(readOptions({ codexRunMode: 'background, advisor=background' }), 'ensemble:codex-advisor', advisor)).toBe('background')
     expect(runsInBackground(o, 'read-only', 'general-purpose', null)).toBe(true)
     expect(runsInBackground(o, 'workspace-write', 'general-purpose', null)).toBe(false)
-    expect(runsInBackground(o, 'read-only', 'duet:codex-advisor', advisor)).toBe(false)
+    expect(runsInBackground(o, 'read-only', 'ensemble:codex-advisor', advisor)).toBe(false)
   })
 
   test('roles: implementer only under workspace-write; descriptions match the mode', () => {
@@ -303,18 +301,18 @@ describe('0.2.0 rules', () => {
   })
 
   test('deliveryText: success leads with the agent id; failure says it did not fall back', () => {
-    const base = { id: 'd3', label: 'duet:codex-reviewer', model: 'gpt-6.1-sol', sandbox: 'read-only' as const, durationMs: 134_000, tokens: 61_000, text: 'verdict: approve', footer: '[duet d3 · codex]', failure: '' }
-    expect(deliveryText(base)).toBe('Background agent duet-d3 (duet:codex-reviewer) finished on Codex · gpt-6.1-sol · read-only · 2m14s · 61k tok\n\nverdict: approve\n\n[duet d3 · codex]')
+    const base = { id: 'd3', label: 'ensemble:codex-reviewer', model: 'gpt-6.1-sol', sandbox: 'read-only' as const, durationMs: 134_000, tokens: 61_000, text: 'verdict: approve', footer: '[ensemble d3 · codex]', failure: '' }
+    expect(deliveryText(base)).toBe('Background agent ensemble-d3 (ensemble:codex-reviewer) finished on Codex · gpt-6.1-sol · read-only · 2m14s · 61k tok\n\nverdict: approve\n\n[ensemble d3 · codex]')
     expect(deliveryText({ ...base, model: '' })).toContain('finished on Codex · default model ·')
-    expect(deliveryText({ ...base, failure: 'timed out after 20m' })).toBe('Background agent duet-d3 (duet:codex-reviewer) failed on Codex: timed out after 20m. It did not run on Claude either.')
+    expect(deliveryText({ ...base, failure: 'timed out after 20m' })).toBe('Background agent ensemble-d3 (ensemble:codex-reviewer) failed on Codex: timed out after 20m. It did not run on Claude either.')
   })
 
   test('deliveryText: a failure keeps the cut-short search note on its own line (PR #48 review); an empty note adds nothing', () => {
-    const note = 'duet: the search for the reader agent definition was cut short at 8 folders deep; a definition past that was not read, so Claude may use a different one.'
+    const note = 'ensemble: the search for the reader agent definition was cut short at 8 folders deep; a definition past that was not read, so Claude may use a different one.'
     const failed = { id: 'd3', label: 'reader', model: '', sandbox: 'read-only' as const, durationMs: 0, tokens: 0, text: '', footer: '', failure: 'timed out after 20m', searchNote: note }
     const plain = { ...failed, searchNote: '' }
-    expect(deliveryText(failed)).toBe(`Background agent duet-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.\n${note}`)
-    expect(deliveryText(plain)).toBe('Background agent duet-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.')
+    expect(deliveryText(failed)).toBe(`Background agent ensemble-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.\n${note}`)
+    expect(deliveryText(plain)).toBe('Background agent ensemble-d3 (reader) failed on Codex: timed out after 20m. It did not run on Claude either.')
   })
 
   test('lostOnReload marks only running Codex rows this module did not start; liveCount counts agent runs', () => {
@@ -439,7 +437,7 @@ describe('third review round: tool lists in any YAML form', () => {
     expect(agent('tools: Read, Bash(echo "a # b"), Edit')?.tools).toEqual(['Read', 'Bash'])
   })
 
-  test('a list value duet cannot read runs read-only', () => {
+  test('a list value ensemble cannot read runs read-only', () => {
     for (const frontmatter of [
       'disallowedTools: >\n  Write, Edit, NotebookEdit, MultiEdit',
       'disallowedTools: |\n  Write',
@@ -468,7 +466,7 @@ describe('third review round: tool lists in any YAML form', () => {
 describe('fourth review round: what the consent says Codex can reach', () => {
   test('both sandboxes say Codex can read beyond the project; only workspace-write mentions writes', () => {
     // 0.3.0: under codexFsScope anything the question names the provider key file, which Codex can read like any file.
-    expect(consentText('/w/proj', 'read-only', '~/.claude/duet-data/.env')).toContain('your provider key file ~/.claude/duet-data/.env')
+    expect(consentText('/w/proj', 'read-only', '~/.claude/ensemble-data/.env')).toContain('your provider key file ~/.claude/ensemble-data/.env')
     expect(consentText('/w/proj', 'read-only')).not.toContain('key file')
     const ro = consentText('/w/proj', 'read-only')
     expect(ro).toContain('any file your user account can read, not only /w/proj')
@@ -485,19 +483,19 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
   const HOME = '/home/u'
   const fsScope = 'project' as never
   const project = (o: Record<string, unknown> = {}) => codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/proj', home: HOME, fsScope, ...o } as never)
-  /** The `-c permissions.duet-mod-fs-scope.filesystem=…` value, or '' when the argv has none. */
-  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+  /** The `-c permissions.ensemble-mod-fs-scope.filesystem=…` value, or '' when the argv has none. */
+  const filesystem = (argv: string[]) => argv.find(a => a.startsWith('permissions.ensemble-mod-fs-scope.filesystem=')) ?? ''
   /** One `"path"="access"` entry of the table, the path as a TOML basic string (JSON's escapes for \ and " are TOML's). */
   const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
   const count = (text: string, what: string) => text.split(what).length - 1
 
-  test('project scope adds a duet profile as the default and its filesystem table, and sets the sandbox with -c sandbox_mode, never -s (codex exec 0.162.1 drops the profile under -s)', () => {
+  test('project scope adds an ensemble profile as the default and its filesystem table, and sets the sandbox with -c sandbox_mode, never -s (codex exec 0.162.1 drops the profile under -s)', () => {
     const argv = project()
-    expect(argv).toContain('default_permissions="duet-mod-fs-scope"')
+    expect(argv).toContain('default_permissions="ensemble-mod-fs-scope"')
     const fs = filesystem(argv)
-    expect(fs.startsWith('permissions.duet-mod-fs-scope.filesystem={')).toBe(true)
+    expect(fs.startsWith('permissions.ensemble-mod-fs-scope.filesystem={')).toBe(true)
     expect(fs.endsWith('}')).toBe(true)
-    const at = [argv.indexOf('default_permissions="duet-mod-fs-scope"'), argv.indexOf(fs)]
+    const at = [argv.indexOf('default_permissions="ensemble-mod-fs-scope"'), argv.indexOf(fs)]
     for (const i of at) expect(argv[i - 1]).toBe('-c')
     const rest = argv.filter((_, i) => !at.some(a => i === a || i === a - 1))
     expect(rest).toEqual(['codex', 'exec', '--json', '--skip-git-repo-check', '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"', '-C', '/w/proj', '-'])
@@ -577,7 +575,7 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
   test('a review gets the same profile read-only, keeps its flags, and still ends with its target; anything scope or none leaves it as it was', () => {
     const scope = { fsScope, cwd: '/w/proj', home: HOME } as never
     const base = reviewArgv({ kind: 'base', ref: 'main' }, '', scope)
-    expect(base).toContain('default_permissions="duet-mod-fs-scope"')
+    expect(base).toContain('default_permissions="ensemble-mod-fs-scope"')
     const fs = filesystem(base)
     expect(fs).toContain(pair('/w/proj', 'read'))
     expect(fs).toContain(pair('/home/u/.codex/packages', 'read'))
@@ -612,14 +610,14 @@ describe('issue 3 part B: codexFsScope and codexWritePaths are read defensively'
 })
 
 describe('PR #39 review: the permission profile has its own name', () => {
-  test('the profile is not named duet, so a [permissions.duet] in a loaded Codex config cannot merge into it and widen reads', () => {
+  test('the profile is not named ensemble, so a [permissions.ensemble] in a loaded Codex config cannot merge into it and widen reads', () => {
     const argv = codexArgv({ sandbox: 'read-only', model: '', cwd: '/w/proj', fsScope: 'project' } as never)
-    expect(argv).toContain('default_permissions="duet-mod-fs-scope"')
-    expect(argv.some(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem={'))).toBe(true)
-    expect(argv).not.toContain('default_permissions="duet"')
-    expect(argv.some(a => a.startsWith('permissions.duet.'))).toBe(false)
+    expect(argv).toContain('default_permissions="ensemble-mod-fs-scope"')
+    expect(argv.some(a => a.startsWith('permissions.ensemble-mod-fs-scope.filesystem={'))).toBe(true)
+    expect(argv).not.toContain('default_permissions="ensemble"')
+    expect(argv.some(a => a.startsWith('permissions.ensemble.'))).toBe(false)
     const review = reviewArgv({ kind: 'uncommitted' }, '', { cwd: '/w/proj', fsScope: 'project' } as never)
-    expect(review).toContain('default_permissions="duet-mod-fs-scope"')
+    expect(review).toContain('default_permissions="ensemble-mod-fs-scope"')
   })
 })
 
@@ -636,12 +634,12 @@ describe('PR #39 review: a malformed codexWritePaths fails closed', () => {
 
   test('an empty folder list narrows to nothing: workspace-write leaves the project read-only, with no folder writable', () => {
     const argv = codexArgv({ sandbox: 'workspace-write', model: '', cwd: '/w/proj', fsScope: 'project', writePaths: [] } as never)
-    const fs = argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+    const fs = argv.find(a => a.startsWith('permissions.ensemble-mod-fs-scope.filesystem=')) ?? ''
     expect(fs).toContain('"/w/proj"="read"')
     expect(fs).not.toContain('="write"')
   })
 
-  test('/duet config paths rejects a malformed value and keeps a good one', () => {
+  test('/ensemble config paths rejects a malformed value and keeps a good one', () => {
     const f = findConfigField('paths')!
     expect('error' in coerceConfigValue(f, 'red-test-writer:tests')).toBe(true)
     expect(coerceConfigValue(f, 'red-test-writer=tests;test')).toEqual({ value: 'red-test-writer=tests;test' })
@@ -662,7 +660,7 @@ describe('PR #39 review: a write folder must land strictly inside the project', 
 })
 
 describe('PR #39 review: git\'s own folders are readable in a linked worktree', () => {
-  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.ensemble-mod-fs-scope.filesystem=')) ?? ''
   test('reads outside the project are added read-only; ones inside the project, repeated or not absolute are not', () => {
     const reads = ['/repo/.git/worktrees/wt', '/repo/.git', '/repo/.git', '/w/wt/.git', 'abc1234']
     for (const sandbox of ['read-only', 'workspace-write']) {
@@ -702,12 +700,12 @@ describe('PR #39 review: Codex\'s real install folder', () => {
 })
 
 describe('PR #39 review: the gaps /code-review listed', () => {
-  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.ensemble-mod-fs-scope.filesystem=')) ?? ''
 
   test('writePathsOf: a malformed option gives no folder, a named type or role alias its folders, an unnamed type undefined', () => {
     expect(writePathsOf({ error: 'bad' }, 'red-test-writer')).toEqual([])
     const w = readOptions({ codexWritePaths: 'implementer=src, red-test-writer=tests' }).writePaths
-    expect(writePathsOf(w, 'duet:codex-implementer')).toEqual(['src'])
+    expect(writePathsOf(w, 'ensemble:codex-implementer')).toEqual(['src'])
     expect(writePathsOf(w, 'codex-implementer')).toEqual(['src'])
     expect(writePathsOf(w, 'red-test-writer')).toEqual(['tests'])
     expect(writePathsOf(w, 'impl-writer')).toBe(undefined)
@@ -736,7 +734,7 @@ describe('PR #39 review: the gaps /code-review listed', () => {
 })
 
 describe('issue 3 part B: the scope help matches what was checked', () => {
-  test('the /duet config help for scope says it was checked through codex exec on Codex 0.162.1, not that it is unchecked', () => {
+  test('the /ensemble config help for scope says it was checked through codex exec on Codex 0.162.1, not that it is unchecked', () => {
     const help = findConfigField('scope')!.help
     expect(help).toContain('codex exec')
     expect(help).toContain('0.162.1')
@@ -750,7 +748,7 @@ describe('issue 3 part B: the scope help matches what was checked', () => {
 })
 
 describe('PR #39 review round 2: a write folder never reaches what Codex protects', () => {
-  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.duet-mod-fs-scope.filesystem=')) ?? ''
+  const fsOf = (argv: string[]) => argv.find(a => a.startsWith('permissions.ensemble-mod-fs-scope.filesystem=')) ?? ''
 
   test('isProtectedPath is true for a .git, .codex or .agents folder under the root and anything below one; never for other names or another root', () => {
     for (const path of ['/w/.git', '/w/.git/hooks', '/w/.codex', '/w/.codex/config.toml', '/w/.agents', '/w/.agents/skills', '/w/vendor/lib/.git/hooks']) expect(isProtectedPath('/w', path)).toBe(true)
@@ -769,7 +767,7 @@ describe('PR #39 review round 2: only a failed command with a bwrap line is a sa
   const cmd = (aggregated_output: string, exit_code: number | null) => ({ type: 'item.completed', item: { type: 'command_execution', command: 'x', aggregated_output, exit_code, status: exit_code ? 'failed' : 'completed' } })
   const fold = (...items: object[]) => foldAll([...items, { type: 'item.completed', item: { type: 'agent_message', text: 'answer' } }].map(l => JSON.stringify(l)).join('\n'))
 
-  test('a command that succeeds, whose output quotes the bwrap line (a git diff or cat of duet itself), leaves the run done', () => {
+  test('a command that succeeds, whose output quotes the bwrap line (a git diff or cat of ensemble itself), leaves the run done', () => {
     const quoted = "+      const unrunnable = /bwrap: execvp (\\S+): No such file or directory/\n  'bwrap: execvp /opt/codex/bin/codex: No such file or directory'\n"
     const run = fold(cmd(quoted, 0))
     expect(run.failure).toBe('')
@@ -799,11 +797,11 @@ describe('PR #39 review round 2: the profile table and its name', () => {
 
   test('a nonce makes the profile name one no config can know; default_permissions names that profile; the nonce keeps letters and digits only', () => {
     const argv = codexArgv({ sandbox: 'read-only', model: '', cwd: '/w', fsScope: 'project', nonce: 'ab12-CD34' } as never)
-    expect(argv).toContain('default_permissions="duet-mod-fs-scope-ab12CD34"')
-    expect(tableOf(argv).startsWith('permissions.duet-mod-fs-scope-ab12CD34.filesystem={')).toBe(true)
+    expect(argv).toContain('default_permissions="ensemble-mod-fs-scope-ab12CD34"')
+    expect(tableOf(argv).startsWith('permissions.ensemble-mod-fs-scope-ab12CD34.filesystem={')).toBe(true)
     const review = reviewArgv({ kind: 'uncommitted' }, '', { cwd: '/w', fsScope: 'project', nonce: 'x.y"z' } as never)
-    expect(review).toContain('default_permissions="duet-mod-fs-scope-xyz"')
-    expect(review.some(a => a.startsWith('permissions.duet-mod-fs-scope-xyz.filesystem='))).toBe(true)
+    expect(review).toContain('default_permissions="ensemble-mod-fs-scope-xyz"')
+    expect(review.some(a => a.startsWith('permissions.ensemble-mod-fs-scope-xyz.filesystem='))).toBe(true)
   })
 })
 
@@ -842,8 +840,8 @@ describe('PR #39 review round 2: a dropped write folder is reported', () => {
 describe('the footer names the model', () => {
   test('a set model follows codex in the footer; none leaves codex alone', () => {
     const base = { id: 'x1', model: '', sandbox: 'read-only' as const, base: 'abc1234', candidate: '' }
-    expect(footerOf({ ...base, model: 'gpt-5.5' })).toContain('[duet x1 · codex gpt-5.5 · sandbox read-only')
-    expect(footerOf(base)).toContain('[duet x1 · codex · sandbox read-only')
+    expect(footerOf({ ...base, model: 'gpt-5.5' })).toContain('[ensemble x1 · codex gpt-5.5 · sandbox read-only')
+    expect(footerOf(base)).toContain('[ensemble x1 · codex · sandbox read-only')
   })
 })
 
@@ -897,7 +895,7 @@ describe('issue 4: pickAgent resolves a custom agent by Claude\'s rules', () => 
   })
 
   test('a name or description whose value starts on the next indented line is read, as Claude reads it (PR #43 review)', () => {
-    // Probed on 2.1.299 and 2.1.300: Claude loads these; duet read each value as empty and skipped the file.
+    // Probed on 2.1.299 and 2.1.300: Claude loads these; ensemble read each value as empty and skipped the file.
     const nextLine = definition('name:\n  general-purpose\ndescription:\n  Reads things\ntools: Read', 'Only reads.')
     const def = pick([nextLine], 'general-purpose')
     expect(def?.body).toBe('Only reads.')
@@ -969,9 +967,9 @@ describe('issue 44: a search cut short runs read-only (PR #48 review)', () => {
 
 describe('PR #52 review: a dismissed consent question is not "nobody could be asked"', () => {
   // What $.ui.ask rejects with, probed live on 2.1.300: on Esc, and under claude -p.
-  const ESC = new Error("duet: $.ui.ask: no answer (The user doesn't want to proceed with this tool use. The tool use was rejected)")
-  const HEADLESS = new Error('duet: $.tool.call: no tool named "AskUserQuestion" in this session')
-  const NOBODY = 'nobody could be asked to allow sending this repo to Codex (set duet codexConsent to allow for headless runs)'
+  const ESC = new Error("ensemble: $.ui.ask: no answer (The user doesn't want to proceed with this tool use. The tool use was rejected)")
+  const HEADLESS = new Error('ensemble: $.tool.call: no tool named "AskUserQuestion" in this session')
+  const NOBODY = 'nobody could be asked to allow sending this repo to Codex (set ensemble codexConsent to allow for headless runs)'
   const refusal = (err: unknown) => ((logic as Record<string, unknown>).consentRefusal as ((e: unknown) => string) | undefined)?.(err)
 
   test('a question that got no answer was dismissed and is asked again; one that could not be asked says how to allow headless runs', () => {
@@ -987,7 +985,7 @@ describe('issue 6: the fallback cap is documented in the config help and shown o
   const NOTE = 'fallback: stops at 10m (timeoutMinutes 20)'
   const row = (over: Partial<Task> = {}): Task => ({ id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'Explore', model: '', status: 'running', startedAt: 0, endedAt: null, tokens: 0, description: 'Find callers', detail: '', envelope: null, ...over })
 
-  test('the timeoutMinutes help, shown by /duet config list and the config pane, says a one-shot fallback run stops at 10 minutes', () => {
+  test('the timeoutMinutes help, shown by /ensemble config list and the config pane, says a one-shot fallback run stops at 10 minutes', () => {
     const help = findConfigField('timeout')!.help
     expect(help).toMatch(/one-shot/)
     expect(help).toMatch(/10 minutes/)
@@ -1025,7 +1023,7 @@ describe('issue 6 review (Codex P2): the fallback cap is readable where the conf
     expect(help()).toMatch(/10 minutes (max|at most)/)
   })
 
-  test('/duet config shows the cap on the timeoutMinutes row when the timeout is longer than it, and not otherwise', () => {
+  test('/ensemble config shows the cap on the timeoutMinutes row when the timeout is longer than it, and not otherwise', () => {
     expect(timeoutRow(undefined)).toMatch(/one-shot fallback.*10 minutes/)
     expect(timeoutRow({ timeoutMinutes: 20 })).toMatch(/one-shot fallback.*10 minutes/)
     expect(timeoutRow({ timeoutMinutes: 10 })).not.toMatch(/one-shot/)
@@ -1033,7 +1031,7 @@ describe('issue 6 review (Codex P2): the fallback cap is readable where the conf
   })
 })
 
-describe('issue 7: mergeLogs joins the per-session run logs for /duet stats', () => {
+describe('issue 7: mergeLogs joins the per-session run logs for /ensemble stats', () => {
   const line = (provider: 'codex' | 'claude', type: string, ms: number, tokens: number, ok: boolean) => ({ id: 'x', at: 0, provider, kind: 'agent' as const, type, model: '', ms, tokens, ok })
   const text = (...lines: ReturnType<typeof line>[]) => lines.reduce((log, l) => appendLog(log, l), '')
   const mergeLogs = (texts: string[]): string => {
@@ -1073,7 +1071,7 @@ describe('issue 7: mergeLogs joins the per-session run logs for /duet stats', ()
   })
 })
 
-describe('PR #67 review: summarize stays linear, since /duet stats now reads every session\'s log', () => {
+describe('PR #67 review: summarize stays linear, since /ensemble stats now reads every session\'s log', () => {
   test('40,000 runs of one kind summarize in well under a second (copying the group on every run took seconds)', () => {
     const run = JSON.stringify({ id: 'x', at: 0, provider: 'codex', kind: 'agent', type: 'Explore', model: '', ms: 1000, tokens: 100, ok: true })
     const log = `${Array(40_000).fill(run).join('\n')}\n`
@@ -1119,8 +1117,8 @@ describe('paneAction: one rule for a bare pane command (#31)', () => {
 
   test('it takes what $.ui.panes() answers, whole entries included', () => {
     const entry = (id: string, isShown: boolean) => ({ id, title: id, isShown, isFocused: false, isPlaced: true })
-    expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet-config')).toBe('show')
-    expect(paneAction([entry('duet', true), entry('duet-config', false)], 'duet')).toBe('close')
+    expect(paneAction([entry('ensemble', true), entry('ensemble-config', false)], 'ensemble-config')).toBe('show')
+    expect(paneAction([entry('ensemble', true), entry('ensemble-config', false)], 'ensemble')).toBe('close')
   })
 })
 
@@ -1174,7 +1172,7 @@ describe('#119: which prompt drops are retried', () => {
   test('only the two the engine gives after Stop', () => {
     expect(logic.retryableDrop?.('the session was stopped and nobody has sent input since')).toBe(true)
     expect(logic.retryableDrop?.('the prompt was removed from the queue before it ran')).toBe(true)
-    expect(logic.retryableDrop?.('duet: $.prompt.submit: the command was removed from the queue before it ran')).toBe(true)
+    expect(logic.retryableDrop?.('ensemble: $.prompt.submit: the command was removed from the queue before it ran')).toBe(true)
     expect(logic.retryableDrop?.('a policy hook held it')).toBe(false)
     expect(logic.retryableDrop?.('')).toBe(false)
   })
@@ -1242,16 +1240,16 @@ describe('#119: outcomeOf, how a Codex run ends', () => {
   })
 })
 
-// #121 (owner's approval, 2026-10-21): a Stop key and /duet stop <id>. Probe (2.1.306): stream.return() from another
+// #121 (owner's approval, 2026-10-21): a Stop key and /ensemble stop <id>. Probe (2.1.306): stream.return() from another
 // dispatch ends the run's loop cleanly with started still false and kills the child; the dispatch isn't aborted.
-describe('#121: stopping a Codex run from duet', () => {
+describe('#121: stopping a Codex run from ensemble', () => {
   const row = (id: string, status: 'running' | 'done', subagentType = 'code-explorer', kind: 'agent' | 'review' = 'agent') =>
     ({ id, provider: 'codex', kind, subagentType, model: '', status, startedAt: 0, endedAt: null, tokens: 0, description: '', detail: '', envelope: null }) as Task
   const list = [row('d3', 'running'), row('d2', 'done'), row('d4', 'running', '--base main', 'review'), row('d5', 'running', 'test-writer')]
   const ways = new Map<string, 'stream' | 'one-shot'>([['d3', 'stream'], ['d4', 'stream'], ['d5', 'one-shot']])
 
   test('stopPlan: usage, not running, still starting, one-shot, and a stop', () => {
-    expect(logic.stopPlan?.(list, '', ways)).toEqual({ stop: null, text: 'Usage: /duet stop <id>. Running now: d3, d4, d5.' })
+    expect(logic.stopPlan?.(list, '', ways)).toEqual({ stop: null, text: 'Usage: /ensemble stop <id>. Running now: d3, d4, d5.' })
     expect(logic.stopPlan?.([row('d2', 'done')], '', new Map())).toEqual({ stop: null, text: 'No Codex run is running.' })
     expect(logic.stopPlan?.(list, 'd2', ways)).toEqual({ stop: null, text: "d2 isn't running." })
     expect(logic.stopPlan?.(list, 'd9', ways)).toEqual({ stop: null, text: "d9 isn't running." })
@@ -1262,15 +1260,56 @@ describe('#121: stopping a Codex run from duet', () => {
   })
 
   test("the person's stop has its own words, and a spawn error after it is a stop, never a fallback", () => {
-    expect(logic.STOPPED_HERE).toBe('stopped: you stopped it from duet')
+    expect(logic.STOPPED_HERE).toBe('stopped: you stopped it from ensemble')
     expect(logic.spawnErrorAction({ started: false, aborted: false, stopped: true } as never)).toBe('stop')
     expect(logic.spawnErrorAction({ started: true, aborted: false, stopped: true } as never)).toBe('stop')
   })
 
   test("the toast and the delivery say which stop it was, and a stopped background run isn't 'failed'", () => {
-    expect(logic.outcomeOf({ id: 'd3', type: 'code-explorer', failure: logic.STOPPED_HERE, isStopped: true, sandbox: 'read-only' }).toast).toBe('d3 stopped: you stopped it from duet')
-    const text = logic.deliveryText({ id: 'd3', label: 'duet:codex-reviewer', model: '', sandbox: 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: logic.STOPPED_HERE, isStopped: true } as never)
-    expect(text).toContain('was stopped on Codex (stopped: you stopped it from duet)')
+    expect(logic.outcomeOf({ id: 'd3', type: 'code-explorer', failure: logic.STOPPED_HERE, isStopped: true, sandbox: 'read-only' }).toast).toBe('d3 stopped: you stopped it from ensemble')
+    const text = logic.deliveryText({ id: 'd3', label: 'ensemble:codex-reviewer', model: '', sandbox: 'read-only', durationMs: 0, tokens: 0, text: '', footer: '', failure: logic.STOPPED_HERE, isStopped: true } as never)
+    expect(text).toContain('was stopped on Codex (stopped: you stopped it from ensemble)')
     expect(text).not.toContain('failed')
+  })
+})
+
+// #128: duet became ensemble. A mod can't move or delete files ($.fs has no rename or delete), so the person moves
+// ~/.claude/duet-data, and a toast at start says how (the owner's choice on #128). The host puts "ensemble: " first.
+describe('#128: the note on duet\'s old data folder', () => {
+  const note = (hasOld: boolean, hasNew: boolean, bothKeyFiles = false) =>
+    ((logic as Record<string, unknown>).migrationNoteOf as ((o: boolean, n: boolean, k: boolean) => string | null) | undefined)?.(hasOld, hasNew, bothKeyFiles)
+
+  test('only the old folder: how to move it', () => {
+    expect(note(true, false)).toBe('your data and API keys now live in ~/.claude/ensemble-data. Move duet\'s: mv ~/.claude/duet-data ~/.claude/ensemble-data')
+  })
+
+  test('both folders: copy without overwriting, then delete the old one (PR #130 review: mv would nest it)', () => {
+    expect(note(true, true)).toBe('~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data')
+  })
+
+  // PR #130 review round 2 (Codex 4347084033): cp -an leaves the new .env as it is, so deleting the old folder would lose
+  // duet's keys. With a .env in both, the key lines are merged by hand before the old folder goes.
+  test('both folders, each with a .env: copy the rest, merge the key lines by hand, then delete', () => {
+    expect(note(true, true, true)).toBe('~/.claude/duet-data and ~/.claude/ensemble-data both hold a .env: copy the rest with cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, add duet\'s key lines to ensemble\'s .env by hand (or /ensemble provider key <id>), then delete ~/.claude/duet-data')
+    expect((note(true, true, true) ?? '').length).toBeLessThanOrEqual(260)
+  })
+
+  test('no old folder: nothing to say', () => {
+    expect(note(false, false)).toBe(null)
+    expect(note(false, true)).toBe(null)
+  })
+})
+
+// PR #130 review: "ensemble:" is four characters longer than "duet:", and the role names were cut in the stats and the rows.
+describe('#130 review: the role names fit', () => {
+  test('/ensemble stats keeps codex · ensemble:codex-implementer whole', () => {
+    const text = statsText([{ key: 'codex · ensemble:codex-implementer', runs: 1, okPct: 100, medianMs: 1000, medianTokens: 10 } as never])
+    expect(text).toContain('codex · ensemble:codex-implementer ')
+  })
+
+  test('a task row keeps ensemble:codex-advisor whole, wide and medium', () => {
+    const t = { id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'ensemble:codex-advisor', status: 'running', startedAt: 0, model: '' } as never
+    expect(rowText(t, 1000, 120)).toContain('ensemble:codex-advisor ')
+    expect(rowText(t, 1000, 55)).toContain('ensemble:codex-advisor ')
   })
 })

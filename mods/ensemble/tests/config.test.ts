@@ -4,7 +4,7 @@ import { BLANKED, PASSED_THROUGH } from './env-names'
 const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 160 } as const
 
-/** Stands for the /config menu: duet's rows, and every set the mod asks for. */
+/** Stands for the /config menu: ensemble's rows, and every set the mod asks for. */
 const CATALOG = JSON.stringify({ models: [
   { slug: 'gpt-6.1-sol', display_name: 'GPT-6.1-Sol', description: 'Latest workhorse model.', visibility: 'list', base_instructions: 'x'.repeat(2000) },
   { slug: 'gpt-6-sol', display_name: 'GPT-6-Sol', description: '', visibility: 'list' },
@@ -28,7 +28,7 @@ function engine(on: any, opts: { deny?: string; opened?: string[]; cutOnce?: boo
     if (cut) { cut = false; throw new Error('reloaded mid-save') }
     return {
     value: ['codexAgents', 'codexSandbox', 'codexModel', 'maxConcurrent', 'timeoutMinutes', 'codexConsent'].map(f => ({
-      key: `duet.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'duet' }, isLocked: false,
+      key: `ensemble.${f}`, label: f, kind: 'text', value: '', provider: { plugin: 'ensemble' }, isLocked: false,
     })),
   }})
   on('config.set', ($: any, e: any) => {
@@ -44,10 +44,10 @@ function engine(on: any, opts: { deny?: string; opened?: string[]; cutOnce?: boo
 
 async function run($: any, args: string): Promise<string> {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
-  return (await $.command.run({ command: 'duet', args, origin: COMPOSER, presentation: PRESENTATION })).text
+  return (await $.command.run({ command: 'ensemble', args, origin: COMPOSER, presentation: PRESENTATION })).text
 }
 
-describe('/duet config', () => {
+describe('/ensemble config', () => {
   test('with no field lists every option, stored values and defaults', { options: { codexAgents: '*', codexModel: 'gpt-6 sol' } }, async ($, on) => {
     engine(on)
     const text = await run($, 'config list')
@@ -61,13 +61,13 @@ describe('/duet config', () => {
     const sets = engine(on)
     expect(await run($, 'config model gpt-5-codex')).toContain('codexModel = gpt-5-codex')
     expect(await run($, 'config codexModel ""')).toContain('codexModel = (empty)')
-    expect(sets).toEqual([{ key: 'duet.codexModel', value: 'gpt-5-codex' }, { key: 'duet.codexModel', value: '' }])
+    expect(sets).toEqual([{ key: 'ensemble.codexModel', value: 'gpt-5-codex' }, { key: 'ensemble.codexModel', value: '' }])
   })
 
   test('sets a number field as a number', async ($, on) => {
     const sets = engine(on)
     await run($, 'config timeout 45')
-    expect(sets).toEqual([{ key: 'duet.timeoutMinutes', value: 45 }])
+    expect(sets).toEqual([{ key: 'ensemble.timeoutMinutes', value: 45 }])
   })
 
   test('refuses bad values and unknown fields without writing', async ($, on) => {
@@ -85,22 +85,22 @@ describe('/duet config', () => {
   })
 })
 
-const PANE = { title: 'Duet config', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
+const PANE = { title: 'Ensemble config', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
 const mount = ($: any, surface: 'terminal' | 'desktop') =>
-  $.ui.mount({ plugin: 'duet', surface, component: 'Pane', requestId: 'duet-config', props: PANE, viewport: { columns: 120, rows: 40 } })
+  $.ui.mount({ plugin: 'ensemble', surface, component: 'Pane', requestId: 'ensemble-config', props: PANE, viewport: { columns: 120, rows: 40 } })
 
 /** Rows: agents, sandbox, model, max, timeout, consent, mode. */
 async function goTo(ui: any, row: number) {
   for (let i = 0; i < row; i++) await ui.press({ key: 'cfg-next' })
 }
 
-describe('/duet config pane', () => {
+describe('/ensemble config pane', () => {
   for (const surface of ['terminal', 'desktop'] as const) {
     test(`${surface}: every row reachable; edits stay a draft until Save`, { options: { codexModel: 'gpt-6 sol', codexAgents: '*' } }, async ($, on) => {
       const opened: string[] = []
       const sets = engine(on, { opened })
       expect(await run($, 'config')).toContain('Config pane opened')
-      expect(opened).toContain('duet-config')
+      expect(opened).toContain('ensemble-config')
       const ui = await mount($, surface)
       expect(await ui.find({ type: 'Text', text: /▸.*agents\s+\*/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /model\s+gpt-6 sol/ })).toBeDefined()
@@ -124,9 +124,9 @@ describe('/duet config pane', () => {
       expect(await ui.find({ type: 'Text', text: /unsaved changes/ })).toBeDefined()
       await ui.press({ key: 'cfg-save' })
       expect(sets).toEqual([
-        { key: 'duet.codexSandbox', value: 'workspace-write' },
-        { key: 'duet.codexModel', value: '' },
-        { key: 'duet.codexConsent', value: 'allow' },
+        { key: 'ensemble.codexSandbox', value: 'workspace-write' },
+        { key: 'ensemble.codexModel', value: '' },
+        { key: 'ensemble.codexConsent', value: 'allow' },
       ])
       expect(await ui.find({ type: 'Text', text: /Saved sandbox, model, consent/ })).toBeDefined()
       await ui.unmount()
@@ -181,14 +181,14 @@ describe('/duet config pane', () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
     await ui.unmount()
     const again = await mount($, 'terminal')
-    expect(sets).toEqual([{ key: 'duet.codexModel', value: 'gpt-5-codex' }])
+    expect(sets).toEqual([{ key: 'ensemble.codexModel', value: 'gpt-5-codex' }])
     expect(await again.find({ type: 'Text', text: /Saved model/ })).toBeDefined()
     await again.unmount()
   })
 })
 
-describe('Codex models in /duet config', () => {
-  test('/duet config models lists the catalog, hidden ones marked, the current one checked', { options: { codexModel: 'gpt-6-sol' } }, async ($, on) => {
+describe('Codex models in /ensemble config', () => {
+  test('/ensemble config models lists the catalog, hidden ones marked, the current one checked', { options: { codexModel: 'gpt-6-sol' } }, async ($, on) => {
     const fetches: string[][] = []
     engine(on, { fetches })
     const text = await run($, 'config models')
@@ -199,7 +199,7 @@ describe('Codex models in /duet config', () => {
     expect(text).toContain('(hidden)')
   })
 
-  test('/duet config models blanks cloud-provider credentials in the codex call', async ($, on) => {
+  test('/ensemble config models blanks cloud-provider credentials in the codex call', async ($, on) => {
     const envs: Record<string, string>[] = []
     engine(on, { envs })
     await run($, 'config models')
@@ -208,12 +208,12 @@ describe('Codex models in /duet config', () => {
     for (const k of PASSED_THROUGH) expect([k, k in env]).toEqual([k, false])
   })
 
-  test('/duet config models says when codex is missing', async ($, on) => {
+  test('/ensemble config models says when codex is missing', async ($, on) => {
     engine(on, { codex: 'missing' })
     expect(await run($, 'config models')).toContain('codex not found on PATH')
   })
 
-  test('/duet config models relays codex\'s error', async ($, on) => {
+  test('/ensemble config models relays codex\'s error', async ($, on) => {
     engine(on, { codex: 'fail' })
     expect(await run($, 'config models')).toContain('Error: not logged in')
   })
@@ -221,7 +221,7 @@ describe('Codex models in /duet config', () => {
   test('setting a slug Codex does not list still saves, with the nearest slug as a note', async ($, on) => {
     const sets = engine(on)
     const text = await run($, 'config model gpt-6sol')
-    expect(sets).toEqual([{ key: 'duet.codexModel', value: 'gpt-6sol' }])
+    expect(sets).toEqual([{ key: 'ensemble.codexModel', value: 'gpt-6sol' }])
     expect(text).toContain('did you mean gpt-6-sol?')
     expect(await run($, 'config model gpt-6-sol')).not.toContain('Note:')
   })
@@ -246,7 +246,7 @@ describe('Codex models in /duet config', () => {
     expect(await ui.find({ type: 'Text', text: /did you mean/ })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /model\s+gpt-6-sol/ })).toBeDefined()
     await ui.press({ key: 'cfg-save' })
-    expect(sets).toEqual([{ key: 'duet.codexModel', value: 'gpt-6-sol' }])
+    expect(sets).toEqual([{ key: 'ensemble.codexModel', value: 'gpt-6-sol' }])
 
     await ui.press({ key: 'cfg-refresh' })                // r refetches and opens the list
     expect(fetches.length).toBe(2)
@@ -272,7 +272,7 @@ describe('Codex models in /duet config', () => {
   })
 })
 
-describe('/duet config after a save', () => {
+describe('/ensemble config after a save', () => {
   // $.ui.focus has no stand-in in this harness, so the keys going back to the pane is not asserted here.
   test('the reload a save causes reopens the pane on the same row; a later reload does not', async ($, on) => {
     const opened: string[] = []
@@ -287,7 +287,7 @@ describe('/duet config after a save', () => {
 
     opened.length = 0
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })   // the reload
-    expect(opened).toEqual(['duet-config'])                                          // ui.panes: none up, so reopened
+    expect(opened).toEqual(['ensemble-config'])                                          // ui.panes: none up, so reopened
     expect(await ui.find({ type: 'Text', text: /▸.*timeout/ })).toBeDefined()        // same row still highlighted
     await ui.unmount()
 
@@ -298,7 +298,7 @@ describe('/duet config after a save', () => {
 
   test('a pane still up after the reload is not opened again, and still answers its keys', async ($, on) => {
     const opened: string[] = []
-    const sets = engine(on, { opened, panes: ['duet-config'] })
+    const sets = engine(on, { opened, panes: ['ensemble-config'] })
     await run($, 'config')
     const ui = await mount($, 'terminal')
     await ui.press({ key: 'cfg-change' })
@@ -310,7 +310,7 @@ describe('/duet config after a save', () => {
     await ui.press({ key: 'cfg-next' })                                              // edit the next option straight away
     await ui.press({ key: 'cfg-change' })
     await ui.press({ key: 'cfg-save' })
-    expect(sets).toEqual([{ key: 'duet.codexAgents', value: 'explorer' }, { key: 'duet.codexSandbox', value: 'workspace-write' }])
+    expect(sets).toEqual([{ key: 'ensemble.codexAgents', value: 'explorer' }, { key: 'ensemble.codexSandbox', value: 'workspace-write' }])
     await ui.unmount()
   })
 

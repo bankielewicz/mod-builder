@@ -1,7 +1,7 @@
 // Literal lists, not derived from BLANKED_ENV, so a name added or deleted there is caught.
-// Shared by the duet-logic, routing and config tests: a name is changed here once.
+// Shared by the ensemble-logic, routing and config tests: a name is changed here once.
 
-/** The names duet blanked before issue #2. */
+/** The names ensemble blanked before issue #2. */
 export const ORIGINAL_ENV = [
   'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_VERTEX_PROJECT_ID',
   'ANTHROPIC_VERTEX_BASE_URL', 'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_BASE_URL', 'ANTHROPIC_FOUNDRY_RESOURCE', 'AWS_BEARER_TOKEN_BEDROCK',
@@ -21,13 +21,13 @@ export const CLOUD_ENV = {
 }
 
 /**
- * The API provider keys duet stores (0.3.0). Never blanked for Codex (the owner's decision at review): a key duet keeps
+ * The API provider keys ensemble stores (0.3.0). Never blanked for Codex (the owner's decision at review): a key ensemble keeps
  * lives in its file, which blanking a variable does nothing about, and one set in the shell is the person's own
  * credential for Codex too. OPENAI_API_KEY and ANTHROPIC_API_KEY are not here: Codex's own, and Claude Code's own.
  */
 export const PROVIDER_KEYS = [
   'GEMINI_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'DEEPSEEK_API_KEY', 'GROQ_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY',
-  'OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY', 'CEREBRAS_API_KEY', 'DUET_CUSTOM_API_KEY',
+  'OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY', 'CEREBRAS_API_KEY',
 ]
 
 /** Every name Codex's env blanks, exactly. */

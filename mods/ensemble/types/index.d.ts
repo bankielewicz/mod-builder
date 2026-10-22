@@ -1,9 +1,9 @@
-// Duet's state contract. Self-contained: no imports.
+// Ensemble's state contract. Self-contained: no imports.
 
 /** Who ran a task: Codex, a Claude subagent, or (0.3.0) an API provider by its id. */
-export type Provider = 'codex' | 'claude' | 'anthropic' | 'openai' | 'google' | 'xai' | 'mistral' | 'deepseek' | 'groq' | 'together' | 'fireworks' | 'openrouter' | 'perplexity' | 'cerebras' | 'ollama' | 'custom'
+export type Provider = 'codex' | 'claude' | 'anthropic' | 'openai' | 'google' | 'xai' | 'mistral' | 'deepseek' | 'groq' | 'together' | 'fireworks' | 'openrouter' | 'perplexity' | 'cerebras' | 'ollama'
 
-/** A provider key test's outcome (0.3.0), kept in $.store under duet:providers:tests; never the key. */
+/** A provider key test's outcome (0.3.0), kept in $.store under ensemble:providers:tests; never the key. */
 export type ProviderTest = {
   ok: boolean
   status: number
@@ -13,7 +13,7 @@ export type ProviderTest = {
   at: number
   /** A fingerprint of the key the test used (`none` for none), so a result never vouches for another key. */
   key: string
-  /** The base URL the test reached ('' for none), so a custom endpoint that moved shows as untested. */
+  /** The base URL the test reached ('' for none). */
   host: string
 }
 export type TaskStatus = 'running' | 'done' | 'error' | 'refused' | 'stopped'
@@ -65,7 +65,7 @@ export type View = 'tasks' | 'stats'
 
 declare module 'claude-code' {
   interface PluginState {
-    duet: {
+    ensemble: {
       tasks: Task[]
       selected: number
       view: View
@@ -73,7 +73,7 @@ declare module 'claude-code' {
       statsText: string
       now: number
       isDemo: boolean
-      /** /duet config pane: edited values by field name, not yet saved. */
+      /** /ensemble config pane: edited values by field name, not yet saved. */
       configDraft: Record<string, string>
       /** The pane's last message (saved, refused, a value that does not fit). */
       configNote: string
@@ -93,7 +93,7 @@ declare module 'claude-code' {
       configReopenAt: number
       /** Claude subagents that answer later, by agentId; measured at their first turn.complete. */
       claudePending: Record<string, ClaudePending>
-      /** /duet provider pane (0.3.0): which row is highlighted. */
+      /** /ensemble provider pane (0.3.0): which row is highlighted. */
       providerAt: number
       /** The key field is open on the highlighted row. */
       providerEditing: boolean
@@ -112,6 +112,8 @@ declare module 'claude-code' {
       providerFileError: string
       /** A fingerprint of each provider's current key (`none` for no key), to tell whether a stored result is still its. */
       providerKeyIds: Record<string, string>
+      /** The old-folder toast was shown this session (#128, PR #130 review). */
+      oldDataNoted: boolean
     }
   }
 }
