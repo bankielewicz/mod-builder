@@ -74,6 +74,10 @@ type World = {
   headTree?: string
   /** The tree `write-tree` last answered. */
   lastTree?: string
+  /** HEAD's tree (PR #136 review): each commit sets it to the staged tree, or to `headTree` (a commit a hook changed); absent, tree0. */
+  commitTree?: string
+  /** `git rev-parse HEAD` (PR #136 review: a HEAD another process moved); absent, c<number of commits>. */
+  revParseHead?: string
   /** The profile in the checkout the session started in; absent, PROFILE. */
   localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
@@ -354,10 +358,13 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (s === 'write-tree') {
       const trees = world.trees ?? []
-      world.lastTree = (trees.length > 1 ? trees.shift() : trees[0]) ?? 'tree0'
+      // Absent `trees`: each staging with changes gives a new tree; with none, the index is HEAD's tree.
+      world.lastTree = (trees.length > 1 ? trees.shift() : trees[0]) ?? (world.hasChanges ? `tree${world.commits.length + 1}` : (world.commitTree ?? 'tree0'))
       return ok(`${world.lastTree}\n`)
     }
-    if (s === 'rev-parse HEAD^{tree}') return ok(`${world.headTree ?? world.lastTree ?? 'tree0'}\n`)
+    if (s === 'rev-parse HEAD^{tree}') return ok(`${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
+    // HEAD and its tree from one commit object (PR #136 review, Codex 4350587226).
+    if (s === 'log -1 --format=%H %T') return ok(`c${world.commits.length} ${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
     // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
     if (s === 'rev-parse --git-path index.lock' || s === 'rev-parse --path-format=absolute --git-path index.lock') {
       if (world.isLockGoneOnLookup) world.lockFile = false
@@ -417,7 +424,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       return hold ? hold.then(() => result) : result
     }
     if (s === 'rev-parse --abbrev-ref HEAD') return ok(`${world.heads && world.heads.length > 0 ? (world.heads.length > 1 ? world.heads.shift() : world.heads[0]) : world.head}\n`)
-    if (s === 'rev-parse HEAD') return ok(`c${world.commits.length}\n`)
+    if (s === 'rev-parse HEAD') return ok(`${world.revParseHead ?? `c${world.commits.length}`}\n`)
     if (a[0] === 'rev-parse' && a[1] === '--verify') return ok(`${world.tip ?? `c${world.commits.length}`}\n`)
     if (s === 'status --porcelain') return ok(world.isDirty ? ' M src/a.ts\n' : '')
     if (a[0] === 'switch') return (world.head = a[3] ?? ''), (world.switched = true), ok()
@@ -443,7 +450,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (a[0] === 'diff' && a[1] === '--cached' && a[2] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--name-only') return ok(world.redPaths.join('\0'))
     if (a[0] === 'diff' && a.includes('-U0')) return ok(DIFF)
-    if (a[0] === 'commit') return world.commits.push(e.init?.stdin ?? ''), ok()
+    if (a[0] === 'commit') return world.commits.push(e.init?.stdin ?? ''), (world.commitTree = world.headTree ?? world.lastTree ?? 'tree0'), ok()
     return ok()
   })
   return world
@@ -3756,5 +3763,35 @@ describe('#101: a gate commits only the tree it tested', () => {
     expect((await run($, 'status')).text).toContain('blocked at gateF: the index changed after gate F tested it (tested 1111111, now 2222222)')
     expect(w.commits.length).toBe(0)
     expect(w.asked).toEqual([])
+  })
+})
+
+// PR #136 review round 1: commitAll reads HEAD and its tree from one commit object, "nothing to commit" means HEAD's tree is
+// the tested one, and gate F publishes the head commitAll verified (Codex 4350587226, 4350587255).
+describe('PR #136 review round 1: the commit commitAll verified', () => {
+  const held = () => new Promise<void>(() => undefined)
+  const G_WORLD = { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }
+  const HOLD_STORE = { when: () => false, until: Promise.resolve() }
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+
+  test("gate G: nothing staged by the index's own account, but HEAD's tree isn't the tested one: it commits the tested tree, not keep HEAD", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateG', { redCommit: 'r1' }) }
+    const w = engine(on, { ...G_WORLD, hasChanges: false, trees: ['1111111aaaa'], commitTree: '4444444dddd', spawnHold: held(), storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'refactor or a block')
+    expect(w.commits.length).toBe(1)
+    expect(storedOf(store).greenCommit).toBe('c1')
+  })
+
+  test('gate F: the head it records is the commit whose tree it checked, though HEAD moved afterwards', async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateF', { greenCommit: 'c0', used: { red: 1, green: 1, refactor: 1 } }) }
+    const w = engine(on, { ...G_WORLD, revParseHead: 'f00dcafe', storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length > 0 || w.toasts.some(t => t.includes('blocked')), 'the push question or a block')
+    expect(w.commits.length).toBe(1)
+    expect(storedOf(store).refactorCommit).toBe('c1')
+    expect(storedOf(store).gatedHead).toBe('c1')
   })
 })
