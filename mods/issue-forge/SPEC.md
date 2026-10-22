@@ -1924,3 +1924,16 @@ count set in the pane.
   - **Green** `91d349d`: 454 pass.
 - **Version:** 0.7.3 (patch).
 
+## Change 0.7.4 (2026-10-22)
+
+> Issue #132. The owner, 2026-10-22: "remove ensemble from this mod builder repo. this is not being implemented as i envisioned." Their choice for issue-forge: keep its routing support as it is, with generic wording.
+
+- **Why:** issue-forge's routed-red refusal, its `redAgentType` option text, its README and its comments named ensemble. That mod is no longer in this repo; its last version is tag `ensemble-0.4.0`.
+- **What changes:**
+  - The refusal reads "a plugin that routes it elsewhere (to Codex, say) may run it in the session's folder".
+  - The option text and README say "a plugin that routes agent types".
+  - `isInlineAnswer` is unchanged, a codex model or an `ensemble-<n>` id. Its comment says where the id came from.
+- **What gets touched:** `hooks/issue-forge-logic.ts`, `hooks/register.tsx` (comments), the two tests that pin the refusal, `README.md`, `plugin.json`, the marketplace entry and this SPEC. No new reach.
+- **TDD:** red `85a93ec` (2 of 454 failed, by assertion), green `46b4001`.
+- **Version:** 0.7.4 (patch).
+

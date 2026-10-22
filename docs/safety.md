@@ -72,10 +72,6 @@ What the skills do for safety:
 
 ## The example mods that reach furthest
 
-- **ensemble** (formerly duet) hands work to Codex, which sends the handoff, and any file your account can read, to
-  OpenAI. Codex gets Claude Code's credential variables blanked, but not credential files or logins
-  its tools find on their own. `codexSandbox`, `codexConsent` and `codexFsScope` set the limits; see
-  [its safety boundaries](../mods/ensemble/README.md#safety-boundaries).
 - **issue-forge** runs the commands in the profile on `origin/<base>`, gives its subagents Bash,
   Edit and Write without a sandbox, and has them read issue bodies that anyone who can file an
   issue writes. It pushes only after you say yes, unless `confirmPublish` is off; see
