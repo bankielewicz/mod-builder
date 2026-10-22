@@ -305,6 +305,25 @@ export function treeDrift(gate: 'R' | 'G' | 'F', tested: string, seen: string, c
 }
 
 /**
+ * A commit object's tree and parents, as `git cat-file commit` prints it (PR #136 review round 2): header lines only, up to
+ * the blank line before the message. A signature's continuation lines start with a space, so they aren't fields.
+ */
+export function commitFields(text: string): { tree: string; parents: string[] } {
+  const header = text.split('\n\n')[0] ?? ''
+  const fields = header.split('\n').filter(line => !line.startsWith(' '))
+  const valueOf = (name: string) => fields.filter(line => line.startsWith(`${name} `)).map(line => line.slice(name.length + 1).trim())
+  return { tree: valueOf('tree')[0] ?? '', parents: valueOf('parent') }
+}
+
+/** Another commit moved the branch during a gate's commit: HEAD's parent isn't the HEAD from before it (PR #136 review round 2). */
+export function branchMoved(gate: 'R' | 'G' | 'F', before: string, head: string, parent: string): { reason: string; next: string } {
+  return {
+    reason: `another commit moved the branch during gate ${gate}'s commit (HEAD ${head.slice(0, 7)}, whose parent is ${parent.slice(0, 7) || 'none'}, not ${before.slice(0, 7)})`,
+    next: `see what landed (git log -3) and put the branch back on gate ${gate}'s commit by hand`,
+  }
+}
+
+/**
  * The commit a passing gate keeps when nothing was left to commit: HEAD, if it is new since the phase before (a replay after a
  * reload, or a resume after an after-the-commit block, #101); else none.
  */

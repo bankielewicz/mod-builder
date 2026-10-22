@@ -24,11 +24,13 @@ import {
   baseRemoteOfRun,
   branchLine,
   branchName,
+  branchMoved,
   canRetry,
   checkoutBaseOf,
   checkoutState,
   checkoutWorkspaceOf,
   cleanupLine,
+  commitFields,
   commitMessage,
   commonDirOf,
   coverageLine,
@@ -260,7 +262,8 @@ async function gitRetry($: EngineInterface, root: string, args: string[], stdin?
 
 /** A git call's output: a failure throws, naming the subcommand and the first line git printed. */
 function outputOf(args: string[], r: ProcessRunResult): string {
-  if (r.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${firstLine(r.stderr || r.stdout)}`)
+  // Named by its subcommand, not a global option before it (`--no-replace-objects cat-file`).
+  if (r.exitCode !== 0) throw new Error(`git ${args.find(arg => !arg.startsWith('-')) ?? args[0]} failed: ${firstLine(r.stderr || r.stdout)}`)
   return r.stdout
 }
 
@@ -581,12 +584,13 @@ async function indexTree($: EngineInterface, run: Run, root: string): Promise<st
 }
 
 /**
- * HEAD and its tree, read from one commit object, so the tree is that commit's own (PR #136 review, Codex 4350587226).
- * `--no-show-signature`: with log.showSignature on, git prints a signature check's line first (probe, git 2.53).
+ * HEAD, its tree and its parents, from the commit object itself: `rev-parse --verify HEAD`, then `cat-file commit` with
+ * replacement refs off, so the tree is that commit's own (PR #136 review rounds 1 and 2; Codex 4350587226, 4351786036).
+ * Plumbing: neither log.showSignature nor another log setting adds lines, and no git newer than the gates' needs it.
  */
-async function headAndTree($: EngineInterface, root: string): Promise<{ head: string; tree: string }> {
-  const [head = '', tree = ''] = (await gitOut($, root, ['log', '-1', '--no-show-signature', '--format=%H %T'])).trim().split(' ')
-  return { head, tree }
+async function headAndTree($: EngineInterface, root: string): Promise<{ head: string; tree: string; parents: string[] }> {
+  const head = (await gitOut($, root, ['rev-parse', '--verify', 'HEAD'])).trim()
+  return { head, ...commitFields(await gitOut($, root, ['--no-replace-objects', 'cat-file', 'commit', head])) }
 }
 
 /**
@@ -603,6 +607,11 @@ async function commitAll($: EngineInterface, run: Run, message: string, gate: 'R
   if (now.tree === tested) return { head: now.head }
   await gitWriteOut($, run, root, ['commit', '-q', '-F', '-'], message)
   const made = await headAndTree($, root)
+  // Another process committed on the branch around this commit: HEAD isn't the one this call made (round 2).
+  if (made.parents[0] !== now.head) {
+    const moved = branchMoved(gate, now.head, made.head, made.parents[0] ?? '')
+    return block(moved.reason, moved.next)
+  }
   const after = treeDrift(gate, tested, made.tree, made.head)
   return after ? block(after.reason, after.next) : { commit: made.head, head: made.head }
 }
