@@ -49,6 +49,7 @@ import {
   spawnRefs,
   isWorking,
   keepText,
+  keptCommit,
   keptWorktreePlan,
   kindOf,
   layoutOf,
@@ -106,6 +107,7 @@ import {
   tailLines,
   takeOverQuestion,
   totals,
+  treeDrift,
   truncate,
   unstagedOf,
   viewOf,
@@ -2432,13 +2434,8 @@ describe('#128: an agent another plugin answered in-line', () => {
 
 // #101 (Change 0.7.5): a gate commits only the tree it tested, or blocks naming what changed and where to look.
 describe('#101: the tree a gate tested', () => {
-  type Drift = { reason: string; next: string } | null
-  const drift = (gate: string, tested: string, seen: string, commit?: string): Drift | undefined =>
-    ((logic as Record<string, unknown>).treeDrift as ((g: string, t: string, s: string, c?: string) => Drift) | undefined)?.(gate, tested, seen, commit)
-  const kept = (head: string, before: string | undefined): string | undefined => {
-    const keptCommit = (logic as Record<string, unknown>).keptCommit as ((h: string, b: string | undefined) => string | undefined) | undefined
-    return keptCommit ? keptCommit(head, before) : 'keptCommit is missing'
-  }
+  const drift = treeDrift
+  const kept = keptCommit
 
   test('the same tree, before the commit or in it, is no block', () => {
     expect(drift('G', '1111111aaaa', '1111111aaaa')).toBe(null)
