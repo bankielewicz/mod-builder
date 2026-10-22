@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1262 551" width="1262" height="551" font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.3">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1262 585" width="1262" height="585" font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.3">
 <title>Mod Lab, live in Claude Code: the demo mod aurora mid-build</title>
-<rect width="1262" height="551" rx="10" fill="#1A1918" stroke="#2E2C2A"/>
+<rect width="1262" height="585" rx="10" fill="#1A1918" stroke="#2E2C2A"/>
 <rect width="1262" height="30" rx="10" fill="#211F1E"/><rect y="20" width="1262" height="10" fill="#211F1E"/>
 <circle cx="18" cy="15.0" r="5.5" fill="#3A3735"/>
 <circle cx="36" cy="15.0" r="5.5" fill="#3A3735"/>
@@ -9,53 +9,56 @@
 <text x="18.0" y="56.5" fill="#8b8a88" textLength="1201.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 <text x="1219.2" y="56.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">✕</text>
 <text x="1227.6" y="56.5" fill="#8b8a88" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─╮</text>
-<text x="18.0" y="73.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="26.4" y="73.5" fill="#E8E6E3" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Duet  </text>
-<rect x="93.6" y="61" width="75.6" height="17" fill="#E8E6E3"/>
-<text x="93.6" y="73.5" fill="#1A1918" font-weight="700" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Mod Lab </text>
+<text x="18.0" y="73.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="73.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="90.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="90.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="90.5" fill="#d97757" font-weight="700" textLength="109.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">M O D   L A B</text>
+<text x="1068.0" y="90.5" fill="#7fb685" textLength="142.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">● B U I L D I N G</text>
 <text x="1236.0" y="90.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="107.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="107.5" fill="#d97757" font-weight="700" textLength="109.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">M O D   L A B</text>
-<text x="1068.0" y="107.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">● </text>
-<text x="1084.8" y="107.5" fill="#7fb685" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">B U I L D I N G</text>
+<text x="18.0" y="107.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="107.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="124.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="124.5" fill="#e8e6e3" textLength="84.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│   aurora</text>
+<text x="102.0" y="124.5" fill="#8a8580" textLength="327.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> is a demo · nothing is written to disk</text>
+<text x="429.6" y="124.5" fill="#e8e6e3" textLength="722.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                                  0:04</text>
+<text x="1152.0" y="124.5" fill="#8a8580" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> / 0:12</text>
 <text x="1236.0" y="124.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="141.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="26.4" y="141.5" fill="#E8E6E3" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">   aurora</text>
-<text x="102.0" y="141.5" fill="#8a8580" textLength="327.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> is a demo · nothing is written to disk</text>
-<text x="429.6" y="141.5" fill="#E8E6E3" textLength="722.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                                                  0:04</text>
-<text x="1152.0" y="141.5" fill="#8a8580" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> / 0:12</text>
+<text x="18.0" y="141.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="141.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="158.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="158.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="158.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  MODS</text>
+<text x="202.8" y="158.5" fill="#8a8580" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 2 3</text>
+<text x="253.2" y="158.5" fill="#d97757" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">4</text>
+<text x="270.0" y="158.5" fill="#8a8580" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">5 6 7 8</text>
 <text x="1236.0" y="158.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="175.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="175.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  MODS</text>
-<text x="202.8" y="175.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 2 3 </text>
-<text x="253.2" y="175.5" fill="#d97757" font-weight="700" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">4 </text>
-<text x="270.0" y="175.5" fill="#8a8580" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">5 6 7 8 </text>
+<text x="18.0" y="175.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="175.5" fill="#d97757" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸</text>
+<rect x="60.0" y="163.0" width="67.2" height="17" fill="#e8e6e3"/>
+<text x="60.0" y="175.5" fill="#1a1918" font-weight="700" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> aurora </text>
+<rect x="135.6" y="163.0" width="50.4" height="17" fill="#e0b15a"/>
+<text x="135.6" y="175.5" fill="#1a1918" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> DEMO </text>
+<text x="202.8" y="175.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="219.6" y="175.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="236.4" y="175.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="253.2" y="175.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">◐</text>
+<text x="270.0" y="175.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
+<text x="286.8" y="175.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
+<text x="303.6" y="175.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
+<text x="320.4" y="175.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
+<text x="328.8" y="175.5" fill="#e8e6e3" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">   register.tsx</text>
+<text x="1177.2" y="175.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">0:04</text>
 <text x="1236.0" y="175.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="192.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="192.5" fill="#d97757" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸</text>
-<rect x="60.0" y="180" width="67.2" height="17" fill="#E8E6E3"/>
-<text x="60.0" y="192.5" fill="#1A1918" font-weight="700" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> aurora </text>
-<rect x="135.6" y="180" width="50.4" height="17" fill="#e0b15a"/>
-<text x="135.6" y="192.5" fill="#1a1918" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> DEMO </text>
+<text x="18.0" y="192.5" fill="#e8e6e3" textLength="134.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│     git-branch</text>
 <text x="202.8" y="192.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="219.6" y="192.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="236.4" y="192.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="253.2" y="192.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">◐</text>
+<text x="253.2" y="192.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="270.0" y="192.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
 <text x="286.8" y="192.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="303.6" y="192.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="320.4" y="192.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="328.8" y="192.5" fill="#E8E6E3" textLength="848.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">   register.tsx                                                                                      </text>
-<text x="1177.2" y="192.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">0:04</text>
+<text x="303.6" y="192.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="320.4" y="192.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="354.0" y="192.5" fill="#8a8580" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">next: Validate</text>
 <text x="1236.0" y="192.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="209.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="26.4" y="209.5" fill="#E8E6E3" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">     duet            </text>
+<text x="18.0" y="209.5" fill="#e8e6e3" textLength="142.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│     issue-forge</text>
 <text x="202.8" y="209.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="219.6" y="209.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="236.4" y="209.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
@@ -64,89 +67,151 @@
 <text x="286.8" y="209.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="303.6" y="209.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="320.4" y="209.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="354.0" y="209.5" fill="#7fb685" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">ready to share</text>
-<text x="1177.2" y="209.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">0:02</text>
+<text x="354.0" y="209.5" fill="#8a8580" textLength="142.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">454 tests · clean</text>
+<text x="1177.2" y="209.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">0:29</text>
 <text x="1236.0" y="209.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="226.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="26.4" y="226.5" fill="#E8E6E3" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">     git-branch      </text>
+<text x="18.0" y="226.5" fill="#e8e6e3" textLength="151.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│     turn-counter</text>
 <text x="202.8" y="226.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="219.6" y="226.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="236.4" y="226.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="253.2" y="226.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
 <text x="270.0" y="226.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
 <text x="286.8" y="226.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="303.6" y="226.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="320.4" y="226.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="354.0" y="226.5" fill="#8a8580" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">next: Validate</text>
+<text x="303.6" y="226.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
+<text x="320.4" y="226.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
+<text x="354.0" y="226.5" fill="#8a8580" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">next:</text>
+<text x="404.4" y="226.5" fill="#8a8580" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Validate</text>
 <text x="1236.0" y="226.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="243.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="26.4" y="243.5" fill="#E8E6E3" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">     turn-counter    </text>
-<text x="202.8" y="243.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="219.6" y="243.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="236.4" y="243.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="253.2" y="243.5" fill="#7fb685" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
-<text x="270.0" y="243.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="286.8" y="243.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="303.6" y="243.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="320.4" y="243.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">○</text>
-<text x="354.0" y="243.5" fill="#8a8580" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">next: Validate</text>
+<text x="18.0" y="243.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="243.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="260.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="260.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="260.5" fill="#999999" textLength="1159.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 <text x="1236.0" y="260.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="277.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="277.5" fill="#999999" textLength="1159.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="18.0" y="277.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="277.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="294.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="294.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="294.5" fill="#e8e6e3" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">aurora</text>
+<rect x="118.8" y="282.0" width="50.4" height="17" fill="#e0b15a"/>
+<text x="118.8" y="294.5" fill="#1a1918" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> DEMO </text>
+<text x="992.4" y="294.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">demo</text>
+<text x="1034.4" y="294.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="1051.2" y="294.5" fill="#8a8580" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">not</text>
+<text x="1084.8" y="294.5" fill="#8a8580" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">written</text>
+<text x="1152.0" y="294.5" fill="#8a8580" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">to</text>
+<text x="1177.2" y="294.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">disk</text>
 <text x="1236.0" y="294.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="311.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="311.5" fill="#E8E6E3" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">aurora</text>
-<rect x="118.8" y="299" width="50.4" height="17" fill="#e0b15a"/>
-<text x="118.8" y="311.5" fill="#1a1918" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> DEMO </text>
-<text x="992.4" y="311.5" fill="#8a8580" textLength="218.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">demo · not written to disk</text>
+<text x="18.0" y="311.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="311.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">A</text>
+<text x="68.4" y="311.5" fill="#8a8580" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">pretend</text>
+<text x="135.6" y="311.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">mod.</text>
+<text x="177.6" y="311.5" fill="#8a8580" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Walks</text>
+<text x="228.0" y="311.5" fill="#8a8580" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">all</text>
+<text x="261.6" y="311.5" fill="#8a8580" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">8</text>
+<text x="278.4" y="311.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">stages</text>
+<text x="337.2" y="311.5" fill="#8a8580" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">in</text>
+<text x="362.4" y="311.5" fill="#8a8580" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">12</text>
+<text x="387.6" y="311.5" fill="#8a8580" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">seconds.</text>
 <text x="1236.0" y="311.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="328.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="328.5" fill="#8a8580" textLength="403.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">A pretend mod. Walks all 8 stages in 12 seconds.</text>
+<text x="18.0" y="328.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="328.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="345.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="345.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1</text>
+<text x="68.4" y="345.5" fill="#7fb685" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Spec ━</text>
+<text x="127.2" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">2</text>
+<text x="144.0" y="345.5" fill="#7fb685" textLength="84.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Scaffold ━</text>
+<text x="236.4" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">3</text>
+<text x="253.2" y="345.5" fill="#7fb685" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Logic ━</text>
+<text x="320.4" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">4</text>
+<text x="337.2" y="345.5" fill="#d97757" font-weight="700" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Register</text>
+<text x="404.4" y="345.5" fill="#d97757" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ━</text>
+<text x="429.6" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">5</text>
+<text x="446.4" y="345.5" fill="#8a8580" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Validate</text>
+<text x="513.6" y="345.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ┄</text>
+<text x="538.8" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">6</text>
+<text x="555.6" y="345.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Test</text>
+<text x="589.2" y="345.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ┄</text>
+<text x="614.4" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">7</text>
+<text x="631.2" y="345.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">README</text>
+<text x="681.6" y="345.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ┄</text>
+<text x="706.8" y="345.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">8</text>
+<text x="723.6" y="345.5" fill="#8a8580" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Share</text>
 <text x="1236.0" y="345.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="362.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="362.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 </text>
-<text x="68.4" y="362.5" fill="#7fb685" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Spec ━ </text>
-<text x="127.2" y="362.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">2 </text>
-<text x="144.0" y="362.5" fill="#7fb685" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Scaffold ━ </text>
-<text x="236.4" y="362.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">3 </text>
-<text x="253.2" y="362.5" fill="#7fb685" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Logic ━ </text>
-<text x="320.4" y="362.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">4 </text>
-<text x="337.2" y="362.5" fill="#d97757" font-weight="700" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Register</text>
-<text x="404.4" y="362.5" fill="#d97757" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ━ </text>
-<text x="429.6" y="362.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">5 </text>
-<text x="446.4" y="362.5" fill="#8a8580" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Validate</text>
-<text x="513.6" y="362.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ┄ 6 </text>
-<text x="555.6" y="362.5" fill="#8a8580" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Test</text>
-<text x="589.2" y="362.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ┄ 7 </text>
-<text x="631.2" y="362.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">README</text>
-<text x="681.6" y="362.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> ┄ 8 </text>
-<text x="723.6" y="362.5" fill="#8a8580" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Share</text>
+<text x="18.0" y="362.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="1236.0" y="362.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="379.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="379.5" fill="#999999" textLength="840.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">ctrl+x tab, then V validate · T test · K types · O readme · J/P move · N new · D demo · esc to leave</text>
+<text x="18.0" y="379.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="379.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">ctrl+x</text>
+<text x="110.4" y="379.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">tab</text>
+<text x="144.0" y="379.5" fill="#999999" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">(again:</text>
+<text x="211.2" y="379.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">next</text>
+<text x="253.2" y="379.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">tab),</text>
+<text x="303.6" y="379.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">then</text>
+<text x="345.6" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">V</text>
+<text x="362.4" y="379.5" fill="#999999" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">validate</text>
+<text x="438.0" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="454.8" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">T</text>
+<text x="471.6" y="379.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">test</text>
+<text x="513.6" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="530.4" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">K</text>
+<text x="547.2" y="379.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">types</text>
+<text x="597.6" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="614.4" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">O</text>
+<text x="631.2" y="379.5" fill="#999999" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">readme</text>
+<text x="690.0" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="706.8" y="379.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">J/P</text>
+<text x="740.4" y="379.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">move</text>
+<text x="782.4" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="799.2" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">N</text>
+<text x="816.0" y="379.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">new</text>
+<text x="849.6" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="866.4" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">D</text>
+<text x="883.2" y="379.5" fill="#999999" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">demo</text>
+<text x="925.2" y="379.5" fill="#999999" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">·</text>
+<text x="942.0" y="379.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">esc</text>
+<text x="975.6" y="379.5" fill="#999999" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">to</text>
+<text x="1000.8" y="379.5" fill="#999999" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">leave</text>
 <text x="1236.0" y="379.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="396.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="396.5" fill="#999999" font-weight="700" textLength="100.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[ Validate ]</text>
-<text x="169.2" y="396.5" fill="#999999" font-weight="700" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[ Test ]</text>
-<text x="253.2" y="396.5" fill="#999999" font-weight="700" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[ Type-check ]</text>
-<text x="387.6" y="396.5" fill="#E8E6E3" font-weight="700" textLength="84.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[ README ]</text>
+<text x="18.0" y="396.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="396.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="68.4" y="396.5" fill="#999999" font-weight="700" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Validate</text>
+<text x="144.0" y="396.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="169.2" y="396.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="186.0" y="396.5" fill="#999999" font-weight="700" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Test</text>
+<text x="228.0" y="396.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="253.2" y="396.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="270.0" y="396.5" fill="#999999" font-weight="700" textLength="84.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Type-check</text>
+<text x="362.4" y="396.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="387.6" y="396.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="404.4" y="396.5" fill="#e8e6e3" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">README</text>
+<text x="463.2" y="396.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
 <text x="1236.0" y="396.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="18.0" y="413.5" fill="#8b8a88" textLength="1226.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
-<text x="26.4" y="430.5" fill="#d97757" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">◆ </text>
-<text x="43.2" y="430.5" fill="#E8E6E3" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">aurora</text>
-<text x="93.6" y="430.5" fill="#d97757" textLength="142.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Register ━━━━━━</text>
-<text x="236.4" y="430.5" fill="#999999" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">░░░░░░░░░</text>
-<text x="312.0" y="430.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  0:04</text>
-<text x="1210.8" y="430.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[-]</text>
-<text x="26.4" y="447.5" fill="#999999" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  register.tsx · demo</text>
-<text x="18.0" y="481.5" fill="#888888" textLength="1226.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="18.0" y="498.5" fill="#E8E6E3" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">❯ </text>
+<text x="18.0" y="413.5" fill="#e8e6e3" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="413.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="68.4" y="413.5" fill="#e8e6e3" font-weight="700" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Next</text>
+<text x="110.4" y="413.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="135.6" y="413.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="152.4" y="413.5" fill="#e8e6e3" font-weight="700" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Prev</text>
+<text x="194.4" y="413.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="219.6" y="413.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="236.4" y="413.5" fill="#e8e6e3" font-weight="700" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">New</text>
+<text x="270.0" y="413.5" fill="#e8e6e3" font-weight="700" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">mod</text>
+<text x="303.6" y="413.5" fill="#e8e6e3" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="328.8" y="413.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[</text>
+<text x="345.6" y="413.5" fill="#999999" font-weight="700" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Demo</text>
+<text x="387.6" y="413.5" fill="#999999" font-weight="700" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">]</text>
+<text x="1236.0" y="413.5" fill="#8b8a88" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="18.0" y="430.5" fill="#e8e6e3" textLength="1226.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<text x="26.4" y="447.5" fill="#d97757" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">◆</text>
+<text x="43.2" y="447.5" fill="#e8e6e3" font-weight="700" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">aurora</text>
+<text x="93.6" y="447.5" fill="#d97757" textLength="142.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Register ━━━━━━</text>
+<text x="236.4" y="447.5" fill="#999999" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">░░░░░░░░░</text>
+<text x="312.0" y="447.5" fill="#8a8580" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  0:04</text>
+<text x="1210.8" y="447.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[-]</text>
+<text x="26.4" y="464.5" fill="#999999" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  register.tsx · demo</text>
+<text x="26.4" y="481.5" fill="#d97757" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⎇ main</text>
+<text x="76.8" y="481.5" fill="#999999" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  ·</text>
+<text x="118.8" y="481.5" fill="#e0b15a" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 changed</text>
 <text x="18.0" y="515.5" fill="#888888" textLength="1226.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="34.8" y="532.5" fill="#ffc107" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⚠ mod-builder: ◆ 4 mods · 1 building</text>
+<text x="18.0" y="532.5" fill="#e8e6e3" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">❯ </text>
+<text x="18.0" y="549.5" fill="#888888" textLength="1226.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="34.8" y="566.5" fill="#ffc107" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⚠ mod-builder: ◆ 4 mods · 1 building</text>
 </svg>

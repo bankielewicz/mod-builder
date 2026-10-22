@@ -14,7 +14,7 @@ product details.** Every terminal element you draw must match the attached real 
 (`modlab-live.svg`): the `M O D   L A B` wordmark, the `MODS 1 2 3 4 5 6 7 8` header, the stage
 lights `● ◐ ○ ◌ ✕`, the numbered track `1 Spec ━ 2 Scaffold ━ …`, the band
 `◆ aurora  Register ━━━━━━░░░░░░░░░  0:04`, and the status line `◆ 4 mods · 1 building`. Use the
-mod names in the capture (`aurora`, `duet`, `git-branch`, `turn-counter`).
+mod names in the capture (`aurora`, `git-branch`, `issue-forge`, `turn-counter`).
 
 ## 1. Hero: `docs/assets/hero-dark.svg` and `hero-light.svg` (1200×420)
 
