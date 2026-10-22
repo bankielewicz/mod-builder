@@ -83,7 +83,7 @@ type World = {
   /** refs/replace/<HEAD> names a commit with this tree (Codex 4351786036): git reads it unless --no-replace-objects. */
   replacedTree?: string
   /** The parent `cat-file commit` names for HEAD (PR #136 review round 2: another commit moved the branch); absent, the commit before. */
-  parentOf?: string
+  headParent?: string
   /** The profile in the checkout the session started in; absent, PROFILE. */
   localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
@@ -373,7 +373,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     const catAt = a[0] === '--no-replace-objects' ? 1 : 0
     if (a[catAt] === 'cat-file' && a[catAt + 1] === 'commit') {
       const tree = catAt === 0 && world.replacedTree ? world.replacedTree : (world.headTree ?? world.commitTree ?? 'tree0')
-      const parent = world.parentOf ?? (world.commits.length > 0 ? `c${world.commits.length - 1}` : 'base0')
+      const parent = world.headParent ?? (world.commits.length > 0 ? `c${world.commits.length - 1}` : 'base0')
       return ok(`tree ${tree}\nparent ${parent}\nauthor t <a@b.c> 1 +0000\ncommitter t <a@b.c> 1 +0000\n\nmsg\n`)
     }
     if (s === 'rev-parse --verify HEAD') return ok(`c${world.commits.length}\n`)
@@ -3992,7 +3992,7 @@ describe('PR #136 review round 2: the commit read', () => {
   })
 
   test("gate G: a commit whose parent isn't the HEAD from before blocks, naming another commit, not the gate's own", async ($, on) => {
-    const w = engine(on, { ...G_WORLD, parentOf: 'f00dcafe99', spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    const w = engine(on, { ...G_WORLD, headParent: 'f00dcafe99', spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'refactor or a block')
