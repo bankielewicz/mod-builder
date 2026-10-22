@@ -580,21 +580,28 @@ async function indexTree($: EngineInterface, run: Run, root: string): Promise<st
   return (await gitWriteOut($, run, root, ['write-tree'])).trim()
 }
 
+/** HEAD and its tree, read from one commit object, so the tree is that commit's own (PR #136 review, Codex 4350587226). */
+async function headAndTree($: EngineInterface, root: string): Promise<{ head: string; tree: string }> {
+  const [head = '', tree = ''] = (await gitOut($, root, ['log', '-1', '--format=%H %T'])).trim().split(' ')
+  return { head, tree }
+}
+
 /**
  * Commits the tree gate `gate` tested (#101): a block when the index changed since, or when the commit made holds another
- * tree (another process staged during a lock wait, or a hook re-staged). Undefined when nothing is staged.
+ * tree (another process staged during a lock wait, or a hook re-staged). Else `head`, a commit whose tree is the tested one,
+ * and `commit` when this call made it: nothing to commit means HEAD's tree is the tested one already.
  */
-async function commitAll($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | string | undefined> {
+async function commitAll($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | { commit?: string; head: string }> {
   await stillOwned($, run)
   const root = workOf(run)
   const before = treeDrift(gate, tested, await indexTree($, run, root))
   if (before) return block(before.reason, before.next)
-  const staged = await git($, root, ['diff', '--cached', '--quiet'])
-  if (staged.exitCode === 0) return undefined
+  const now = await headAndTree($, root)
+  if (now.tree === tested) return { head: now.head }
   await gitWriteOut($, run, root, ['commit', '-q', '-F', '-'], message)
-  const commit = (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
-  const after = treeDrift(gate, tested, (await gitOut($, root, ['rev-parse', 'HEAD^{tree}'])).trim(), commit)
-  return after ? block(after.reason, after.next) : commit
+  const made = await headAndTree($, root)
+  const after = treeDrift(gate, tested, made.tree, made.head)
+  return after ? block(after.reason, after.next) : { commit: made.head, head: made.head }
 }
 
 /** Stashes the tree under a unique message and records the entry's SHA (the list is shared by every worktree). */
@@ -1163,9 +1170,9 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
   const made = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []), 'R', tested)
-  if (typeof made === 'object') return made
+  if ('type' in made) return made
   // Nothing new to commit means a replay after a reload: the gated tests are HEAD already.
-  const commit = made ?? (await headOf($, root))
+  const commit = made.commit ?? made.head
   if (isBehaviour && run.greenStash) {
     const stash = run.greenStash
     stillDriving(run)
@@ -1220,10 +1227,11 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
   if (gate.passed) {
     const made = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run), which, tested)
-    if (typeof made === 'object') return made
+    if ('type' in made) return made
     // Nothing new to commit: HEAD is the phase's commit when it is new since the phase before (a replay, or a resume, #101).
-    const commit = made ?? keptCommit(await headOf($, root), which === 'G' ? run.redCommit : run.greenCommit)
-    return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: await headOf($, root) } : {}) }
+    const commit = made.commit ?? keptCommit(made.head, which === 'G' ? run.redCommit : run.greenCommit)
+    // Gate F publishes the head whose tree commitAll checked, not a later read of HEAD (Codex 4350587255).
+    return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: made.head } : {}) }
   }
   if (which === 'G' && gate.isBehaviourOnly && !run.isBehaviourDone) {
     await setActivity($, "stashing green's work")
