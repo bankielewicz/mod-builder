@@ -3681,7 +3681,7 @@ describe('#101: a gate commits only the tree it tested', () => {
     await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
     const status = (await run($, 'status')).text ?? ''
     expect(status).toContain('blocked at gateG: the index changed after gate G tested it (tested 1111111, now 2222222)')
-    expect(status).toContain("next: see what was staged since (git diff --cached --stat 1111111) and unstage what isn't the run's, then /issue-forge resume")
+    expect(status).toContain("next: see what was staged since (git diff --cached --stat 1111111aaaa) and unstage what isn't the run's, then /issue-forge resume")
     // The tested tree is recorded after staging and before any test runs.
     expect(firstOf(w, isGit('add -A'))).toBeLessThan(firstOf(w, isGit('write-tree')))
     expect(firstOf(w, isGit('write-tree'))).toBeLessThan(firstOf(w, a => a[0] === 't'))
@@ -3697,7 +3697,7 @@ describe('#101: a gate commits only the tree it tested', () => {
     await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
     const status = (await run($, 'status')).text ?? ''
     expect(status).toContain("blocked at gateG: commit c1 holds a tree gate G didn't test (3333333, tested 1111111)")
-    expect(status).toContain("next: see what wasn't tested (git diff 1111111 HEAD); if it isn't the run's, git reset --soft HEAD~1, then /issue-forge resume")
+    expect(status).toContain("next: see what wasn't tested (git diff 1111111aaaa HEAD); if it isn't the run's, git reset --soft HEAD~1, then /issue-forge resume")
     expect(w.commits.length).toBe(1)
     expect(w.argv.some(a => a[0] === 'git' && a[1] === 'reset')).toBe(false)
     expect(w.spawned).toEqual([])
