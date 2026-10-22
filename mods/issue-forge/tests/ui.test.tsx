@@ -68,6 +68,12 @@ type World = {
   isAncestor?: boolean
   /** `git status --porcelain -z` after staging. */
   porcelainZ?: string
+  /** `git write-tree` (#101): each call takes the next tree and the last one repeats; absent, tree0. */
+  trees?: string[]
+  /** `git rev-parse HEAD^{tree}` (#101): absent, the tree `write-tree` last answered. */
+  headTree?: string
+  /** The tree `write-tree` last answered. */
+  lastTree?: string
   /** The profile in the checkout the session started in; absent, PROFILE. */
   localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
@@ -346,6 +352,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       world.stashLockFile = next?.isStashLocked ?? false
       if (next) return fail(next.stderr, next.code)
     }
+    if (s === 'write-tree') {
+      const trees = world.trees ?? []
+      world.lastTree = (trees.length > 1 ? trees.shift() : trees[0]) ?? 'tree0'
+      return ok(`${world.lastTree}\n`)
+    }
+    if (s === 'rev-parse HEAD^{tree}') return ok(`${world.headTree ?? world.lastTree ?? 'tree0'}\n`)
     // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
     if (s === 'rev-parse --git-path index.lock' || s === 'rev-parse --path-format=absolute --git-path index.lock') {
       if (world.isLockGoneOnLookup) world.lockFile = false
@@ -3649,3 +3661,100 @@ describe('new plugins are mod-builder\'s (Change 0.7.0)', () => {
   })
 })
 
+
+// #101 (Change 0.7.5): a gate records the tree it tests (git write-tree after git add -A), commits only that tree, and
+// blocks when the index changed before the commit or the commit holds another tree.
+describe('#101: a gate commits only the tree it tested', () => {
+  const isBlocked = (w: World) => w.toasts.some(t => t.includes('blocked'))
+  /** Keeps $.agent.spawn pending, so the drive stays at the next phase's spawn (under test a spawn never gets an agent id). */
+  const held = () => new Promise<void>(() => undefined)
+  const G_WORLD = { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }
+  const R_RUN = { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }
+  const R_WORLD = { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }
+  const firstOf = (w: World, match: (a: string[]) => boolean) => w.argv.findIndex(match)
+  const isGit = (sub: string) => (a: string[]) => a[0] === 'git' && a.slice(1).join(' ') === sub
+
+  test('gate G: a path staged after the gate staged blocks it before the commit, with nothing committed', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, trees: ['1111111aaaa', '2222222bbbb'], spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at gateG: the index changed after gate G tested it (tested 1111111, now 2222222)')
+    expect(status).toContain("next: see what was staged since (git diff --cached --stat 1111111) and unstage what isn't the run's, then /issue-forge resume")
+    // The tested tree is recorded after staging and before any test runs.
+    expect(firstOf(w, isGit('add -A'))).toBeLessThan(firstOf(w, isGit('write-tree')))
+    expect(firstOf(w, isGit('write-tree'))).toBeLessThan(firstOf(w, a => a[0] === 't'))
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned).toEqual([])
+  })
+
+  test("gate G: a commit whose tree isn't the tested one blocks after it and resets nothing; a resume tests the commit and keeps it", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateG', { redCommit: 'r1' }) }
+    const w = engine(on, { ...G_WORLD, trees: ['1111111aaaa'], headTree: '3333333cccc', spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain("blocked at gateG: commit c1 holds a tree gate G didn't test (3333333, tested 1111111)")
+    expect(status).toContain("next: see what wasn't tested (git diff 1111111 HEAD); if it isn't the run's, git reset --soft HEAD~1, then /issue-forge resume")
+    expect(w.commits.length).toBe(1)
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'reset')).toBe(false)
+    expect(w.spawned).toEqual([])
+    // The index is the commit now: resume stages it again, tests it, and keeps HEAD as green's commit.
+    w.headTree = undefined
+    w.trees = ['3333333cccc']
+    w.hasChanges = false
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'refactor')
+    expect(w.commits.length).toBe(1)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+    const stored = (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+    expect(stored.greenCommit).toBe('c1')
+  })
+
+  test('gate G: a write-tree that meets a held index.lock waits a second and tries again; the gate goes on', async ($, on) => {
+    const LOCKED = { stderr: `fatal: Unable to create '${LOCK_PATH}': File exists.\n`, code: 128, isLocked: true }
+    const w = engine(on, { ...G_WORLD, gitFails: { on: 'write-tree', seq: [LOCKED] }, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    for (let t = 0; t < 12_000 && w.spawned.length === 0 && !isBlocked(w); t += 50) await w.clock.advance(50)
+    await w.clock.settle()
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    const trees = w.calls.filter(c => c.argv[0] === 'git' && c.argv[1] === 'write-tree')
+    expect(trees.length).toBe(3)
+    expect(trees[1]!.at - trees[0]!.at).toBeGreaterThanOrEqual(1000)
+    expect(w.commits.length).toBe(1)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+  })
+
+  test('gate R: a path staged after the gate staged blocks it before the red commit', async ($, on) => {
+    const w = engine(on, { ...R_WORLD, trees: ['1111111aaaa', '2222222bbbb'], spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', R_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or green')
+    expect((await run($, 'status')).text).toContain('blocked at gateR: the index changed after gate R tested it (tested 1111111, now 2222222)')
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned).toEqual([])
+  })
+
+  test('gate R: a replay with nothing staged keeps HEAD as the red commit, as before', async ($, on) => {
+    const w = engine(on, { ...R_WORLD, hasChanges: false, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', R_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1 || isBlocked(w), 'green or a block')
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
+  test('gate F: a path staged after the gate staged blocks it before the refactor commit', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, trees: ['1111111aaaa', '2222222bbbb'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateF', { greenCommit: 'c2', used: { red: 1, green: 1, refactor: 1 } }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.asked.length > 0, 'a block or the push question')
+    expect((await run($, 'status')).text).toContain('blocked at gateF: the index changed after gate F tested it (tested 1111111, now 2222222)')
+    expect(w.commits.length).toBe(0)
+    expect(w.asked).toEqual([])
+  })
+})

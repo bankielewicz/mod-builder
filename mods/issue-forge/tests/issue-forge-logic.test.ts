@@ -2429,3 +2429,39 @@ describe('#128: an agent another plugin answered in-line', () => {
     expect(inline('', 'codex-mini')).toBe(false)
   })
 })
+
+// #101 (Change 0.7.5): a gate commits only the tree it tested, or blocks naming what changed and where to look.
+describe('#101: the tree a gate tested', () => {
+  type Drift = { reason: string; next: string } | null
+  const drift = (gate: string, tested: string, seen: string, commit?: string): Drift | undefined =>
+    ((logic as Record<string, unknown>).treeDrift as ((g: string, t: string, s: string, c?: string) => Drift) | undefined)?.(gate, tested, seen, commit)
+  const kept = (head: string, before: string | undefined): string | undefined => {
+    const keptCommit = (logic as Record<string, unknown>).keptCommit as ((h: string, b: string | undefined) => string | undefined) | undefined
+    return keptCommit ? keptCommit(head, before) : 'keptCommit is missing'
+  }
+
+  test('the same tree, before the commit or in it, is no block', () => {
+    expect(drift('G', '1111111aaaa', '1111111aaaa')).toBe(null)
+    expect(drift('R', '1111111aaaa', '1111111aaaa', 'c1')).toBe(null)
+  })
+
+  test('a tree that changed before the commit names the gate and both short trees; nothing is committed yet', () => {
+    expect(drift('G', '1111111aaaa', '2222222bbbb')).toEqual({
+      reason: 'the index changed after gate G tested it (tested 1111111, now 2222222)',
+      next: "see what was staged since (git diff --cached --stat 1111111) and unstage what isn't the run's",
+    })
+  })
+
+  test("a commit whose tree isn't the tested one names the commit, both trees and how to undo it", () => {
+    expect(drift('F', '1111111aaaa', '3333333cccc', 'abcdef0123')).toEqual({
+      reason: "commit abcdef0 holds a tree gate F didn't test (3333333, tested 1111111)",
+      next: "see what wasn't tested (git diff 1111111 HEAD); if it isn't the run's, git reset --soft HEAD~1",
+    })
+  })
+
+  test('with nothing left to commit, a passing gate keeps HEAD when it is new since the phase before', () => {
+    expect(kept('c2', 'c1')).toBe('c2')
+    expect(kept('c1', 'c1')).toBe(undefined)
+    expect(kept('c2', undefined)).toBe('c2')
+  })
+})
