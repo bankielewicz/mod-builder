@@ -61,6 +61,7 @@ import {
   isWorktreeRun,
   issueLabel,
   keepText,
+  keptCommit,
   keptForkBlock,
   keptWorktreePlan,
   layoutOf,
@@ -124,6 +125,7 @@ import {
   tailLines,
   takeOverQuestion,
   totals,
+  treeDrift,
   truncate,
   unstagedOf,
   viewOf,
@@ -573,13 +575,26 @@ async function readLcov($: EngineInterface, path: string, since: number): Promis
   }
 }
 
-async function commitAll($: EngineInterface, run: Run, message: string): Promise<string | undefined> {
+/** The index's tree; `write-tree` takes the index lock, so it goes through gitWrite (#101 probe, git 2.53). */
+async function indexTree($: EngineInterface, run: Run, root: string): Promise<string> {
+  return (await gitWriteOut($, run, root, ['write-tree'])).trim()
+}
+
+/**
+ * Commits the tree gate `gate` tested (#101): a block when the index changed since, or when the commit made holds another
+ * tree (another process staged during a lock wait, or a hook re-staged). Undefined when nothing is staged.
+ */
+async function commitAll($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | string | undefined> {
   await stillOwned($, run)
   const root = workOf(run)
+  const before = treeDrift(gate, tested, await indexTree($, run, root))
+  if (before) return block(before.reason, before.next)
   const staged = await git($, root, ['diff', '--cached', '--quiet'])
   if (staged.exitCode === 0) return undefined
   await gitWriteOut($, run, root, ['commit', '-q', '-F', '-'], message)
-  return (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
+  const commit = (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
+  const after = treeDrift(gate, tested, (await gitOut($, root, ['rev-parse', 'HEAD^{tree}'])).trim(), commit)
+  return after ? block(after.reason, after.next) : commit
 }
 
 /** Stashes the tree under a unique message and records the entry's SHA (the list is shared by every worktree). */
@@ -1137,6 +1152,7 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
+  const tested = await indexTree($, run, root)
   const madeR = await newPluginAt($, run, root)
   if (madeR) return { type: 'gated', gate: newPluginGate('R', madeR) }
   // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
@@ -1146,8 +1162,10 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   const gate = gateR(p, { staged, tests })
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
+  const made = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []), 'R', tested)
+  if (typeof made === 'object') return made
   // Nothing new to commit means a replay after a reload: the gated tests are HEAD already.
-  const commit = (await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []))) ?? (await headOf($, root))
+  const commit = made ?? (await headOf($, root))
   if (isBehaviour && run.greenStash) {
     const stash = run.greenStash
     stillDriving(run)
@@ -1177,6 +1195,7 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
+  const tested = await indexTree($, run, root)
   const madeG = await newPluginAt($, run, root)
   if (madeG) return { type: 'gated', gate: newPluginGate(which, madeG) }
   const staged = await stagedSince($, root, run.mergeBase)
@@ -1200,7 +1219,10 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   if (rewritten.length > 0) return block(`a command changed files after staging, so the tested bytes aren't the ones that would be committed: ${rewritten.slice(0, 5).join(', ')}${rewritten.length > 5 ? ` and ${rewritten.length - 5} more` : ''}`, 'make the profile commands leave the tree as they found it (or commit what they write)')
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
   if (gate.passed) {
-    const commit = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run))
+    const made = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run), which, tested)
+    if (typeof made === 'object') return made
+    // Nothing new to commit: HEAD is the phase's commit when it is new since the phase before (a replay, or a resume, #101).
+    const commit = made ?? keptCommit(await headOf($, root), which === 'G' ? run.redCommit : run.greenCommit)
     return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: await headOf($, root) } : {}) }
   }
   if (which === 'G' && gate.isBehaviourOnly && !run.isBehaviourDone) {
