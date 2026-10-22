@@ -1171,7 +1171,7 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
   const made = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []), 'R', tested)
-  if ('type' in made) return made
+  if ('type' in made) return { ...made, gate, testTail: tests.tail }
   // Nothing new to commit means a replay after a reload: the gated tests are HEAD already.
   const commit = made.commit ?? made.head
   if (isBehaviour && run.greenStash) {
@@ -1228,7 +1228,7 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
   if (gate.passed) {
     const made = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run), which, tested)
-    if ('type' in made) return made
+    if ('type' in made) return { ...made, gate, testTail: tests.tail }
     // Nothing new to commit: HEAD is the phase's commit when it is new since the phase before (a replay, or a resume, #101).
     // Gate F compares with red's commit when green committed nothing (PR #136 review, finding 7).
     const commit = made.commit ?? keptCommit(made.head, which === 'G' ? run.redCommit : (run.greenCommit ?? run.redCommit))

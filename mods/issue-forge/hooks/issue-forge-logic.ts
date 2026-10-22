@@ -1032,7 +1032,7 @@ export type RunEvent =
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string; reason?: TurnEnd }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean }
+  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean; gate?: Gate; testTail?: string }
   | { type: 'newPlugin'; path: string }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'made'; keep: Kept }
@@ -1105,6 +1105,12 @@ function blockedAt(run: Run, at: Step, reason: string, next: string, more: { ste
 }
 
 /** The single transition function: every step change goes through here. */
+/** A gate's result carried by a block from its commit step (PR #136 review, finding 3), recorded under the step it ends. */
+function gateRecord(run: Run, ev: { gate?: Gate; testTail?: string }): Partial<Run> {
+  const at = run.step === 'gateR' ? 'R' : run.step === 'gateG' ? 'G' : run.step === 'gateF' ? 'F' : null
+  return ev.gate && at ? { lastGate: ev.gate, gates: { ...run.gates, [at]: ev.gate }, lastTestTail: ev.testTail } : {}
+}
+
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
   // Who drives the run (Change 0.3.0): set when a drive starts; only that session's release clears it.
@@ -1119,7 +1125,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   // A number start's repository, once origin agrees with it: kept over a block, so resume can't move the run (PR #68 review 2).
   if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
-  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
+  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep, ...gateRecord(run, ev) }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
   // The guard refused a manifest: the phase's gate blocks on it (Change 0.7.0).
   if (ev.type === 'newPlugin') return isActive(run) ? { ...run, newPlugin: ev.path } : run
   if (ev.type === 'resume') {
