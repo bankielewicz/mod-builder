@@ -3830,3 +3830,20 @@ describe('PR #136 review round 1: the checks read the tested tree', () => {
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
   })
 })
+
+// PR #136 review round 1, finding 7: with nothing to commit, a gate keeps HEAD only when it is new since the last commit the run
+// recorded: gate F compares with the green commit or, when green committed nothing, the red commit.
+describe('PR #136 review round 1: the commit a gate keeps', () => {
+  const HOLD_STORE = { when: () => false, until: Promise.resolve() }
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+
+  test("gate F with no green commit recorded and HEAD at red's commit records no refactor commit", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateF', { redCommit: 'c0', greenCommit: undefined, used: { red: 1, green: 1, refactor: 1 } }) }
+    const w = engine(on, { head: BRANCH, hasChanges: false, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length > 0 || w.toasts.some(t => t.includes('blocked')), 'the push question or a block')
+    expect(w.commits.length).toBe(0)
+    expect(storedOf(store).refactorCommit).toBe(undefined)
+  })
+})

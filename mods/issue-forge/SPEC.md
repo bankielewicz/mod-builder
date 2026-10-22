@@ -1975,6 +1975,6 @@ count set in the pane.
   - **Finding 4:** UI tests for gate R's after-commit block (in the behaviour pass too: green's stash is applied on the resume), gate F's after-commit block and its kept HEAD, and the order "add -A, then write-tree, then the tests" at gates R and F.
   - **Finding 5:** the READMEs said 0.7.5 was "checked on 2.1.308". They now say what ran: the module loaded on 2.1.308, the test suite covers the gates, a git-level probe checked the git commands, and no gate ran live.
   - **Finding 6:** the replay bullet above is corrected.
-  - **Finding 7:** with no commit recorded for the phase before, `keptCommit` treated any HEAD as new. Gate G now compares with the red commit or the merge base, and gate F with the green commit or the red commit.
+  - **Finding 7:** with no commit recorded for the phase before, `keptCommit` treated any HEAD as new. Gate F now compares with the green commit or, when green committed nothing, the red commit. Gate G always has a red commit by then (a run reaches it only through gate R's commit), so it is unchanged.
   - **Finding 10:** the logic tests call `treeDrift` and `keptCommit` directly, so the typecheck sees their signatures.
 - **Version:** 0.7.5 (patch).
