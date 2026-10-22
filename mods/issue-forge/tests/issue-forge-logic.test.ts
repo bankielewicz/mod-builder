@@ -1147,7 +1147,7 @@ describe('review of PR #41', () => {
     expect(routedRedBlock('issue-forge:red', true)).toBeNull()
     expect(routedRedBlock('general-purpose', false)).toBeNull()
     expect(routedRedBlock('general-purpose', true)).toEqual({
-      reason: "redAgentType general-purpose can't work in a worktree: another plugin (duet's Codex) runs it in the session's folder",
+      reason: "redAgentType general-purpose can't work in a worktree: another plugin (ensemble's Codex) runs it in the session's folder",
       next: 'set redAgentType to issue-forge:red (a red on Codex needs "workspace": "here" and a clean checkout on the base)',
     })
   })
