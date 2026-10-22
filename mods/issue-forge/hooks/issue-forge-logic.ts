@@ -309,7 +309,8 @@ export function treeDrift(gate: 'R' | 'G' | 'F', tested: string, seen: string, c
  * the blank line before the message. A signature's continuation lines start with a space, so they aren't fields.
  */
 export function commitFields(text: string): { tree: string; parents: string[] } {
-  const header = text.split('\n\n')[0] ?? ''
+  const end = text.indexOf('\n\n')
+  const header = end < 0 ? text : text.slice(0, end)
   const fields = header.split('\n').filter(line => !line.startsWith(' '))
   const valueOf = (name: string) => fields.filter(line => line.startsWith(`${name} `)).map(line => line.slice(name.length + 1).trim())
   return { tree: valueOf('tree')[0] ?? '', parents: valueOf('parent') }

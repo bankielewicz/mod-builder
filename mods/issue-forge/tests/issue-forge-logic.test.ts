@@ -2499,6 +2499,15 @@ describe('PR #136 review round 2: reading a commit object', () => {
     expect(fields(signed)).toEqual({ tree: '4444444dddd', parents: ['c1'] })
   })
 
+  test('a header with no message, or with no tree line, still reads', () => {
+    expect(fields('tree 5555555eeee\nparent c2\n')).toEqual({ tree: '5555555eeee', parents: ['c2'] })
+    expect(fields('parent c2\n\nno tree\n')).toEqual({ tree: '', parents: ['c2'] })
+  })
+
+  test('a HEAD with no parent (a root commit) is named as having none', () => {
+    expect(moved('R', 'c0', 'abcdef0123', '').reason).toBe("another commit moved the branch during gate R's commit (HEAD abcdef0, whose parent is none, not c0)")
+  })
+
   test("another commit on the branch is named with the HEAD's parent and the HEAD from before", () => {
     expect(moved('G', 'c0', 'abcdef0123', 'f00dcafe99')).toEqual({
       reason: "another commit moved the branch during gate G's commit (HEAD abcdef0, whose parent is f00dcaf, not c0)",
