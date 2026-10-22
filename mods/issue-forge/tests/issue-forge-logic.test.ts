@@ -2503,3 +2503,15 @@ describe('PR #136 review round 2: reading a commit object', () => {
     })
   })
 })
+
+// PR #136 review round 2, finding 4: a git commit that fails after the gate passed names a commit hook as the likely cause.
+describe('PR #136 review round 2: a refused commit', () => {
+  const refused = (gate: string, message: string) => ((logic as Record<string, unknown>).commitRefused as ((g: string, m: string) => unknown) | undefined)?.(gate, message)
+
+  test('the gate passed, the commit failed, and a commit hook may have refused it or changed files and failed', () => {
+    expect(refused('G', 'git commit failed: - files were modified by this hook')).toEqual({
+      reason: 'gate G passed, but git commit failed: - files were modified by this hook',
+      next: "see the commit hook's output (git commit in the run's folder): it may have refused the commit, or changed files and failed, as pre-commit does",
+    })
+  })
+})

@@ -4024,3 +4024,35 @@ describe('PR #136 review round 2: a rejected refactor', () => {
     expect(stored.gatedHead).toBe('g1')
   })
 })
+
+// PR #136 review round 2, finding 4, in the drive: errors during the commit keep the gate's result.
+describe('PR #136 review round 2: errors during the commit', () => {
+  const LOCKED = { stderr: `fatal: Unable to create '${LOCK_PATH}': File exists.\n`, code: 128, isLocked: true }
+  const G_WORLD = { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }
+  const HOLD_STORE = { when: () => false, until: Promise.resolve() }
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+  const isBlocked = (w: World) => w.toasts.some(t => t.includes('blocked'))
+
+  test("gate G: a commit that a hook fails blocks, naming the hook, with the gate's passing result kept", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateG') }
+    const w = engine(on, { ...G_WORLD, gitFails: { on: 'commit', seq: [{ stderr: '- files were modified by this hook\n', code: 1, isLocked: false }] }, storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w), 'the block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain('blocked at gateG: gate G passed, but git commit failed: - files were modified by this hook')
+    expect(storedOf(store).gates?.G?.passed).toBe(true)
+    expect(storedOf(store).lastTestTail).toBe('all pass')
+  })
+
+  test("gate G: a commit that meets the lock five times blocks naming the lock, with the gate's passing result kept", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateG') }
+    const w = engine(on, { ...G_WORLD, gitFails: { on: 'commit', seq: [LOCKED, LOCKED, LOCKED, LOCKED, LOCKED] }, storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    for (let t = 0; t < 12_000 && !isBlocked(w); t += 50) await w.clock.advance(50)
+    await w.clock.settle()
+    expect((await run($, 'status')).text).toContain(`blocked at gateG: another git process is using ${LOCK_PATH}`)
+    expect(storedOf(store).gates?.G?.passed).toBe(true)
+  })
+})
