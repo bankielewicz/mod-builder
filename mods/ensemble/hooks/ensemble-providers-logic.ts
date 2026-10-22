@@ -1,11 +1,11 @@
 /**
- * Duet 0.3.0: API providers as data, the user-level key file, redaction and
+ * Ensemble 0.3.0: API providers as data, the user-level key file, redaction and
  * the key test (SPEC, Change 0.3.0, parts A, C and D). Pure: no `$`.
  *
  * The shared shape is OpenAI's Chat Completions: `GET {base}/models` and
  * `POST {base}/chat/completions` with `Authorization: Bearer <key>`. Base URLs
  * are `[field]` from each provider's docs and stay `[probe]` until
- * `/duet provider test` has hit them live (SPEC, Change 0.3.0, part A).
+ * `/ensemble provider test` has hit them live (SPEC, Change 0.3.0, part A).
  */
 
 import type { ProviderTest } from '../types'
@@ -51,13 +51,13 @@ export const PROVIDERS: ProviderDef[] = [
 ]
 
 /**
- * The key variables duet stores, except `OPENAI_API_KEY` (Codex's own) and `ANTHROPIC_API_KEY` (Claude Code's own).
+ * The key variables ensemble stores, except `OPENAI_API_KEY` (Codex's own) and `ANTHROPIC_API_KEY` (Claude Code's own).
  * None is blanked for Codex: a stored key lives in the file, and one set in the shell is the person's credential for Codex too.
  */
 export const PROVIDER_KEY_NAMES: readonly string[] = PROVIDERS.map(p => p.keyName).filter((n): n is string => n !== null && n !== 'OPENAI_API_KEY' && n !== 'ANTHROPIC_API_KEY')
 
 /** The key file as the pane, notes and answers show it. */
-export const KEY_FILE_SHOWN = '~/.claude/duet-data/.env'
+export const KEY_FILE_SHOWN = '~/.claude/ensemble-data/.env'
 
 export const KEY_FILE_NOTE = `keys live in ${KEY_FILE_SHOWN} (mode 600), never in the project`
 
@@ -88,10 +88,10 @@ export function baseUrlOf(p: ProviderDef, o: { customUrl: string }): string {
 
 // ── The key file ─────────────────────────────────────────────────────────
 
-/** `~/.claude/duet-data/.env`, with `/` separators whatever the home folder uses; '' with no home folder (never a path under the project, Codex 4297835997). */
+/** `~/.claude/ensemble-data/.env`, with `/` separators whatever the home folder uses; '' with no home folder (never a path under the project, Codex 4297835997). */
 export function keyFileOf(home: string): string {
   const h = home.trim().replace(/\\/g, '/').replace(/\/+$/, '')
-  return h === '' ? '' : `${h}/.claude/duet-data/.env`
+  return h === '' ? '' : `${h}/.claude/ensemble-data/.env`
 }
 
 export const NO_HOME = "no home folder (HOME or USERPROFILE); keys can't be stored"
@@ -148,7 +148,7 @@ function globMatches(glob: string, name: string): boolean {
   }
 }
 
-/** A path with `/` separators reaches the key file: `.claude/duet-data` itself, or a segment under it that matches `.env`. */
+/** A path with `/` separators reaches the key file: `.claude/ensemble-data` itself, or a segment under it that matches `.env`. */
 function pathReaches(p: string): boolean {
   const parts: string[] = []
   for (const seg of p.split('/')) {
@@ -158,7 +158,7 @@ function pathReaches(p: string): boolean {
     if (seg === '..' && last !== undefined && last !== '' && last !== '..' && last !== '~') { parts.pop(); continue }
     parts.push(seg)
   }
-  const at = parts.findIndex((seg, i) => /^\.claude$/i.test(seg) && /^duet-data$/i.test(parts[i + 1] ?? ''))
+  const at = parts.findIndex((seg, i) => /^\.claude$/i.test(seg) && /^ensemble-data$/i.test(parts[i + 1] ?? ''))
   if (at < 0) return false
   const next = parts[at + 2]
   return next === undefined || next === '' || globMatches(next, '.env')
@@ -172,7 +172,7 @@ const ROOTED = /^(?:~|\/|\.{1,2}\/|[A-Za-z]:\/)/
  * A rooted path inside a word: stops at code punctuation (`,` `]` `}` `)` quotes), keeps whole `{a,b}` and `[…]` groups. A `]`,
  * `}` or `,` that a later `/` follows in the same run is part of a segment (`/home/u]/…`, `/home/u,team/…`: Codex 4337056082,
  * 4337185228), not code closing. A word is read both ways (`PATH_IN_WORD_STRICT` stops at every one of them), so a list of
- * paths (`['/home/u/.claude/duet-data/.env','/b']`) still has its first path read on its own.
+ * paths (`['/home/u/.claude/ensemble-data/.env','/b']`) still has its first path read on its own.
  */
 const PATH_IN_WORD = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[\]},](?=[^\s"'<>|;&(){}[\]]*\/)|[^\s"'<>|;&(),{}[\]])*)/g
 const PATH_IN_WORD_STRICT = /(?:^|[=:,(\[{\s])((?:~|\/|\.{1,2}\/|[A-Za-z]:\/)(?:\{[^}\s]*\}|\[[^\]\s]*\]|[^\s"'<>|;&(),{}[\]])*)/g
@@ -191,7 +191,7 @@ function wordReaches(value: string): boolean {
 
 /**
  * A quoted word with spaces is a message, unless it is one rooted path (a home folder with a space): no `: `, and no space
- * that starts another rooted path, as in `/duet keeps keys in ~/.claude/…` (Codex 4337185247).
+ * that starts another rooted path, as in `/ensemble keeps keys in ~/.claude/…` (Codex 4337185247).
  */
 function spacedPathReaches(value: string): boolean {
   const n = normPath(value).trim()
@@ -308,9 +308,9 @@ function reaches(text: string, depth: number): boolean {
 
 /**
  * True when a shell command reaches the key file: a rooted path (`~/…`, `/…`, `./…`, `$HOME/…`, `C:\…`) to
- * `.claude/duet-data` or to a name under it that matches `.env`, as an argument, after `=`, inside a `-c` payload or in a
+ * `.claude/ensemble-data` or to a name under it that matches `.env`, as an argument, after `=`, inside a `-c` payload or in a
  * heredoc an interpreter reads. A quoted text with spaces (a message), a grep pattern, a heredoc `cat` writes out and a
- * `#` comment do not count, nor does another folder named `duet-data`. A text match, not a check on what the command
+ * `#` comment do not count, nor does another folder named `ensemble-data`. A text match, not a check on what the command
  * opens: a tripwire for the obvious case.
  */
 export function namesKeyFile(text: string): boolean {
@@ -336,7 +336,7 @@ export function searchCoversKeyFile(path: string, home: string): boolean {
   // one, and a project's own `.claude` is not it (Codex 4337056086).
   if (p === '/' || (!h && /(?:^|\/)\.claude$/i.test(p))) return true
   // Windows paths (a drive or a UNC share) compare without case; POSIX ones with it (Codex 4337185238).
-  const keyFolder = `${h || '~'}/.claude/duet-data`
+  const keyFolder = `${h || '~'}/.claude/ensemble-data`
   const fold = (s: string) => (/^(?:[A-Za-z]:\/|\/\/)/.test(keyFolder) ? s.toLowerCase() : s)
   return fold(keyFolder).startsWith(`${fold(p)}/`)
 }
@@ -344,7 +344,7 @@ export function searchCoversKeyFile(path: string, home: string): boolean {
 /** True when a Grep's or Glob's path, glob or pattern reaches the key file or its folder (a search over the folder reads the file). */
 export function namesKeyFolder(text: string): boolean {
   const t = text.trim()
-  return t !== '' && (keyPathReaches(t) || /(?:^\*\*|\.claude)[\\/](?:.*[\\/])?duet-data[\\/]\.env$/i.test(t))
+  return t !== '' && (keyPathReaches(t) || /(?:^\*\*|\.claude)[\\/](?:.*[\\/])?ensemble-data[\\/]\.env$/i.test(t))
 }
 
 /**
@@ -537,8 +537,8 @@ export function parseChatReply(text: string, keys: readonly string[] = []): { te
 export type HttpReply = { status: number; ok: boolean; text: string; headers?: Record<string, string> } | { refused: string }
 
 /**
- * The reason inside the engine's wording of a `$.http.fetch` rejection: `duet: $.http.fetch: <reason>` for a policy
- * refusal, `duet: $.http.fetch(<url>) failed: <reason>` for a connection that failed (2.1.301, probed). Other text is kept.
+ * The reason inside the engine's wording of a `$.http.fetch` rejection: `ensemble: $.http.fetch: <reason>` for a policy
+ * refusal, `ensemble: $.http.fetch(<url>) failed: <reason>` for a connection that failed (2.1.301, probed). Other text is kept.
  */
 export function refusalReason(message: string): string {
   return message.split('\n')[0]!.replace(/^\S+: \$\.http\.fetch(?:\([^)]*\))?(?: failed)?: /, '').trim()
@@ -616,9 +616,9 @@ export function providerRowText(r: ProviderRow, width: number): string {
   return line.trimEnd().slice(0, width)
 }
 
-/** `/duet provider list`: the rows as text. */
+/** `/ensemble provider list`: the rows as text. */
 export function providersText(rows: ProviderRow[], keys: number, tested: number): string {
-  return [`duet providers · ${keys} keys · ${tested} tested`, ...rows.map(r => providerRowText(r, 120)), KEY_FILE_NOTE, 'Commands: /duet provider [list | key <id> | test <id> [model] | models <id> | remove <id>]'].join('\n')
+  return [`ensemble providers · ${keys} keys · ${tested} tested`, ...rows.map(r => providerRowText(r, 120)), KEY_FILE_NOTE, 'Commands: /ensemble provider [list | key <id> | test <id> [model] | models <id> | remove <id>]'].join('\n')
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "issue-forge",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Takes one GitHub issue to a pull request test-first: red, green and refactor subagents, each phase checked by commands and a 95% diff-coverage gate; pushes only after you confirm",
   "author": { "name": "Bryan Ankielewicz" },
   "types": "./types/index.d.ts",
@@ -26,7 +26,7 @@
     "redAgentType": {
       "type": "string",
       "title": "Red phase agent type",
-      "description": "issue-forge:red runs red on Claude. Another type runs red as that agent, unnamed, so duet sends it to Codex when the type is in duet's codexAgents (Codex then needs codexSandbox workspace-write to write tests).",
+      "description": "issue-forge:red runs red on Claude. Another type runs red as that agent, unnamed, so ensemble sends it to Codex when the type is in ensemble's codexAgents (Codex then needs codexSandbox workspace-write to write tests).",
       "default": "issue-forge:red"
     },
     "confirmPublish": {
