@@ -1230,7 +1230,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
     const made = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run), which, tested)
     if ('type' in made) return made
     // Nothing new to commit: HEAD is the phase's commit when it is new since the phase before (a replay, or a resume, #101).
-    const commit = made.commit ?? keptCommit(made.head, which === 'G' ? run.redCommit : run.greenCommit)
+    // Gate F compares with red's commit when green committed nothing (PR #136 review, finding 7).
+    const commit = made.commit ?? keptCommit(made.head, which === 'G' ? run.redCommit : (run.greenCommit ?? run.redCommit))
     // Gate F publishes the head whose tree commitAll checked, not a later read of HEAD (Codex 4350587255).
     return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: made.head } : {}) }
   }
