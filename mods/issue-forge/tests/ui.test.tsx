@@ -444,6 +444,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
     if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
+    // The gate's checks diff the tested tree (PR #136 review, Codex 4350587243): `git diff … <ref> <tested tree>`.
+    const isTreeDiff = a[0] === 'diff' && !a.includes('--cached') && a.at(-1) === world.lastTree
+    if (isTreeDiff && a.includes('--diff-filter=A') && a.at(-2) === 'base0') return ok((world.added ?? []).join('\0'))
+    if (isTreeDiff && a[1] === '--name-only' && a.at(-2) === 'base0') return ok(world.staged.join('\0'))
+    if (isTreeDiff && a[1] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--cached' && a.includes('--diff-filter=A') && a.at(-1) === 'base0') return ok((world.added ?? []).join('\0'))
     if (s === 'ls-tree -r --name-only -z origin/main') return ok((world.baseTip ?? []).join('\0'))
     if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
@@ -3793,5 +3798,34 @@ describe('PR #136 review round 1: the commit commitAll verified', () => {
     expect(w.commits.length).toBe(1)
     expect(storedOf(store).refactorCommit).toBe('c1')
     expect(storedOf(store).gatedHead).toBe('c1')
+  })
+})
+
+// PR #136 review round 1, Codex 4350587243: every check a gate makes judges the tree it tested, not the index at its own moment.
+describe('PR #136 review round 1: the checks read the tested tree', () => {
+  const held = () => new Promise<void>(() => undefined)
+
+  test("gate G: the staged paths, the new manifests and the coverage diff are diffs to the tested tree; none reads the index", async ($, on) => {
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], trees: ['5555555eeee'], spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'refactor or a block')
+    const diffs = w.argv.filter(a => a[0] === 'git' && a[1] === 'diff')
+    expect(diffs.filter(a => a.includes('--cached'))).toEqual([])
+    expect(diffs.find(a => a.includes('--diff-filter=A'))?.slice(-2)).toEqual(['base0', '5555555eeee'])
+    expect(diffs.find(a => a.includes('-U0'))?.slice(-2)).toEqual(['base0', '5555555eeee'])
+    expect(diffs.filter(a => a[2] === '--name-only' || a[1] === '--name-only').map(a => a.slice(-2))).toContainEqual(['c1', '5555555eeee'])
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+  })
+
+  test('gate R: the staged paths and the new manifests are diffs to the tested tree', async ($, on) => {
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'], trees: ['6666666ffff'], spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'green or a block')
+    const diffs = w.argv.filter(a => a[0] === 'git' && a[1] === 'diff')
+    expect(diffs.filter(a => a.includes('--cached'))).toEqual([])
+    expect(diffs.find(a => a.includes('--diff-filter=A'))?.slice(-2)).toEqual(['base0', '6666666ffff'])
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
   })
 })
