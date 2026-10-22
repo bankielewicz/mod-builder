@@ -130,6 +130,15 @@ it finishes, stage everything (`git add -A`) and check **gate R**:
 On pass, commit `test(#<N>): red: <title>` (with `commitTrailers`; same for every commit below); record it as the **red commit**. On fail, give the
 agent the failed checks and try again, up to `attempts.red` (default 2), then stop in `blocked`.
 
+**Every gate commits the tree it tested (SPEC change 0.7.5, #101).** Right after `git add -A`, record the index's tree
+with `git write-tree`, before any test runs; it takes the index lock, so it is retried as `add` is. Before the commit,
+write the tree again: a different tree blocks the gate with nothing committed ("the index changed after gate X tested
+it"). After the commit, `git rev-parse HEAD^{tree}` must be that tree; else the gate blocks with the commit made ("commit
+<sha> holds a tree gate X didn't test"), naming `git diff <tested tree> HEAD` and `git reset --soft HEAD~1`. issue-forge
+resets nothing. Both blocks resume: the gate runs again from `git add -A`. With nothing left to commit, a passing gate
+keeps HEAD when it is new since the phase before. The repository's commit hooks run, so a pre-commit hook that
+re-stages is caught by the after-the-commit check; committing the tree with `git commit-tree` would skip them.
+
 **Step 5: green phase.** Spawn the green agent with the issue text, the red agent's answer, the red
 commit's test file paths, and the last 200 lines of R3's test output. When it finishes, `git add -A` and check **gate G**:
 - G1: tests unchanged since the red commit: `git diff --cached --name-only <red commit> -- <testGlobs>` is empty;
