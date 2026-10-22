@@ -1153,12 +1153,13 @@ export function verdictOf(text: string): string {
 
 /**
  * The note on duet's old data folder (#128). duet became ensemble, and a mod can't move or delete a file ($.fs has no
- * rename or delete), so the person moves it; once both folders are there, the old one's key file is no longer guarded.
+ * rename or delete), so the person moves it. Once ensemble-data exists, mv would put duet-data inside it, so the note
+ * says to copy without overwriting, then delete the old folder (PR #130 review).
  */
 export function migrationNoteOf(hasOld: boolean, hasNew: boolean): string | null {
   if (!hasOld) return null
   return hasNew
-    ? '~/.claude/duet-data is still there and no longer guarded: delete it once what you need is in ~/.claude/ensemble-data'
+    ? '~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data'
     : "your data and API keys now live in ~/.claude/ensemble-data. Move duet's: mv ~/.claude/duet-data ~/.claude/ensemble-data"
 }
 
