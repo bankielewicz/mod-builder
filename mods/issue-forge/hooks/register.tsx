@@ -1254,7 +1254,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   if (which === 'F' && !canRetry(run, 'refactor')) {
     await setActivity($, 'stashing the rejected refactor')
     const stash = await stashAll($, run, stashMessage('refactor', run))
-    return { type: 'gated', gate, stash, testTail: tests.tail, head: await headOf($, root) }
+    // Publish green's commit, which gate G checked, not a fresh HEAD: a branch that moved meanwhile fails publish's tip check (round 2).
+    return { type: 'gated', gate, stash, testTail: tests.tail, head: run.greenCommit ?? run.redCommit }
   }
   return { type: 'gated', gate, testTail: tests.tail }
 }
