@@ -112,6 +112,8 @@ declare module 'claude-code' {
       providerFileError: string
       /** A fingerprint of each provider's current key (`none` for no key), to tell whether a stored result is still its. */
       providerKeyIds: Record<string, string>
+      /** The old-folder toast was shown this session (#128, PR #130 review). */
+      oldDataNoted: boolean
     }
   }
 }

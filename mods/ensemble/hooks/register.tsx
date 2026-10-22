@@ -71,6 +71,8 @@ const provAuth = atom({ plugin: 'ensemble', key: 'providerAuth' } as const, {} a
 const provTests = atom({ plugin: 'ensemble', key: 'providerTests' } as const, {} as Record<string, ProviderTest | 'running'>)
 const provFileError = atom({ plugin: 'ensemble', key: 'providerFileError' } as const, '')
 const provKeyIds = atom({ plugin: 'ensemble', key: 'providerKeyIds' } as const, {} as Record<string, string>)
+// The old-folder toast once a session: an atom survives the reload a /config write causes (PR #130 review).
+const oldDataNoted = atom({ plugin: 'ensemble', key: 'oldDataNoted' } as const, false)
 // Saves, removals and test results are read-modify-write sequences on shared files; this session's go one at a time.
 let keyChain: Promise<unknown> = Promise.resolve()
 /** Per provider, a count bumped by every save, removal and test start: a test whose count moved on records nothing (Codex 4298989626). */
@@ -204,13 +206,16 @@ async function homeDir($: EngineInterface): Promise<string> {
   return (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
 }
 
-/** At start, a toast on duet's old data folder while it is there (#128). Nothing is moved or read. */
+/** At start, a toast on duet's old data folder while it is there (#128), once a session. Nothing is moved or read. */
 async function noteOldData($: EngineInterface): Promise<void> {
+  if (await read($, oldDataNoted).catch(() => false)) return
   const home = await homeDir($)
   if (!home) return
   const hasOld = await $.fs.exists(`${home}/.claude/duet-data`).catch(() => false)
   const note = migrationNoteOf(hasOld, hasOld && (await $.fs.exists(await dataDir($)).catch(() => false)))
-  if (note) $.ui.toast(note, { timeoutMs: 15_000 })
+  if (!note) return
+  await update($, oldDataNoted, () => true).catch(() => undefined)
+  $.ui.toast(note, { timeoutMs: 15_000 })
 }
 
 async function dataDir($: EngineInterface): Promise<string> {
