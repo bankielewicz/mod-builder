@@ -841,4 +841,17 @@ describe('/ensemble provider', () => {
     expect(other.deny).toBeUndefined()
   })
 
+  // PR #130 review (Codex 4344331748): duet's old key file is refused the same way while it is there.
+  test("duet's old key file: an @-mention, a Bash, a Read, a Grep and a Glob are refused", async ($, on) => {
+    engine(on)
+    on('prompt.mention', () => ({ type: null }))
+    await start($)
+    const KEYS = /ensemble: that file holds API keys/
+    expect((await $.prompt.mention({ mention: '~/.claude/duet-data/.env', path: '/home/u/.claude/duet-data/.env' })).deny).toMatch(KEYS)
+    expect(((await $.tool.call({ tool: 'Bash', command: 'cat ~/.claude/duet-data/.env' } as never)) as any).deny).toMatch(KEYS)
+    expect(((await $.tool.call({ tool: 'Read', file_path: '/home/u/.claude/duet-data/.env' } as never)) as any).deny).toMatch(KEYS)
+    expect(((await $.tool.call({ tool: 'Grep', pattern: 'KEY', path: '/home/u/.claude/duet-data' } as never)) as any).deny).toMatch(KEYS)
+    expect(((await $.tool.call({ tool: 'Glob', pattern: '**/.claude/duet-data/.env' } as never)) as any).deny).toMatch(KEYS)
+  })
+
 })

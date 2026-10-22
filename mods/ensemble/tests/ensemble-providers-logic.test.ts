@@ -493,3 +493,18 @@ describe('pane text', () => {
     expect(text).not.toContain(KEY)
   })
 })
+
+// PR #130 review (Codex 4344331748): until the person moves or deletes ~/.claude/duet-data, its key file is still guarded,
+// as ensemble's own is. Another folder that ends in -data is not.
+describe('#130 review: duet\'s old key folder is still guarded', () => {
+  test('a path, a shell command, a search root and a glob that reach ~/.claude/duet-data count', () => {
+    expect(keyPathReaches('/home/u/.claude/duet-data/.env')).toBe(true)
+    expect(keyPathReaches('~/.claude/duet-data')).toBe(true)
+    expect(namesKeyFile('cat ~/.claude/duet-data/.env')).toBe(true)
+    expect(namesKeyFolder('**/.claude/duet-data/.env')).toBe(true)
+    expect(searchCoversKeyFile('/home/u/.claude/duet-data', '/home/u')).toBe(true)
+    expect(keyPathReaches('/home/u/.claude/ensemble-data/.env')).toBe(true)
+    expect(keyPathReaches('/home/u/.claude/other-data/.env')).toBe(false)
+    expect(namesKeyFile('cat ~/.claude/other-data/.env')).toBe(false)
+  })
+})

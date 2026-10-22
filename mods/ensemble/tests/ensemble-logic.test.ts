@@ -1283,12 +1283,26 @@ describe('#128: the note on duet\'s old data folder', () => {
     expect(note(true, false)).toBe('your data and API keys now live in ~/.claude/ensemble-data. Move duet\'s: mv ~/.claude/duet-data ~/.claude/ensemble-data')
   })
 
-  test('both folders: the old one is no longer guarded, so delete it', () => {
-    expect(note(true, true)).toBe('~/.claude/duet-data is still there and no longer guarded: delete it once what you need is in ~/.claude/ensemble-data')
+  test('both folders: copy without overwriting, then delete the old one (PR #130 review: mv would nest it)', () => {
+    expect(note(true, true)).toBe('~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data')
   })
 
   test('no old folder: nothing to say', () => {
     expect(note(false, false)).toBe(null)
     expect(note(false, true)).toBe(null)
+  })
+})
+
+// PR #130 review: "ensemble:" is four characters longer than "duet:", and the role names were cut in the stats and the rows.
+describe('#130 review: the role names fit', () => {
+  test('/ensemble stats keeps codex · ensemble:codex-implementer whole', () => {
+    const text = statsText([{ key: 'codex · ensemble:codex-implementer', runs: 1, okPct: 100, medianMs: 1000, medianTokens: 10 } as never])
+    expect(text).toContain('codex · ensemble:codex-implementer ')
+  })
+
+  test('a task row keeps ensemble:codex-advisor whole, wide and medium', () => {
+    const t = { id: 'd1', provider: 'codex', kind: 'agent', subagentType: 'ensemble:codex-advisor', status: 'running', startedAt: 0, model: '' } as never
+    expect(rowText(t, 1000, 120)).toContain('ensemble:codex-advisor ')
+    expect(rowText(t, 1000, 55)).toContain('ensemble:codex-advisor ')
   })
 })

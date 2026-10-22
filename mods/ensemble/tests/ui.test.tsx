@@ -14,13 +14,13 @@ const RUN = (provider: 'codex' | 'claude', type: string) => JSON.stringify({ id:
  * pane, `isPlaced: false` one waiting undrawn; a row is placed unless it says so); a listed pane comes to the front once it was opened while `showOnOpen` is set. `opens` takes every `$.ui.open`
  * whole, `focus` included; `closed` every `$.ui.close`; `toasts` every `$.ui.toast`.
  */
-type PaneWorld = { panes?: { id: string; isShown: boolean; isPlaced?: boolean }[]; showOnOpen?: boolean; opens?: any[]; closed?: string[]; toasts?: string[] }
+type PaneWorld = { panes?: { id: string; isShown: boolean; isPlaced?: boolean }[]; showOnOpen?: boolean; opens?: any[]; closed?: string[]; toasts?: string[]; registerDeny?: string }
 
 /** `sessions`: each session folder's runs.jsonl, by folder name; the legacy log holds one codex Explore run. Returns the test's clock. */
 function engine(on: any, opened: string[], sessions: Record<string, string> = {}, world: PaneWorld = {}) {
   const clock = mock.clock(on)
   on('session.start', ($: any, e: any) => ({ cwd: e.cwd }))
-  on('command.register', () => ({ value: undefined }))
+  on('command.register', () => (world.registerDeny ? { deny: world.registerDeny } : { value: undefined }))
   on('ui.open', ($: any, e: any) => (opened.push(e.id), world.opens?.push({ ...e }), { value: { isPlaced: true } }))
   on('ui.panes', () => ({
     value: (world.panes ?? []).map(pane => ({ id: pane.id, title: pane.id, isFocused: false, isPlaced: pane.isPlaced ?? true, isShown: pane.isShown || (world.showOnOpen === true && opened.includes(pane.id)) })),
@@ -294,11 +294,52 @@ describe('#128: the toast about duet\'s old data folder', () => {
     expect(await start($, on, [OLD])).toContain('your data and API keys now live in ~/.claude/ensemble-data. Move duet\'s: mv ~/.claude/duet-data ~/.claude/ensemble-data')
   })
 
-  test('both folders: the toast says to delete the old one', async ($, on) => {
-    expect(await start($, on, [OLD, DATA])).toContain('~/.claude/duet-data is still there and no longer guarded: delete it once what you need is in ~/.claude/ensemble-data')
+  test('both folders: the toast says to copy without overwriting, then delete the old one', async ($, on) => {
+    expect(await start($, on, [OLD, DATA])).toContain('~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data')
   })
 
   test('no old folder: no toast about it', async ($, on) => {
     expect((await start($, on, [DATA])).filter(t => t.includes('duet-data'))).toEqual([])
+  })
+})
+
+// PR #130 review: the toast shows once a session, not at every reload (a /config write reloads the module), and a
+// /ensemble that could not be registered says so instead of failing quietly.
+describe('#130 review: start-up notices', () => {
+  const OLD = '/home/u/.claude/duet-data'
+  const exists = (on: any) => on('fs.exists', ($: any, e: any) => ({ value: String(e.path).replace(/\/+$/, '') === OLD }))
+
+  test('two starts in one session show the old-folder toast once', async ($, on) => {
+    const toasts: string[] = []
+    const clock = engine(on, [], {}, { toasts })
+    exists(on)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await clock.settle()
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await clock.settle()
+    expect(toasts.filter(t => t.includes('duet-data'))).toHaveLength(1)
+  })
+
+  test('after a reload, a toast this session already showed is not shown again', async ($, on) => {
+    const toasts: string[] = []
+    const clock = engine(on, [], {}, { toasts })
+    exists(on)
+    // As after a reload: state says the toast was shown; the module starts afresh.
+    on('state.get', async (_: any, e: any, next: any) => {
+      const got = await next(e)
+      return e.plugin === 'ensemble' && e.key === 'oldDataNoted' ? { ...got, value: { ...got.value, value: true } } : got
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await clock.settle()
+    expect(toasts.filter(t => t.includes('duet-data'))).toEqual([])
+  })
+
+  test('a /ensemble the engine refuses is named in a toast', async ($, on) => {
+    const toasts: string[] = []
+    const clock = engine(on, [], {}, { toasts, registerDeny: '"/ensemble" refused: it is the built-in /ensemble' })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await clock.settle()
+    const notice = toasts.find(t => t.startsWith('/ensemble was not added'))
+    expect(notice ?? '').toContain('it is the built-in /ensemble')
   })
 })
