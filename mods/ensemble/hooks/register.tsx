@@ -1503,7 +1503,8 @@ export const register: Register = (on, raw) => {
     }
     await $.command
       .register({ name: 'ensemble', description: 'Delegate subagents to Codex, review diffs independently, and compare runs', argumentHint: '[demo | review [--base <branch> | --commit <sha>] | show <id> | stop <id> | stats | routes | config [list | models | <field> <value>] | provider [list | key <id> | test <id> [model] | models <id> | remove <id>]]' })
-      .catch(() => undefined)
+      // A name the engine refuses (a built-in took it) is said, not swallowed: the reason duet became ensemble (#128, PR #130 review).
+      .catch((err: unknown) => $.ui.toast(`/ensemble was not added: ${String((err as Error)?.message ?? err).split('\n')[0]!.replace(/^\S+: \$\.command\.register: /, '')}`, { timeoutMs: 15_000 }))
     void noteOldData($).catch(() => undefined)
     return next(e)
   })
