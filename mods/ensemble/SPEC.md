@@ -1,4 +1,6 @@
-# Duet: SPEC
+# Ensemble: SPEC
+
+> Named duet until 0.4.0 (#128). The changes before 0.4.0 keep duet's names, as they were written.
 
 > An orchestration mod that delegates work between Claude Code and Codex. A setting assigns
 > subagent types to Codex; when Claude spawns one of those, Codex does the work instead and its
@@ -1049,4 +1051,44 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
     - **Checked on both builds:** a review that finished still reported its verdict (`d1 review: fake codex answer: hi`), and a stop read `d2 review stopped: you stopped it from duet`.
     - This is wiring only: the kit has no streaming spawn.
   - #126 was retargeted from #123's branch to `main` after #123 merged, so it closes #121.
+
+## Change 0.4.0 (2026-10-22)
+
+> Issue #128, the owner's choices (2026-10-22, on the issue): rename duet to ensemble; the person moves `~/.claude/duet-data`; the old `duet:` names end at the rename; options are entered again; version 0.4.0, with #111 moved to 0.5.0. Issue #129, the owner's choices: remove the whole `custom` provider, inside this change.
+
+- **Why:**
+  - Anthropic is releasing a product named Duet (the owner, 2026-10-21).
+  - `$.command.register` throws for a name a built-in command holds (`docs/research/Mods/Build/Use-the-mods-API.md`), and duet registered `/duet` behind `.catch(() => undefined)`. A built-in `/duet` would have taken the command with no message.
+  - The custom provider's key (#129): the owner did not ask for a custom endpoint. Claude added it in Change 0.3.0's provider table (`1454957`), and it was used only by the key test.
+- **What changes:**
+  1. **The name, everywhere it is used:**
+     - the plugin, its `/ensemble` command, the panes (`ensemble`, `ensemble-config`, `ensemble-providers`) and the `$.state` atoms;
+     - the roles (`ensemble:codex-advisor`, `-reviewer`, `-implementer`) and the agent ids (`ensemble-<n>`);
+     - the data folder (`~/.claude/ensemble-data/`) and the key-file guard's patterns;
+     - the store keys (`ensemble:providers:tests:<id>`), the config rows (`ensemble.<field>`) and every message.
+     - Files: `mods/ensemble/`, `hooks/ensemble-logic.ts`, `hooks/ensemble-providers-logic.ts` and their tests.
+  2. **No migration code.** A mod can't move or delete a file (`$.fs` has no rename or delete). `migrationNoteOf` (pure) and a detached check at `session.start` raise a 15-second toast: the `mv` command while `~/.claude/duet-data` is there, or, once both folders are, that the old one is no longer guarded. Nothing is read from either folder.
+  3. **No custom provider (#129):** its row, `DUET_CUSTOM_API_KEY`, `apiCustomUrl` and `apiCustomModel` are gone. `isLocalBaseUrl` goes too, and `baseUrlOf(p)` and `authTextOf(p, k)` lose their custom argument. `isAllowedBaseUrl` still checks every table URL.
+  4. **Routes are promised for 0.5.0**, not 0.4.0, in the signed-in key test's reason and the providers pane (#111 moved).
+  5. **issue-forge 0.7.3:** `isInlineAnswer` (pure) treats an `ensemble-<n>` id, or a codex model, as answered in-line. The `duet-` prefix ends. The routed-red refusal and the `redAgentType` text name ensemble.
+- **Not changed:**
+  - this SPEC's earlier changes, `gotchas.md` and `conventions.md` attributions, and the mod-builder test fixtures that use `duet` as a sample name;
+  - the stored test result's `host` field, still written;
+  - the code paths themselves, apart from the custom provider.
+- **What gets touched:**
+  - this mod's files, `README.md` (a "Moving from duet" section, the options and reach rows) and this SPEC;
+  - `mods/issue-forge` (logic, register, tests, README, SPEC, 0.7.3);
+  - the marketplace entries, and the repo docs that describe the mod as it is.
+  - Reach: one new `$.fs.exists` pair at start; the custom endpoint's host and key variable are gone.
+- **TDD:**
+  - **Move** `2d81262`: the folder and files only, 374 tests pass.
+  - **Red** `199760b`: the tests say ensemble, plus `migrationNoteOf`, the toast, and issue-forge's `isInlineAnswer`.
+    - 202 of 382 failed: 86 by assertion and 115 as the kit's "no implementation for command.run/ui.render" (nothing answered `/ensemble` yet).
+    - 1 TypeError. None was an import or syntax error.
+  - **Red** `dc5b0e3`: issue-forge's refusal names ensemble.
+  - **Test fix** `8a293d9`: ensemble's key-file path is 4 characters longer, so the unreadable-file test mounts 130 columns.
+  - **Green** `91d349d`.
+  - **Red** `87ec656` and **green** `5e81bae`: no custom provider (5 failed by assertion).
+  - **Red** `a35893b` and **green** `2a70363`: routes in 0.5.0 (2 failed by assertion).
+- **Version:** 0.4.0 (minor: renames break installs, saved options and type names).
 

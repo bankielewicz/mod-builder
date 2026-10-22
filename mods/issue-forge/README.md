@@ -220,7 +220,7 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
   symlink inside the worktree can still lead an edit outside it. A Bash command that `cd`s elsewhere
   or names an absolute path still reaches it, and a `here` run's agents can't Write outside the
   repository either (`/tmp` included).
-- A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: duet's Codex runs in
+- A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: ensemble's Codex runs in
   the session's folder whatever the spawn says, so a worktree run with one blocks before it starts.
 - A run started in a linked worktree puts its new worktree under that checkout's `worktreeDir`, so
   the agents' writes stay under the session's folder.
@@ -281,10 +281,10 @@ Changes load with `/reload-plugins` or a new session.
 | `redModel` | `opus` | model for the red agent |
 | `greenModel` | `sonnet` | model for the green agent |
 | `refactorModel` | `opus` | model for the refactor agent |
-| `redAgentType` | `issue-forge:red` | another type runs red as that agent, unnamed, so duet sends it to Codex if the type is in duet's `codexAgents`. Codex needs `codexSandbox: workspace-write`, which also makes duet wait for the run; in duet's read-only background mode the phase would end at once with nothing written |
+| `redAgentType` | `issue-forge:red` | another type runs red as that agent, unnamed, so ensemble sends it to Codex if the type is in ensemble's `codexAgents`. Codex needs `codexSandbox: workspace-write`, which also makes ensemble wait for the run; in ensemble's read-only background mode the phase would end at once with nothing written |
 | `confirmPublish` | `true` | ask before pushing and opening the pull request; off publishes as soon as the run is ready |
 
-The mod's own agents are spawned with a name, so duet leaves them on Claude even with
+The mod's own agents are spawned with a name, so ensemble leaves them on Claude even with
 `codexAgents: "*"`.
 
 ## What it reaches

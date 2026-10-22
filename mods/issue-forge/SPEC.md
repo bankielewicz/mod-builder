@@ -1906,3 +1906,18 @@ count set in the pane.
   - **Red** `21ee1e0`. `7c9c376` fixes a guessed label in the activity test. **Green** `eca8710`. **Refactor** `e4967a0`, and `4aa4e73` types the test's sources.
   - **README:** the hooks row escapes its pipes, which had split the table cell, and stops claiming `/resume` and `/branch` were run here. The gating-hooks and processes rows name the new hook.
 
+## Change 0.7.3 (2026-10-22)
+
+> Issue #128: duet is renamed ensemble 0.4.0. The owner chose to end the old names at the rename, with no `duet-` alias.
+
+- **Why:** issue-forge treated an agent id starting `duet-` as answered in-line (C0). After the rename, ensemble's in-line answers carry `ensemble-<n>` ids, so a red phase routed to Codex would have waited for a `turn.complete` that never comes.
+- **What changes:**
+  - `isInlineAnswer(agentId, model)` (pure, in the logic module) replaces the inline check in `phase`: an `ensemble-<n>` id or a codex model.
+  - The routed-red refusal reads "another plugin (ensemble's Codex)".
+  - The `redAgentType` option text and the README name ensemble.
+- **What gets touched:** `hooks/issue-forge-logic.ts`, `hooks/register.tsx`, `tests/issue-forge-logic.test.ts`, `tests/ui.test.tsx`, `README.md`, `plugin.json`, the marketplace entry and this SPEC. No new reach.
+- **TDD:**
+  - **Red** `199760b` (`isInlineAnswer`) and `dc5b0e3` (the refusal's words): 4 of 454 failed, all by assertion.
+  - **Green** `91d349d`: 454 pass.
+- **Version:** 0.7.3 (patch).
+

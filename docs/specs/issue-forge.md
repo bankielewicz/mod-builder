@@ -1,5 +1,7 @@
 # issue-forge — implement GitHub issues test-first, behind a coverage gate
 
+> The duet mod named below is `ensemble` from 0.4.0 (#128), at `mods/ensemble/`. This spec's records keep duet's names as they were written.
+
 > **What it is.** A Claude Code mod that takes one GitHub issue and turns it into a pull request.
 > Three subagents work on it in order: one writes failing tests (red), one makes them pass (green),
 > and one refactors. Between phases the mod checks the work with commands and fixed rules, not

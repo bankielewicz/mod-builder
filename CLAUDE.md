@@ -20,7 +20,7 @@ There is no build step and no package.json: the engine loads the TypeScript dire
 claude plugin validate .                         # the marketplace
 claude plugin validate plugins/mod-builder       # one plugin: manifest, hooks, gating hooks, state contract
 claude plugin test plugins/mod-builder           # one plugin's *.test.ts(x) (no per-test filter; a few seconds)
-claude plugin test mods/duet                     # likewise for each mod under mods/
+claude plugin test mods/ensemble                 # likewise for each mod under mods/
 bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # scaffold all 5 archetypes, validate + test each
 node plugins/mod-builder/skills/build/scripts/check-sandbox.mjs     # the loader still refuses import()/node:fs tests; canary list = gotchas.md's
 claude -p --plugin-dir mods/<name> "/<name> demo"                    # headless live smoke test of a command
@@ -33,8 +33,8 @@ One logic test file, or one test by name, runs under node through the coverage k
 design, since node has the file system it checks is absent.
 
 ```sh
-node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test mods/duet/tests/duet-logic.test.ts
-node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test --test-name-pattern='BLANKED_ENV' mods/duet/tests/duet-logic.test.ts
+node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test mods/ensemble/tests/ensemble-logic.test.ts
+node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs --test --test-name-pattern='BLANKED_ENV' mods/ensemble/tests/ensemble-logic.test.ts
 ```
 
 Typecheck (needs the bundled API types from the built-in `plugin-authoring` skill, at
@@ -53,7 +53,7 @@ pin included.
 ## Changing files: a worktree, then a PR
 
 `main` is protected, and the main folder is shared. Several Claude sessions work in it at once, and the
-installed plugins (`mod-builder@claudemod`, `git-branch@claudemod`, `duet@claudemod`,
+installed plugins (`mod-builder@claudemod`, `git-branch@claudemod`, `ensemble@claudemod`,
 `issue-forge@claudemod`) load from whatever branch it is on. So **never edit, commit or switch
 branches in the main folder**, with one exception. After a PR merges, the main folder may be brought
 up to date so the installed plugins get the merge: `git switch main && git merge --ff-only origin/main`
@@ -64,7 +64,7 @@ change to this repo happens in its own worktree and reaches `main` through a PR:
 1. `git fetch origin && git worktree add --no-track -b <branch> scratch/<name> origin/main`
    (`scratch/` is gitignored). Edit, test and commit only inside `scratch/<name>`.
 2. Test the worktree's code, not the installed copy, which still loads from the main folder. From
-   inside the worktree, the commands above work as written (`claude plugin test mods/duet`); a live
+   inside the worktree, the commands above work as written (`claude plugin test mods/ensemble`); a live
    session there is `claude --plugin-dir <plugin>`. Mod Lab watches the folder a build or edit
    reports (`lab_report`'s `path`, so a worktree edited by path shows up), else the `mods/` nearest
    the session's project root (`/cd` moves it; Claude's own Bash `cd` doesn't), even though its code
@@ -91,7 +91,7 @@ output shows it. In the commands below, `<kit>` stands for
    reason the change exists; a failed import or a syntax error doesn't count. A bug fix starts with a
    test that reproduces the bug. In mods:
    - pure rules go in `hooks/<name>-logic.ts`, and their tests in `tests/<name>-logic.test.ts`;
-   - `$` behaviour is tested in `tests/ui.test.tsx` (duet also has `routing.test.ts` and
+   - `$` behaviour is tested in `tests/ui.test.tsx` (ensemble also has `routing.test.ts` and
      `config.test.ts`), with an `on(...)` stub for every call (see "Rules the engine enforces").
 2. **Green.** Write the least code that makes the new test pass, without editing the red tests. Then
    run the plugin's whole suite (`claude plugin test <plugin>`); everything passes.
@@ -135,7 +135,7 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
   `register.tsx`, chained on one promise; that orders this session's writes only (#58). `SPEC.md`
   sections "Design" and "Edits" record why.
 
-**`mods/*`**: `git-branch`, `duet` (delegates subagents/reviews to the Codex CLI), `issue-forge` (a
+**`mods/*`**: `git-branch`, `ensemble` (formerly duet; delegates subagents/reviews to the Codex CLI), `issue-forge` (a
 GitHub issue to a PR via red/green/refactor subagents behind a diff-coverage gate; this repo's profile
 is `.issue-forge.json`, its coverage kit `plugins/mod-builder/skills/build/scripts/coverage/`, its
 design spec `docs/specs/issue-forge.md`), `turn-counter` (left as raw scaffold output on purpose, and
@@ -149,7 +149,7 @@ not in the marketplace). Each has the same layout and its own `SPEC.md` with dat
   imported functions or closures inside `register`. Module state lives in top-level `let`s.
 - `atom({ plugin, key })` and `command.run`/`tool.call` matchers must be **literals** (validate reads them
   statically): strings, or a RegExp literal for a `tool.call` matcher that covers tools the build's types don't
-  name (duet's `{ tool: /^(?:Grep|Glob)$/ }`, `gotchas.md`).
+  name (ensemble's `{ tool: /^(?:Grep|Glob)$/ }`, `gotchas.md`).
 - One hook per event + matcher per plugin. Guards (`tool.call`, `command.run`, …) carry `.catch`.
 - Tests: nothing sits beneath the mod, so every `$` call needs an `on(...)` stub (including
   `session.start`); one stub per event per test; `$.ui.ask` is a `tool.call` of `AskUserQuestion`;
