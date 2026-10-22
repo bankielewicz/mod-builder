@@ -2448,14 +2448,14 @@ describe('#101: the tree a gate tested', () => {
   test('a tree that changed before the commit names the gate and both short trees; nothing is committed yet', () => {
     expect(drift('G', '1111111aaaa', '2222222bbbb')).toEqual({
       reason: 'the index changed after gate G tested it (tested 1111111, now 2222222)',
-      next: "see what was staged since (git diff --cached --stat 1111111aaaa) and unstage what isn't the run's",
+      next: "see what was staged since (git diff --cached --stat 1111111aaaa) and take what isn't the run's out of the run's folder (resume stages everything again)",
     })
   })
 
   test("a commit whose tree isn't the tested one names the commit, both trees and how to undo it", () => {
     expect(drift('F', '1111111aaaa', '3333333cccc', 'abcdef0123')).toEqual({
-      reason: "commit abcdef0 holds a tree gate F didn't test (3333333, tested 1111111)",
-      next: "see what wasn't tested (git diff 1111111aaaa HEAD); if it isn't the run's, git reset --soft HEAD~1",
+      reason: "commit abcdef0 holds a tree gate F didn't test (3333333, tested 1111111): a commit hook that rewrites files, or another process during the commit",
+      next: "see what wasn't tested (git diff 1111111aaaa HEAD); a commit hook's change needs nothing (resume tests the commit as it stands), anything else needs git reset HEAD~1 and taking it out of the run's folder",
     })
   })
 
