@@ -1742,7 +1742,8 @@ export const register: Register = (on, raw) => {
 
   // The key file is never read into the conversation: not through an @-mention, a Bash command that names it, or the Read tool.
   const KEY_FILE_DENY = 'ensemble: that file holds API keys; it is not read into the conversation. /ensemble provider manages them.'
-  on('prompt.mention', { path: /ensemble-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
+  // duet's old folder too, while it is there (PR #130 review, Codex 4344331748).
+  on('prompt.mention', { path: /(?:duet|ensemble)-data[\\/]\.env$/ }, () => ({ deny: KEY_FILE_DENY }))
     .catch(() => ({ deny: KEY_FILE_DENY }))
   // Bash and PowerShell (#115): one matcher; this build's tool types name neither PowerShell, Grep nor Glob.
   on('tool.call', { tool: /^(?:Bash|PowerShell)$/ }, ($, e, next) => (namesKeyFile(String((e as unknown as { command?: unknown }).command ?? '')) ? { deny: KEY_FILE_DENY } : next(e)))

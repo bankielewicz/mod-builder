@@ -142,7 +142,10 @@ function globMatches(glob: string, name: string): boolean {
   }
 }
 
-/** A path with `/` separators reaches the key file: `.claude/ensemble-data` itself, or a segment under it that matches `.env`. */
+/**
+ * A path with `/` separators reaches the key file: `.claude/ensemble-data` itself, or a segment under it that matches `.env`.
+ * duet's old `.claude/duet-data` counts too, while the person hasn't moved it (PR #130 review, Codex 4344331748).
+ */
 function pathReaches(p: string): boolean {
   const parts: string[] = []
   for (const seg of p.split('/')) {
@@ -152,7 +155,7 @@ function pathReaches(p: string): boolean {
     if (seg === '..' && last !== undefined && last !== '' && last !== '..' && last !== '~') { parts.pop(); continue }
     parts.push(seg)
   }
-  const at = parts.findIndex((seg, i) => /^\.claude$/i.test(seg) && /^ensemble-data$/i.test(parts[i + 1] ?? ''))
+  const at = parts.findIndex((seg, i) => /^\.claude$/i.test(seg) && /^(?:duet|ensemble)-data$/i.test(parts[i + 1] ?? ''))
   if (at < 0) return false
   const next = parts[at + 2]
   return next === undefined || next === '' || globMatches(next, '.env')
@@ -338,7 +341,7 @@ export function searchCoversKeyFile(path: string, home: string): boolean {
 /** True when a Grep's or Glob's path, glob or pattern reaches the key file or its folder (a search over the folder reads the file). */
 export function namesKeyFolder(text: string): boolean {
   const t = text.trim()
-  return t !== '' && (keyPathReaches(t) || /(?:^\*\*|\.claude)[\\/](?:.*[\\/])?ensemble-data[\\/]\.env$/i.test(t))
+  return t !== '' && (keyPathReaches(t) || /(?:^\*\*|\.claude)[\\/](?:.*[\\/])?(?:duet|ensemble)-data[\\/]\.env$/i.test(t))
 }
 
 /**
