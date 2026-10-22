@@ -35,7 +35,9 @@ While developing, from its folder:
 claude --plugin-dir <path-to>/__NAME__
 ```
 
-Changes load with `/reload-plugins` or a new session.
+Saving a change to the hooks module reloads it. Other changes load with `/reload-plugins` or a new
+session. An install from a remote marketplace changes only with a new version and
+`claude plugin update`.
 
 ## Options
 

@@ -102,5 +102,5 @@ everything that costs money or is hard to undo. Nothing is built until the perso
 
 ## Handoff
 
-When finished, tell the person in plain words: how to open it, how to configure it, and that
-`/reload-plugins` (or a new session) picks it up.
+When finished, tell the person in plain words: how to open it, how to configure it, and how later
+edits reach the copy they run (build's step 5).
