@@ -220,8 +220,9 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
   symlink inside the worktree can still lead an edit outside it. A Bash command that `cd`s elsewhere
   or names an absolute path still reaches it, and a `here` run's agents can't Write outside the
   repository either (`/tmp` included).
-- A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: ensemble's Codex runs in
-  the session's folder whatever the spawn says, so a worktree run with one blocks before it starts.
+- A red type that isn't the mod's own (`redAgentType`) can't run in a worktree: a plugin that routes it elsewhere
+  (to Codex, say) may run it in the session's folder whatever the spawn says, so a worktree run with one blocks
+  before it starts.
 - A run started in a linked worktree puts its new worktree under that checkout's `worktreeDir`, so
   the agents' writes stay under the session's folder.
 - The merge check at ready needs git 2.38 or later (`merge-tree --write-tree`); with an older git it
@@ -281,11 +282,10 @@ Changes load with `/reload-plugins` or a new session.
 | `redModel` | `opus` | model for the red agent |
 | `greenModel` | `sonnet` | model for the green agent |
 | `refactorModel` | `opus` | model for the refactor agent |
-| `redAgentType` | `issue-forge:red` | another type runs red as that agent, unnamed, so ensemble sends it to Codex if the type is in ensemble's `codexAgents`. Codex needs `codexSandbox: workspace-write`, which also makes ensemble wait for the run; in ensemble's read-only background mode the phase would end at once with nothing written |
+| `redAgentType` | `issue-forge:red` | another type runs red as that agent, unnamed, so a plugin that routes agent types (to Codex, say) can take it. The routed run has to be able to write tests and to answer before the phase ends; one that answers in the background ends the phase at once with nothing written |
 | `confirmPublish` | `true` | ask before pushing and opening the pull request; off publishes as soon as the run is ready |
 
-The mod's own agents are spawned with a name, so ensemble leaves them on Claude even with
-`codexAgents: "*"`.
+The mod's own agents are spawned with a name, so a routing plugin that leaves named calls on Claude doesn't take them.
 
 ## What it reaches
 

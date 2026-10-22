@@ -705,7 +705,7 @@ describe('a run, stage by stage', () => {
     expect(w.argv).toContainEqual(['git', 'push', 'origin', `c0:refs/heads/${BRANCH}`])
   })
 
-  test('a red type other than issue-forge:red is spawned unnamed (ensemble may route it), with the red rules in its prompt', { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
+  test('a red type other than issue-forge:red is spawned unnamed (a routing plugin may take it), with the red rules in its prompt', { options: { redAgentType: 'general-purpose' } }, async ($, on) => {
     const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], redPaths: ['tests/a.test.ts'] }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }) })
     await start($)
     await run($, 'resume')
@@ -1127,7 +1127,7 @@ describe('review of PR #41', () => {
     await start($)
     await run($, '16')
     await until(w, () => w.toasts.some(t => t.includes('blocked')), 'the block')
-    expect((await run($, 'status')).text).toContain("blocked at preflight: redAgentType general-purpose can't work in a worktree: another plugin (ensemble's Codex) runs it in the session's folder")
+    expect((await run($, 'status')).text).toContain("blocked at preflight: redAgentType general-purpose can't work in a worktree: a plugin that routes it elsewhere (to Codex, say) may run it in the session's folder")
     expect(w.argv.some(a => a[1] === 'worktree' || a[1] === 'switch')).toBe(false)
   })
 
