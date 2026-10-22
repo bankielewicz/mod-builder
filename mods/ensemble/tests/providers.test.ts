@@ -310,7 +310,7 @@ describe('/ensemble provider', () => {
     expect(await run($, 'provider test google')).toBe('google: no key. Press e on its row in /ensemble provider, or set GEMINI_API_KEY.')
     expect(await run($, 'provider test nope')).toContain('unknown provider "nope"')
     expect(await run($, 'provider test codex')).toContain('codex signs in with codex login')
-    expect(await run($, 'provider test anthropic')).toContain('anthropic signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key')
+    expect(await run($, 'provider test anthropic')).toContain('anthropic signed-in: tested when a run goes to it (0.5.0); set ANTHROPIC_API_KEY to test a key')
     // #129: custom is not a provider any more.
     expect(await run($, 'provider test custom')).toContain('unknown provider "custom"')
     expect(seen.fetches).toEqual([])
@@ -381,6 +381,8 @@ describe('/ensemble provider', () => {
       expect(await ui.find({ type: 'Text', text: /no provider keys yet · e on a row enters one · codex signs in with codex login/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /anthropic\s+Anthropic \(Claude\)\s+signed-in/ })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /e enter key\s+t test\s+m models\s+x remove\s+j\/k\s+c close/ })).toBeDefined()
+      // #128: ensemble is 0.4.0, and routes moved to 0.5.0 (#111).
+      expect(await ui.find({ type: 'Text', text: /apiRoutes arrive in 0\.5\.0/ })).toBeDefined()
       await ui.unmount()
     }
     const narrow = await mount($, 'terminal', { ...PANE, bodyColumns: 50 })
