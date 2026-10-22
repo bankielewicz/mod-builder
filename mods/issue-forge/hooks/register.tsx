@@ -580,9 +580,12 @@ async function indexTree($: EngineInterface, run: Run, root: string): Promise<st
   return (await gitWriteOut($, run, root, ['write-tree'])).trim()
 }
 
-/** HEAD and its tree, read from one commit object, so the tree is that commit's own (PR #136 review, Codex 4350587226). */
+/**
+ * HEAD and its tree, read from one commit object, so the tree is that commit's own (PR #136 review, Codex 4350587226).
+ * `--no-show-signature`: with log.showSignature on, git prints a signature check's line first (probe, git 2.53).
+ */
 async function headAndTree($: EngineInterface, root: string): Promise<{ head: string; tree: string }> {
-  const [head = '', tree = ''] = (await gitOut($, root, ['log', '-1', '--format=%H %T'])).trim().split(' ')
+  const [head = '', tree = ''] = (await gitOut($, root, ['log', '-1', '--no-show-signature', '--format=%H %T'])).trim().split(' ')
   return { head, tree }
 }
 
