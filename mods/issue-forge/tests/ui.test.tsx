@@ -4007,3 +4007,20 @@ describe('PR #136 review round 2: the commit read', () => {
     expect(w.spawned).toEqual([])
   })
 })
+
+// PR #136 review round 2, finding 1: a rejected refactor publishes green's commit, so publish's tip check blocks a branch that
+// moved, instead of a fresh read of HEAD that no tree check covered.
+describe('PR #136 review round 2: a rejected refactor', () => {
+  test("gate F's rejected refactor records green's commit as the head to publish, though HEAD moved", async ($, on) => {
+    // Resume gives the phase its attempts again, so a profile with no refactor retry sends the failed gate F to the stash.
+    const noRetry = storedRun('gateF', { greenCommit: 'g1', used: { red: 1, green: 1, refactor: 1 } })
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: { ...noRetry, profile: { ...noRetry.profile, attempts: { red: 2, green: 3, refactor: 0 } } } }
+    const w = engine(on, { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], revParseHead: 'f00dcafe', storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length > 0 || w.toasts.some(t => t.includes('blocked')), 'the push question or a block')
+    const stored = (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+    expect(stored.isRefactorRejected).toBe(true)
+    expect(stored.gatedHead).toBe('g1')
+  })
+})
