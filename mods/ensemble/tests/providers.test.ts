@@ -547,7 +547,8 @@ describe('/ensemble provider', () => {
     const seen = engine(on, { files: { [KEY_FILE]: `GEMINI_API_KEY=${KEY}\n` }, unreadable: 'EACCES: permission denied', store: seed({ google: { ok: true, status: 200, ms: 1, model: '', note: 'ok 1ms · 2 models', at: 1, key: '…a1b2' } }) })
     await start($)
     await run($, 'provider key google')
-    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 120 })
+    // 130 columns: the note names the key file, and ~/.claude/ensemble-data is longer than duet's path was (#128).
+    const ui = await mount($, 'terminal', { ...PANE, bodyColumns: 130 })
     await ui.press({ key: 'prov-test' })
     await seen.clock.settle()
     expect(await ui.find({ type: 'Text', text: /could not be read \(EACCES: permission denied\); fix the file, or set GEMINI_API_KEY/ })).toBeDefined()
