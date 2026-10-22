@@ -96,8 +96,8 @@ Read each mod's **What it reaches** table before installing it.
 
 ## Requirements
 
-- Claude Code. CI tests every plugin on **2.1.296**; issue-forge's latest changes were
-  also checked on 2.1.300. The mod API is early access and changes between builds.
+- Claude Code. CI tests every plugin on **2.1.296**; issue-forge 0.7.5 was also loaded, and its
+  tests run, on 2.1.308 (no gate ran live). The mod API is early access and changes between builds.
 - `node` and `npx`, for the scaffold script and the optional type-check.
 - Tested on Linux (WSL2). macOS and Windows native aren't verified yet.
 

@@ -14,6 +14,7 @@ import {
   badgeOf,
   baseOf,
   branchLine,
+  branchMoved,
   branchName,
   canRetry,
   checkoutBaseOf,
@@ -22,7 +23,9 @@ import {
   cleanupCommand,
   commonDirOf,
   cleanupLine,
+  commitFields,
   commitMessage,
+  commitRefused,
   coverageLine,
   demoRun,
   diffCoverage,
@@ -49,6 +52,7 @@ import {
   spawnRefs,
   isWorking,
   keepText,
+  keptCommit,
   keptWorktreePlan,
   kindOf,
   layoutOf,
@@ -106,6 +110,7 @@ import {
   tailLines,
   takeOverQuestion,
   totals,
+  treeDrift,
   truncate,
   unstagedOf,
   viewOf,
@@ -2427,5 +2432,103 @@ describe('#128: an agent another plugin answered in-line', () => {
     expect(inline('a1', 'claude')).toBe(false)
     expect(inline('duet-d3', 'claude')).toBe(false)
     expect(inline('', 'codex-mini')).toBe(false)
+  })
+})
+
+// #101 (Change 0.7.5): a gate commits only the tree it tested, or blocks naming what changed and where to look.
+describe('#101: the tree a gate tested', () => {
+  const drift = treeDrift
+  const kept = keptCommit
+
+  test('the same tree, before the commit or in it, is no block', () => {
+    expect(drift('G', '1111111aaaa', '1111111aaaa')).toBe(null)
+    expect(drift('R', '1111111aaaa', '1111111aaaa', 'c1')).toBe(null)
+  })
+
+  test('a tree that changed before the commit names the gate and both short trees; nothing is committed yet', () => {
+    expect(drift('G', '1111111aaaa', '2222222bbbb')).toEqual({
+      reason: 'the index changed after gate G tested it (tested 1111111, now 2222222)',
+      next: "see what was staged since (git diff --cached --stat 1111111aaaa) and take what isn't the run's out of the run's folder (resume stages everything again)",
+    })
+  })
+
+  test("a commit whose tree isn't the tested one names the commit, both trees and how to undo it", () => {
+    expect(drift('F', '1111111aaaa', '3333333cccc', 'abcdef0123')).toEqual({
+      reason: "commit abcdef0 holds a tree gate F didn't test (3333333, tested 1111111): a commit hook that rewrites files, or another process during the commit",
+      next: "see what wasn't tested (git diff 1111111aaaa HEAD); a commit hook's change needs nothing (resume tests the commit as it stands), anything else needs git reset HEAD~1 and taking it out of the run's folder",
+    })
+  })
+
+  test('with nothing left to commit, a passing gate keeps HEAD when it is new since the phase before', () => {
+    expect(kept('c2', 'c1')).toBe('c2')
+    expect(kept('c1', 'c1')).toBe(undefined)
+    expect(kept('c2', undefined)).toBe('c2')
+  })
+})
+
+// PR #136 review round 1, finding 3: a block from the commit step keeps the gate's result, so the status shows the passing
+// checks beside the block, not an earlier attempt's failure.
+describe('PR #136 review round 1: a block keeps the gate it ends', () => {
+  test('a block that carries the gate records it, under the step, with its test tail, before blocking', () => {
+    const r = advance(run({ step: 'gateG', lastGate: failG('G'), gates: { G: failG('G') } }), { type: 'block', reason: 'the index changed after gate G tested it', next: 'n', gate: pass('G'), testTail: 'all pass' }, 1)
+    expect(r).toMatchObject({ step: 'blocked', lastGate: pass('G'), gates: { G: pass('G') }, lastTestTail: 'all pass' })
+    expect(r.blocked).toMatchObject({ at: 'gateG', reason: 'the index changed after gate G tested it' })
+  })
+
+  test('a block without a gate leaves the gate record as it was', () => {
+    const r = advance(run({ step: 'gateF', lastGate: failG('F'), gates: { F: failG('F') } }), { type: 'block', reason: 'r', next: 'n' }, 1)
+    expect(r).toMatchObject({ step: 'blocked', lastGate: failG('F'), gates: { F: failG('F') } })
+  })
+})
+
+// PR #136 review round 2: the commit read is `git --no-replace-objects cat-file commit <sha>`, parsed here; and a commit
+// whose parent isn't the HEAD from before the commit means another commit moved the branch.
+describe('PR #136 review round 2: reading a commit object', () => {
+  const fields = commitFields
+  const moved = branchMoved
+  const who = 'author t <a@b.c> 1 +0000\ncommitter t <a@b.c> 1 +0000\n'
+
+  test('its tree and parents come from the header; the message is never read', () => {
+    expect(fields(`tree 1111111aaaa\nparent c0\n${who}\nmsg\ntree fake\nparent fake\n`)).toEqual({ tree: '1111111aaaa', parents: ['c0'] })
+    expect(fields(`tree 2222222bbbb\n${who}\nroot commit\n`)).toEqual({ tree: '2222222bbbb', parents: [] })
+    expect(fields(`tree 3333333cccc\nparent p1\nparent p2\n${who}\nmerge\n`)).toEqual({ tree: '3333333cccc', parents: ['p1', 'p2'] })
+  })
+
+  test("a signed commit's signature lines, which start with a space, are not header fields", () => {
+    const signed = `tree 4444444dddd\nparent c1\n${who}gpgsig -----BEGIN SSH SIGNATURE-----\n tree evil\n parent evil\n -----END SSH SIGNATURE-----\n\nsigned\n`
+    expect(fields(signed)).toEqual({ tree: '4444444dddd', parents: ['c1'] })
+  })
+
+  test('a header with no message, or with no tree line, still reads', () => {
+    expect(fields('tree 5555555eeee\nparent c2\n')).toEqual({ tree: '5555555eeee', parents: ['c2'] })
+    expect(fields('parent c2\n\nno tree\n')).toEqual({ tree: '', parents: ['c2'] })
+  })
+
+  test('a HEAD with no parent (a root commit) is named as having none', () => {
+    expect(moved('R', 'c0', 'abcdef0123', '').reason).toBe("another commit moved the branch during gate R's commit (HEAD abcdef0, whose parent is none, not c0)")
+  })
+
+  test("another commit on the branch is named with the HEAD's parent and the HEAD from before", () => {
+    expect(moved('G', 'c0', 'abcdef0123', 'f00dcafe99')).toEqual({
+      reason: "another commit moved the branch during gate G's commit (HEAD abcdef0, whose parent is f00dcaf, not c0)",
+      next: "see what landed (git log -3) and put the branch back on gate G's commit by hand",
+    })
+  })
+})
+
+// PR #136 review round 2, finding 4: a git commit that fails after the gate passed names a commit hook as the likely cause.
+describe('PR #136 review round 2: a refused commit', () => {
+  const refused = commitRefused
+
+  test('the gate passed, the commit failed, and a commit hook may have refused it or changed files and failed', () => {
+    expect(refused('G', 'git commit failed: - files were modified by this hook')).toEqual({
+      reason: 'gate G passed, but git commit failed: - files were modified by this hook',
+      next: "see the commit hook's output (git commit in the run's folder): it may have refused the commit, or changed files and failed, as pre-commit does",
+    })
+  })
+
+  test("git's own refusal (fatal or error) isn't blamed on a hook: it stays the unexpected block", () => {
+    expect(refused('R', 'git commit failed: fatal: empty ident name (for <u@h>) not allowed')).toEqual({ reason: 'unexpected: git commit failed: fatal: empty ident name (for <u@h>) not allowed', next: 'see /issue-forge status' })
+    expect(refused('F', 'git commit failed: error: pathspec')).toMatchObject({ reason: 'unexpected: git commit failed: error: pathspec' })
   })
 })

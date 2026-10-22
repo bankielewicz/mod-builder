@@ -288,6 +288,62 @@ export function unstagedOf(porcelainZ: string): string[] {
   return out
 }
 
+/**
+ * A gate commits only the tree it tested (#101, Change 0.7.5). `tested` is the index's tree when the gate staged, and `seen`
+ * the index's tree just before the commit or, with `commit`, the tree of the commit made. Null when they are the same tree.
+ * The reason shows short trees; the commands to run name the whole tested tree, which no repository finds ambiguous.
+ */
+export function treeDrift(gate: 'R' | 'G' | 'F', tested: string, seen: string, commit?: string): { reason: string; next: string } | null {
+  if (seen === tested) return null
+  const [t, s] = [tested.slice(0, 7), seen.slice(0, 7)]
+  // Resume stages everything again (git add -A), so a stray path has to leave the folder, not just the index (PR #136 review).
+  if (commit === undefined) return { reason: `the index changed after gate ${gate} tested it (tested ${t}, now ${s})`, next: `see what was staged since (git diff --cached --stat ${tested}) and take what isn't the run's out of the run's folder (resume stages everything again)` }
+  return {
+    reason: `commit ${commit.slice(0, 7)} holds a tree gate ${gate} didn't test (${s}, tested ${t}): a commit hook that rewrites files, or another process during the commit`,
+    next: `see what wasn't tested (git diff ${tested} HEAD); a commit hook's change needs nothing (resume tests the commit as it stands), anything else needs git reset HEAD~1 and taking it out of the run's folder`,
+  }
+}
+
+/**
+ * A commit object's tree and parents, as `git cat-file commit` prints it (PR #136 review round 2): header lines only, up to
+ * the blank line before the message. A signature's continuation lines start with a space, so they aren't fields.
+ */
+export function commitFields(text: string): { tree: string; parents: string[] } {
+  const end = text.indexOf('\n\n')
+  const header = end < 0 ? text : text.slice(0, end)
+  const fields = header.split('\n').filter(line => !line.startsWith(' '))
+  const valueOf = (name: string) => fields.filter(line => line.startsWith(`${name} `)).map(line => line.slice(name.length + 1).trim())
+  return { tree: valueOf('tree')[0] ?? '', parents: valueOf('parent') }
+}
+
+/**
+ * A `git commit` that failed after the gate passed (PR #136 review round 2): a commit hook is the likely cause. git's own
+ * refusal (`fatal:` or `error:`: an identity, a broken ref) isn't a hook's, so it stays the unexpected block it was.
+ */
+export function commitRefused(gate: 'R' | 'G' | 'F', message: string): { reason: string; next: string } {
+  if (/^git commit failed: (?:fatal|error):/.test(message)) return { reason: `unexpected: ${message}`, next: 'see /issue-forge status' }
+  return {
+    reason: `gate ${gate} passed, but ${message}`,
+    next: "see the commit hook's output (git commit in the run's folder): it may have refused the commit, or changed files and failed, as pre-commit does",
+  }
+}
+
+/** Another commit moved the branch during a gate's commit: HEAD's parent isn't the HEAD from before it (PR #136 review round 2). */
+export function branchMoved(gate: 'R' | 'G' | 'F', before: string, head: string, parent: string): { reason: string; next: string } {
+  return {
+    reason: `another commit moved the branch during gate ${gate}'s commit (HEAD ${head.slice(0, 7)}, whose parent is ${parent.slice(0, 7) || 'none'}, not ${before.slice(0, 7)})`,
+    next: `see what landed (git log -3) and put the branch back on gate ${gate}'s commit by hand`,
+  }
+}
+
+/**
+ * The commit a passing gate keeps when nothing was left to commit: HEAD, if it is new since the phase before (a replay after a
+ * reload, or a resume after an after-the-commit block, #101); else none.
+ */
+export function keptCommit(head: string, before: string | undefined): string | undefined {
+  return head === before ? undefined : head
+}
+
 /** NUL-separated `git … -z` output as paths. */
 export function splitZ(out: string): string[] {
   return out.split('\0').filter(path => path !== '')
@@ -1008,7 +1064,7 @@ export type RunEvent =
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string; reason?: TurnEnd }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean }
+  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean; gate?: Gate; testTail?: string }
   | { type: 'newPlugin'; path: string }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'made'; keep: Kept }
@@ -1080,6 +1136,12 @@ function blockedAt(run: Run, at: Step, reason: string, next: string, more: { ste
   return { ...run, step: 'blocked', blocked: { at, reason, next, ...more } }
 }
 
+/** A gate's result carried by a block from its commit step (PR #136 review, finding 3), recorded under the step it ends. */
+function gateRecord(run: Run, ev: { gate?: Gate; testTail?: string }): Partial<Run> {
+  const at = run.step === 'gateR' ? 'R' : run.step === 'gateG' ? 'G' : run.step === 'gateF' ? 'F' : null
+  return ev.gate && at ? { lastGate: ev.gate, gates: { ...run.gates, [at]: ev.gate }, lastTestTail: ev.testTail } : {}
+}
+
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
@@ -1095,7 +1157,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   // A number start's repository, once origin agrees with it: kept over a block, so resume can't move the run (PR #68 review 2).
   if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
-  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
+  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep, ...gateRecord(run, ev) }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
   // The guard refused a manifest: the phase's gate blocks on it (Change 0.7.0).
   if (ev.type === 'newPlugin') return isActive(run) ? { ...run, newPlugin: ev.path } : run
   if (ev.type === 'resume') {

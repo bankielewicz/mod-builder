@@ -24,12 +24,15 @@ import {
   baseRemoteOfRun,
   branchLine,
   branchName,
+  branchMoved,
   canRetry,
   checkoutBaseOf,
   checkoutState,
   checkoutWorkspaceOf,
   cleanupLine,
+  commitFields,
   commitMessage,
+  commitRefused,
   commonDirOf,
   coverageLine,
   demoRun,
@@ -61,6 +64,7 @@ import {
   isWorktreeRun,
   issueLabel,
   keepText,
+  keptCommit,
   keptForkBlock,
   keptWorktreePlan,
   layoutOf,
@@ -124,6 +128,7 @@ import {
   tailLines,
   takeOverQuestion,
   totals,
+  treeDrift,
   truncate,
   unstagedOf,
   viewOf,
@@ -258,7 +263,8 @@ async function gitRetry($: EngineInterface, root: string, args: string[], stdin?
 
 /** A git call's output: a failure throws, naming the subcommand and the first line git printed. */
 function outputOf(args: string[], r: ProcessRunResult): string {
-  if (r.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${firstLine(r.stderr || r.stdout)}`)
+  // Named by its subcommand, not a global option before it (`--no-replace-objects cat-file`).
+  if (r.exitCode !== 0) throw new Error(`git ${args.find(arg => !arg.startsWith('-')) ?? args[0]} failed: ${firstLine(r.stderr || r.stdout)}`)
   return r.stdout
 }
 
@@ -573,13 +579,56 @@ async function readLcov($: EngineInterface, path: string, since: number): Promis
   }
 }
 
-async function commitAll($: EngineInterface, run: Run, message: string): Promise<string | undefined> {
+/** The index's tree; `write-tree` takes the index lock, so it goes through gitWrite (#101 probe, git 2.53). */
+async function indexTree($: EngineInterface, run: Run, root: string): Promise<string> {
+  return (await gitWriteOut($, run, root, ['write-tree'])).trim()
+}
+
+/**
+ * HEAD, its tree and its parents, from the commit object itself: `rev-parse --verify HEAD`, then `cat-file commit` with
+ * replacement refs off, so the tree is that commit's own (PR #136 review rounds 1 and 2; Codex 4350587226, 4351786036).
+ * Plumbing: neither log.showSignature nor another log setting adds lines, and no git newer than the gates' needs it.
+ */
+async function headAndTree($: EngineInterface, root: string): Promise<{ head: string; tree: string; parents: string[] }> {
+  const head = (await gitOut($, root, ['rev-parse', '--verify', 'HEAD'])).trim()
+  return { head, ...commitFields(await gitOut($, root, ['--no-replace-objects', 'cat-file', 'commit', head])) }
+}
+
+/**
+ * Commits the tree gate `gate` tested (#101): a block when the index changed since, or when the commit made holds another
+ * tree (another process staged during a lock wait, or a hook re-staged). Else `head`, a commit whose tree is the tested one,
+ * and `commit` when this call made it: nothing to commit means HEAD's tree is the tested one already.
+ */
+async function commitAll($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | { commit?: string; head: string }> {
+  // A lock that outlasts the retries, or a commit a hook failed, comes back as a block, so the gate's result is kept (round 2).
+  try {
+    return await commitTested($, run, message, gate, tested)
+  } catch (err) {
+    if (err instanceof Locked) return block(err.message, err.next)
+    if (err instanceof Error && err.message.startsWith('git commit failed:')) {
+      const refused = commitRefused(gate, err.message)
+      return block(refused.reason, refused.next)
+    }
+    throw err
+  }
+}
+
+async function commitTested($: EngineInterface, run: Run, message: string, gate: 'R' | 'G' | 'F', tested: string): Promise<Blocked | { commit?: string; head: string }> {
   await stillOwned($, run)
   const root = workOf(run)
-  const staged = await git($, root, ['diff', '--cached', '--quiet'])
-  if (staged.exitCode === 0) return undefined
+  const before = treeDrift(gate, tested, await indexTree($, run, root))
+  if (before) return block(before.reason, before.next)
+  const now = await headAndTree($, root)
+  if (now.tree === tested) return { head: now.head }
   await gitWriteOut($, run, root, ['commit', '-q', '-F', '-'], message)
-  return (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
+  const made = await headAndTree($, root)
+  // Another process committed on the branch around this commit: HEAD isn't the one this call made (round 2).
+  if (made.parents[0] !== now.head) {
+    const moved = branchMoved(gate, now.head, made.head, made.parents[0] ?? '')
+    return block(moved.reason, moved.next)
+  }
+  const after = treeDrift(gate, tested, made.tree, made.head)
+  return after ? block(after.reason, after.next) : { commit: made.head, head: made.head }
 }
 
 /** Stashes the tree under a unique message and records the entry's SHA (the list is shared by every worktree). */
@@ -1102,8 +1151,9 @@ async function headOf($: EngineInterface, root: string): Promise<string> {
   return (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
 }
 
-async function stagedSince($: EngineInterface, root: string, ref: string): Promise<string[]> {
-  return splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '-z', ref]))
+/** The paths that differ between `ref` and the tree the gate tested (PR #136 review, Codex 4350587243: not the index at its own moment). */
+async function stagedSince($: EngineInterface, root: string, ref: string, tested: string): Promise<string[]> {
+  return splitZ(await gitOut($, root, ['diff', '--name-only', '-z', ref, tested]))
 }
 
 /** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.7.0); never a run another session took over. */
@@ -1124,8 +1174,8 @@ async function manifestsAt($: EngineInterface, root: string, ref: string): Promi
  * R4 and G8 (Change 0.7.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard
  * refused, unless the base branch's tip has it. Checked before any test runs.
  */
-async function newPluginAt($: EngineInterface, run: Run, root: string) {
-  const added = splitZ(await gitOut($, root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase]))
+async function newPluginAt($: EngineInterface, run: Run, root: string, tested: string) {
+  const added = splitZ(await gitOut($, root, ['diff', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase, tested]))
   return newPluginOf(added, run.newPlugin, run.profile?.testGlobs ?? [], await manifestsAt($, root, baseRefOf(run)))
 }
 
@@ -1137,17 +1187,20 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
-  const madeR = await newPluginAt($, run, root)
+  const tested = await indexTree($, run, root)
+  const madeR = await newPluginAt($, run, root, tested)
   if (madeR) return { type: 'gated', gate: newPluginGate('R', madeR) }
   // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
-  const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase)
+  const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase, tested)
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
   const gate = gateR(p, { staged, tests })
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
+  const made = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []), 'R', tested)
+  if ('type' in made) return { ...made, gate, testTail: tests.tail }
   // Nothing new to commit means a replay after a reload: the gated tests are HEAD already.
-  const commit = (await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []))) ?? (await headOf($, root))
+  const commit = made.commit ?? made.head
   if (isBehaviour && run.greenStash) {
     const stash = run.greenStash
     stillDriving(run)
@@ -1177,10 +1230,11 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
-  const madeG = await newPluginAt($, run, root)
+  const tested = await indexTree($, run, root)
+  const madeG = await newPluginAt($, run, root, tested)
   if (madeG) return { type: 'gated', gate: newPluginGate(which, madeG) }
-  const staged = await stagedSince($, root, run.mergeBase)
-  const changedSinceRed = await stagedSince($, root, redCommit)
+  const staged = await stagedSince($, root, run.mergeBase, tested)
+  const changedSinceRed = await stagedSince($, root, redCommit, tested)
   const redPaths = splitZ(await gitOut($, root, ['diff', '--name-only', '-z', run.mergeBase, redCommit]))
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
@@ -1189,7 +1243,7 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   const coverage = await runLong($, p.coverageCommand, root, p.commandTimeoutMinutes)
   const lcov = coverage.exit === 0 ? await readLcov($, lcovFileOf(p, root), since) : null
   // Fixed prefixes and no external diff: diff.mnemonicPrefix or diff.noprefix would hide every changed line.
-  const diff = await gitOut($, root, ['diff', '-U0', '--cached', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', run.mergeBase])
+  const diff = await gitOut($, root, ['diff', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', run.mergeBase, tested])
   const checks: { argv: string[]; result: CommandResult }[] = []
   for (const [i, argv] of p.checks.entries()) {
     await setActivity($, `checks ${i + 1}/${p.checks.length}`)
@@ -1200,8 +1254,13 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   if (rewritten.length > 0) return block(`a command changed files after staging, so the tested bytes aren't the ones that would be committed: ${rewritten.slice(0, 5).join(', ')}${rewritten.length > 5 ? ` and ${rewritten.length - 5} more` : ''}`, 'make the profile commands leave the tree as they found it (or commit what they write)')
   const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
   if (gate.passed) {
-    const commit = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run))
-    return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: await headOf($, root) } : {}) }
+    const made = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run), which, tested)
+    if ('type' in made) return { ...made, gate, testTail: tests.tail }
+    // Nothing new to commit: HEAD is the phase's commit when it is new since the phase before (a replay, or a resume, #101).
+    // Gate F compares with red's commit when green committed nothing (PR #136 review, finding 7).
+    const commit = made.commit ?? keptCommit(made.head, which === 'G' ? run.redCommit : (run.greenCommit ?? run.redCommit))
+    // Gate F publishes the head whose tree commitAll checked, not a later read of HEAD (Codex 4350587255).
+    return { type: 'gated', gate, commit, testTail: tests.tail, ...(which === 'F' ? { head: made.head } : {}) }
   }
   if (which === 'G' && gate.isBehaviourOnly && !run.isBehaviourDone) {
     await setActivity($, "stashing green's work")
@@ -1210,7 +1269,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   if (which === 'F' && !canRetry(run, 'refactor')) {
     await setActivity($, 'stashing the rejected refactor')
     const stash = await stashAll($, run, stashMessage('refactor', run))
-    return { type: 'gated', gate, stash, testTail: tests.tail, head: await headOf($, root) }
+    // Publish green's commit, which gate G checked, not a fresh HEAD: a branch that moved meanwhile fails publish's tip check (round 2).
+    return { type: 'gated', gate, stash, testTail: tests.tail, head: run.greenCommit ?? run.redCommit }
   }
   return { type: 'gated', gate, testTail: tests.tail }
 }

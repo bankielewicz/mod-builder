@@ -56,7 +56,7 @@ without a coverage tool (the gate can't be measured, so the run refuses to start
   files matching `unmeasuredGlobs`, code the coverage tool can't reach (§5.4). Their changes
   need a behaviour test instead of a percentage.
 - **Changed lines**: for each source file, the added or modified line numbers in
-  `git diff -U0 --cached <merge base> -- <file>`. A hunk header `@@ -a,b +c,d @@` adds lines
+  `git diff -U0 <merge base> <tested tree> -- <file>` (the tree the gate tested; SPEC change 0.7.5). A hunk header `@@ -a,b +c,d @@` adds lines
   `c … c+d−1`; `+c` with no count means one line; `d = 0` adds none [verified: format].
 - **Diff line coverage**: of the changed lines that the LCOV report has a `DA:` record for, the
   share with a hit count above 0.
@@ -120,7 +120,7 @@ branch coverage as the baseline. If the LCOV file is missing or has no `SF:` rec
 
 **Step 4: red phase.** Spawn the red agent (§6) with the issue text and the profile's globs. When
 it finishes, stage everything (`git add -A`) and check **gate R**:
-- R1: every staged path (`git diff --cached --name-only <merge base>`) matches `testGlobs`;
+- R1: every staged path (`git diff --name-only <merge base> <tested tree>`) matches `testGlobs`;
 - R2: at least one staged path;
 - R4 (SPEC change 0.7.0, checked first, before any test runs): no path added since the merge base is a Claude Code plugin manifest (`.claude-plugin/plugin.json`, in any case), and the guard refused none during the phase. Rename detection is off (`--no-renames`), so a moved manifest counts as added. A manifest the base branch's tip has (`git ls-tree <remote>/<base>`) doesn't count: it is someone else's plugin, merged in. A manifest that matches `testGlobs` is a test fixture and doesn't count.
 - R3: `testCommand` exits non-zero. The baseline passed and only test files changed, so the new
@@ -130,9 +130,26 @@ it finishes, stage everything (`git add -A`) and check **gate R**:
 On pass, commit `test(#<N>): red: <title>` (with `commitTrailers`; same for every commit below); record it as the **red commit**. On fail, give the
 agent the failed checks and try again, up to `attempts.red` (default 2), then stop in `blocked`.
 
+**Every gate commits the tree it tested (SPEC change 0.7.5, #101).** Right after `git add -A`, record the index's tree
+with `git write-tree`, before any test runs; it takes the index lock, so it is retried as `add` is. Before the commit,
+write the tree again: a different tree blocks the gate with nothing committed ("the index changed after gate X tested
+it"). HEAD is read with `git rev-parse --verify HEAD`, and its tree and parent from the commit object itself
+(`git --no-replace-objects cat-file commit <sha>`: a replacement ref can't stand in for it, and no log setting adds
+lines). When HEAD's tree is the tested one, nothing is committed and HEAD stands; else the gate commits and reads again.
+A new HEAD whose parent isn't the HEAD from before means another commit moved the branch, and the gate blocks saying so.
+A tree that isn't the tested one blocks the gate with the commit made ("commit <sha> holds a tree gate X didn't test: a commit hook that
+rewrites files, or another process during the commit"). issue-forge resets nothing. Both blocks resume: the gate runs
+again from `git add -A`, so a stray path has to leave the folder, and a hook's change is tested and kept. Gate F records
+the commit it verified as the head to publish (green's commit, when it rejects the refactor). A `git commit` a hook
+fails, or a lock that outlasts the retries, blocks with the gate's result kept. Every check (R1, R4, G1, G4, G8) diffs the tested tree, not the index.
+With nothing left to commit, a passing gate keeps HEAD when it is new since the phase before (for gate F, green's commit,
+or red's when green committed nothing). No published tool compares the committed tree with the tested one; this check
+is issue-forge's own design. The repository's commit hooks run, so a pre-commit hook that
+re-stages is caught by the after-the-commit check; committing the tree with `git commit-tree` would skip them.
+
 **Step 5: green phase.** Spawn the green agent with the issue text, the red agent's answer, the red
 commit's test file paths, and the last 200 lines of R3's test output. When it finishes, `git add -A` and check **gate G**:
-- G1: tests unchanged since the red commit: `git diff --cached --name-only <red commit> -- <testGlobs>` is empty;
+- G1: tests unchanged since the red commit: `git diff --name-only <red commit> <tested tree> -- <testGlobs>` is empty;
 - G2: `testCommand` exits 0;
 - G3: `coverageCommand` succeeds and writes LCOV;
 - G4: diff line coverage ≥ threshold and diff branch coverage ≥ threshold (§5), or "n/a" when
