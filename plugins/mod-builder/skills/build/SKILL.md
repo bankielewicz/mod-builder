@@ -121,14 +121,18 @@ through this gate. (lab_report: Spec passed once approved.)
 ```
 claude plugin validate <mods>/<name>   # clean; every gating hook has .catch
 claude plugin test <mods>/<name>       # all pass
+rm -f <scratchpad>/<name>-debug.log    # the log is appended to, never replaced
 claude -p --debug-file <scratchpad>/<name>-debug.log --plugin-dir <mods>/<name> "/<name> demo"   # live smoke test
 ```
 
 The smoke test passes when it prints the command's text **and** its debug log shows that this
-folder's code is what ran (`grep -n '<name>' <log>`):
+folder's code is what ran (`grep -n '<name>' <log>`). Start each run with no log: `--debug-file`
+appends, so an earlier run's lines would pass or fail this one.
 - The log has a `hooks module <name>@inline loaded` line.
 - It has no line for the mod that says `did not load`, `not loaded`, `ignored`, `hook skipped` or
-  `refused`. In a `-p` run, another mod's refusal goes to the debug log only.
+  `refused`, and no `Plugin path does not exist`. With a wrong path the installed copy, if there is
+  one, answers the demo, and only that log line says so. In a `-p` run, another mod's refusal goes
+  to the debug log only.
 
 A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off.
 The run uses each option's default, plus any `pluginConfigs."<name>@inline"` entry in
