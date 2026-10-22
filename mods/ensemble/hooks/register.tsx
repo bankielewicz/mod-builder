@@ -212,7 +212,13 @@ async function noteOldData($: EngineInterface): Promise<void> {
   const home = await homeDir($)
   if (!home) return
   const hasOld = await $.fs.exists(`${home}/.claude/duet-data`).catch(() => false)
-  const note = migrationNoteOf(hasOld, hasOld && (await $.fs.exists(await dataDir($)).catch(() => false)))
+  const hasNew = hasOld && (await $.fs.exists(await dataDir($)).catch(() => false))
+  // Whether each folder holds a .env: existence only, never a read (round 2, Codex 4347084033).
+  const bothKeyFiles =
+    hasNew &&
+    (await $.fs.exists(`${home}/.claude/duet-data/.env`).catch(() => false)) &&
+    (await $.fs.exists(`${await dataDir($)}/.env`).catch(() => false))
+  const note = migrationNoteOf(hasOld, hasNew, bothKeyFiles)
   if (!note) return
   await update($, oldDataNoted, () => true).catch(() => undefined)
   $.ui.toast(note, { timeoutMs: 15_000 })

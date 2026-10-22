@@ -1156,11 +1156,13 @@ export function verdictOf(text: string): string {
  * rename or delete), so the person moves it. Once ensemble-data exists, mv would put duet-data inside it, so the note
  * says to copy without overwriting, then delete the old folder (PR #130 review).
  */
-export function migrationNoteOf(hasOld: boolean, hasNew: boolean): string | null {
+export function migrationNoteOf(hasOld: boolean, hasNew: boolean, bothKeyFiles = false): string | null {
   if (!hasOld) return null
-  return hasNew
-    ? '~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data'
-    : "your data and API keys now live in ~/.claude/ensemble-data. Move duet's: mv ~/.claude/duet-data ~/.claude/ensemble-data"
+  if (!hasNew) return "your data and API keys now live in ~/.claude/ensemble-data. Move duet's: mv ~/.claude/duet-data ~/.claude/ensemble-data"
+  // cp -an keeps an existing .env as it is, so with one in each folder duet's key lines are merged by hand (round 2, Codex 4347084033).
+  return bothKeyFiles
+    ? "~/.claude/duet-data and ~/.claude/ensemble-data both hold a .env: copy the rest with cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, add duet's key lines to ensemble's .env by hand (or /ensemble provider key <id>), then delete ~/.claude/duet-data"
+    : '~/.claude/duet-data is still there. Copy what you need without overwriting: cp -an ~/.claude/duet-data/. ~/.claude/ensemble-data/, then delete ~/.claude/duet-data'
 }
 
 export const LOST = 'lost when ensemble reloaded'
