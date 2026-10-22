@@ -11,7 +11,7 @@ import {
 } from './ensemble-logic'
 import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './ensemble-logic'
 import {
-  KEY_FILE_SHOWN, NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
+  KEY_FILE_SHOWN, NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, safeText, savedNote, testOutcome, testText, upsertEnvLine,
 } from './ensemble-providers-logic'
 import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './ensemble-providers-logic'
@@ -1020,7 +1020,6 @@ async function envKey($: EngineInterface, name: string): Promise<string | undefi
     case 'OPENROUTER_API_KEY': return $.env.get('OPENROUTER_API_KEY')
     case 'PERPLEXITY_API_KEY': return $.env.get('PERPLEXITY_API_KEY')
     case 'CEREBRAS_API_KEY': return $.env.get('CEREBRAS_API_KEY')
-    case 'DUET_CUSTOM_API_KEY': return $.env.get('DUET_CUSTOM_API_KEY')
     default: return undefined
   }
 }
@@ -1074,7 +1073,7 @@ async function refreshProviderAuth($: EngineInterface): Promise<Record<string, K
   const auth: Record<string, string> = {}
   const ids: Record<string, string> = {}
   for (const p of PROVIDERS) {
-    auth[p.id] = authTextOf(p, sources[p.id]!, options.customUrl)
+    auth[p.id] = authTextOf(p, sources[p.id]!)
     ids[p.id] = keyId(sources[p.id]!.key)
   }
   await update($, provAuth, () => auth)
@@ -1247,10 +1246,9 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
   const keys = keyValues(sources)
   const k = sources[p.id]!
   if (p.auth === 'cli') return { why: `${p.id} signs in with codex login; ensemble does not test it.`, key: '', base: '', keys }
-  const base = baseUrlOf(p, { customUrl: options.customUrl })
-  if (p.id === 'custom' && base === '') return { why: `${p.id}: no URL set. Set apiCustomUrl (https://, or http:// to localhost) in /ensemble config first.`, key: '', base, keys }
-  // A provider that takes no key (ollama), a public model list, or a custom server on this machine (LM Studio) needs none (Codex 4298736545, 4298736595).
-  const takesKey = (p.auth === 'bearer' || p.auth === 'session') && !(p.id === 'custom' && isLocalBaseUrl(base))
+  const base = baseUrlOf(p)
+  // A provider that takes no key (ollama) or a public model list needs none (Codex 4298736545, 4298736595).
+  const takesKey = p.auth === 'bearer' || p.auth === 'session'
   const needsKey = takesKey && k.key === '' && !(op === 'models' && !p.modelsNeedKey)
   if (needsKey && fileError !== '') return { why: `${p.id}: ${fileError}; fix the file, or set ${p.keyName}.`, key: '', base, keys }
   if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
@@ -1286,7 +1284,7 @@ async function testProviderNow($: EngineInterface, p: ProviderDef, model: string
     const started = Date.now()
     const models = models0 ? modelsRequest(p, ready.key, ready.base) : null
     const step = models ? 'models' : 'probe'
-    const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || (p.id === 'custom' ? options.customModel : '')))
+    const reply = await fetchReply($, models ?? probeRequest(p, ready.key, ready.base, model || ''))
     if (provGen.get(p.id) !== gen) {
       // The key was saved or removed while the request was out: this reply says nothing about the key now stored.
       await storeProviderTest($, p.id, null)
@@ -1421,10 +1419,9 @@ async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; 
   const current = (id: string, t: ProviderTest | 'running' | undefined) => {
     if (t === undefined || t === 'running') return t
     if ((t.key ?? '') !== (keyIds[id] ?? 'none')) return undefined
-    if (id === 'custom' && (t.host ?? '') !== baseUrlOf(providerOf('custom')!, { customUrl: options.customUrl })) return undefined   // the endpoint moved (Codex 4299362999)
     return t
   }
-  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }, options.customUrl), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
+  const rows = PROVIDERS.map(p => ({ p, auth: auth[p.id] ?? authTextOf(p, { key: '', source: 'none' }), test: p.auth === 'cli' ? '—' : testText(current(p.id, tests[p.id])), used: false }))
   const keys = rows.filter(r => r.auth.startsWith('key ')).length
   // Only results that are still current count (Codex 4299537623).
   const tested = PROVIDERS.filter(p => p.auth !== 'cli' && (t => t !== undefined && t !== 'running')(current(p.id, tests[p.id]))).length

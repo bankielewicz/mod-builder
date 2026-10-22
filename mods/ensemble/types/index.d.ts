@@ -1,7 +1,7 @@
 // Ensemble's state contract. Self-contained: no imports.
 
 /** Who ran a task: Codex, a Claude subagent, or (0.3.0) an API provider by its id. */
-export type Provider = 'codex' | 'claude' | 'anthropic' | 'openai' | 'google' | 'xai' | 'mistral' | 'deepseek' | 'groq' | 'together' | 'fireworks' | 'openrouter' | 'perplexity' | 'cerebras' | 'ollama' | 'custom'
+export type Provider = 'codex' | 'claude' | 'anthropic' | 'openai' | 'google' | 'xai' | 'mistral' | 'deepseek' | 'groq' | 'together' | 'fireworks' | 'openrouter' | 'perplexity' | 'cerebras' | 'ollama'
 
 /** A provider key test's outcome (0.3.0), kept in $.store under ensemble:providers:tests; never the key. */
 export type ProviderTest = {
@@ -13,7 +13,7 @@ export type ProviderTest = {
   at: number
   /** A fingerprint of the key the test used (`none` for none), so a result never vouches for another key. */
   key: string
-  /** The base URL the test reached ('' for none), so a custom endpoint that moved shows as untested. */
+  /** The base URL the test reached ('' for none). */
   host: string
 }
 export type TaskStatus = 'running' | 'done' | 'error' | 'refused' | 'stopped'

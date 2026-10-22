@@ -15,7 +15,7 @@ export type ProviderAuth = 'bearer' | 'session' | 'none' | 'cli'
 export type ProviderDef = {
   id: string
   name: string
-  /** The Chat Completions base, no trailing slash; '' for `codex` (a process) and `custom` (the `apiCustomUrl` option). */
+  /** The Chat Completions base, no trailing slash; '' for `codex` (a process). */
   baseUrl: string
   /** The conventional variable; null where no key is used (ollama) or the CLI signs in (codex). */
   keyName: string | null
@@ -47,7 +47,6 @@ export const PROVIDERS: ProviderDef[] = [
   def('perplexity', 'Perplexity', 'https://api.perplexity.ai', 'PERPLEXITY_API_KEY', 'sonar-pro', 'bearer', null),
   def('cerebras', 'Cerebras', 'https://api.cerebras.ai/v1', 'CEREBRAS_API_KEY', 'llama-3.3-70b'),
   def('ollama', 'Ollama (local)', 'http://localhost:11434/v1', null, '', 'none'),
-  def('custom', 'Custom endpoint', '', 'DUET_CUSTOM_API_KEY', ''),
 ]
 
 /**
@@ -75,14 +74,9 @@ export function isAllowedBaseUrl(url: string): boolean {
   return /^https:\/\/[^/\s@]+(\/|$)/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(url)
 }
 
-/** A local http base (Ollama, LM Studio): a server that usually takes no key. */
-export function isLocalBaseUrl(url: string): boolean {
-  return /^http:\/\//.test(url)
-}
-
-/** A provider's base URL: the table's, or for `custom` the option when it is allowed, with no trailing slash. '' when there is none. */
-export function baseUrlOf(p: ProviderDef, o: { customUrl: string }): string {
-  const url = (p.id === 'custom' ? o.customUrl : p.baseUrl).trim().replace(/\/+$/, '')
+/** A provider's base URL from the table, when it is allowed, with no trailing slash. '' when there is none. */
+export function baseUrlOf(p: ProviderDef): string {
+  const url = p.baseUrl.trim().replace(/\/+$/, '')
   return isAllowedBaseUrl(url) ? url : ''
 }
 
@@ -592,12 +586,11 @@ export function testOutcome(step: 'models' | 'probe', r: HttpReply, ms: number, 
 // ── Pane text ────────────────────────────────────────────────────────────
 
 /** The sign-in column: how this provider is reached right now. */
-export function authTextOf(p: ProviderDef, k: KeySource, customUrl: string): string {
+export function authTextOf(p: ProviderDef, k: KeySource): string {
   if (p.auth === 'cli') return 'codex login'
   if (p.auth === 'none') return p.baseUrl.replace(/^https?:\/\//, '').replace(/\/v1$/, '')
-  const host = p.id === 'custom' && customUrl.trim() !== '' ? ` · ${customUrl.replace(/^https?:\/\//, '').split('/')[0]}` : ''
-  if (k.key === '') return p.auth === 'session' ? 'signed-in' : p.id === 'custom' && customUrl.trim() === '' ? 'no URL set' : `no key${host}`
-  return `key ${maskKey(k.key)}${k.source === 'env' ? ' from env' : ''}${host}`
+  if (k.key === '') return p.auth === 'session' ? 'signed-in' : 'no key'
+  return `key ${maskKey(k.key)}${k.source === 'env' ? ' from env' : ''}`
 }
 
 /** The test column. */

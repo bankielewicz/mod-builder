@@ -72,18 +72,6 @@
       "title": "Folders an agent may write",
       "description": "With codexFsScope project and workspace-write: agent=folder;folder entries, comma-separated, e.g. red-test-writer=tests;test. A named agent writes only those project folders and reads the rest; others write the whole project. A folder outside the project or in .git, .codex or .agents (also through a symlink), or not there yet, is ignored and named in the run's result; a malformed value leaves every agent read-only.",
       "default": ""
-    },
-    "apiCustomUrl": {
-      "type": "string",
-      "title": "Custom provider base URL",
-      "description": "The custom API provider's OpenAI-compatible base URL (https://, or http:// to localhost), e.g. https://my-gateway.example.com/v1 for Azure OpenAI, LiteLLM, LM Studio or a company gateway. Its key is DUET_CUSTOM_API_KEY, entered in /ensemble provider.",
-      "default": ""
-    },
-    "apiCustomModel": {
-      "type": "string",
-      "title": "Custom provider default model",
-      "description": "The model id that runs on the custom provider will use (0.4.0). For now the key test lists the models instead, and /ensemble provider test custom <model> names one directly.",
-      "default": ""
     }
   }
 }

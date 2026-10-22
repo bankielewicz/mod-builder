@@ -5,7 +5,6 @@
  */
 
 import type { ClaudePending, CodexModel, Envelope, Provider, Sandbox, Task, TaskStatus } from '../types'
-import { isAllowedBaseUrl } from './ensemble-providers-logic'
 
 export type { ClaudePending, CodexModel, Envelope, Sandbox, Task, TaskStatus }
 
@@ -24,9 +23,6 @@ export type Options = {
   runModes: RunModes
   fsScope: FsScope
   writePaths: WritePaths
-  /** The `custom` provider's base URL (0.3.0), '' when unset or not allowed. */
-  customUrl: string
-  customModel: string
 }
 
 /** `codexWritePaths`: project folders per agent type, or the error a malformed value gives (every agent then writes nothing). */
@@ -133,8 +129,6 @@ export function readOptions(raw: unknown): Options {
     fsScope: o.codexFsScope === 'project' ? 'project' : 'anything',
     writePaths: parseWritePaths(String(o.codexWritePaths ?? '')),
     runModes: ((m) => ('error' in m ? { fallback: 'background' as const, overrides: Object.create(null) as Record<string, RunMode> } : m))(parseRunModes(String(o.codexRunMode ?? 'background'))),
-    customUrl: ((u) => (isAllowedBaseUrl(u) ? u.replace(/\/+$/, '') : ''))(String(o.apiCustomUrl ?? '').trim()),
-    customModel: String(o.apiCustomModel ?? '').trim(),
   }
 }
 
@@ -286,8 +280,6 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { field: 'codexRunMode', alias: 'mode', kind: 'text', fallback: 'background', help: 'wait or background for codexAgents types, then overrides: advisor=background, Explore=wait (editing runs always wait)' },
   { field: 'codexFsScope', alias: 'scope', kind: 'text', choices: ['anything', 'project'], fallback: 'anything', help: 'project confines Codex to the session folder (read, and write under workspace-write) and hides /tmp; checked through `codex exec` on Codex 0.162.1, Linux only (on macOS, the Codex source makes /tmp readable and writable, even under read-only), re-check after upgrading' },
   { field: 'codexWritePaths', alias: 'paths', kind: 'text', fallback: '', help: 'with scope project and workspace-write: red-test-writer=tests;test, impl=src limits a named agent to those project folders; empty = whole project' },
-  { field: 'apiCustomUrl', alias: 'customurl', kind: 'text', fallback: '', help: 'the custom provider\'s OpenAI-compatible base URL (https://, or http:// to localhost), e.g. https://my-gateway.example.com/v1' },
-  { field: 'apiCustomModel', alias: 'custommodel', kind: 'text', fallback: '', help: 'the custom provider\'s default model id' },
 ]
 
 /** A field's stored value as text, its default when unset. */
@@ -349,8 +341,6 @@ export function coerceConfigValue(f: ConfigField, text: string): { value: string
     const w = parseWritePaths(t)
     if (typeof w.error === 'string') return { error: w.error }
   }
-  // The refusal never shows a password the URL carried (#115).
-  if (f.field === 'apiCustomUrl' && t !== '' && !isAllowedBaseUrl(t)) return { error: `apiCustomUrl takes an https:// URL, or http:// to localhost, 127.0.0.1 or [::1], with no user:password@, query, fragment, space or backslash; got "${t.replace(/\/\/[^/@\s]*@/, '//***@')}".` }
   return { value: t }
 }
 
