@@ -53,6 +53,8 @@ describe('providers as data', () => {
     expect(isAllowedBaseUrl('')).toBe(false)
     expect(baseUrlOf(providerOf('groq')!)).toBe('https://api.groq.com/openai/v1')
     expect(baseUrlOf(providerOf('ollama')!)).toBe('http://localhost:11434/v1')
+    // A table URL that isn't allowed reaches nothing (the custom endpoint's tests covered this before #129).
+    expect(baseUrlOf({ ...providerOf('groq')!, baseUrl: 'http://api.groq.example/v1' })).toBe('')
   })
 })
 
