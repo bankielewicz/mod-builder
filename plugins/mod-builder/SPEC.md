@@ -1026,6 +1026,13 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - No code changes, so there is no red or green step.
   - QA: `claude plugin validate .`, validate and test for `plugins/mod-builder`, the archetype check (the build skill changes) and the typecheck.
   - The live check is point 2's command, run on 2.1.308 against this branch's `mods/issue-forge` at the PR head.
+- **QA** (2026-10-22, Claude Code 2.1.308, at `2a543e3`):
+  - `claude plugin validate .` and `claude plugin validate plugins/mod-builder` pass.
+  - `claude plugin test plugins/mod-builder`: 357 of 357.
+  - The archetype check: all five pass.
+  - The typecheck exits 0.
+  - **Live check:** point 2's command, with the installed copies left enabled, run with `--plugin-dir <worktree>/mods/issue-forge` and with `--plugin-dir <worktree>/plugins/mod-builder` (`/modlab demo`). Each answered, and each log has `Plugin "<name>" from --plugin-dir overrides installed version` and `hooks module <name>@inline loaded`, with none of the failure lines.
+  - **The check catches a wrong copy:** a first run, given a relative `--plugin-dir` from the wrong folder, also answered the demo. Its log had `[WARN] Plugin path does not exist: …/mods/issue-forge (ENOENT), skipping` and `hooks module issue-forge@claudemod loaded`, and no `@inline` line. The installed copy had answered, and only the log showed it.
 - **Follow-up #141:** edit's step 0.1 finds a mod only in `<mods>/`. A marketplace entry under another folder, like `./plugins/mod-builder`, can't go through the skill as written, and Mod Lab ignores its path. The owner chose to file it (2026-10-22, "File an issue (Recommended)"), and it isn't part of this change.
 - **Version:** 0.2.29 (patch: skill text).
 
