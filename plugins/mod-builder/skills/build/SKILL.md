@@ -128,7 +128,10 @@ claude -p --debug-file <scratchpad>/<name>-debug.log --plugin-dir <mods>/<name> 
 The smoke test passes when it prints the command's text **and** its debug log shows that this
 folder's code is what ran (`grep -n '<name>' <log>`). Start each run with no log: `--debug-file`
 appends, so an earlier run's lines would pass or fail this one.
-- The log has a `hooks module <name>@inline loaded` line.
+- The log has a `hooks module <name>@inline loaded` line, and after it a
+  `plugin.register: <name> (user, <name>@inline), … admitted` line. A policy refusal comes after
+  `loaded`, so `loaded` alone isn't enough.
+- Its `--plugin-dir <path> is one plugin` line names `<mods>/<name>`, the folder you built.
 - It has no line for the mod that says `did not load`, `not loaded`, `ignored`, `hook skipped` or
   `refused`, and no `Plugin path does not exist`. With a wrong path the installed copy, if there is
   one, answers the demo, and only that log line says so. In a `-p` run, another mod's refusal goes
