@@ -133,13 +133,15 @@ agent the failed checks and try again, up to `attempts.red` (default 2), then st
 **Every gate commits the tree it tested (SPEC change 0.7.5, #101).** Right after `git add -A`, record the index's tree
 with `git write-tree`, before any test runs; it takes the index lock, so it is retried as `add` is. Before the commit,
 write the tree again: a different tree blocks the gate with nothing committed ("the index changed after gate X tested
-it"). HEAD and its tree are read from one commit object (`git log -1 --no-show-signature --format='%H %T'`; with `log.showSignature` on, git prints
-a signature check's line first): when HEAD's tree is the tested
-one, nothing is committed and HEAD stands; else the gate commits and reads the pair again, and a tree that isn't the
-tested one blocks the gate with the commit made ("commit <sha> holds a tree gate X didn't test: a commit hook that
+it"). HEAD is read with `git rev-parse --verify HEAD`, and its tree and parent from the commit object itself
+(`git --no-replace-objects cat-file commit <sha>`: a replacement ref can't stand in for it, and no log setting adds
+lines). When HEAD's tree is the tested one, nothing is committed and HEAD stands; else the gate commits and reads again.
+A new HEAD whose parent isn't the HEAD from before means another commit moved the branch, and the gate blocks saying so.
+A tree that isn't the tested one blocks the gate with the commit made ("commit <sha> holds a tree gate X didn't test: a commit hook that
 rewrites files, or another process during the commit"). issue-forge resets nothing. Both blocks resume: the gate runs
 again from `git add -A`, so a stray path has to leave the folder, and a hook's change is tested and kept. Gate F records
-the commit it verified as the head to publish. Every check (R1, R4, G1, G4, G8) diffs the tested tree, not the index.
+the commit it verified as the head to publish (green's commit, when it rejects the refactor). A `git commit` a hook
+fails, or a lock that outlasts the retries, blocks with the gate's result kept. Every check (R1, R4, G1, G4, G8) diffs the tested tree, not the index.
 With nothing left to commit, a passing gate keeps HEAD when it is new since the phase before (for gate F, green's commit,
 or red's when green committed nothing). No published tool compares the committed tree with the tested one; this check
 is issue-forge's own design. The repository's commit hooks run, so a pre-commit hook that
