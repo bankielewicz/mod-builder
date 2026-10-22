@@ -1,5 +1,5 @@
 // Literal lists, not derived from BLANKED_ENV, so a name added or deleted there is caught.
-// Shared by the duet-logic, routing and config tests: a name is changed here once.
+// Shared by the ensemble-logic, routing and config tests: a name is changed here once.
 
 /** The names duet blanked before issue #2. */
 export const ORIGINAL_ENV = [

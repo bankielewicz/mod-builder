@@ -7,8 +7,8 @@ import {
   footerOf, statsText, summarize, verdictOf,
   claudeTaskOf, coerceConfigValue, configText, deliveryText, findConfigField, liveCount, lostOnReload, modeOf, parseRunModes, pendingIdOf,
   roleDescription, roleOf, rolesFor, routeOf, routesLines, routesText, runsInBackground, typeKey, usageTokens, ROLES, LOST,
-} from '../hooks/duet-logic'
-import * as logic from '../hooks/duet-logic'
+} from '../hooks/ensemble-logic'
+import * as logic from '../hooks/ensemble-logic'
 import type { Task } from '../types'
 import { BLANKED, PASSED_THROUGH } from './env-names'
 

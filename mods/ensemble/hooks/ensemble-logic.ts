@@ -5,7 +5,7 @@
  */
 
 import type { ClaudePending, CodexModel, Envelope, Provider, Sandbox, Task, TaskStatus } from '../types'
-import { isAllowedBaseUrl } from './duet-providers-logic'
+import { isAllowedBaseUrl } from './ensemble-providers-logic'
 
 export type { ClaudePending, CodexModel, Envelope, Sandbox, Task, TaskStatus }
 

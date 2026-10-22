@@ -8,13 +8,13 @@ import {
   mergeLogs, splitLines, statsText, statusLineOf, subText, summarize, tokensOf, verdictOf, writePathsOf, folderUnder, isInside, isProtectedPath, parentOf, pathDirs, resolveFrom, DEFAULT_TYPE,
   claudeTaskOf, deliveryText, launchedRecord, liveCount, lostOnReload, modeOf, pendingIdOf, roleDef, roleDescription, rolesFor, routeOf, routesLines, runsInBackground, ROLE_PREFIX,
   paneAction, dropOf, idAfter, liveRuns, retryableDrop, spawnErrorAction, stopPlan, kindLabel, STOPPED_HERE, stoppedCandidateOf, candidateFrom, outcomeOf, STOPPED, STOPPED_CANDIDATE, consentRefusal, consentText, fallbackFailure, fallbackNote, FALLBACK_MAX_MS, hashablePaths, limitText, sessionFolderOf, snapshotOf,
-} from './duet-logic'
-import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './duet-logic'
+} from './ensemble-logic'
+import type { AgentDef, ClaudePending, CodexModel, ConfigField, Envelope, FsScope, Options, ReviewTarget, Role, Run, Sandbox, Task } from './ensemble-logic'
 import {
   KEY_FILE_SHOWN, NO_HOME, PROVIDERS, authTextOf, baseUrlOf, detailLinesThatFit, isLocalBaseUrl, keyFileExposed, keyFileOf, keyFor, keyId, keyPathReaches, modelsRequest, namesKeyFile, namesKeyFolder, parseEnvFile, searchCoversKeyFile, parseModelsReply, probeRequest, providerOf, providerRowText, providersText,
   redact, refusalReason, rowWindow, safeText, savedNote, testOutcome, testText, upsertEnvLine,
-} from './duet-providers-logic'
-import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './duet-providers-logic'
+} from './ensemble-providers-logic'
+import type { HttpReply, KeySource, ProviderDef, ProviderRow, TestResult } from './ensemble-providers-logic'
 import type { ProviderTest } from '../types'
 
 /**

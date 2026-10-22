@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { keyId } from '../hooks/duet-providers-logic'
+import { keyId } from '../hooks/ensemble-providers-logic'
 
 const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: false, columns: 160 } as const

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   PROVIDERS, PROVIDER_KEY_NAMES, KEY_FILE_NOTE, authTextOf, baseUrlOf, detailLinesThatFit, isAllowedBaseUrl, isLocalBaseUrl, keyFileOf, keyFor, maskKey, modelsRequest, namesKeyFile, namesKeyFolder, parseChatReply, parseEnvFile,
   keyFileExposed, keyId, keyPathReaches, parseModelsReply, probeRequest, safeText, providerOf, providerRowText, providersText, redact, refusalReason, rowWindow, savedNote, searchCoversKeyFile, serializeEnv, testOutcome, testText, upsertEnvLine,
-} from '../hooks/duet-providers-logic'
+} from '../hooks/ensemble-providers-logic'
 import { PROVIDER_KEYS } from './env-names'
 
 const KEY = 'sk-test-0123456789abcdefa1b2'

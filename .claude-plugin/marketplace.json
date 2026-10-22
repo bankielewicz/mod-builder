@@ -19,7 +19,7 @@
     },
     {
       "name": "duet",
-      "source": "./mods/duet",
+      "source": "./mods/ensemble",
       "description": "Delegates subagents to Codex: Codex roles Claude can pick (advisor, reviewer, implementer) plus chosen subagent types, in the background or waited on; independent Codex reviews; measures every run. Keeps API keys for fourteen model providers (Anthropic, OpenAI, Gemini, xAI, Mistral, DeepSeek, Groq, Together, Fireworks, OpenRouter, Perplexity, Cerebras, Ollama, custom) in a user-level key file and tests them.",
       "version": "0.3.4"
     },

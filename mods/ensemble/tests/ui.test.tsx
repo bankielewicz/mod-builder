@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { demoTasks, rowsThatFit } from '../hooks/duet-logic'
+import { demoTasks, rowsThatFit } from '../hooks/ensemble-logic'
 
 const PANE = { title: 'Duet', isFocused: true, bodyColumns: 76, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
 const COMPOSER = { kind: 'composer' } as const
