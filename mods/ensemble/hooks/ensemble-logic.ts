@@ -1322,8 +1322,9 @@ export function summarize(log: string): StatRow[] {
 
 export function statsText(rows: StatRow[]): string {
   if (!rows.length) return 'No runs recorded yet. Routed subagents and /ensemble review are logged as they finish.'
-  const head = 'provider · type'.padEnd(34) + 'runs'.padStart(5) + 'ok'.padStart(6) + 'median'.padStart(9) + 'tokens'.padStart(9)
-  return [head, ...rows.map(r => r.key.slice(0, 33).padEnd(34) + String(r.runs).padStart(5) + `${r.okPct}%`.padStart(6) + duration(r.medianMs).padStart(9) + compact(r.medianTokens).padStart(9))].join('\n')
+  // The key column fits codex · ensemble:codex-implementer (34) with room (PR #130 review).
+  const head = 'provider · type'.padEnd(39) + 'runs'.padStart(5) + 'ok'.padStart(6) + 'median'.padStart(9) + 'tokens'.padStart(9)
+  return [head, ...rows.map(r => r.key.slice(0, 38).padEnd(39) + String(r.runs).padStart(5) + `${r.okPct}%`.padStart(6) + duration(r.medianMs).padStart(9) + compact(r.medianTokens).padStart(9))].join('\n')
 }
 
 // ── Pane text ────────────────────────────────────────────────────────────
@@ -1386,8 +1387,8 @@ export function rowText(t: Task, now: number, columns: number): string {
     layout === 'compact'
       ? [t.id, t.provider, t.status, elapsed]
       : layout === 'medium'
-        ? [t.id.padEnd(4), t.provider.padEnd(7), kindLabel(t).slice(0, 18).padEnd(18), t.status.padEnd(8), elapsed]
-        : [t.id.padEnd(4), t.provider.padEnd(7), (t.model || 'default').slice(0, 12).padEnd(12), kindLabel(t).slice(0, 20).padEnd(20), t.status.padEnd(8), elapsed.padStart(7), compact(t.tokens).padStart(6) + ' tok']
+        ? [t.id.padEnd(4), t.provider.padEnd(7), kindLabel(t).slice(0, 22).padEnd(22), t.status.padEnd(8), elapsed]
+        : [t.id.padEnd(4), t.provider.padEnd(7), (t.model || 'default').slice(0, 12).padEnd(12), kindLabel(t).slice(0, 24).padEnd(24), t.status.padEnd(8), elapsed.padStart(7), compact(t.tokens).padStart(6) + ' tok']
   const text = parts.join(layout === 'compact' ? ' ' : ' ')
   return text.length > columns ? `${text.slice(0, Math.max(0, columns - 1))}…` : text
 }
