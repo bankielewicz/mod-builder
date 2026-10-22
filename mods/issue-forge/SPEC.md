@@ -1910,7 +1910,10 @@ count set in the pane.
 
 > Issue #128: duet is renamed ensemble 0.4.0. The owner chose to end the old names at the rename, with no `duet-` alias.
 
-- **Why:** issue-forge treated an agent id starting `duet-` as answered in-line (C0). After the rename, ensemble's in-line answers carry `ensemble-<n>` ids, so a red phase routed to Codex would have waited for a `turn.complete` that never comes.
+- **Why:**
+  - The routed-red refusal and the option text named duet.
+  - The in-line check's `duet-` id test could never match again.
+  - Corrected at PR #130 review: the `codex` model test already catches every ensemble answer. An in-line answer resolves with `resolvedModel` `codex` or `codex:<model>` (`mods/ensemble/hooks/ensemble-logic.ts`, `gotchas.md`: `{ model: "codex", agentId: … }`). So no red phase would have hung, and the `ensemble-` id test is a second signal, not the one that decides.
 - **What changes:**
   - `isInlineAnswer(agentId, model)` (pure, in the logic module) replaces the inline check in `phase`: an `ensemble-<n>` id or a codex model.
   - The routed-red refusal reads "another plugin (ensemble's Codex)".

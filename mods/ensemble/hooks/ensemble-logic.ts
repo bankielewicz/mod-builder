@@ -28,7 +28,7 @@ export type Options = {
 /** `codexWritePaths`: project folders per agent type, or the error a malformed value gives (every agent then writes nothing). */
 export type WritePaths = Record<string, string[]> | { error: string }
 
-/** `codexFsScope`: `project` confines Codex's filesystem to a ensemble profile; `anything` leaves Codex's own sandbox as it was. */
+/** `codexFsScope`: `project` confines Codex's filesystem to an ensemble profile; `anything` leaves Codex's own sandbox as it was. */
 export type FsScope = 'project' | 'anything'
 
 /** Whether a Codex run makes Claude wait for it or answers later. */
@@ -736,7 +736,7 @@ export function resolveFrom(cwd: string, path: string): string {
 type FsProfile = { fsScope?: FsScope; home?: string; writePaths?: string[]; reads?: string[]; nonce?: string }
 
 /**
- * The two `-c` overrides that make a `ensemble` permission profile the default (SPEC, Change 0.2.6): Codex's
+ * The two `-c` overrides that make an `ensemble` permission profile the default (SPEC, Change 0.2.6): Codex's
  * built-in minimal set and the project are readable, nothing else is, and `/tmp` and files outside
  * are not mounted. Under workspace-write the project is writable, or only the `writePaths` folders
  * inside it when any are given; a folder outside the project is dropped. Codex's install folder is

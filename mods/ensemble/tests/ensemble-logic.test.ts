@@ -489,7 +489,7 @@ describe('issue 3 part B: codexFsScope limits what Codex can read and write', ()
   const pair = (path: string, access: 'read' | 'write') => `${JSON.stringify(path)}="${access}"`
   const count = (text: string, what: string) => text.split(what).length - 1
 
-  test('project scope adds a ensemble profile as the default and its filesystem table, and sets the sandbox with -c sandbox_mode, never -s (codex exec 0.162.1 drops the profile under -s)', () => {
+  test('project scope adds an ensemble profile as the default and its filesystem table, and sets the sandbox with -c sandbox_mode, never -s (codex exec 0.162.1 drops the profile under -s)', () => {
     const argv = project()
     expect(argv).toContain('default_permissions="ensemble-mod-fs-scope"')
     const fs = filesystem(argv)

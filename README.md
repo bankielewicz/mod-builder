@@ -73,7 +73,7 @@ turn-counter loads from its folder.
 | Mod | What it does | Try it |
 |---|---|---|
 | [**git-branch**](mods/git-branch/) | A band above the prompt with the current branch, changed files, and ahead/behind | `/plugin install git-branch@claudemod`, then `/git-branch demo` |
-| [**ensemble**](mods/ensemble/) (formerly duet) | Hands chosen subagents to OpenAI's Codex, gets independent Codex reviews of your diff, and measures every run. Needs the [Codex CLI](https://github.com/openai/codex). | `/plugin install duet@claudemod`, then `/duet demo` |
+| [**ensemble**](mods/ensemble/) (formerly duet) | Hands chosen subagents to OpenAI's Codex, gets independent Codex reviews of your diff, and measures every run. Needs the [Codex CLI](https://github.com/openai/codex). | `/plugin install ensemble@claudemod`, then `/ensemble demo` |
 | [**issue-forge**](mods/issue-forge/) | Takes a GitHub issue to a pull request, test-first: red, green and refactor subagents, with commands and a 95% diff-coverage gate checking each phase. Pushes only after you say yes. Needs `gh` signed in and a `.issue-forge.json` profile in the repository. | `/plugin install issue-forge@claudemod`, then `/issue-forge demo` |
 | [**turn-counter**](mods/turn-counter/) | Counts this turn's tool calls in a band. Left as the scaffold produced it, mid-pipeline, so you can see a mod before its README and Share stages. | `claude --plugin-dir mods/turn-counter`, then `/turn-counter demo` |
 

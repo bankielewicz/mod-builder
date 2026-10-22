@@ -2423,7 +2423,7 @@ describe('#128: an agent another plugin answered in-line', () => {
     expect(inline('a1', 'codex-mini')).toBe(true)
   })
 
-  test('a Claude agent, or an old duet- id, is waited for', () => {
+  test('a Claude agent is waited for; a duet- id with a non-codex model is a boundary, not a case that occurs', () => {
     expect(inline('a1', 'claude')).toBe(false)
     expect(inline('duet-d3', 'claude')).toBe(false)
     expect(inline('', 'codex-mini')).toBe(false)

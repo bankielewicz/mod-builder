@@ -1058,7 +1058,7 @@ async function readKeyFile($: EngineInterface): Promise<{ file: Record<string, s
 /** Every provider's key and where it came from, and the key file's trouble if any. The values stay in this call; only masks reach `$.state`. */
 async function keySources($: EngineInterface): Promise<{ sources: Record<string, KeySource>; fileError: string }> {
   const { file, error } = await readKeyFile($)
-  // The environment reads are independent: one round of them, not fifteen in a row.
+  // The environment reads are independent: one round of them, not one after another.
   const fromEnv = await Promise.all(PROVIDERS.map(p => (p.keyName ? envKey($, p.keyName).catch(() => undefined) : Promise.resolve(undefined))))
   const sources: Record<string, KeySource> = {}
   PROVIDERS.forEach((p, i) => {

@@ -60,7 +60,7 @@
     "codexFsScope": {
       "type": "string",
       "title": "Codex filesystem scope",
-      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: a ensemble permission profile limits Codex to the session folder (writable only under workspace-write), plus read-only system paths and Codex's own install and memories folders, plus git's own folders in a linked worktree, and hides every other file and, on Linux, /tmp (on macOS, Codex's source makes /tmp readable and writable, even under read-only; not run). On Codex 0.162.1 (Linux), codex exec runs confirmed the hidden files and /tmp; the write limits are partly checked in codex sandbox only (SPEC, Change 0.2.6). Re-check after upgrading Codex.",
+      "description": "anything: Codex's own sandbox, which reads any file your account can read. project: an ensemble permission profile limits Codex to the session folder (writable only under workspace-write), plus read-only system paths and Codex's own install and memories folders, plus git's own folders in a linked worktree, and hides every other file and, on Linux, /tmp (on macOS, Codex's source makes /tmp readable and writable, even under read-only; not run). On Codex 0.162.1 (Linux), codex exec runs confirmed the hidden files and /tmp; the write limits are partly checked in codex sandbox only (SPEC, Change 0.2.6). Re-check after upgrading Codex.",
       "options": [
         "anything",
         "project"

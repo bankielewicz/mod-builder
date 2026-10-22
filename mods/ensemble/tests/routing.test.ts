@@ -269,7 +269,7 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     expect(seen.asked).toBe(0)
   })
 
-  test('a ensemble: role goes to Codex even when named, with its role instructions, read-only', { options: { codexAgents: '', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'background, reviewer=wait' } }, async ($, on) => {
+  test('an ensemble: role goes to Codex even when named, with its role instructions, read-only', { options: { codexAgents: '', codexSandbox: 'workspace-write', codexConsent: 'allow', codexRunMode: 'background, reviewer=wait' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
     const r: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-reviewer', name: 'rev' }) as never)
@@ -281,7 +281,7 @@ describe('0.2.0: roles, background runs, honest routing', () => {
     expect(argv[argv.indexOf('-s') + 1]).toBe('read-only')
   })
 
-  test('a ensemble: role is refused from inside a subagent or isolated, and never reaches Claude', { options: { codexConsent: 'allow' } }, async ($, on) => {
+  test('an ensemble: role is refused from inside a subagent or isolated, and never reaches Claude', { options: { codexConsent: 'allow' } }, async ($, on) => {
     const seen = engine(on)
     await start($)
     const nested: any = await $.tool.call(call({ subagent_type: 'ensemble:codex-advisor', agentId: 'sub-1' }) as never)

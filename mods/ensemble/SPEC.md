@@ -1067,7 +1067,7 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
      - the data folder (`~/.claude/ensemble-data/`) and the key-file guard's patterns;
      - the store keys (`ensemble:providers:tests:<id>`), the config rows (`ensemble.<field>`) and every message.
      - Files: `mods/ensemble/`, `hooks/ensemble-logic.ts`, `hooks/ensemble-providers-logic.ts` and their tests.
-  2. **No migration code.** A mod can't move or delete a file (`$.fs` has no rename or delete). `migrationNoteOf` (pure) and a detached check at `session.start` raise a 15-second toast: the `mv` command while `~/.claude/duet-data` is there, or, once both folders are, that the old one is no longer guarded. Nothing is read from either folder.
+  2. **No migration code.** A mod can't move or delete a file (`$.fs` has no rename or delete). `migrationNoteOf` (pure) and a detached check at `session.start` raise a 15-second toast, once a session: the `mv` command while only `~/.claude/duet-data` is there, or, once both folders are, copy without overwriting (`cp -an`) and then delete the old one. Nothing is read from either folder, and the key-file guard covers both while the old one exists (review round 1, below).
   3. **No custom provider (#129):** its row, `DUET_CUSTOM_API_KEY`, `apiCustomUrl` and `apiCustomModel` are gone. `isLocalBaseUrl` goes too, and `baseUrlOf(p)` and `authTextOf(p, k)` lose their custom argument. `isAllowedBaseUrl` still checks every table URL.
   4. **Routes are promised for 0.5.0**, not 0.4.0, in the signed-in key test's reason and the providers pane (#111 moved).
   5. **issue-forge 0.7.3:** `isInlineAnswer` (pure) treats an `ensemble-<n>` id, or a codex model, as answered in-line. The `duet-` prefix ends. The routed-red refusal and the `redAgentType` text name ensemble.
@@ -1091,4 +1091,23 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
   - **Red** `87ec656` and **green** `5e81bae`: no custom provider (5 failed by assertion).
   - **Red** `a35893b` and **green** `2a70363`: routes in 0.5.0 (2 failed by assertion).
 - **Version:** 0.4.0 (minor: renames break installs, saved options and type names).
+- **PR #130 review round 1** (2026-10-22): Codex's two P1s plus a `/code-review` of 12 findings that included them, each reproduced on this branch. The advisor's call: fix ten here, correct one in issue-forge's SPEC, acknowledge one.
+  - **Codex 4344331748 (P1), the old key file unguarded:** fixed. The path checks and the `@`-mention matcher take `(?:duet|ensemble)-data`.
+    - The same probe, through `keyPathReaches`, `namesKeyFile`, `namesKeyFolder` and `searchCoversKeyFile`: on main, `duet-data` true and `ensemble-data` false; here both true, and `other-data` false.
+    - Kit-checked only: no live probe against a real key file.
+    - Not extended to a folder nested by `mv` (`ensemble-data/duet-data/.env`): the guard is a tripwire (the owner's stopping rule), and the instructions now avoid the nesting.
+  - **Codex 4344331752 (P1), the root README's install cell:** fixed; it reads `ensemble@claudemod`, then `/ensemble demo`.
+  - **`mv` nests the folder once `ensemble-data` exists:** the both-folders toast and the README say `cp -an …/. …/` and then delete; the README says to move before any run.
+  - **Role names cut:** "ensemble:" is four characters longer than "duet:". The stats key column is now 38 wide, a medium row's type label 22 and a wide one's 24.
+  - **The toast at every reload** (each `/config` write reloads the module): once a session, through an `oldDataNoted` atom, which a reload keeps.
+  - **A refused `/ensemble` was swallowed by `.catch(() => undefined)`:** a toast now names it.
+  - **Docs:**
+    - the README's `D U E T` sketch, the providers paragraph's "(0.4.0)" (now 0.5.0), and the README and Store row's base URL (recorded, not read since 0.4.0);
+    - "a ensemble" changed to "an ensemble" in the option text, the README, two comments and three test names;
+    - a stale "fifteen" comment.
+  - **The `host` field:** kept and still written, now documented as not read.
+  - **issue-forge's `isInlineAnswer`:** the `codex` model test already caught ensemble's answers, so its SPEC reason is corrected. The function stays, tested.
+  - **Red with 115 non-assertion failures (`199760b`):** acknowledged. A stub `/ensemble` hook in that commit would have made them assertion failures; the commits stand.
+  - **Commits:** red `3361a8c` (9 of 383 failed, all by assertion); green `679ec3a` (guard), `92f4ce6` (toast text), `c42a448` (widths), `d32018b` (once a session), `98c51d9` (registration notice).
+
 
