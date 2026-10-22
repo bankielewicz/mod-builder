@@ -1067,7 +1067,7 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
      - the data folder (`~/.claude/ensemble-data/`) and the key-file guard's patterns;
      - the store keys (`ensemble:providers:tests:<id>`), the config rows (`ensemble.<field>`) and every message.
      - Files: `mods/ensemble/`, `hooks/ensemble-logic.ts`, `hooks/ensemble-providers-logic.ts` and their tests.
-  2. **No migration code.** A mod can't move or delete a file (`$.fs` has no rename or delete). `migrationNoteOf` (pure) and a detached check at `session.start` raise a 15-second toast, once a session: the `mv` command while only `~/.claude/duet-data` is there, or, once both folders are, copy without overwriting (`cp -an`) and then delete the old one. Nothing is read from either folder, and the key-file guard covers both while the old one exists (review round 1, below).
+  2. **No migration code.** A mod can't move or delete a file (`$.fs` has no rename or delete). `migrationNoteOf` (pure) and a detached check at `session.start` raise a 15-second toast, once a session: the `mv` command while only `~/.claude/duet-data` is there; once both folders are, copy without overwriting (`cp -an`) and then delete the old one; and when both hold a `.env`, merge duet's key lines by hand first (round 2). Nothing is read from either folder, and the key-file guard covers both while the old one exists (review round 1, below).
   3. **No custom provider (#129):** its row, `DUET_CUSTOM_API_KEY`, `apiCustomUrl` and `apiCustomModel` are gone. `isLocalBaseUrl` goes too, and `baseUrlOf(p)` and `authTextOf(p, k)` lose their custom argument. `isAllowedBaseUrl` still checks every table URL.
   4. **Routes are promised for 0.5.0**, not 0.4.0, in the signed-in key test's reason and the providers pane (#111 moved).
   5. **issue-forge 0.7.3:** `isInlineAnswer` (pure) treats an `ensemble-<n>` id, or a codex model, as answered in-line. The `duet-` prefix ends. The routed-red refusal and the `redAgentType` text name ensemble.
@@ -1109,5 +1109,13 @@ Events and UI (`tests/routing.test.ts`, `tests/providers.test.ts`, `tests/ui.tes
   - **issue-forge's `isInlineAnswer`:** the `codex` model test already caught ensemble's answers, so its SPEC reason is corrected. The function stays, tested.
   - **Red with 115 non-assertion failures (`199760b`):** acknowledged. A stub `/ensemble` hook in that commit would have made them assertion failures; the commits stand.
   - **Commits:** red `3361a8c` (9 of 383 failed, all by assertion); green `679ec3a` (guard), `92f4ce6` (toast text), `c42a448` (widths), `d32018b` (once a session), `98c51d9` (registration notice).
-
+- **PR #130 review round 2** (Codex at `e4e5ebe`, 2026-10-22):
+  - **Codex 4347084033 (P1), keys lost when both folders hold a `.env`:** fixed.
+    - The cause: `cp -an` leaves an existing `.env` as it is, so "copy, then delete" would discard duet's keys. Reproduced with fake files: after `cp -an`, the new `.env` held only its own line.
+    - The fix: `migrationNoteOf` takes a third input, both key files present. Its note says to add duet's key lines by hand, or with `/ensemble provider key <id>`, before deleting the old folder.
+    - `noteOldData` checks the two `.env` files' existence only, and only when both folders exist. They are never read: no key-merging code, by the owner's choice on #128.
+    - `-n` stays: ensemble writes run files under `sessions/<id>/`, so `.env` is the only clash it guards against, and GNU's `--update=none` isn't portable.
+    - Red `782a7a0` (2 of 386 failed, by assertion), green `8924ea6`.
+  - **Codex 4347084029 (P2), the reach table showed the old matcher:** the Hooks and Gating rows now show `prompt.mention{path=/(?:duet|ensemble)-data[\\/]\.env$/}` and duet's old folder. The Files row gains the two `.env` existence checks. Render-checked with GitHub's Markdown API: 13 rows, two cells each.
+  - README step 2 lists the three cases.
 
