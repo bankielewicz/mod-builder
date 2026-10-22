@@ -1124,8 +1124,9 @@ async function headOf($: EngineInterface, root: string): Promise<string> {
   return (await gitOut($, root, ['rev-parse', 'HEAD'])).trim()
 }
 
-async function stagedSince($: EngineInterface, root: string, ref: string): Promise<string[]> {
-  return splitZ(await gitOut($, root, ['diff', '--cached', '--name-only', '-z', ref]))
+/** The paths that differ between `ref` and the tree the gate tested (PR #136 review, Codex 4350587243: not the index at its own moment). */
+async function stagedSince($: EngineInterface, root: string, ref: string, tested: string): Promise<string[]> {
+  return splitZ(await gitOut($, root, ['diff', '--name-only', '-z', ref, tested]))
 }
 
 /** The guard refused a manifest: the driven run records it, so the phase's gate blocks on it (Change 0.7.0); never a run another session took over. */
@@ -1146,8 +1147,8 @@ async function manifestsAt($: EngineInterface, root: string, ref: string): Promi
  * R4 and G8 (Change 0.7.0): a manifest added since the merge base (renames off: a moved one is added), or the one the guard
  * refused, unless the base branch's tip has it. Checked before any test runs.
  */
-async function newPluginAt($: EngineInterface, run: Run, root: string) {
-  const added = splitZ(await gitOut($, root, ['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase]))
+async function newPluginAt($: EngineInterface, run: Run, root: string, tested: string) {
+  const added = splitZ(await gitOut($, root, ['diff', '--no-renames', '--name-only', '--diff-filter=A', '-z', run.mergeBase, tested]))
   return newPluginOf(added, run.newPlugin, run.profile?.testGlobs ?? [], await manifestsAt($, root, baseRefOf(run)))
 }
 
@@ -1160,10 +1161,10 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
   const tested = await indexTree($, run, root)
-  const madeR = await newPluginAt($, run, root)
+  const madeR = await newPluginAt($, run, root, tested)
   if (madeR) return { type: 'gated', gate: newPluginGate('R', madeR) }
   // The behaviour pass must add a test of its own: judge it against the red commit, not the merge base.
-  const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase)
+  const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase, tested)
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
   const gate = gateR(p, { staged, tests })
@@ -1203,10 +1204,10 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
   const tested = await indexTree($, run, root)
-  const madeG = await newPluginAt($, run, root)
+  const madeG = await newPluginAt($, run, root, tested)
   if (madeG) return { type: 'gated', gate: newPluginGate(which, madeG) }
-  const staged = await stagedSince($, root, run.mergeBase)
-  const changedSinceRed = await stagedSince($, root, redCommit)
+  const staged = await stagedSince($, root, run.mergeBase, tested)
+  const changedSinceRed = await stagedSince($, root, redCommit, tested)
   const redPaths = splitZ(await gitOut($, root, ['diff', '--name-only', '-z', run.mergeBase, redCommit]))
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
@@ -1215,7 +1216,7 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   const coverage = await runLong($, p.coverageCommand, root, p.commandTimeoutMinutes)
   const lcov = coverage.exit === 0 ? await readLcov($, lcovFileOf(p, root), since) : null
   // Fixed prefixes and no external diff: diff.mnemonicPrefix or diff.noprefix would hide every changed line.
-  const diff = await gitOut($, root, ['diff', '-U0', '--cached', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', run.mergeBase])
+  const diff = await gitOut($, root, ['diff', '-U0', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', run.mergeBase, tested])
   const checks: { argv: string[]; result: CommandResult }[] = []
   for (const [i, argv] of p.checks.entries()) {
     await setActivity($, `checks ${i + 1}/${p.checks.length}`)
