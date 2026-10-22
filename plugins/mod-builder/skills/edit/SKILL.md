@@ -98,15 +98,11 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
      version with what ran on the build from step 0: the tests, the `-p` demo, or an interactive
      session. For example: `Built on Claude Code 2.1.296; 0.1.3's tests and demo ran on 2.1.308.`
    - Leave no template comments.
-3. **Hand off** as in build's step 5. Add what changed in one line, and what loads the new version
-   in the person's case from step 0.4:
-   - **An in-place install:** `/reload-plugins`, which prints `re-read from its folder`.
-   - **A copy of one version:** the change pushed to the marketplace and `claude plugin update <id>`,
-     which ends with `Restart to apply changes.`, then `/reload-plugins`.
-   - **A `--plugin-dir` session:** the hooks module reloads at once, and the transcript's reload
-     line names the mod. `reload failed, the previous version stays loaded:` means the old code is
-     still running. An edited skill or other component loads at `/reload-plugins`.
-
-   If you edited a folder the person's copy doesn't read, such as a git worktree, say that the edit
-   reaches that copy only once the change is in the folder that `readFromFolder` names. `/plugin`'s
-   Installed tab shows which copy loaded (build's step 5).
+3. **Hand off** as in build's step 5. Its "how later edits reach the copy they run" bullet covers
+   each case from step 0.4, and the Installed tab check. Add what changed in one line, and the two
+   cases that bullet doesn't spell out:
+   - **An installed copy and a `--plugin-dir` session together**, as when an in-place install is
+     checked with `--plugin-dir` on a git worktree. This session runs the `--plugin-dir` copy, and
+     the installed copy keeps reading the folder `readFromFolder` names. Say that the edit reaches
+     the installed copy only once the change is in that folder.
+   - **Neither installed nor loaded:** say how to load it the first time, as build's hand-off does.

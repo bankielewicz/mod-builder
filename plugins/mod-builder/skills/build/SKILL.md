@@ -162,8 +162,8 @@ Load it live, in one of two ways:
 - **Install it once** from the marketplace (Share) with `/plugin install <name>@<marketplace>`. From
   a marketplace added from a local folder it loads in place, and `/reload-plugins` picks up later
   edits (it prints `re-read from its folder`). From a GitHub or other remote marketplace it is a copy
-  of one version: an edit reaches it only after a version bump, a push and
-  `claude plugin update <name>@<marketplace>`.
+  of one version: an edit reaches it only after a version bump (the scaffold's `plugin.json` pins
+  `version`), a push, `claude plugin update <name>@<marketplace>` and then `/reload-plugins`.
 
 `/reload-plugins` alone never loads a plugin that isn't installed. Walk through the demo and every
 "Done means" bullet.
@@ -192,8 +192,11 @@ those results stale: run Verify again (and report Validate and Test again) befor
      - from a marketplace added from a local folder: `/reload-plugins`, which prints
        `re-read from its folder`;
      - from GitHub or another remote marketplace: a version bump, a push and
-       `claude plugin update <name>@<marketplace>`, then `/reload-plugins`;
-     - with `--plugin-dir`: a save reloads the hooks module, and `/reload-plugins` loads the rest.
+       `claude plugin update <name>@<marketplace>` (it ends with `Restart to apply changes.`), then
+       `/reload-plugins`;
+     - with `--plugin-dir`: a save reloads the hooks module, and the transcript's reload line names
+       the mod. `reload failed, the previous version stays loaded:` means the old code still runs.
+       `/reload-plugins` loads the rest.
 
      `/plugin`'s Installed tab shows which copy loaded: the row `<name>  Plugin  inline` is a
      `--plugin-dir` copy, and an installed copy's row names its marketplace. The row's details give
