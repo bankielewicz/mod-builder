@@ -296,8 +296,12 @@ export function unstagedOf(porcelainZ: string): string[] {
 export function treeDrift(gate: 'R' | 'G' | 'F', tested: string, seen: string, commit?: string): { reason: string; next: string } | null {
   if (seen === tested) return null
   const [t, s] = [tested.slice(0, 7), seen.slice(0, 7)]
-  if (commit === undefined) return { reason: `the index changed after gate ${gate} tested it (tested ${t}, now ${s})`, next: `see what was staged since (git diff --cached --stat ${tested}) and unstage what isn't the run's` }
-  return { reason: `commit ${commit.slice(0, 7)} holds a tree gate ${gate} didn't test (${s}, tested ${t})`, next: `see what wasn't tested (git diff ${tested} HEAD); if it isn't the run's, git reset --soft HEAD~1` }
+  // Resume stages everything again (git add -A), so a stray path has to leave the folder, not just the index (PR #136 review).
+  if (commit === undefined) return { reason: `the index changed after gate ${gate} tested it (tested ${t}, now ${s})`, next: `see what was staged since (git diff --cached --stat ${tested}) and take what isn't the run's out of the run's folder (resume stages everything again)` }
+  return {
+    reason: `commit ${commit.slice(0, 7)} holds a tree gate ${gate} didn't test (${s}, tested ${t}): a commit hook that rewrites files, or another process during the commit`,
+    next: `see what wasn't tested (git diff ${tested} HEAD); a commit hook's change needs nothing (resume tests the commit as it stands), anything else needs git reset HEAD~1 and taking it out of the run's folder`,
+  }
 }
 
 /**
