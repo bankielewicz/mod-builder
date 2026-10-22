@@ -168,5 +168,6 @@ Declare `userConfig` in `plugin.json`, with a `title`, `description` and `defaul
 
 - Every README has: what it does (one screen), the install line, `/name demo`, the options, a
   "What it reaches" table generated from `claude plugin validate` (plus any command hook or MCP
-  server, which validate doesn't list), and "built on <version>".
+  server, which validate doesn't list), and "built on <version>". Each edit adds its version and
+  what ran on its build, as in `Built on Claude Code 2.1.296; 0.1.3's tests and demo ran on 2.1.308.`
 - Version is semver in `plugin.json` *and* the marketplace entry, bumped together.

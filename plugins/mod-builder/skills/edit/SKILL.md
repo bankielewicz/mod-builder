@@ -24,6 +24,28 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
    that was built before, that starts a new **build generation**: every stage whose evidence is
    older than now turns `◌` stale in the pane, and turns green again as you redo it. Report each
    stage as build's step 0 describes. Scaffold isn't redone; it stays green.
+4. **Which copy runs.** Two answers decide what makes your edit run. Note both for step 4 and the
+   hand-off.
+   - **How it's installed.** Run `claude plugin list --json` and find the mod's id
+     (`<name>@<marketplace>`).
+     - `readFromFolder` is set (the text form prints `Read from:`): the mod was installed from a
+       marketplace added from a local folder, and it loads in place. Edits to *that* folder load at
+       `/reload-plugins` or the next session. If you're editing another folder, such as a git
+       worktree, the installed copy keeps running the other folder's code.
+     - `readFromFolder` is null: the mod is a copy of one version, under `installPath`. An edit reaches
+       it only after the version is bumped, the marketplace holds the change (pushed), and
+       `claude plugin update <id>` or `/plugin` updates it. Then `/reload-plugins` loads it.
+     - No id: the mod isn't installed.
+   - **Whether this session loaded it with `--plugin-dir`.** The install records can't tell you,
+     because the marketplace row stays enabled while an inline copy replaces it. The person sees it
+     in `/plugin` (the `mods active` line and the Installed tab), so if the request doesn't say,
+     ask in step 1's batch.
+     - Such a folder runs as `<name>@inline`. It reloads when the person saves a file in it, or when
+       a turn in which you saved files ends.
+     - Each reload runs `register` again, so module variables reset, while `$.state` and `$.store`
+       stay.
+     - The folder is a protected path, so in the `default` and `acceptEdits` modes each of your edits
+       to it asks the person for approval.
 
 ## 1. Slots for the change
 
@@ -66,8 +88,22 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
 
 1. **Version:** set the new version in `plugin.json` **and** the marketplace entry. Mod Lab's
    Share stage re-passes when they match.
-2. **README:** describe the change where it matters to a user, update the options and commands,
-   and regenerate the "What it reaches" table from `claude plugin validate`, plus any command
-   hook or MCP server it doesn't list (build's step 5). No template comments left.
-3. **Hand off** as in build's step 5. Add what changed in one line, and that `/reload-plugins`
-   (or a new session) loads the new version.
+2. **README:**
+   - Describe the change where it matters to a user, and update the options and commands.
+   - Regenerate the "What it reaches" table from `claude plugin validate`, plus any command hook or
+     MCP server it doesn't list (build's step 5).
+   - Refresh the "Built on Claude Code <version>" line. Keep the build it names, and add the new
+     version with what ran on the build from step 0: the tests, the `-p` demo, or an interactive
+     session. For example: `Built on Claude Code 2.1.296; 0.1.3's tests and demo ran on 2.1.308.`
+   - Leave no template comments.
+3. **Hand off** as in build's step 5. Add what changed in one line, and what loads the new version
+   in the person's case from step 0.4:
+   - **An in-place install:** `/reload-plugins`, which prints `re-read from its folder`.
+   - **A copy of one version:** the change pushed to the marketplace and `claude plugin update <id>`,
+     which ends with `Restart to apply changes.`, then `/reload-plugins`.
+   - **A `--plugin-dir` session:** it reloads at once, and the transcript's reload line names the
+     mod. `reload failed, the previous version stays loaded:` means the old code is still running.
+
+   If you edited a folder the person's copy doesn't read, such as a git worktree, say that the edit
+   reaches that copy only once the change is in the folder that `readFromFolder` names. `/plugin`'s
+   `mods active` line shows what loaded.
