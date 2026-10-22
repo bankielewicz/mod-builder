@@ -1251,7 +1251,7 @@ async function providerReady($: EngineInterface, p: ProviderDef, op: 'models' | 
   const takesKey = p.auth === 'bearer' || p.auth === 'session'
   const needsKey = takesKey && k.key === '' && !(op === 'models' && !p.modelsNeedKey)
   if (needsKey && fileError !== '') return { why: `${p.id}: ${fileError}; fix the file, or set ${p.keyName}.`, key: '', base, keys }
-  if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.4.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
+  if (p.auth === 'session' && needsKey) return { why: `${p.id} signed-in: tested when a run goes to it (0.5.0); set ANTHROPIC_API_KEY to test a key.`, key: '', base, keys }
   if (p.auth === 'bearer' && needsKey) return { why: `${p.id}: no key. Press e on its row in /ensemble provider, or set ${p.keyName}.`, key: '', base, keys }
   return { why: '', key: k.key, base, keys }
 }
@@ -1414,7 +1414,7 @@ async function providerRows($: EngineInterface): Promise<{ rows: ProviderRow[]; 
   const auth = await read($, provAuth)
   const tests = await read($, provTests)
   const keyIds = await read($, provKeyIds)
-  // `used` marks a provider a route uses; routes arrive in 0.4.0 with the mark's legend, so no row is marked yet.
+  // `used` marks a provider a route uses; routes arrive in 0.5.0 with the mark's legend, so no row is marked yet.
   // A stored result vouches only for the key it tested: its fingerprint must be the current key's, `none` for no key (Codex 4298989626, 4299537610).
   const current = (id: string, t: ProviderTest | 'running' | undefined) => {
     if (t === undefined || t === 'running') return t
@@ -1823,7 +1823,7 @@ export const register: Register = (on, raw) => {
         ) })}
         {below > 0 && <Text dimColor>{`  ↓ ${below} more (j)`}</Text>}
         <Text dimColor>{'─'.repeat(width)}</Text>
-        <Text dimColor wrap="truncate">{`routes  advisor, reviewer, review, implementer, routed types → codex (apiRoutes arrive in 0.4.0)`}</Text>
+        <Text dimColor wrap="truncate">{`routes  advisor, reviewer, review, implementer, routed types → codex (apiRoutes arrive in 0.5.0)`}</Text>
         {editing && (
           <Box flexDirection="column">
             <Input key="prov-key" label={`${sel.keyName} (${sel.name})`} value="" submitLabel="save" autoFocus placeholder="paste the key"
