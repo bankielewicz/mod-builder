@@ -14,6 +14,7 @@ import {
   badgeOf,
   baseOf,
   branchLine,
+  branchMoved,
   branchName,
   canRetry,
   checkoutBaseOf,
@@ -22,7 +23,9 @@ import {
   cleanupCommand,
   commonDirOf,
   cleanupLine,
+  commitFields,
   commitMessage,
+  commitRefused,
   coverageLine,
   demoRun,
   diffCoverage,
@@ -2481,8 +2484,8 @@ describe('PR #136 review round 1: a block keeps the gate it ends', () => {
 // PR #136 review round 2: the commit read is `git --no-replace-objects cat-file commit <sha>`, parsed here; and a commit
 // whose parent isn't the HEAD from before the commit means another commit moved the branch.
 describe('PR #136 review round 2: reading a commit object', () => {
-  const fields = (text: string) => ((logic as Record<string, unknown>).commitFields as ((t: string) => unknown) | undefined)?.(text)
-  const moved = (...a: string[]) => ((logic as Record<string, unknown>).branchMoved as ((...x: string[]) => unknown) | undefined)?.(...a)
+  const fields = commitFields
+  const moved = branchMoved
   const who = 'author t <a@b.c> 1 +0000\ncommitter t <a@b.c> 1 +0000\n'
 
   test('its tree and parents come from the header; the message is never read', () => {
@@ -2506,7 +2509,7 @@ describe('PR #136 review round 2: reading a commit object', () => {
 
 // PR #136 review round 2, finding 4: a git commit that fails after the gate passed names a commit hook as the likely cause.
 describe('PR #136 review round 2: a refused commit', () => {
-  const refused = (gate: string, message: string) => ((logic as Record<string, unknown>).commitRefused as ((g: string, m: string) => unknown) | undefined)?.(gate, message)
+  const refused = commitRefused
 
   test('the gate passed, the commit failed, and a commit hook may have refused it or changed files and failed', () => {
     expect(refused('G', 'git commit failed: - files were modified by this hook')).toEqual({

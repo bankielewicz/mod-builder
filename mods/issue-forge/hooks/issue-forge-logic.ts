@@ -1135,13 +1135,13 @@ function blockedAt(run: Run, at: Step, reason: string, next: string, more: { ste
   return { ...run, step: 'blocked', blocked: { at, reason, next, ...more } }
 }
 
-/** The single transition function: every step change goes through here. */
 /** A gate's result carried by a block from its commit step (PR #136 review, finding 3), recorded under the step it ends. */
 function gateRecord(run: Run, ev: { gate?: Gate; testTail?: string }): Partial<Run> {
   const at = run.step === 'gateR' ? 'R' : run.step === 'gateG' ? 'G' : run.step === 'gateF' ? 'F' : null
   return ev.gate && at ? { lastGate: ev.gate, gates: { ...run.gates, [at]: ev.gate }, lastTestTail: ev.testTail } : {}
 }
 
+/** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
   if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
   // Who drives the run (Change 0.3.0): set when a drive starts; only that session's release clears it.

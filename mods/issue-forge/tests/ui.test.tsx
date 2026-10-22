@@ -70,7 +70,7 @@ type World = {
   porcelainZ?: string
   /** `git write-tree` (#101): each call takes the next tree and the last one repeats; absent, tree0. */
   trees?: string[]
-  /** `git rev-parse HEAD^{tree}` (#101): absent, the tree `write-tree` last answered. */
+  /** HEAD's tree as the commit read sees it (#101: a commit a hook changed); absent, the tree the last commit staged. */
   headTree?: string
   /** The tree `write-tree` last answered. */
   lastTree?: string
@@ -368,7 +368,6 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       world.lastTree = (trees.length > 1 ? trees.shift() : trees[0]) ?? (world.hasChanges ? `tree${world.commits.length + 1}` : (world.commitTree ?? 'tree0'))
       return ok(`${world.lastTree}\n`)
     }
-    if (s === 'rev-parse HEAD^{tree}') return ok(`${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
     // HEAD and its tree from one commit object (PR #136 review, Codex 4350587226).
     // A commit object, as `git cat-file commit` prints it; replacement refs apply unless --no-replace-objects (round 2).
     const catAt = a[0] === '--no-replace-objects' ? 1 : 0
@@ -460,16 +459,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       return hold ? hold.then(() => ok('base0\n')) : ok('base0\n')
     }
     if (a[0] === 'rev-list') return ok(`${world.commits.length}\n`)
-    if (s === 'diff --cached --quiet') return world.hasChanges ? fail('', 1) : ok()
     // The gate's checks diff the tested tree (PR #136 review, Codex 4350587243): `git diff … <ref> <tested tree>`.
-    const isTreeDiff = a[0] === 'diff' && !a.includes('--cached') && a.at(-1) === world.lastTree
+    const isTreeDiff = a[0] === 'diff' && a.at(-1) === world.lastTree
     if (isTreeDiff && a.includes('--diff-filter=A') && a.at(-2) === 'base0') return ok((world.added ?? []).join('\0'))
     if (isTreeDiff && a[1] === '--name-only' && a.at(-2) === 'base0') return ok(world.staged.join('\0'))
     if (isTreeDiff && a[1] === '--name-only') return ok(world.sinceRed.join('\0'))
-    if (a[0] === 'diff' && a[1] === '--cached' && a.includes('--diff-filter=A') && a.at(-1) === 'base0') return ok((world.added ?? []).join('\0'))
     if (s === 'ls-tree -r --name-only -z origin/main') return ok((world.baseTip ?? []).join('\0'))
-    if (s === 'diff --cached --name-only -z base0') return ok(world.staged.join('\0'))
-    if (a[0] === 'diff' && a[1] === '--cached' && a[2] === '--name-only') return ok(world.sinceRed.join('\0'))
     if (a[0] === 'diff' && a[1] === '--name-only') return ok(world.redPaths.join('\0'))
     if (a[0] === 'diff' && a.includes('-U0')) return ok(DIFF)
     if (a[0] === 'commit') return world.commits.push(e.init?.stdin ?? ''), (world.commitTree = world.headTree ?? world.lastTree ?? 'tree0'), ok()
