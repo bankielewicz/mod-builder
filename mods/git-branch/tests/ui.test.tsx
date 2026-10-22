@@ -85,3 +85,64 @@ describe('overlapping refreshes', () => {
   })
 })
 
+
+// #119 step 4: /clear, /resume and /branch reset every atom and don't run session.start. The branch is read again, and
+// a band the person hid stays hidden (a choice kept from the module).
+describe('#119: after /clear', () => {
+  const watch = (on: any) => {
+    const writes: { key: string; value: unknown }[] = []
+    on('state.set', (_: any, e: any, next: any) => {
+      if (e.plugin === 'git-branch') writes.push({ key: e.key, value: e.value })
+      return next(e)
+    })
+    on('classic.SessionStart', () => ({}) as never)
+    on('session.start', ($: any, e: any) => ({ cwd: e.cwd }) as never)
+    on('command.register', () => ({ value: undefined }) as never)
+    on('process.run', () => ({ value: ON_BRANCH }) as never)
+    return writes
+  }
+  const run = ($: any, args: string) => $.command.run({ command: 'git-branch', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+  test('a hidden band stays hidden and the branch is read again; compaction writes nothing', async ($, on) => {
+    const writes = watch(on)
+    const clock = mock.clock(on)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await run($, 'hide')
+    await clock.settle()
+    writes.length = 0
+    await $.classic.SessionStart({ source: 'compact' } as never)
+    await clock.settle()
+    expect(writes).toEqual([])
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    await clock.settle()
+    expect(writes.filter(w => w.key === 'isHidden').map(w => w.value)).toEqual([true])
+    expect(writes.some(w => w.key === 'snapshot')).toBe(true)
+  })
+
+  test('at a resumed startup, before session.start, it does nothing', async ($, on) => {
+    const writes = watch(on)
+    const clock = mock.clock(on)
+    await $.classic.SessionStart({ source: 'resume' } as never)
+    await clock.settle()
+    expect(writes).toEqual([])
+  })
+
+  // Codex P2 on PR #127: a reload starts the module afresh and keeps the atoms (live on 2.1.307: hide, a changed
+  // module reloaded, /clear, and the band came back). The kept hide is read at session start.
+  test('a band hidden before a reload stays hidden after /clear', async ($, on) => {
+    const writes = watch(on)
+    const clock = mock.clock(on)
+    // As after a reload: state kept the hide, and this module never ran /git-branch hide. The store's own version is
+    // kept, or update() misses it and writes twice.
+    on('state.get', async (_: any, e: any, next: any) => {
+      const got = await next(e)
+      if (e.plugin !== 'git-branch' || e.key !== 'isHidden' || writes.some(w => w.key === 'isHidden')) return got
+      return { ...got, value: { ...got.value, value: true } } as never
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    await clock.settle()
+    await $.classic.SessionStart({ source: 'clear' } as never)
+    await clock.settle()
+    expect(writes.filter(w => w.key === 'isHidden').map(w => w.value)).toEqual([true])
+  })
+})

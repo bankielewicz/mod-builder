@@ -48,8 +48,12 @@ on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e,
 }).catch(($, e, next) => next(e))
 ```
 
-`startup` and `compact` reset nothing, so the matcher leaves them out. Validate counts the hook as
-gating, hence the `.catch`. Atoms that only count this conversation (a turn's tools, the watcher's
+`startup` and `compact` reset nothing, so the matcher leaves them out. A resumed startup
+(`claude --continue`) fires `resume` too, before `session.start` (`gotchas.md`): `seed` must skip it
+when the module hasn't started (a module variable `session.start` sets), since `session.start` seeds
+there. A choice kept in module state for `seed` to write back (git-branch's hide, Mod Lab's pin) is read
+from its atom in `session.start`: a reload starts the module afresh and keeps the atoms (`gotchas.md`).
+Validate counts the hook as gating, hence the `.catch`. Atoms that only count this conversation (a turn's tools, the watcher's
 stats) are right to reset, so the archetypes have no such hook. Where an organization manages Claude
 Code, `classic.*` hooks don't run in a plugin a person installs, and the reset stays.
 
@@ -75,8 +79,9 @@ Code, `classic.*` hooks don't run in a plugin a person installs, and the reset s
   `$.model.complete`'s options). A `$.process.spawn` the hook waits on is ended by the engine when the
   signal aborts, and a process call after that rejects `… aborted`, while state, store, toast and file
   writes still work (`gotchas.md`). So in the `catch`, check `next.signal.aborted`, record a stop the
-  person asked for (not a failure), and start no fallback process. Work started with `void` survives
-  Esc: give it a stop command.
+  person asked for (not a failure), and start no fallback process. A stop undoes nothing: to say what
+  the stopped work left (a `git status`), run it from `$.clock.after(0, …)`, where process calls work
+  again. Work started with `void` survives Esc: give it a stop command.
 - **`$.prompt.submit` resolves `{ drop }` rather than rejecting** when it can't queue the prompt:
   `the session was stopped and nobody has sent input since` until the person's next input after Stop,
   or `the prompt was removed from the queue before it ran` for one queued at Stop. Retry only those

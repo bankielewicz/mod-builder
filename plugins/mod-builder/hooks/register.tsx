@@ -80,6 +80,8 @@ let isQueuedAnnounced = false
 // lab_report hook sets it before its scan without a state read: a dispatch's first `get` fixes what all its
 // reads see (gotchas.md), and the #10 scan has to come first.
 let pin: Lab.Pin | null = null
+/** Set by session.start: a resumed startup fires classic.SessionStart before it (probed on 2.1.296 and 2.1.306, #119). */
+let hasStarted = false
 // The project root's repository (its common git folder), found once per root (PR #95 review follow-up).
 let rootRepo: { root: string; common: string | null } | null = null
 // Writes to the results and generations in $.store, in order (Change 0.2.8).
@@ -229,6 +231,12 @@ async function setPin($: Engine, next: Lab.Pin | null): Promise<void> {
   if (pin?.modsDir === next?.modsDir && pin?.root === next?.root) return
   pin = next
   await $.state.set({ plugin: 'mod-builder', key: 'pinned' }, next).catch((error: unknown) => logCaught($, 'state.set', error, 'normal', { key: 'pinned' }))
+}
+
+/** After /clear, /resume or /branch (#119): the pin's copy in state again, then a scan to list the mods again. */
+async function reseed($: Engine): Promise<void> {
+  if (pin) await $.state.set({ plugin: 'mod-builder', key: 'pinned' }, pin).catch((error: unknown) => logCaught($, 'state.set', error, 'normal', { key: 'pinned' }))
+  await scan($, false)
 }
 
 /** A folder's `.git`: a file (a worktree's pointer) is read; a directory is known by its `HEAD`. */
@@ -1129,6 +1137,8 @@ export const register: Register = (on, options) => {
         name: 'modlab',
         description: 'Mod Lab: every mod you are building, stage by stage',
         argumentHint: '[demo | new | <mod>]',
+        // Every branch opens, closes or fronts the pane, fills the prompt box or reads: it needn't wait for the turn (#119).
+        immediate: true,
       })
       .catch((error: unknown) => logCaught($, 'session.start.command', error, 'normal', { command: 'modlab' }))
     await $.command
@@ -1144,6 +1154,7 @@ export const register: Register = (on, options) => {
       .catch((error: unknown) => logCaught($, 'session.start.tool', error))
     // A pin from before a reload (#92), before the first scan reads the folder.
     pin = Lab.pinOf(await read($, pinned).catch((error: unknown) => (logCaught($, 'session.start.pin', error), null)))
+    hasStarted = true
     await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
@@ -1293,6 +1304,13 @@ export const register: Register = (on, options) => {
   // The work is detached: the next model request waits on this hook. It starts no Validate or Test run.
   on('classic.PostToolBatch', async ($, e, next) => {
     void rescanAfter($, e.tool_calls).catch((error: unknown) => logCaught($, 'batch.rescan', error))
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // /clear, /resume and /branch reset every atom and don't run session.start (#119): the pin's copy in state is written
+  // back (setPin skips an unchanged pin) and the folder is scanned again, detached. Startup and compaction reset nothing.
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    if (hasStarted) void reseed($).catch((error: unknown) => logCaught($, 'session.reseed', error))
     return next(e)
   }).catch(($, e, next) => next(e))
 

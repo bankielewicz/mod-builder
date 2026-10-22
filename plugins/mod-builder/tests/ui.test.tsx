@@ -52,6 +52,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     logs: [] as string[],
     writes: [] as { path: string; text: string }[],
     sets: [] as { key: string; value: unknown }[],
+    /** Every `$.command.register`, whole: `immediate` included (#119). */
+    registered: [] as { name: string; immediate?: true }[],
     sessionId: 's1-session',
     cwd: '/m' as string | null,
     /** The session's project root (#92): undefined follows `cwd` (a `/cd` moves both); a string stays put (a Bash `cd` moves only `cwd`); null is refused. */
@@ -135,7 +137,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
   on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('classic.PostToolBatch', () => ({}) as never)
-  on('command.register', () => ({ value: undefined }) as never)
+  on('command.register', ($, e) => (seen.registered.push({ ...(e as unknown as { name: string; immediate?: true }) }), { value: undefined }) as never)
   on('tool.register', ($, e) => ({ value: { tool: `mcp__mod-builder__${e.name}` } }) as never)
   let lists = 0
   on('fs.list', async ($, e) => {
@@ -3640,6 +3642,48 @@ describe('a build names its folder, and the session keeps it (#92)', () => {
     await clock.advance(10)
     expect((await listed($)).names).toEqual(['beta'])
   })
+
+  // #119 step 4: /clear, /resume and /branch reset every atom, and session.start doesn't run again. The pin's copy in
+  // state is written back (setPin skips an unchanged pin, which this is) and the folder is scanned again.
+  describe('#119: after /clear', () => {
+    const watch = (on: On) => {
+      const writes: { key: string; value: unknown }[] = []
+      on('state.set', (_, e, next) => {
+        const { plugin, key, value } = e as unknown as { plugin: string; key: string; value: unknown }
+        if (plugin === 'mod-builder') writes.push({ key, value })
+        return next(e)
+      })
+      on('classic.SessionStart', () => ({}) as never)
+      return writes
+    }
+
+    test('the pin is written back and the folder scanned; compaction writes nothing', async ($, on) => {
+      const writes = watch(on)
+      const { seen, clock } = world(on, disk())
+      seen.cwd = MAIN
+      seen.root = MAIN
+      await start($)
+      await report($, { mod: 'beta', stage: 'Logic', status: 'running', path: `${WT}/mods/beta` })
+      await clock.advance(10)
+      writes.length = 0
+      await $.classic.SessionStart({ source: 'compact' } as never)
+      await clock.advance(10)
+      expect(writes.filter(w => w.key === 'pinned' || w.key === 'judged')).toEqual([])
+      await $.classic.SessionStart({ source: 'clear' } as never)
+      await clock.advance(10)
+      expect(writes.filter(w => w.key === 'pinned').map(w => (w.value as { modsDir?: string } | null)?.modsDir)).toEqual([`${WT}/mods`])
+      expect(writes.some(w => w.key === 'judged')).toBe(true)
+    })
+
+    // Probed on 2.1.296 and 2.1.306: classic.SessionStart fires before session.start at a resumed startup.
+    test('at a resumed startup, before session.start, it does nothing', async ($, on) => {
+      const writes = watch(on)
+      const { clock } = world(on, disk())
+      await $.classic.SessionStart({ source: 'resume' } as never)
+      await clock.advance(10)
+      expect(writes).toEqual([])
+    })
+  })
 })
 
 // Change 0.2.24 (#100): during a long turn, the pane follows what Claude's tools change, batch by batch.
@@ -3938,5 +3982,14 @@ describe('a rescan after a tool batch follows the folder a report pinned (#100)'
     await clock.settle()
     expect(seen.reads.slice(next).filter(path => path.startsWith(`${MAIN}/mods/`))).toEqual([])
     expect(seen.listed.slice(listedFrom).filter(path => path.startsWith(`${MAIN}/mods`))).toEqual([])
+  })
+})
+
+// #119 gap 4 (the owner's choice, 2026-10-21): /modlab runs mid-turn; /mod-builder, which sets options (a reload), waits.
+describe('#119: /modlab runs while Claude is working', () => {
+  test('/modlab is registered immediate, /mod-builder is not', OPTIONS, async ($, on) => {
+    const { seen } = world(on, {})
+    await start($)
+    expect(seen.registered.map(r => [r.name, r.immediate])).toEqual([['modlab', true], ['mod-builder', undefined]])
   })
 })

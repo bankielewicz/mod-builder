@@ -59,26 +59,50 @@ async function describeNow($: EngineInterface): Promise<string> {
   return textOf(bandParts(s, 200))
 }
 
+/** The person's hide or show, kept in the module: /clear, /resume and /branch reset the atom (#119). */
+let hiddenKept = false
+/** Set by session.start: a resumed startup fires classic.SessionStart before it (probed on 2.1.296 and 2.1.306, #119). */
+let hasStarted = false
+
+/** The only writer of isHidden: the atom and the module's copy. */
+async function setHidden($: EngineInterface, hidden: boolean): Promise<void> {
+  hiddenKept = hidden
+  await update($, isHidden, () => hidden)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command
       .register({ name: 'git-branch', description: 'A band above the prompt showing the current git branch', argumentHint: '[demo | hide | show | refresh]' })
       .catch(() => undefined)
     const started = await next(e)
+    // A reload starts the module afresh and keeps the atoms: a hide from before it is kept too (Codex P2, PR #127).
+    hiddenKept = await read($, isHidden).catch(() => false)
+    hasStarted = true
     void refresh($).catch(() => undefined)
     return started
   })
+
+  // /clear, /resume and /branch reset every atom and don't run session.start (#119): a hidden band stays hidden, and the
+  // branch is read again, detached. Startup and compaction reset nothing.
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    if (hasStarted) {
+      if (hiddenKept) await update($, isHidden, () => true).catch(() => undefined)
+      void refresh($).catch(() => undefined)
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'git-branch' }, async ($, e) => {
     try {
       const word = e.args.trim().toLowerCase()
       if (word === 'demo') {
-        await update($, isHidden, () => false)
+        await setHidden($, false)
         await update($, isDemo, () => true)
         return { text: 'four sample states are above the prompt until this turn ends.' }
       }
       if (word === 'hide' || word === 'show') {
-        await update($, isHidden, () => word === 'hide')
+        await setHidden($, word === 'hide')
         return { text: `band ${word === 'hide' ? 'hidden' : 'shown'}.` }
       }
       if (word === '' || word === 'refresh') return { text: await describeNow($) }
