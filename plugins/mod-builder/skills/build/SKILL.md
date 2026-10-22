@@ -195,5 +195,7 @@ those results stale: run Verify again (and report Validate and Test again) befor
        `claude plugin update <name>@<marketplace>`, then `/reload-plugins`;
      - with `--plugin-dir`: a save reloads the hooks module, and `/reload-plugins` loads the rest.
 
-     `/plugin`'s `mods active` line shows it loaded.
+     `/plugin`'s Installed tab shows which copy loaded: the row `<name>  Plugin  inline` is a
+     `--plugin-dir` copy, and an installed copy's row names its marketplace. The row's details give
+     the version. The `mods active` line names mods only, not which copy or version.
    - `/modlab` to see its pipeline, if Mod Lab is installed

@@ -38,8 +38,9 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
      - No id: the mod isn't installed.
    - **Whether this session loaded it with `--plugin-dir`.** The install records can't tell you,
      because the marketplace row stays enabled while an inline copy replaces it. The person sees it
-     in `/plugin` (the `mods active` line and the Installed tab), so if the request doesn't say,
-     ask in step 1's batch.
+     in `/plugin`'s Installed tab: a `--plugin-dir` copy is the row `<name>  Plugin  inline`, and an
+     installed copy's row names its marketplace. The `mods active` line names mods only. If the
+     request doesn't say, ask in step 1's batch.
      - Such a folder runs as `<name>@inline`. Its hooks module reloads when the person saves a file
        in it, or when a turn in which you saved files ends. Its skills, agents and other components
        load their changes at `/reload-plugins`.
@@ -108,4 +109,4 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
 
    If you edited a folder the person's copy doesn't read, such as a git worktree, say that the edit
    reaches that copy only once the change is in the folder that `readFromFolder` names. `/plugin`'s
-   `mods active` line shows what loaded.
+   Installed tab shows which copy loaded (build's step 5).
