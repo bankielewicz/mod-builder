@@ -3862,3 +3862,88 @@ describe('PR #136 review round 1: the gate record beside a block', () => {
     expect(stored.lastTestTail).toBe('all pass')
   })
 })
+
+// PR #136 review round 1, finding 4: gates R and F, as gate G is tested above.
+describe('PR #136 review round 1: gates R and F', () => {
+  const held = () => new Promise<void>(() => undefined)
+  const isBlocked = (w: World) => w.toasts.some(t => t.includes('blocked'))
+  const isGit = (sub: string) => (a: string[]) => a[0] === 'git' && a.slice(1).join(' ') === sub
+  const firstOf = (w: World, match: (a: string[]) => boolean) => w.argv.findIndex(match)
+  const HOLD_STORE = { when: () => false, until: Promise.resolve() }
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+  const STASH = { sha: 'abc1234def', message: 'issue-forge #16 green before behaviour test (run 16-1, attempt 1)' }
+  const R_RUN = { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [] }
+  const R_WORLD = { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }
+  const G_WORLD = { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }
+  const F_RUN = { greenCommit: 'g1', used: { red: 1, green: 1, refactor: 1 } }
+
+  test("gate R: a commit whose tree isn't the tested one blocks after it, resets nothing, and green doesn't start", async ($, on) => {
+    const w = engine(on, { ...R_WORLD, trees: ['1111111aaaa'], headTree: '3333333cccc', spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', R_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or green')
+    expect((await run($, 'status')).text).toContain("blocked at gateR: commit c1 holds a tree gate R didn't test (3333333, tested 1111111)")
+    expect(w.commits.length).toBe(1)
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'reset')).toBe(false)
+    expect(w.spawned).toEqual([])
+  })
+
+  test("gate R's behaviour pass: an after-commit block leaves green's stash alone, and the resume applies it", async ($, on) => {
+    const w = engine(
+      on,
+      { head: BRANCH, testsExit: 1, sinceRed: ['tests/b.ui.test.ts'], staged: ['tests/a.test.ts', 'tests/b.ui.test.ts'], stashList: `${STASH.sha}\tOn ${BRANCH}: ${STASH.message}\n`, trees: ['1111111aaaa'], headTree: '3333333cccc', spawnHold: held() },
+      { [`issue-forge:run:${ROOT}`]: storedRun('gateR', { redCommit: 'r1', behaviourFor: ['src/register.tsx'], greenStash: STASH, used: { red: 1, green: 1, refactor: 0 }, agents: [] }) },
+    )
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w), 'the block')
+    expect((await run($, 'status')).text).toContain("blocked at gateR: commit c1 holds a tree gate R didn't test")
+    expect(w.argv.some(a => a[1] === 'stash' && a[2] === 'apply')).toBe(false)
+    // The index is the commit now: the resume tests it, keeps it and restores green's work.
+    w.headTree = undefined
+    w.trees = ['3333333cccc']
+    w.hasChanges = false
+    await run($, 'resume')
+    await until(w, () => w.argv.some(a => a[1] === 'stash' && a[2] === 'apply'), "green's stash applied")
+    expect(w.argv.filter(a => a[1] === 'stash' && a[2] === 'apply')).toEqual([['git', 'stash', 'apply', STASH.sha]])
+    expect(w.commits.length).toBe(1)
+  })
+
+  test("gate F: a commit whose tree isn't the tested one blocks after it, and the run asks nothing about pushing", async ($, on) => {
+    const w = engine(on, { ...G_WORLD, trees: ['1111111aaaa'], headTree: '3333333cccc' }, { [`issue-forge:run:${ROOT}`]: storedRun('gateF', F_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.asked.length > 0, 'a block or the push question')
+    expect((await run($, 'status')).text).toContain("blocked at gateF: commit c1 holds a tree gate F didn't test (3333333, tested 1111111)")
+    expect(w.commits.length).toBe(1)
+    expect(w.asked).toEqual([])
+  })
+
+  test('gate F: a replay with nothing to commit keeps HEAD, new since green, as the refactor commit and the head it publishes', async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateF', F_RUN) }
+    const w = engine(on, { ...G_WORLD, hasChanges: false, storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.asked.length > 0, 'a block or the push question')
+    expect(w.commits.length).toBe(0)
+    expect(storedOf(store)).toMatchObject({ refactorCommit: 'c0', gatedHead: 'c0' })
+  })
+
+  test('gate R records the tested tree after staging and before the tests', async ($, on) => {
+    const r = engine(on, { ...R_WORLD, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', R_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(r, () => isBlocked(r) || r.spawned.length > 0, 'a block or green')
+    expect(firstOf(r, isGit('add -A'))).toBeLessThan(firstOf(r, isGit('write-tree')))
+    expect(firstOf(r, isGit('write-tree'))).toBeLessThan(firstOf(r, a => a[0] === 't'))
+  })
+
+  test('gate F records the tested tree after staging and before the tests', async ($, on) => {
+    const w = engine(on, { ...G_WORLD }, { [`issue-forge:run:${ROOT}`]: storedRun('gateF', F_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.asked.length > 0, 'a block or the push question')
+    expect(firstOf(w, isGit('add -A'))).toBeLessThan(firstOf(w, isGit('write-tree')))
+    expect(firstOf(w, isGit('write-tree'))).toBeLessThan(firstOf(w, a => a[0] === 't'))
+  })
+})
