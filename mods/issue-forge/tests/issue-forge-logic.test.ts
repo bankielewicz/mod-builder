@@ -2477,3 +2477,29 @@ describe('PR #136 review round 1: a block keeps the gate it ends', () => {
     expect(r).toMatchObject({ step: 'blocked', lastGate: failG('F'), gates: { F: failG('F') } })
   })
 })
+
+// PR #136 review round 2: the commit read is `git --no-replace-objects cat-file commit <sha>`, parsed here; and a commit
+// whose parent isn't the HEAD from before the commit means another commit moved the branch.
+describe('PR #136 review round 2: reading a commit object', () => {
+  const fields = (text: string) => ((logic as Record<string, unknown>).commitFields as ((t: string) => unknown) | undefined)?.(text)
+  const moved = (...a: string[]) => ((logic as Record<string, unknown>).branchMoved as ((...x: string[]) => unknown) | undefined)?.(...a)
+  const who = 'author t <a@b.c> 1 +0000\ncommitter t <a@b.c> 1 +0000\n'
+
+  test('its tree and parents come from the header; the message is never read', () => {
+    expect(fields(`tree 1111111aaaa\nparent c0\n${who}\nmsg\ntree fake\nparent fake\n`)).toEqual({ tree: '1111111aaaa', parents: ['c0'] })
+    expect(fields(`tree 2222222bbbb\n${who}\nroot commit\n`)).toEqual({ tree: '2222222bbbb', parents: [] })
+    expect(fields(`tree 3333333cccc\nparent p1\nparent p2\n${who}\nmerge\n`)).toEqual({ tree: '3333333cccc', parents: ['p1', 'p2'] })
+  })
+
+  test("a signed commit's signature lines, which start with a space, are not header fields", () => {
+    const signed = `tree 4444444dddd\nparent c1\n${who}gpgsig -----BEGIN SSH SIGNATURE-----\n tree evil\n parent evil\n -----END SSH SIGNATURE-----\n\nsigned\n`
+    expect(fields(signed)).toEqual({ tree: '4444444dddd', parents: ['c1'] })
+  })
+
+  test("another commit on the branch is named with the HEAD's parent and the HEAD from before", () => {
+    expect(moved('G', 'c0', 'abcdef0123', 'f00dcafe99')).toEqual({
+      reason: "another commit moved the branch during gate G's commit (HEAD abcdef0, whose parent is f00dcaf, not c0)",
+      next: "see what landed (git log -3) and put the branch back on gate G's commit by hand",
+    })
+  })
+})

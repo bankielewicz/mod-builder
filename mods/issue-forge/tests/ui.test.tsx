@@ -80,6 +80,10 @@ type World = {
   revParseHead?: string
   /** `log.showSignature` is on: as git 2.53 does for a signed commit, `git log` prints the check's line first (unless --no-show-signature). */
   showSignature?: boolean
+  /** refs/replace/<HEAD> names a commit with this tree (Codex 4351786036): git reads it unless --no-replace-objects. */
+  replacedTree?: string
+  /** The parent `cat-file commit` names for HEAD (PR #136 review round 2: another commit moved the branch); absent, the commit before. */
+  parentOf?: string
   /** The profile in the checkout the session started in; absent, PROFILE. */
   localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
@@ -366,9 +370,17 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     if (s === 'rev-parse HEAD^{tree}') return ok(`${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
     // HEAD and its tree from one commit object (PR #136 review, Codex 4350587226).
+    // A commit object, as `git cat-file commit` prints it; replacement refs apply unless --no-replace-objects (round 2).
+    const catAt = a[0] === '--no-replace-objects' ? 1 : 0
+    if (a[catAt] === 'cat-file' && a[catAt + 1] === 'commit') {
+      const tree = catAt === 0 && world.replacedTree ? world.replacedTree : (world.headTree ?? world.commitTree ?? 'tree0')
+      const parent = world.parentOf ?? (world.commits.length > 0 ? `c${world.commits.length - 1}` : 'base0')
+      return ok(`tree ${tree}\nparent ${parent}\nauthor t <a@b.c> 1 +0000\ncommitter t <a@b.c> 1 +0000\n\nmsg\n`)
+    }
+    if (s === 'rev-parse --verify HEAD') return ok(`c${world.commits.length}\n`)
     if (a[0] === 'log' && a.includes('--format=%H %T')) {
       const signature = world.showSignature && !a.includes('--no-show-signature') ? 'Good "git" signature for p@p with ED25519 key SHA256:HhRJ4R0iwBQK9sEH4vryn4kTqmD6h4b9weroZ7BY0so\n' : ''
-      return ok(`${signature}c${world.commits.length} ${world.headTree ?? world.commitTree ?? 'tree0'}\n`)
+      return ok(`${signature}c${world.commits.length} ${world.replacedTree ?? world.headTree ?? world.commitTree ?? 'tree0'}\n`)
     }
     // As git 2.53 prints it: relative to the folder in the main checkout, absolute in a linked worktree.
     if (s === 'rev-parse --git-path index.lock' || s === 'rev-parse --path-format=absolute --git-path index.lock') {
@@ -3964,5 +3976,34 @@ describe('PR #136 review round 1: log.showSignature', () => {
     expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
     expect(w.commits.length).toBe(1)
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+  })
+})
+
+// PR #136 review round 2: Codex 4351786036 (replacement refs) and finding 3 (another commit during the commit).
+describe('PR #136 review round 2: the commit read', () => {
+  const held = () => new Promise<void>(() => undefined)
+  const G_WORLD = { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }
+  const HOLD_STORE = { when: () => false, until: Promise.resolve() }
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+
+  test("gate G: a replacement ref whose tree is the tested one doesn't make HEAD's own tree pass for it", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateG', { redCommit: 'r1' }) }
+    const w = engine(on, { ...G_WORLD, hasChanges: false, trees: ['1111111aaaa'], commitTree: '4444444dddd', replacedTree: '1111111aaaa', spawnHold: held(), storeHold: HOLD_STORE }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'refactor or a block')
+    expect(w.commits.length).toBe(1)
+    expect(storedOf(store).greenCommit).toBe('c1')
+  })
+
+  test("gate G: a commit whose parent isn't the HEAD from before blocks, naming another commit, not the gate's own", async ($, on) => {
+    const w = engine(on, { ...G_WORLD, parentOf: 'f00dcafe99', spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length > 0 || w.toasts.some(t => t.includes('blocked')), 'refactor or a block')
+    const status = (await run($, 'status')).text ?? ''
+    expect(status).toContain("blocked at gateG: another commit moved the branch during gate G's commit (HEAD c1, whose parent is f00dcaf, not c0)")
+    expect(status).toContain("next: see what landed (git log -3) and put the branch back on gate G's commit by hand, then /issue-forge resume")
+    expect(w.spawned).toEqual([])
   })
 })
