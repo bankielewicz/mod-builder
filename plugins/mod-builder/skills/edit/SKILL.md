@@ -41,7 +41,11 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
      - The row has no `readFromFolder` key: the mod is a copy of one version, under `installPath`. An
        edit reaches it only after the version is bumped, the marketplace holds the change (pushed),
        and `claude plugin update <id>` or `/plugin` updates it. Then `/reload-plugins` loads it.
-     - No row: the mod isn't installed.
+     - No row: the mod isn't installed from this marketplace.
+     - When this marketplace's row is missing or disabled, a row of the same name from another
+       origin, `@skills-dir` or `@synced`, may be the copy running (docs, not observed). An enabled
+       marketplace copy takes precedence over both. The Installed tab shows which one this session
+       runs.
    - **Whether this session loaded it with `--plugin-dir`**, or the same way through `--plugin-url`
      or `CLAUDE_CODE_PLUGIN_DIRS`. The install records can't tell you,
      because the marketplace row stays enabled while an inline copy replaces it. The person sees it
