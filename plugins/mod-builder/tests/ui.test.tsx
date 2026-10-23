@@ -81,6 +81,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     deleted: [] as string[],
     /** Paths whose `$.fs.stat` rejects with this ending in place of the disk's answer, as `failed: EACCES` (#138). */
     statFails: {} as Record<string, string>,
+    /** Runs after each `$.fs.stat` answers, with the path and how many times it was stat'ed (PR #146 review, finding 5). */
+    afterStat: null as ((path: string, count: number) => void) | null,
     /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
     holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next read of `key` waits for `until`, and sets `isReached`. */
@@ -139,12 +141,19 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     return { value: undefined } as never
   })
   // A path is a folder when the disk holds a file under it; a missing one rejects as the engine's does (probed on 2.1.309).
+  const stats: Record<string, number> = {}
+  const statOf = (path: string) => {
+    if (seen.statFails[path]) return { deny: `$.fs.stat(${path}) ${seen.statFails[path]}` }
+    if (path in disk) return { value: { kind: 'file', size: 0, mtimeMs: mtime.ms, isLink: false } }
+    if (Object.keys(disk).some(file => file.startsWith(`${path}/`))) return { value: { kind: 'dir', size: 0, mtimeMs: mtime.ms, isLink: false } }
+    return { deny: `$.fs.stat(${path}) failed: ENOENT` }
+  }
   on('fs.stat', ($, e) => {
     const path = (e as { path: string }).path
-    if (seen.statFails[path]) return { deny: `$.fs.stat(${path}) ${seen.statFails[path]}` }
-    if (path in disk) return { value: { kind: 'file', size: 0, mtimeMs: mtime.ms, isLink: false } } as never
-    if (Object.keys(disk).some(file => file.startsWith(`${path}/`))) return { value: { kind: 'dir', size: 0, mtimeMs: mtime.ms, isLink: false } } as never
-    return { deny: `$.fs.stat(${path}) failed: ENOENT` }
+    const answer = statOf(path)
+    stats[path] = (stats[path] ?? 0) + 1
+    seen.afterStat?.(path, stats[path])
+    return answer as never
   })
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
@@ -4078,6 +4087,19 @@ describe('#138: records of folders and mods that are gone', () => {
     await start($)
     await clock.settle()
     expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
+  })
+
+  // PR #146 review round 1, finding 5: each delete stats its folder again in its own turn on the chain.
+  test('a folder that is back by the time its keys come to be deleted keeps them', OPTIONS, async ($, on) => {
+    const seed = { [`modlab:results:${GONE}`]: {}, [`modlab:done:${GONE}`]: {} }
+    const disk: Disk = modFiles('git-branch')
+    const { seen, clock, stored } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    // The folder comes back right after the first stat said it was gone, as a worktree added again at the same path.
+    seen.afterStat = (path, count) => void (path === GONE && count === 1 && Object.assign(disk, modFiles('alpha', GONE)))
+    await start($)
+    await clock.settle()
+    expect(seen.deleted).toEqual([])
+    expect(stored.has(`modlab:results:${GONE}`)).toBe(true)
   })
 
   // PR #146 review round 1, finding 2: a folder empty for a moment (a checkout, a sync) isn't every mod gone.
