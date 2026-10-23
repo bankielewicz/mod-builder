@@ -35,6 +35,7 @@ everything that costs money or is hard to undo. Nothing is built until the perso
 | external reach | ARCH | <none · processes · files · network (hosts) · model calls (model, est. cost) · MCP> | |
 | depends on | ARCH | <none · another mod's noun / tool> | |
 | options (userConfig) | ARCH | <none · key: type, default> | |
+| license (plugin.json) | ARCH | <SPDX id · none> | <request · LICENSE · asked> |
 | home | HOUSE | `<modsDir>/<name>/` (a plugin in the folder marketplace) | conventions.md |
 | tsconfig | HOUSE | extends `./.claude-plugin/types/tsconfig.json` | conventions.md |
 | state API | HOUSE | `atom/read/update` + `types/index.d.ts` PluginState | conventions.md |

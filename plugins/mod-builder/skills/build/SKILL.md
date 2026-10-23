@@ -65,9 +65,11 @@ Copy `templates/SPEC.template.md`. Its slot table has three kinds:
   person sees it and can override it at approval.
 - **ARCH** (state lifetime, external reach, dependencies, options): ask only when the request
   leaves it genuinely unclear *and* the choice changes what gets built.
-- **License:** take the SPDX identifier the repository's `LICENSE` file names (`MIT License` gives
-  `MIT`). With no such file, ask in the batch below, and leave it out when none is given. Never
-  make one up.
+
+**License** (the `license` slot): use the SPDX identifier the request names, else the one for the
+license text in `<root>/LICENSE` (`<root>` from step 0.2; `MIT License` gives `MIT`). Ask when
+neither gives exactly one, as with GPL text, which doesn't say `-only` or `-or-later`: it is the one
+question a detailed request still gets. With no answer, write `none` in the slot. Never make one up.
 
 Ask everything in one AskUserQuestion call (up to 4 questions; a second call only if answers
 open new gaps). Give each question options with a recommended first choice. A detailed request
@@ -102,8 +104,9 @@ through this gate. (lab_report: Spec passed once approved.)
 ## 3. Build (in this order)
 
 1. **Scaffold:** run
-   `node <base directory>/scripts/scaffold.mjs <archetype> <mods> <name> "<description>" "<author>" ["<license>"]`,
-   the license from step 1, if any.
+   `node <base directory>/scripts/scaffold.mjs <archetype> <mods> <name> "<description>" "<author>" "<license>"`.
+   `<license>` is the `license` slot, or `""` when it is `none`, which writes no `license` line. The
+   arguments are positional, so pass both.
    It writes the manifest, hooks.json, tsconfig, a working `register.tsx`, logic, tests and
    contract, and the README template. Run `claude plugin test` on it at once: it passes as
    generated. Then reshape it to the SPEC, keeping it green as you go.
