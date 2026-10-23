@@ -484,11 +484,26 @@ function updateGenerations($: Engine, modsDir: string, change: (current: Record<
   return updateStore($, GENERATIONS_KEY, modsDir, (stored: StoredGenerations) => change(generationsFrom(stored)))
 }
 
-/** Deletes one key in turn with `updateStore`'s writes, so a write this session started for it lands first (#138). */
-function deleteStore($: Engine, key: string): Promise<void> {
-  storeChain = storeChain.catch(() => undefined).then(() => $.store.delete(key))
-  return storeChain
+/**
+ * Deletes one key in turn with `updateStore`'s writes, so a write this session started for it lands first (#138), if
+ * `isStillGone` says so in that same turn (PR #146 review, finding 5). Resolves to whether it deleted the key.
+ */
+function deleteStore($: Engine, key: string, isStillGone: () => Promise<boolean>): Promise<boolean> {
+  const task = storeChain.catch(() => undefined).then(async () => {
+    if (!(await isStillGone())) return false
+    await $.store.delete(key)
+    return true
+  })
+  storeChain = task.then(() => undefined)
+  return task
 }
+
+/** Whether `$.fs.stat` says the folder is gone: the engine's ENOENT, and nothing else (#138). */
+const isFolderGone = ($: Engine, dir: string): Promise<boolean> =>
+  $.fs.stat(dir).then(
+    () => false,
+    (error: unknown) => Lab.folderGone(Lab.errorText(error)),
+  )
 
 /**
  * Change 0.2.30 (#138): deletes the keys of mods folders that are gone, and each unkeyed key from before 0.2.9 its own
@@ -499,11 +514,14 @@ async function pruneStore($: Engine): Promise<void> {
   const keys = await $.store.keys()
   const legacyDir = legacyDirOf($)
   const folders = Lab.storeFoldersOf(keys, STORE_PREFIXES, legacyDir)
-  const isGone = await Promise.all(folders.map(dir => $.fs.stat(dir).then(() => false, (error: unknown) => Lab.folderGone(Lab.errorText(error)))))
+  const isGone = await Promise.all(folders.map(dir => isFolderGone($, dir)))
   const gone = folders.filter((_, at) => isGone[at])
   for (const { key, why } of Lab.prunableKeys(keys, STORE_PREFIXES, gone, legacyDir)) {
-    await deleteStore($, key).then(
-      () => logEvent($, 'normal', 'store', `deleted ${key} (${why})`),
+    // A key that goes with its gone folder is checked again in its turn: the folder may be back (finding 5).
+    const dir = Lab.storeFolderOf(key, STORE_PREFIXES) ?? legacyDir
+    const isStillGone = () => (gone.includes(dir) ? isFolderGone($, dir) : Promise.resolve(true))
+    await deleteStore($, key, isStillGone).then(
+      isDeleted => logEvent($, isDeleted ? 'normal' : 'verbose', 'store', isDeleted ? `deleted ${key} (${why})` : `kept ${key} (${dir} is back)`),
       (error: unknown) => logCaught($, 'store.delete', error, 'normal', { key }),
     )
   }
