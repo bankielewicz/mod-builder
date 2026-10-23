@@ -96,6 +96,7 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
   const nonEmptyStrings = (v: unknown) => isStrings(v) && v.length > 0
   need('testCommand', isArgv, 'a non-empty array of strings (argv)')
   need('coverageCommand', isArgv, 'a non-empty array of strings (argv)')
+  may('formatCommand', isArgv, 'a non-empty array of strings (argv)')
   need('lcovPath', v => typeof v === 'string' && v !== '', 'a non-empty string')
   const nonEmptyGlobs = (v: unknown) => isGlobs(v) && v.length > 0
   const GLOBS = 'non-empty globs using only * ** ? (no braces, brackets or !)'
@@ -125,6 +126,7 @@ export function parseProfile(text: string, home: string): { profile?: Profile; e
     baseBranch: (o.baseBranch as string | undefined) ?? DEFAULTS.baseBranch,
     testCommand: o.testCommand as string[],
     coverageCommand: o.coverageCommand as string[],
+    ...(o.formatCommand === undefined ? {} : { formatCommand: o.formatCommand as string[] }),
     lcovPath: expandHome(o.lcovPath as string, home),
     sourceGlobs: o.sourceGlobs as string[],
     testGlobs: o.testGlobs as string[],
@@ -158,7 +160,8 @@ export type OutsideChecks = {
 
 export function outsideChecks(p: Profile, root: string): OutsideChecks {
   const abs = isAbsolutePath(p.lcovPath) ? normalizePath(p.lcovPath) : normalizePath(`${root}/${p.lcovPath}`)
-  const argv0s = [...new Set([p.testCommand[0] as string, p.coverageCommand[0] as string, ...p.checks.map(c => c[0] as string)])]
+  const format = p.formatCommand ? [p.formatCommand[0] as string] : []
+  const argv0s = [...new Set([p.testCommand[0] as string, p.coverageCommand[0] as string, ...format, ...p.checks.map(c => c[0] as string)])]
   return {
     lcovInside: relativeTo(root, abs),
     commands: argv0s.map(argv0 => ({ argv0, kind: /[\\/]/.test(argv0) ? 'path' : 'name' })),
@@ -606,9 +609,22 @@ function list(paths: readonly string[], max = 5): string {
 
 const check = (id: string, passed: boolean, detail: string): Check => ({ id, passed, detail })
 
-export type GateRFacts = { staged: string[]; tests: CommandResult }
+/** R5 (gate R) or G9 (gates G and F), Change 0.8.0: the profile's format command, run before the gate records its tree. */
+function formatCheck(which: 'R' | 'G' | 'F', p: Profile, r: CommandResult): Check {
+  const passed = r.exit === 0 && !r.isTimedOut
+  // Set: a gate runs the format command only when the profile names one.
+  return check(which === 'R' ? 'R5' : 'G9', passed, passed ? 'format command ran (exit 0)' : `format command failed: ${(p.formatCommand as string[]).join(' ')} (${ended(r, p.commandTimeoutMinutes)})`)
+}
 
-/** R1 only test files changed, R2 at least one, R3 the tests now fail. */
+/** A format command that failed fails the gate alone, before anything is tested; not final, so the phase gets another attempt. Null when it passed. */
+export function formatGate(which: 'R' | 'G' | 'F', p: Profile, r: CommandResult): Gate | null {
+  const c = formatCheck(which, p, r)
+  return c.passed ? null : { gate: which, passed: false, checks: [c] }
+}
+
+export type GateRFacts = { staged: string[]; tests: CommandResult; format?: CommandResult }
+
+/** R1 only test files changed, R2 at least one, R3 the tests now fail; R5 the format command ran, when there is one. */
 export function gateR(p: Profile, f: GateRFacts): Gate {
   const notTests = f.staged.filter(path => !matchesAny(path, p.testGlobs))
   const checks = [
@@ -625,6 +641,7 @@ export function gateR(p: Profile, f: GateRFacts): Gate {
             ? 'tests pass; the new tests must fail first'
             : `tests fail as intended (exit ${f.tests.exit})`,
     ),
+    ...(f.format ? [formatCheck('R', p, f.format)] : []),
   ]
   return { gate: 'R', passed: checks.every(c => c.passed), checks }
 }
@@ -643,9 +660,11 @@ export type GateGFacts = {
   /** `git diff -U0 --cached <merge base>`. */
   diff: string
   checks: { argv: string[]; result: CommandResult }[]
+  /** The format command's result, when the profile has one (Change 0.8.0). */
+  format?: CommandResult
 }
 
-/** G1–G7 (gate F is the same checks). */
+/** G1–G7, and G9 when there is a format command (gate F is the same checks). */
 export function gateG(p: Profile, baseline: Baseline | null, f: GateGFacts, root: string, which: 'G' | 'F' = 'G'): Gate {
   const min = p.commandTimeoutMinutes
   const changedTests = f.changedSinceRed.filter(path => matchesAny(path, p.testGlobs))
@@ -701,6 +720,7 @@ export function gateG(p: Profile, baseline: Baseline | null, f: GateGFacts, root
           : `no behaviour test in the red commit for ${list(unmeasured)}`,
     ),
     check('G7', failedChecks.length === 0, failedChecks.length === 0 ? `${f.checks.length} checks pass` : `check failed: ${failedChecks.map(c => `${c.argv.join(' ')} (${ended(c.result, min)})`).join('; ')}`),
+    ...(f.format ? [formatCheck(which, p, f.format)] : []),
   ]
   const failed = checks.filter(c => !c.passed)
   return {
@@ -1497,11 +1517,12 @@ export const AGENT_DESCRIPTIONS: Record<Phase, string> = {
   refactor: 'issue-forge refactor phase: improves the changed code without changing behaviour (spawned by the issue-forge mod only)',
 }
 
-export type PromptExtra = { failures?: string[]; behaviourFor?: string[]; redTestPaths?: string[]; testTail?: string }
+export type PromptExtra = { failures?: string[]; behaviourFor?: string[]; redTestPaths?: string[]; testTail?: string; formatTail?: string }
 
 function profileLines(p: Profile): string[] {
   return [
     `Test command: ${p.testCommand.join(' ')}`,
+    ...(p.formatCommand ? [`Format command: ${p.formatCommand.join(' ')} (each gate runs it before testing)`] : []),
     `Test globs (red writes only these; green and refactor never touch them): ${p.testGlobs.join(', ')}`,
     `Source globs: ${p.sourceGlobs.join(', ')}`,
     p.unmeasuredGlobs.length > 0 ? `Code no coverage reaches (needs a behaviour test matching ${p.behaviourTestGlobs.join(', ')}): ${p.unmeasuredGlobs.join(', ')}` : '',
@@ -1541,11 +1562,14 @@ export function promptExtraOf(phase: Phase, run: Run, redTestPaths?: string[]): 
   const last = run.lastGate
   // A retry is this phase's own gate having failed last (an attempt count resets on resume; the failure stays relevant).
   const isRetry = !!last && !last.passed && last.gate === (phase === 'red' ? 'R' : phase === 'green' ? 'G' : 'F')
+  // A failed format command (R5, G9) leaves its own output as the gate's tail (Change 0.8.0).
+  const isFormatRetry = isRetry && !!last?.checks.some(c => (c.id === 'R5' || c.id === 'G9') && !c.passed)
   return {
     failures: isRetry && last ? failuresOf(last) : undefined,
     behaviourFor: phase === 'red' ? run.behaviourFor : undefined,
     redTestPaths,
     testTail: phase === 'green' && !isRetry ? run.redTestTail : isRetry && last?.checks.some(c => (c.id === 'G2' || c.id === 'R3') && !c.passed) ? run.lastTestTail : undefined,
+    ...(isFormatRetry ? { formatTail: run.lastTestTail } : {}),
   }
 }
 
@@ -1575,6 +1599,7 @@ export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): st
   }
   if (extra.redTestPaths && extra.redTestPaths.length > 0) out.push('', `The failing tests are in: ${extra.redTestPaths.join(', ')}`)
   if (extra.testTail) out.push('', 'The last lines of the failing test run:', '```', extra.testTail, '```')
+  if (extra.formatTail) out.push('', "The last lines of the format command's output:", '```', extra.formatTail, '```')
   if (extra.failures && extra.failures.length > 0) out.push('', 'Your previous attempt failed these checks. Fix them:', ...extra.failures.map(f => `- ${f}`))
   return out.filter((line, i, all) => line !== '' || (i > 0 && all[i - 1] !== '')).join('\n')
 }

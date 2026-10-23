@@ -23,6 +23,8 @@ export type Profile = {
   baseBranch: string
   testCommand: string[]
   coverageCommand: string[]
+  /** Change 0.8.0 (#137): the repository's formatter; each gate runs it between two `git add -A`. Absent, no format step. */
+  formatCommand?: string[]
   lcovPath: string
   sourceGlobs: string[]
   testGlobs: string[]
@@ -130,7 +132,7 @@ export type Run = {
   lastGate?: Gate
   /** Last 200 lines of the test output red's gate saw: green's first prompt gets them. */
   redTestTail?: string
-  /** Last 200 lines of the latest gate's test output: a retry's prompt gets them. */
+  /** Last 200 lines of the latest gate's test output, or of its format command's when that failed it (R5, G9; 0.8.0): a retry's prompt gets them. */
   lastTestTail?: string
   /** The red agent's final answer, plus a behaviour detour's once its gate R passed: each green prompt and the PR body get it. */
   redAnswer?: string

@@ -42,6 +42,7 @@ import {
   foreignChange,
   forkOfOrigin,
   forkRemoteVerdict,
+  formatGate,
   gateG,
   gateR,
   guardAction,
@@ -1179,6 +1180,22 @@ async function newPluginAt($: EngineInterface, run: Run, root: string, tested: s
   return newPluginOf(added, run.newPlugin, run.profile?.testGlobs ?? [], await manifestsAt($, root, baseRefOf(run)))
 }
 
+/**
+ * Change 0.8.0 (#137): the profile's format command after `git add -A`, then `git add -A` again, so the tree the gate tests
+ * holds what it wrote (lint-staged formats only staged files). A failed one fails the gate here (R5, G9), before anything
+ * is tested. Without the key, nothing runs.
+ */
+async function formatStaged($: EngineInterface, run: Run, root: string, p: Profile, which: 'R' | 'G' | 'F'): Promise<Extract<RunEvent, { type: 'gated' }> | { format?: CommandResult }> {
+  if (!p.formatCommand) return {}
+  await setActivity($, 'formatting')
+  const format = await runLong($, p.formatCommand, root, p.commandTimeoutMinutes)
+  const failed = formatGate(which, p, format)
+  if (failed) return { type: 'gated', gate: failed, testTail: format.tail }
+  await setActivity($, 'staging')
+  await gitWriteOut($, run, root, ['add', '-A'])
+  return { format }
+}
+
 /** Gate R (§3 step 4); on pass, the red commit, and after G6's return, green's work restored by its SHA. */
 async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunEvent> {
   const root = workOf(run)
@@ -1187,6 +1204,8 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
+  const formatted = await formatStaged($, run, root, p, 'R')
+  if ('type' in formatted) return formatted
   const tested = await indexTree($, run, root)
   const madeR = await newPluginAt($, run, root, tested)
   if (madeR) return { type: 'gated', gate: newPluginGate('R', madeR) }
@@ -1194,7 +1213,7 @@ async function gateRStep($: EngineInterface, run: Run, p: Profile): Promise<RunE
   const staged = await stagedSince($, root, run.behaviourFor && run.redCommit ? run.redCommit : run.mergeBase, tested)
   await setActivity($, 'running tests')
   const tests = await runLong($, p.testCommand, root, p.commandTimeoutMinutes)
-  const gate = gateR(p, { staged, tests })
+  const gate = gateR(p, { staged, tests, ...formatted })
   if (!gate.passed) return { type: 'gated', gate, testTail: tests.tail }
   const isBehaviour = !!run.behaviourFor
   const made = await commitAll($, run, commitMessage(isBehaviour ? 'behaviour' : 'red', run, run.behaviourFor ?? []), 'R', tested)
@@ -1230,6 +1249,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   stillDriving(run)
   await setActivity($, 'staging')
   await gitWriteOut($, run, root, ['add', '-A'])
+  const formatted = await formatStaged($, run, root, p, which)
+  if ('type' in formatted) return which === 'F' && !canRetry(run, 'refactor') ? rejectRefactor($, run, formatted.gate, formatted.testTail) : formatted
   const tested = await indexTree($, run, root)
   const madeG = await newPluginAt($, run, root, tested)
   if (madeG) return { type: 'gated', gate: newPluginGate(which, madeG) }
@@ -1251,8 +1272,8 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
   }
   // A command that rewrote files (a formatter, a snapshot update) means the tests ran on bytes that aren't staged.
   const rewritten = unstagedOf(await gitOut($, root, ['status', '--porcelain', '-z']))
-  if (rewritten.length > 0) return block(`a command changed files after staging, so the tested bytes aren't the ones that would be committed: ${rewritten.slice(0, 5).join(', ')}${rewritten.length > 5 ? ` and ${rewritten.length - 5} more` : ''}`, 'make the profile commands leave the tree as they found it (or commit what they write)')
-  const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks }, root, which)
+  if (rewritten.length > 0) return block(`a command changed files after staging, so the tested bytes aren't the ones that would be committed: ${rewritten.slice(0, 5).join(', ')}${rewritten.length > 5 ? ` and ${rewritten.length - 5} more` : ''}`, 'make the profile commands leave the tree as they found it, or put the formatter in formatCommand')
+  const gate: Gate = gateG(p, run.baseline, { staged, changedSinceRed, redPaths, tests, coverage, lcov, diff, checks, ...formatted }, root, which)
   if (gate.passed) {
     const made = await commitAll($, run, commitMessage(which === 'G' ? 'green' : 'refactor', run), which, tested)
     if ('type' in made) return { ...made, gate, testTail: tests.tail }
@@ -1266,13 +1287,16 @@ async function gateGStep($: EngineInterface, run: Run, p: Profile, which: 'G' | 
     await setActivity($, "stashing green's work")
     return { type: 'gated', gate, stash: await stashAll($, run, stashMessage('green', run)), testTail: tests.tail }
   }
-  if (which === 'F' && !canRetry(run, 'refactor')) {
-    await setActivity($, 'stashing the rejected refactor')
-    const stash = await stashAll($, run, stashMessage('refactor', run))
-    // Publish green's commit, which gate G checked, not a fresh HEAD: a branch that moved meanwhile fails publish's tip check (round 2).
-    return { type: 'gated', gate, stash, testTail: tests.tail, head: run.greenCommit ?? run.redCommit }
-  }
+  if (which === 'F' && !canRetry(run, 'refactor')) return rejectRefactor($, run, gate, tests.tail)
   return { type: 'gated', gate, testTail: tests.tail }
+}
+
+/** Gate F failed on the refactor's last attempt (a check, or the format command, #137): the refactor goes to a stash. */
+async function rejectRefactor($: EngineInterface, run: Run, gate: Gate, testTail?: string): Promise<RunEvent> {
+  await setActivity($, 'stashing the rejected refactor')
+  const stash = await stashAll($, run, stashMessage('refactor', run))
+  // Publish green's commit, which gate G checked, not a fresh HEAD: a branch that moved meanwhile fails publish's tip check (round 2).
+  return { type: 'gated', gate, stash, testTail, head: run.greenCommit ?? run.redCommit }
 }
 
 /** Step 7: push the branch (no -u) and open the pull request. */

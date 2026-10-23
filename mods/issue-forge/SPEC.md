@@ -1988,3 +1988,63 @@ count set in the pane.
   - **Finding 5:** each gate blocks once in a repository whose commit hook re-stages: the owner's round 1 decision, with #137 as the follow-up. Unchanged.
   - **Built:** SPEC `3151271`. Codex 4351786036 and findings 3 and 9: red `353a866` (5 of 484 failed, by assertion), green `f7fdafe`; [probe] git 2.53.0: the plumbing read gave the commit's own tree in a repository with `refs/replace/<HEAD>`, and in an SSH-signed one the `gpgsig` continuation lines start with a space. Finding 1: red `58002c0` (1 failed), green `c01ace3`. Finding 4: red `a0d9ef3` (3 failed), green `ee5b600` (git's own refusal, `fatal:` or `error:`, keeps the unexpected text the #28 tests pin). Findings 7 and 8: refactor `275d222`; the test World's field for HEAD's parent renamed `headParent` after the typecheck found it shadowed the fork tests' `parentOf` (`165be3b`). Coverage: the round's first measure had logic branches at 99.58%, against 99.79% on `main`; `0edc766` removed a branch `commitFields` couldn't take and tested the other two, back to 99.79% (functions 99.29%). 491 of 491 pass.
 - **Version:** 0.7.5 (patch).
+
+## Change 0.8.0 (2026-10-22)
+
+> The owner, 2026-10-22, on a pre-commit hook that rewrites and re-stages files (PR #136 review round 1): "A now, B as follow-up (Recommended)", B being a profile command that formats before staging, filed as #137. Then: "137 but in a new session after running /precompact". The design source is issue #137: its research and its "Asked for" list.
+
+- **Why:** from 0.7.5 a gate commits only the tree it tested. In a repository whose pre-commit hook rewrites files and re-stages them (husky with lint-staged), each gate therefore blocks once after its commit: `commit <sha> holds a tree gate <X> didn't test`. When the profile names the formatter, the gate runs it before it records the tested tree; the hook then has nothing left to change, and the commit holds the tested tree.
+- **What changes:**
+  - **A new profile key, `formatCommand`:** an argv, like `testCommand`, absent by default. `parseProfile` accepts a non-empty array of strings whose first isn't empty, and refuses anything else with `formatCommand must be a non-empty array of strings (argv)`. Preflight's command check (`outsideChecks`, §4.2) adds its first word, so a formatter that isn't installed blocks the start (`command not found: <argv0>`), not gate R.
+  - **The order at gates R, G and F when it is set:** `git add -A`, then `formatCommand` in the run's folder, then `git add -A` again, then `git write-tree` (the tested tree), then the new-plugin check (R4, G8) and the tests, coverage and checks as before. Both `add`s go through `gitWrite` and its lock retries (#28).
+    - **This departs from the issue's wording**, "before `git add -A`". lint-staged, the issue's own case, "only runs tasks on files that include staged changes" ([its README](https://github.com/lint-staged/lint-staged), read 2026-10-22), so run before staging it would find nothing to format.
+    - Staging first lets the hook's own command (`npx lint-staged`) be the profile's `formatCommand`. The second `git add -A` stages what a whole-tree formatter (`prettier --write .`) writes.
+  - **A failed format command fails the gate, as a failing check does:** a non-zero exit, or a timeout at `commandTimeoutMinutes`, ends the gate at once, before the second `git add -A`, with nothing tested or committed.
+    - The gate has one row, R5 (gate R) or G9 (gates G and F): `format command failed: <argv> (exit <n>)`, or `(timed out after <m> min)`.
+    - It isn't a final block, unlike R4 and G8: the phase gets another attempt, as for any failed gate. The attempt's prompt lists the failed check and the last lines of the format command's output, under a heading of their own.
+    - After the last attempt, gates R and G block as today (`gate R failed after <n> attempts: …`), and gate F rejects the refactor and stashes it, as for any failed check.
+  - **A format command that passes adds a row:** R5 or G9, `format command ran (exit 0)`, so the pull request's gate table shows that it ran. Without the key there is no row, and the gates make the same git and process calls as 0.7.5.
+  - **The agents see it:** the phase prompt's profile lines gain `Format command: <argv>` when it is set, so an agent can run it.
+  - **Gate G's look for rewritten files** (`unstagedOf`, after the tests, coverage and checks) is unchanged and still applies to those commands. The format command runs before the tested tree is recorded, so what it writes is staged and tested. The block's next step now names the key: `make the profile commands leave the tree as they found it, or put the formatter in formatCommand`.
+  - **The after-commit tree check stays** (0.7.5). The format command makes a re-staging hook a no-op when both run the same formatter. A hook that does something else, or a formatter whose second run still changes files, blocks the gate once, as in 0.7.5.
+  - **Limits, written in the README:**
+    - The base branch must already satisfy the format command. A whole-tree formatter on a base that isn't formatted rewrites files the phase didn't touch: at gate R they are non-test files, so R1 fails; at gate G they enter the diff coverage. A formatter that touches only the staged files (lint-staged) avoids this.
+    - A formatter that exits non-zero after it changes files fails R5 or G9 each time it formats. [docs, not probed] `pre-commit run` (the framework) does this: the issue's research, pre-commit#806.
+  - **Not chosen:**
+    - Running the format command before the first `git add -A`, as the issue words it: lint-staged would find nothing staged (above).
+    - Running the repository's hooks first (`git hook run pre-commit`), or re-testing on its own after a hook changes the commit: the owner chose the profile command, 2026-10-22 (#137).
+    - A formatter in this repository's own `.issue-forge.json`: the repository has none. The tests cover the key with a stand-in argv.
+- **What gets touched:**
+  - `types/index.d.ts`: `Profile` gains `formatCommand?: string[]`.
+  - `hooks/issue-forge-logic.ts`: `parseProfile`, `outsideChecks`, the R5/G9 row (a pure function of the command's result), `gateR` and `gateG` (an optional format fact), `promptExtraOf`, `phasePrompt` and `profileLines`.
+  - `hooks/register.tsx`: `gateRStep` and `gateGStep` (the format run and the second `git add -A`), and the rewritten-files block's text.
+  - Tests: `tests/issue-forge-logic.test.ts` and `tests/ui.test.tsx`.
+  - `README.md`: "Set up a repository" (the key and its limits), the Processes row (`formatCommand`, and `add -A` twice when it is set), the limits bullet that names #137, and "Built on". `docs/specs/issue-forge.md`: §3 steps 4 to 6 and the tree paragraph, §4.1's table, and §4.2, which also gains `checks` (the code already checks them). `plugin.json` and the marketplace entry at 0.8.0. This SPEC.
+  - Per gate, when the key is set: one run of the profile's format command and one more `git add -A`, in the run's folder. The format command is the repository's own, as the test command is, so issue-forge reaches nothing new. lint-staged, when it is the command, keeps a backup stash while it runs (its README); issue-forge applies only its own stashes, by SHA.
+- **Tests (fail before the change):**
+  - Logic:
+    - `parseProfile` accepts `formatCommand` as an argv, and leaves it absent by default. It refuses a string, `[]` and `[""]` with the argv error.
+    - `outsideChecks` lists its first word only when it is set.
+    - `gateR` and `gateG` add a passing R5 or G9 row when the format command ran, and no row without it. The failed-format gate has the one failing row and no `newPlugin`, so it isn't final.
+    - `advance` sends a failed-format gate to another attempt and, after the last, to the usual block (gates R and G) or rejection (gate F).
+    - `promptExtraOf` forwards the format output on an R5 or G9 retry, and `phasePrompt` shows it under its own heading, with the `Format command:` line.
+  - UI, gates R, G and F:
+    - With `formatCommand` set, `process.run` sees `add -A`, the format argv, `add -A`, `write-tree`, then the tests, in that order.
+    - A format command that exits 1 fails the gate with R5 or G9; no `write-tree`, test, coverage or check run follows, and the phase's agent is spawned again.
+    - Without the key, one `add -A` comes before `write-tree`, as in 0.7.5.
+    - Gate G: a format command that rewrites a file leaves no rewritten-files block, since the second `add` stages it.
+- **Done means:** a repository whose pre-commit hook formats and re-stages names that formatter in `formatCommand`, and each gate commits the tree it tested without blocking. A formatter that fails gives the phase another attempt, with its output.
+- **Version:** 0.8.0 (minor: a new profile key; without it nothing changes).
+- **Built** with `/mod-builder:edit`, in the worktree `scratch/issue-137-format-command` from `main` at `d16dd6f`. The owner approved this section on 2026-10-22 ("Approve (Recommended)"), after a plain-words explanation.
+  - **TDD:** SPEC `139f972`. Red `27623c9`: 14 of 506 failed, by assertion; the no-key guard (one `add -A` before `write-tree`) passed, as in 0.7.5. Green `156d8fc`: 506 of 506.
+  - **Gate F's last attempt:** the green code returned the format failure before gate F's rejection branch, so the refactor's work would have stayed in the folder with no head to publish. Red `fe0bd56` (1 of 507 failed, by assertion), green `ce0b01b`: `rejectRefactor` holds that branch for both paths. 507 of 507.
+  - **Refactor** `f738def`: the logic tests call `formatGate` and read `formatCommand` directly, so the typecheck sees their signatures.
+  - **Live check** (Claude Code 2.1.309): `claude -p --debug-file … --plugin-dir <worktree>/mods/issue-forge "/issue-forge demo"` answered the demo. The fresh debug log reads `--plugin-dir <worktree>/mods/issue-forge is one plugin`, `Plugin "issue-forge" from --plugin-dir overrides installed version`, `hooks module issue-forge@inline loaded`, and then `plugin.register: issue-forge (user, issue-forge@inline), judged by core alone: admitted`, with no failure line. No gate ran live: that needs a GitHub issue and model calls.
+  - **[probe] lint-staged** (the owner's OK, 2026-10-23, after a side agent noted that the design rested on lint-staged's README only). lint-staged 16.2.0 (`npx -y lint-staged@16.2.0`), git 2.53.0, in a throwaway repository whose pre-commit hook runs the same lint-staged, as husky does, with a `*.txt` task of our own that squeezes spaces:
+    - The gate's sequence with it as `formatCommand` (`add -A`, lint-staged, `add -A`, `write-tree`, `commit`): lint-staged exited 0, the staged file was formatted and re-staged, nothing was left unstaged, and its backup stash was made and dropped. The commit's tree was the recorded one.
+    - With nothing staged (a replay): `→ No staged files found.`, exit 0, so a replay doesn't fail R5 or G9.
+    - Without `formatCommand` (0.7.5's sequence): the hook re-staged during the commit, and the commit's tree differed from the recorded one, which is the block this change avoids.
+    - A file its configuration doesn't match was left as it was.
+    - Not probed: lint-staged's backup stash goes on the stash list that a repository's worktrees share. [inference] A run that pushes a stash in another worktree while lint-staged runs could interleave with it; `--no-stash` turns the backup off.
+    - An earlier git-only probe of the same sequence was held by the blast-radius hook (an `rm -rf` of a shell-variable path) and not rerun; this one covers it.
+  - **QA:** `claude plugin validate .` and `claude plugin validate mods/issue-forge` passed; the second also printed one new plugin-directory warning on 2.1.309, `ICON_MISSING`, which doesn't change the result and isn't this change's. The typecheck (`tsconfig.check.json` against 2.1.309's types, the tests included) exited 0. Logic coverage: lines 100.00%, branches 99.79% and functions 99.30%, against 100.00%, 99.79% and 99.29% on `main`; LCOV has no untaken branch on a changed line.
