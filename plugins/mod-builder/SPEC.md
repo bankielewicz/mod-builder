@@ -1243,3 +1243,55 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Live check:** `claude -p --debug-file <new log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"`, since the manifest changes: loaded, admitted, and no failure line.
 - **Version:** 0.2.31 (patch: skill text, templates and metadata; no change to commands, options or the state contract).
 
+## Change 0.2.32 (2026-10-23)
+
+> Issue #148, "mod-builder skills: imperative text, lean SKILL.md and references/, per /plugin-dev:skill-development". The owner chose it next: "#148 skill rewrite". And, before the rewrite: "use progressive disclosure where appropriate - do not make text ambiguous as you truncate or make it concise and thus losing contextual meaning".
+
+- **How:** mod-builder is a plugin, so this change follows Anthropic's plugin documents and goes through `/plugin-dev:skill-development` (CLAUDE.md, "Read first"):
+  - imperative instructions and third-person descriptions;
+  - a lean `SKILL.md` that points to `references/` for detail;
+  - the skill-reviewer agent at the end.
+
+  A skill may carry supporting files beside its `SKILL.md`, and a frontmatter `name` sets its command name [read: `docs/research/claude-plugins/Add-components-to-a-plugin.md:222-260`], so `/mod-builder:build` and `/mod-builder:edit` keep theirs.
+- **The method, from the owner's second sentence: a move, not a summary.**
+  - Text that leaves a `SKILL.md` goes whole into a reference, with every `(docs, not observed)` and `[d.ts]` tag on its sentence.
+  - Each `SKILL.md` keeps the steps, commands and pass criteria. It points to each reference, saying when to read it.
+  - Nothing is shortened into something vaguer. The two skills were snapshot before the change, and after it each removed passage is found by a distinctive phrase in its new home.
+- **What moves** (line numbers at `0982f59`):
+
+  | From | To |
+  | --- | --- |
+  | build `:135-166`: the smoke test's log checks, the managed-settings case, options in a `-p` run, and the typecheck procedure | `skills/build/references/verify.md` |
+  | build `:169`: the `CLAUDE_CONFIG_DIR=$(mktemp -d)` sentence, moved as it is (see Open) | `references/verify.md` |
+  | build `:170-181`: loading the mod live, both ways, and why `/reload-plugins` alone doesn't load an uninstalled one | `skills/build/references/loading.md` |
+  | build `:204-216`: how later edits reach the copy that runs, and the Installed tab check | `references/loading.md` |
+  | edit `:33-74`: which copy runs, covering the install records, `--plugin-dir`, the managed lock, archives, a folder's reloads and the protected path | `references/loading.md`, merged with build `:204-216` as their union, since the two are near-copies |
+
+- **What else changes:**
+  - **Imperative text.** Every "you" in both skills means the model, never the person (checked line by line), so each becomes an instruction, and "the person" stays "the person".
+  - **Build's own text:**
+    - "five steps" becomes "six steps, 0 to 5".
+    - `<scratchpad>` is defined: the session's scratchpad directory, outside the repository and the mod.
+    - "Walk through the demo and every 'Done means' bullet" names its actor: the person does it, in the live session, since a headless run can't press keys. The build reports it as pending until they have.
+    - The file list names `references/verify.md` and `references/loading.md`, and says what `ci/` holds and when each file is used.
+  - **Edit's own text:**
+    - "Read it once before step 1" becomes "before step 0", since step 0 runs build's step 0.
+    - The stage map uses edit's own numbers: Spec → 2, Logic → 3.1, Register → 3.2 to 3.3, Validate and Test → 4, README and Share → 5.
+    - Step 0.4 keeps its two questions and points to `../build/references/loading.md` for the answers.
+    - Step 1 asks step 0.4's `--plugin-dir` question too, when the request doesn't answer it. Today it says it asks "only about gaps in the change".
+    - Step 3 gains build's demo step: `/<name> demo` shows every state the change adds or alters.
+  - **Not changed:** the skills' names, their steps' order and the gates, the templates, the scripts, Mod Lab's code, and the facts in any moved text.
+- **Open, for the owner:**
+  - Build's description: drop the generic trigger "with tests" and keep the spec-first routing, so "make a mod" stays with the built-in `plugin-authoring`; or also add plain phrasings such as "create a Claude Code mod".
+  - Edit's trigger "update <mod>", which can collide with `claude plugin update`: drop it, or keep it.
+  - Build's file list: name `scripts/check-archetypes.sh` and `scripts/check-sandbox.mjs` as maintainer checks that a build doesn't run, or leave them out.
+  - The `mktemp` sentence moves as it is. Its meaning isn't clear (`claude plugin test` is a shell command), and rewriting it would change a fact nobody has checked.
+- **Tests and QA:** skill text only, so there is no red or green step.
+  - `claude plugin validate --strict` for the marketplace and `plugins/mod-builder`.
+  - The archetype check, since the build skill changes, and the sandbox check.
+  - `test -e` on every path the two skills and the references name.
+  - The moved-text check above.
+  - The `-p` load check for the version bump.
+  - The skill-reviewer agent, briefed with the move table so it checks the move as well as the prose.
+- **Version:** 0.2.32 (patch: skill text).
+
