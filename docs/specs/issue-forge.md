@@ -126,12 +126,17 @@ it finishes, stage everything (`git add -A`) and check **gate R**:
 - R3: `testCommand` exits non-zero. The baseline passed and only test files changed, so the new
   tests cause the failure. Which tests fail isn't checked (that depends on the language); the red
   agent's list of failing tests goes into the pull request for review.
+- R5 (SPEC change 0.8.0, #137), only when the profile has a `formatCommand`: it exits 0. It runs after `git add -A`, then
+  everything is staged again, before the tree is recorded (below). A failure fails the gate there, with this row alone,
+  before anything is tested; it isn't final, so the phase gets another attempt with the command's output.
 
 On pass, commit `test(#<N>): red: <title>` (with `commitTrailers`; same for every commit below); record it as the **red commit**. On fail, give the
 agent the failed checks and try again, up to `attempts.red` (default 2), then stop in `blocked`.
 
 **Every gate commits the tree it tested (SPEC change 0.7.5, #101).** Right after `git add -A`, record the index's tree
-with `git write-tree`, before any test runs; it takes the index lock, so it is retried as `add` is. Before the commit,
+with `git write-tree`, before any test runs. With a `formatCommand` (SPEC change 0.8.0, #137), the gate runs it after
+`git add -A` and stages again before it records the tree, so a pre-commit hook running the same formatter finds nothing
+to change; it stages first because lint-staged formats only staged files. `write-tree` takes the index lock, so it is retried as `add` is. Before the commit,
 write the tree again: a different tree blocks the gate with nothing committed ("the index changed after gate X tested
 it"). HEAD is read with `git rev-parse --verify HEAD`, and its tree and parent from the commit object itself
 (`git --no-replace-objects cat-file commit <sha>`: a replacement ref can't stand in for it, and no log setting adds
@@ -160,6 +165,8 @@ commit's test file paths, and the last 200 lines of R3's test output. When it fi
   step 4 once, telling the red agent "add a behaviour test for <files>", then continues from step 5;
 - G7: every command in `checks` exits 0 (project-specific checks: linters, type checks, validators).
 - G8 (SPEC change 0.7.0, checked first, before any test runs): as R4, for gates G and F.
+- G9 (SPEC change 0.8.0): as R5, for gates G and F. A gate F that fails it on the refactor's last attempt rejects the
+  refactor into a stash, as for any failed check.
 
 A failed R4 or G8 blocks the run at once, with no retry, as a **final** block. Its hint is `next: build it with /mod-builder:build, then /issue-forge stop <N>`, and `/issue-forge status` lists the next steps. `/issue-forge resume` answers `can't be resumed`. A pull request's number is also a final block, and the start menu offers a final-blocked run Stop, not Resume. Nothing past the phase's last commit is committed (red's at gates R and G, green's at gate F), and nothing is pushed; the steps name those commits, and after G6's detour, the stash that holds green's work.
 
@@ -199,6 +206,7 @@ stash; run when step 1 fails.
 | `baseBranch` | string | `"main"` | pull request target unless the issue names one (§2) |
 | `testCommand` | string[] | required | argv; exit 0 = all tests pass |
 | `coverageCommand` | string[] | required | argv; runs the tests with coverage and writes LCOV to `lcovPath` |
+| `formatCommand` | string[] | absent | argv (SPEC change 0.8.0); the repository's formatter, run at gates R, G and F after `git add -A`, then everything is staged again before the tested tree is recorded (§3). The base branch must already satisfy it |
 | `lcovPath` | string | required | where `coverageCommand` writes LCOV; must be outside the repository or ignored by git (§4.2). A relative path is the run's folder's, so runs in separate worktrees never share one |
 | `sourceGlobs` | string[] | required | code under the coverage gate |
 | `testGlobs` | string[] | required | test files and fixtures; the red phase writes only these |
@@ -224,7 +232,8 @@ Globs use `*` (within a path segment) and `**` (any depth), matched against repo
 - `testGlobs` and `sourceGlobs` aren't empty.
 - `lcovPath` is outside the repository, or `git check-ignore -q <lcovPath>` exits 0. Otherwise
   `git add -A` would commit coverage output.
-- `testCommand[0]` and `coverageCommand[0]` are found on PATH or are relative paths that exist.
+- `testCommand[0]`, `coverageCommand[0]`, `formatCommand[0]` (when set) and each `checks` command's first word are
+  found on PATH or are relative paths that exist.
 
 ### 4.3 Example profiles
 
