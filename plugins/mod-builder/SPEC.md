@@ -1085,3 +1085,79 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - **The same run with a stale `CLAUDE_CODE_PLUGIN_DIRS` entry:** the same lines, plus one unrelated missing-path line, and it passes the scoped rule.
 - **Version:** 0.2.29 (patch: skill text).
 
+## Change 0.2.30 (2026-10-23)
+
+> Issue #138, "Mod Lab: remove stored results for mods folders and mods that no longer exist". The owner chose it next, 2026-10-23: "#138 Mod Lab store (Recommended)".
+
+- **Following the edit skill by hand:** edit's step 0.1 finds a mod only in `<mods>/` (#141), and Mod Lab ignores a `plugins/` path (0.2.29). No `lab_report` is sent for this change: without a path it would record `mod-builder` as a build in the watched `mods/` folder. [inference] That may be how `mod-builder` got its stale Test result there.
+- **Why:** Mod Lab keeps one set of keys per mods folder, `modlab:results:<dir>`, `modlab:done:<dir>` and `modlab:generations:<dir>`, and never removes a key or an entry inside one. Every folder a build or edit reports through `lab_report`'s `path` adds a set.
+- **The stores now** [ran: a read-only listing of `~/.claude/plugins/store/mod-builder_*.json`, and a folder check for each key, 2026-10-23]:
+  - The installed copy's, `mod-builder_claudemod-424a2ff7bc42.json`: 22,609 bytes on disk, 13,648 characters of compact JSON, 20 keys.
+    - 14 keys belong to 6 folders that no longer exist: four from #138's own list, plus this session's `scratch/issue-137-format-command/mods` and `scratch/issue-140-store-budget/mods`, which `lab_report` pinned during those edits.
+    - `modlab:results:/mnt/c/Projects/ClaudeMod/mods` holds `duet` (removed by PR #133) and `mod-builder`, neither of which is in that folder. `modlab:done:…/mods` holds `duet`.
+    - The unkeyed `modlab:results`, `modlab:done` and `modlab:generations` from before 0.2.9 are there, beside the keyed ones for `/mnt/c/Projects/ClaudeMod/mods`.
+  - The `--plugin-dir` copy's, `mod-builder_inline-265b4e9b5ab2.json`: 21,998 characters, 20 keys, 14 of them for 11 folders that no longer exist. It has keyed results and done for `…/mods` but no keyed generations, so its unkeyed `modlab:generations` is still the one that folder reads.
+  - Both are far from the 4 MiB limit: this is upkeep, so the records don't grow with every worktree.
+- **What `$.fs` says about a missing folder** [probe: a throwaway mod under `claude -p --plugin-dir`, Claude Code 2.1.309, 2026-10-23]:
+  - `$.fs.stat` of a deleted folder rejects with a `HooksError` whose message is `<plugin>: $.fs.stat(<path>) failed: ENOENT`, with no `.code`.
+  - Under a folder with mode 000, it rejects with `… failed: EACCES`.
+  - `$.fs.exists` answers `false` for both, so it can't tell a missing folder from one it can't read.
+  - `/mnt/z/nothing/mods` (no such drive) rejects with `ENOENT`, the same as a deleted folder. `//nohost/share/mods` is read as `/nohost/share/mods` on Linux, and also rejects with `ENOENT`.
+- **What changes:**
+  1. **Folders that are gone.** At session start, after the scan starts and without holding the hook up, Mod Lab lists the store's keys (`$.store.keys`).
+     - A key under `modlab:results:`, `modlab:done:` or `modlab:generations:` names its folder after that prefix. The key is read by the three prefixes, not split on `:`, since a Windows folder's key holds one more.
+     - Each folder is checked once, with `$.fs.stat`. Only a rejection whose message says `ENOENT` counts as gone. A folder that answers, or a rejection for any other reason (`EACCES`, a network location, a message worded otherwise), is kept.
+     - A gone folder's keys are deleted (`$.store.delete`). Each delete waits its turn on the chain `updateStore` uses, so a write this session already started for that key lands first.
+     - Each delete writes a log line at `normal`: `store: deleted <key> (<folder> is gone)`.
+  2. **Mods that are gone.** At a scan whose listing of the mods folder succeeded, the entries for names that are neither a folder in it nor a live build's placeholder are dropped:
+     - from `results` and `generations` through `updateStore`, built from the value read in its turn;
+     - from `done` in `announceGreen`'s own read and write, which that scan already makes. `announceGreen` writes `done` with `$.store.set` directly, not through `updateStore`, so the drop goes into that same write, and the two can't interleave.
+
+     A scan whose listing failed drops nothing: such a scan still runs as a full pass, with no folders. A placeholder is kept because a Validate or Test report on a mod whose folder isn't written yet can store a result for it.
+  3. **The unkeyed keys from before 0.2.9.** Each of `modlab:results`, `modlab:done` and `modlab:generations` is deleted when the folder `legacyDirOf` names (this session's `modsDir` option, else the plugin's own `mods/`) has its own keyed record under that prefix, or when that folder is gone. `storedOf` reads an unkeyed key only while the folder's keyed one is missing, so this changes nothing a scan reads.
+  4. **Pure rules** in `hooks/mod-builder-logic.ts`:
+     - `storeFolderOf(key, prefixes)`: the folder a key names, or null.
+     - `folderGone(message)`: whether a `$.fs.stat` rejection says `ENOENT`.
+     - `prunableKeys(keys, prefixes, gone, legacyDir)`: the keys to delete, each with why.
+     - `withoutGone(record, keep)`: the record without the names left out of `keep`, or null when nothing goes.
+- **A departure from the issue:** #138 asks that a folder that "can't be read (an unmounted drive, a permission error)" be kept. A permission error is kept. A folder on a drive that isn't mounted can't be told from a deleted one, as the probe shows, so its records go.
+  - What it costs, when the drive comes back: Validate and Test show `○` until they're run again. A mod already announced as ready to share may be announced once more. An edit in progress loses the start of its build generation.
+  - The alternative, not taken unless the owner chooses it: also keep a folder whose first two path parts (such as `/mnt/z`) are missing.
+- **Known limits:**
+  - A folder created again at the same path between its stat and its delete loses what was written in between. issue-forge's worktrees reuse `scratch/issue-forge/<branch>`. The window is one stat and one delete.
+  - Another session's write is ordered only within its own session (#58), as now.
+  - The `ENOENT` test reads the error's message, since it has no code. A build that words it otherwise makes every folder read as one that can't be checked, so nothing is pruned.
+  - `legacyDirOf` reads this session's `modsDir` option. A session with another setting judges the unkeyed keys by another folder.
+- **Against Anthropic's mod docs** (`docs/research/Mods`, read 2026-10-23, as the owner asked before #140's build):
+  - **Lifetime:** a `$.store` value lasts until "Your mod deletes it, or no session reads or writes the store for `cleanupPeriodDays`" [read: `Build/Draw-in-the-interface-with-a-mod.md:727`]. Mod Lab's store is read in every session, so removing its stale keys is Mod Lab's own job.
+  - **Several sessions:** "Give each item its own key" and "Read again right before you write" [read: `Build/Draw-in-the-interface-with-a-mod.md:837-842`]. Keys stay one set per folder. The drops in 2 are built inside `updateStore`'s turn, or `announceGreen`'s read, from the value read then.
+  - **The calls:** `$.store` has `get`, `set`, `delete` and `keys`, and `$.fs` has `exists` and `stat` [read: `Test and troubleshoot/Mods-reference.md:216-217`]. The 2.1.309 types say `stat` "Rejects when missing", with `ENOENT` [d.ts], and `exists` "rejects only a network location" [d.ts].
+  - **Time:** `$` calls don't count against a hook's 10 seconds [read: `Test and troubleshoot/Mods-reference.md:347`], and the prune runs detached from `session.start` anyway.
+- **What gets touched:**
+  - `hooks/register.tsx`, `hooks/mod-builder-logic.ts`, `tests/mod-builder-logic.test.ts` and `tests/ui.test.tsx`.
+  - README: the store paragraph, and the Store and Files rows of "What it reaches", from validate's output.
+  - `skills/build/references/gotchas.md`: the probe's `$.fs.stat` and `$.fs.exists` facts, tagged `[probe]`.
+  - This SPEC, and version 0.2.30 in `plugin.json` and the marketplace entry.
+  - **New reach:** `$.store.keys` and `$.store.delete`, and `$.fs.stat` of each folder the store has keys for, once per session.
+- **Tests (first, failing):**
+  - **Logic:**
+    - `storeFolderOf`: each prefix, a Windows folder holding `:`, other keys.
+    - `folderGone`: the probe's exact `ENOENT` and `EACCES` messages, and an unknown one.
+    - `prunableKeys`: a gone folder's keys go, while a kept or unreadable folder's stay. Each unkeyed key goes only with its own keyed record or a gone legacy folder, so the inline store's case keeps unkeyed generations. Keys with other prefixes are kept.
+    - `withoutGone`: names dropped, placeholders kept, null when nothing goes.
+  - **UI** (`world()` gains `store.keys`, `store.delete` and `fs.stat` stubs, the stat rejections worded as the probe's):
+    - A session start deletes a gone folder's three keys and logs each delete. It keeps the keys of a folder that is there, and of one that rejects with `EACCES`.
+    - A scan drops a mod that's no longer on disk from results, done and generations, and keeps a build's placeholder.
+    - A scan whose listing fails drops nothing.
+    - The unkeyed keys go when the legacy folder has keyed records.
+  - **QA:**
+    - `claude plugin validate .`, and validate and test for `plugins/mod-builder`.
+    - The typecheck, and logic coverage with no drop.
+    - The sandbox check, since gotchas.md changes.
+  - **Live check:**
+    - `claude -p --debug-file <fresh log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"` loads this copy. Its session start prunes the `--plugin-dir` copy's own store.
+    - That store is copied to the scratchpad first, so the PR can show its keys before and after, with the log lines.
+    - The installed copy's store is pruned only once this merges and a session reloads it.
+- **Done means:** Mod Lab's stores hold records only for folders that exist and mods in them. A removed worktree's keys go at the next session start, and a removed mod's entries at the next scan.
+- **Version:** 0.2.30 (patch: upkeep of the plugin's own store, no change to commands, options or the state contract).
+
