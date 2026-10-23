@@ -2714,6 +2714,15 @@ describe('#140: the store under its limit', () => {
     expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], storeSize(entries.slice(0, 2))])
   })
 
+  // PR #145 review round 1, finding 6: the session driving a run knows it is unfinished.
+  test("the stale line leaves out a run this session drives, and keeps another session's", () => {
+    const now = 10 * DAY
+    const mine = run({ issue: 8, step: 'green', startedAt: 1 * DAY, driver: { session: 'me', since: now } })
+    const theirs = run({ issue: 9, step: 'green', startedAt: 1 * DAY, driver: { session: 'other', since: now } })
+    expect(staleLine([mine, theirs], now, 'me')).toBe('unfinished for over 7 days: #9 green (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+    expect(staleLine([mine], now, 'me')).toBe(null)
+  })
+
   // PR #145 review round 1, finding 14: a run blocked for days and stopped today isn't the oldest finished run.
   test('a run that finishes records finishedAt, and the budget deletes by it (by startedAt for a record without one)', () => {
     const finishedAt = (r: Run) => (r as { finishedAt?: number }).finishedAt
