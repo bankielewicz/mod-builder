@@ -498,11 +498,18 @@ function deleteStore($: Engine, key: string, isStillGone: () => Promise<boolean>
   return task
 }
 
-/** Whether `$.fs.stat` says the folder is gone: the engine's ENOENT, and nothing else (#138). */
+/**
+ * Whether `$.fs.stat` says the folder is gone: the engine's ENOENT, and nothing else (#138). Any other rejection keeps
+ * it, with a debug line, so pruning a reworded message stopped isn't silent (PR #146 review, finding 6).
+ */
 const isFolderGone = ($: Engine, dir: string): Promise<boolean> =>
   $.fs.stat(dir).then(
     () => false,
-    (error: unknown) => Lab.folderGone(Lab.errorText(error)),
+    (error: unknown) => {
+      const isGone = Lab.folderGone(Lab.errorText(error))
+      if (!isGone) logCaught($, 'store.prune', error, 'debug', { path: dir })
+      return isGone
+    },
   )
 
 /**
