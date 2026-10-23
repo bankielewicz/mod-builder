@@ -4273,6 +4273,17 @@ describe('#140: the store under its limit', () => {
     expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
   })
 
+  // PR #145 review round 2, finding 1 (Codex 4360654720): the counts come from what the re-reads found, not the first read.
+  test('the warning counts a run another session restarted before the delete as unfinished', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }
+    const restarted = otherRun(5, 'green', 5, { id: '5-2', title: 'x'.repeat(3_300_000) })
+    const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
+    await start($)
+    await run($, '16')
+    const warning = w.toasts.find(t => t.startsWith('store still 3.')) ?? ''
+    expect(warning).toContain('with 1 unfinished run in 1 repository')
+  })
+
   test('the warning shows once a session: a second start over the budget shows no second toast', async ($, on) => {
     const HERE = { ...PROFILE, workspace: 'here' }
     const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
