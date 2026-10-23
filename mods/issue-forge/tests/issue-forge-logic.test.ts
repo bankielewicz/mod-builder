@@ -71,6 +71,7 @@ import {
   newRun,
   nextDemoState,
   normalizePath,
+  openCounts,
   othersLine,
   othersOf,
   outputTail,
@@ -2737,6 +2738,13 @@ describe('#140: the store under its limit', () => {
       { key: 'doneLongAgo', run: run({ step: 'done', startedAt: 2 }), size: 100 },
     ]
     expect(budgetKeys(entries, 200, 150)).toEqual(['doneLongAgo'])
+  })
+
+  // PR #145 review round 2, finding 5: keys are read as parseRunKey reads them; a folder may be called project#2 (Codex 4278707570).
+  test("the warning's repositories: two checkouts named like issue keys are two, and one repository under both key forms is one", () => {
+    expect(openCounts(['issue-forge:run:/w/project#2', 'issue-forge:run:/w/project#3'])).toEqual({ unfinished: 2, repos: 2 })
+    expect(openCounts(['issue-forge:repo-run:/a/.git#1', 'issue-forge:run:/a'])).toEqual({ unfinished: 2, repos: 1 })
+    expect(openCounts([])).toEqual({ unfinished: 0, repos: 0 })
   })
 
   // PR #145 review round 2, finding 2: a key the sweep couldn't read weighs nothing in the plan, so the warning says so.
