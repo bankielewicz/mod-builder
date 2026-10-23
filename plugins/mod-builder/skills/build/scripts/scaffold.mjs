@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Scaffolds a mod from the templates: the common files plus one archetype.
 //
-//   node scaffold.mjs <archetype> <mods-folder> <name> "<description>" ["<author>"]
+//   node scaffold.mjs <archetype> <mods-folder> <name> "<description>" ["<author>"] ["<license>"]
+//
+// license: an SPDX identifier such as MIT, written into plugin.json only when given.
 //
 // archetype: band | pane-command | guard | watcher | command-only
 // Refuses to write into a folder that already holds files, so it never
@@ -15,7 +17,7 @@ const ARCHETYPES = ['band', 'pane-command', 'guard', 'watcher', 'command-only']
 const here = dirname(fileURLToPath(import.meta.url))
 const templates = resolve(here, '../templates')
 
-const [archetype, modsDir, name, description, author = 'Unknown'] = process.argv.slice(2)
+const [archetype, modsDir, name, description, author = 'Unknown', license = ''] = process.argv.slice(2)
 
 function fail(message) {
   console.error(`scaffold: ${message}`)
@@ -31,10 +33,12 @@ const title = name
   .split('-')
   .map(word => word[0].toUpperCase() + word.slice(1))
   .join(' ')
-// __DESCRIPTION__ and __AUTHOR__ sit inside JSON strings; __DESCRIPTION_JS__ is a whole JS string literal.
+// __DESCRIPTION__, __AUTHOR__ and __LICENSE__ sit inside JSON strings; __DESCRIPTION_JS__ is a whole JS string literal.
 const inJson = text => JSON.stringify(text).slice(1, -1)
+// No license given: its whole line goes, since a license is the person's choice and is never made up.
+const withLicense = text => (license ? text.replaceAll('__LICENSE__', inJson(license)) : text.replace(/^.*__LICENSE__.*\n/gm, ''))
 const fill = text =>
-  text
+  withLicense(text)
     .replaceAll('__NAME__', name)
     .replaceAll('__TITLE__', title)
     .replaceAll('__DESCRIPTION_JS__', JSON.stringify(description))
