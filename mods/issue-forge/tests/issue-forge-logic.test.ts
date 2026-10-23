@@ -2811,8 +2811,18 @@ describe('#140: the store under its limit', () => {
     expect(staleLine([], now)).toBe(null)
   })
 
-  // A toast already carries the mod's name (docs/research/Mods, Use-the-mods-API.md:212), so the text doesn't repeat it.
-  test('the warning when only unfinished runs are left over the budget', () => {
-    expect(storeWarning(3.3 * 1024 * 1024)).toBe("saved runs take 3.3 MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop")
+  // A toast already carries the mod's name (docs/research/Mods, Use-the-mods-API.md:212), so the text doesn't repeat it. It names
+  // what is left across repositories, as status names only its own repository's old runs (PR #145 review round 1, finding 2).
+  test('the warning when the store is still over the budget names the unfinished runs left and where they are', () => {
+    const warn = storeWarning as unknown as (bytes: number, unfinished: number, repos: number) => string
+    expect(warn(3.3 * 1024 * 1024, 1, 1)).toBe("store still 3.3 MiB of Claude Code's 4 MiB after the cleanup, with 1 unfinished run in 1 repository; /issue-forge stop <N>, in a run's repository, ends one")
+    expect(warn(3.3 * 1024 * 1024, 3, 2)).toBe("store still 3.3 MiB of Claude Code's 4 MiB after the cleanup, with 3 unfinished runs in 2 repositories; /issue-forge stop <N>, in a run's repository, ends one")
+    const plan = sweepPlan([
+      { key: 'issue-forge:repo-run:/other/.git#1', value: run({ id: '1-1', step: 'blocked' }) },
+      { key: 'issue-forge:repo-run:/other/.git#2', value: run({ id: '2-1', step: 'ready' }) },
+      { key: 'issue-forge:run:/elsewhere', value: run({ id: '3-1', step: 'green' }) },
+      { key: 'issue-forge:repo-run:/other/.git#4', value: run({ id: '4-1', step: 'done' }) },
+    ]) as ReturnType<typeof sweepPlan> & { unfinished?: number; repos?: number }
+    expect([plan.unfinished, plan.repos]).toEqual([3, 2])
   })
 })

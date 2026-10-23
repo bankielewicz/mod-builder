@@ -4239,9 +4239,9 @@ describe('#140: the store under its limit', () => {
     await start($)
     expect((await run($, '16')).text).toContain('starting #16')
     expect(OTHER(7) in store).toBe(true)
-    const warnings = w.toasts.filter(t => t.includes("MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop"))
+    const warnings = w.toasts.filter(t => t.includes("MiB of Claude Code's 4 MiB after the cleanup, with 1 unfinished run in 1 repository"))
     expect(warnings.length).toBe(1)
-    expect(warnings[0]).toStartWith('saved runs take 3.')
+    expect(warnings[0]).toStartWith('store still 3.')
   })
 
   // PR #145 review round 1, finding 4: one failed read is skipped, not the end of the sweep.
