@@ -2687,7 +2687,8 @@ describe('#140: the store under its limit', () => {
     expect(roomy.trim).toEqual([other(1)])
     expect(roomy.drop).toEqual([])
     const tight = sweepPlan(entries, 4000)
-    expect(tight.trim).toEqual([other(1)])
+    // A record the plan deletes isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
+    expect(tight.trim).toEqual([])
     expect(tight.drop).toEqual([other(1), other(2)])
     expect(tight.left).toBeGreaterThan(4000)
     const after = entries.filter(e => e.key !== other(1) && e.key !== other(2))
@@ -2708,7 +2709,9 @@ describe('#140: the store under its limit', () => {
     } catch (err) {
       plan = `threw: ${String(err)}`
     }
-    expect(plan).toEqual({ trim: [other(3)], drop: [other(3)], left: storeSize(entries.slice(0, 2)) })
+    expect(typeof plan).toBe('object')
+    const p = plan as ReturnType<typeof sweepPlan>
+    expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], storeSize(entries.slice(0, 2))])
   })
 
   // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves a pre-0.3 record of another checkout in place.
