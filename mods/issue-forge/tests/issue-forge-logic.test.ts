@@ -2715,13 +2715,15 @@ describe('#140: the store under its limit', () => {
     expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], storeSize(entries.slice(0, 2))])
   })
 
-  // PR #145 review round 1, finding 6: the session driving a run knows it is unfinished.
-  test("the stale line leaves out a run this session drives, and keeps another session's", () => {
+  // PR #145 review round 1, finding 6: the session driving a run knows it is unfinished. Round 2 (Codex 4360654727): by the run
+  // this module drives, as a reload of the module ends the drive while the stored driver still names this session.
+  test('the stale line leaves out the run this module drives, and keeps one whose stored driver is this session after a reload', () => {
     const now = 10 * DAY
-    const mine = run({ issue: 8, step: 'green', startedAt: 1 * DAY, driver: { session: 'me', since: now } })
-    const theirs = run({ issue: 9, step: 'green', startedAt: 1 * DAY, driver: { session: 'other', since: now } })
-    expect(staleLine([mine, theirs], now, 'me')).toBe('unfinished for over 7 days: #9 green (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
-    expect(staleLine([mine], now, 'me')).toBe(null)
+    const driven = run({ id: '8-1', issue: 8, step: 'green', startedAt: 1 * DAY, driver: { session: 'me', since: now } })
+    const reloaded = run({ id: '9-1', issue: 9, step: 'green', startedAt: 1 * DAY, driver: { session: 'me', since: now } })
+    expect(staleLine([driven, reloaded], now, '8-1')).toBe('unfinished for over 7 days: #9 green (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+    expect(staleLine([driven], now, '8-1')).toBe(null)
+    expect(staleLine([driven], now, null)).toContain('#8 green')
   })
 
   // PR #145 review round 1, finding 14: a run blocked for days and stopped today isn't the oldest finished run.
