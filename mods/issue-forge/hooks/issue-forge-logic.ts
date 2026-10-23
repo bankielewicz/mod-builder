@@ -2346,8 +2346,10 @@ const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAn
 export function finishedRecord(run: Run): Run {
   const { lastTestTail: _l, redTestTail: _r, redAnswer: _a, behaviourAnswer: _b, ...rest } = run
   // A body that isn't a string (a hand-edited or foreign record) stays as it is (PR #145 review round 1, finding 7).
-  const isLong = typeof run.body === 'string' && run.body.length > BODY_EXCERPT_CHARS
-  return { ...rest, body: isLong ? `${run.body.slice(0, BODY_EXCERPT_CHARS)}…` : run.body }
+  if (typeof run.body !== 'string' || run.body.length <= BODY_EXCERPT_CHARS) return { ...rest, body: run.body }
+  // Never half an emoji: a cut that would end on a high surrogate ends one unit sooner (PR #145 review round 1, finding 9).
+  const end = (run.body.charCodeAt(BODY_EXCERPT_CHARS - 1) & 0xfc00) === 0xd800 ? BODY_EXCERPT_CHARS - 1 : BODY_EXCERPT_CHARS
+  return { ...rest, body: `${run.body.slice(0, end)}…` }
 }
 
 /** Whether a record is already as `finishedRecord` leaves it. */
@@ -2435,7 +2437,10 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
 /** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */
 export function outputTail(text: string): string {
   const tail = tailLines(text)
-  return tail.length > TAIL_MAX_CHARS ? tail.slice(-TAIL_MAX_CHARS) : tail
+  if (tail.length <= TAIL_MAX_CHARS) return tail
+  const cut = tail.slice(-TAIL_MAX_CHARS)
+  // A cut that starts on a low surrogate drops it: never half an emoji in a prompt (PR #145 review round 1, finding 9).
+  return (cut.charCodeAt(0) & 0xfc00) === 0xdc00 ? cut.slice(1) : cut
 }
 
 /** Status's line for unfinished runs started over `STALE_DAYS` ago, oldest first: nothing clears their branches by itself. */
