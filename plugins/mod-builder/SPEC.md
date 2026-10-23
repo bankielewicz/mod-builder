@@ -1194,3 +1194,42 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - **Logic coverage:** lines 99.68%, branches 90.98% and functions 99.08%. LCOV has 33 branch records on the new functions, none of them untaken.
     - **Live check:** `claude -p --debug-file <new log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"` answered. The log has `is one plugin`, `loaded` and `admitted`, and no failure line. It deleted nothing, since the first live check had already pruned that store.
 
+## Change 0.2.31 (2026-10-23)
+
+> Issue #141, "mod-builder:edit: find the mod by its marketplace entry, so a plugin outside mods/ (mod-builder itself) can be edited; plus release metadata". The owner chose it next, 2026-10-23: "#141 edit outside mods/". It also holds three comments the owner folded in: PR #142's two post-merge Codex P2s (6364044223), and the store's limit for `gotchas.md` (6368199989, 6369261334).
+
+- **Following the edit skill by hand, for the last time:** this change is what lets the skill take mod-builder itself. No `lab_report` is sent, for the reason in 0.2.30.
+- **Why:** edit's step 0.1 finds a mod only at `<mods>/<mod>/` [read: `skills/edit/SKILL.md:19`], and `<mods>` is `<root>/mods/` [read: `skills/build/SKILL.md:41-46`]. This marketplace lists `./plugins/mod-builder` [read: `.claude-plugin/marketplace.json:10`], so 0.2.29, 0.2.30 and this change all followed the skill by hand.
+- **What `--strict` does today** [ran: `claude plugin validate --strict`, 2026-10-23]:
+  - On 2.1.309, the marketplace and all four plugins (`plugins/mod-builder`, `mods/git-branch`, `mods/issue-forge`, `mods/turn-counter`) pass. Each plugin has one plugin-directory warning, `ICON_MISSING`, which `--strict` doesn't fail on.
+  - On 2.1.296, CI's pin, `validate --help` lists `--strict` ("Treat warnings as errors (exit 1). Use in CI …"), and the same five pass. 2.1.296 ran from an `npm install --prefix` in the scratchpad.
+- **What changes:**
+  1. **Edit finds a mod by its marketplace entry.**
+     - Step 0.1 reads `<root>/.claude-plugin/marketplace.json`, finds the entry whose `name` is the mod, and resolves its `source` against the root. `<root>/mods/<mod>/` is the usual case, not the only one. No entry, or a `source` that isn't a relative path in the repository (a `github` or `url` source): stop and say why.
+     - Build's step 0.2 is unchanged: a new mod still goes in `<root>/mods/`.
+     - **Mod Lab, option (a), the recommended one:** step 0.3 reports to Mod Lab only when the folder is under `<root>/mods/`. Otherwise it says in one line that Mod Lab won't show this edit, and sends no report. The hand-off says the same. Mod Lab is unchanged.
+     - **Option (b), if the owner picks it:** Mod Lab would pin the folder that holds an entry's plugin, such as `plugins/`. `pinCheckOf` and the scan would change, and Mod Lab would judge itself. That is a code change with red and green tests, as #141 lists, and it would make this change a larger one.
+  2. **`--strict` in CI.** `.github/workflows/ci.yml:35` and `:42` run `claude plugin validate --strict`, and so does the build skill's copy, `skills/build/ci/ci.yml`. The two stay byte-identical (`cmp` in QA). The archetype check validates each scaffolded mod with `--strict` too.
+  3. **mod-builder's manifest** gains `homepage` and `repository`, both `https://github.com/bankielewicz/mod-builder` (the marketplace's address in `CLAUDE.md`), and `displayName`, whose value is the owner's [read: `docs/research/claude-plugins/Publish-and-distribute-a-plugin.md:40`, `:62`, untracked, main folder only: "Set `displayName` in `plugin.json` for the label users see", "Set `description`, `author`, `homepage`, and `repository` … `homepage` must parse as a URL"].
+  4. **`license` in the scaffold.**
+     - `scaffold.mjs` takes an optional sixth argument, the license, and writes `"license": "<it>"` into the new `plugin.json`. Without one, it writes no `license` line, and no `__LICENSE__` is left behind.
+     - The build skill fills the license from the repository's `LICENSE` file when the file names one (`MIT License` gives `MIT`). Otherwise it asks in step 1's batch, and it leaves the field out when the person gives none. It never makes one up.
+  5. **PR #142's two late Codex P2s** (#141 comment 6364044223):
+     - **A managed lock:** build's step 4 (`skills/build/SKILL.md:141`) says a `--plugin-dir` copy replaces an installed one "so there is nothing to turn off". It now names the exception. A plugin whose id managed settings' `enabledPlugins` names isn't replaced, and the log says `--plugin-dir copy of "<name>" ignored: plugin is locked by managed settings`. Step 4's failure list says that line means a policy must change before the folder's copy can be checked, and edit's step 0.4 says the same. All three are tagged "docs, not observed": managed settings are outside the repository.
+     - **The update command:** the README template's `claude plugin update` (`templates/README.template.md:40`) becomes `claude plugin update __NAME__@<marketplace-name>`, the placeholder the install line above it already uses, so step 5 fills both. `claude plugin update` with no argument prints `error: missing required argument 'plugin'` [ran: 2.1.309, 2026-10-23, the comment].
+  6. **The store's limit in `gotchas.md`** (#141 comments 6368199989, 6369261334), beside the `$.store` entry. The limit is per plugin, over every key together, so a mod that keeps a record per item bounds what it keeps [d.ts]. What counts, a key's length, and one value on its own, from a probe:
+     - **The probe:** a throwaway mod under `claude -p --plugin-dir` on 2.1.309 sets a 257-character key, a value of about 1.5 million three-byte characters (over 4 MiB as UTF-8 and under it in characters), and one value over 4,194,304 characters, then deletes its keys.
+     - It writes and deletes only in that probe plugin's own store file under `~/.claude/plugins/store/`.
+     - Each fact is tagged `[probe]` only as far as the probe shows it. What the 2.1.309 binary showed beyond that stays in #141's comment.
+- **Not changed:** Mod Lab's code under option (a); `ICON_MISSING`, which matters only for a submission to Anthropic's directory (#141); `git-branch`'s and `issue-forge`'s manifests.
+- **What gets touched:** `skills/edit/SKILL.md`, `skills/build/SKILL.md`, `skills/build/scripts/scaffold.mjs`, `skills/build/scripts/check-archetypes.sh`, `skills/build/templates/scaffold/.claude-plugin/plugin.json.tpl`, `skills/build/templates/README.template.md`, `skills/build/references/gotchas.md`, `.github/workflows/ci.yml` with `skills/build/ci/ci.yml`, `.claude-plugin/plugin.json`, this SPEC, and version 0.2.31 in `plugin.json` and the marketplace entry. No new reach.
+- **Tests:**
+  - **First, failing:** `scaffold.mjs` is code, so the archetype check first scaffolds one archetype with a license and expects `"license": "MIT"` in its `plugin.json`, and one without and expects no `license` line and no `__LICENSE__`. On today's scaffold the first fails.
+  - The rest is skill text and configuration: the documentation review, and QA.
+- **QA:**
+  - `claude plugin validate --strict` for the marketplace and every plugin, on 2.1.309. CI runs it on 2.1.296.
+  - `claude plugin test plugins/mod-builder`, the archetype check and the sandbox check.
+  - `cmp` of the two `ci.yml` files.
+  - **Live check:** `claude -p --debug-file <new log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"`, since the manifest changes: loaded, admitted, and no failure line.
+- **Version:** 0.2.31 (patch: skill text, templates and metadata; no change to commands, options or the state contract).
+
