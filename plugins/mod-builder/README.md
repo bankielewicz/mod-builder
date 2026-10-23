@@ -163,7 +163,8 @@ within it each mods folder keeps its own results. If you switch either one (anot
 or a `/cd` into another worktree), Validate and Test show `○` until you press V and T once.
 Results don't build up (0.2.30): at session start, Mod Lab deletes those of a mods folder that's gone, such as a
 removed worktree, and each scan drops a mod that's no longer in its folder. A folder it can't check, such as one it
-has no permission to read, keeps its results. A drive that isn't mounted reads as gone.
+has no permission to read, keeps its results, and so does a folder that lists no mods at all. A drive that isn't
+mounted reads as gone.
 
 ## Options
 
