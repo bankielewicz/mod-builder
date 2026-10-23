@@ -4247,9 +4247,9 @@ describe('#140: the store under its limit', () => {
     await start($)
     expect((await run($, '16')).text).toContain('starting #16')
     expect(OTHER(7) in store).toBe(true)
-    const warnings = w.toasts.filter(t => t.includes("MiB of Claude Code's 4 MiB after the cleanup, with 1 unfinished run in 1 repository"))
+    const warnings = w.toasts.filter(t => t.includes("of Claude Code's limit after the cleanup: 1 unfinished run in 1 repository left"))
     expect(warnings.length).toBe(1)
-    expect(warnings[0]).toStartWith('store still 3.')
+    expect(warnings[0]).toStartWith('store still at 79%')
   })
 
   // PR #145 review round 1, finding 3: the sweep's guards. Its second read of a key is the re-read before the write.
@@ -4270,7 +4270,7 @@ describe('#140: the store under its limit', () => {
     expect((await run($, '16')).text).toContain('starting #16')
     // The id, not the record: a failure that printed 3.3 MB of title would end the test run without a report.
     expect((store[OTHER(5)] as any)?.id).toBe('5-2')
-    expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
+    expect(w.toasts.filter(t => t.startsWith('store still at '))).toHaveLength(1)
   })
 
   // PR #145 review round 3, finding 2 (Codex 4361161666): two starts at once both plan the same delete; the second finds it gone.
@@ -4280,7 +4280,7 @@ describe('#140: the store under its limit', () => {
     await start($)
     expect((await run($, '16')).text).toContain('starting #16')
     expect(OTHER(5) in store).toBe(false)
-    expect(w.toasts.filter(t => t.startsWith('store still'))).toEqual([])
+    expect(w.toasts.filter(t => t.startsWith('store still at '))).toEqual([])
   })
 
   // PR #145 review round 2, finding 1 (Codex 4360654720): the counts come from what the re-reads found, not the first read.
@@ -4290,8 +4290,8 @@ describe('#140: the store under its limit', () => {
     const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
     await start($)
     await run($, '16')
-    const warning = w.toasts.find(t => t.startsWith('store still 3.')) ?? ''
-    expect(warning).toContain('with 1 unfinished run in 1 repository')
+    const warning = w.toasts.find(t => t.startsWith('store still at ')) ?? ''
+    expect(warning).toContain('1 unfinished run in 1 repository left')
   })
 
   test('the warning shows once a session: a second start over the budget shows no second toast', async ($, on) => {
@@ -4304,7 +4304,7 @@ describe('#140: the store under its limit', () => {
     w.answer = 'Start #17 here (Recommended)'
     await run($, '17')
     await until(w, () => w.toasts.some(t => t.startsWith('#17 blocked')), "#17's block")
-    expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
+    expect(w.toasts.filter(t => t.startsWith('store still at '))).toHaveLength(1)
   })
 
   // PR #145 review round 1, finding 4: one failed read is skipped, not the end of the sweep.
@@ -4326,7 +4326,8 @@ describe('#140: the store under its limit', () => {
     const w = engine(on, { storeHold: HOLD(), storeGetFails: [OTHER(6)] }, store)
     await start($)
     expect((await run($, '16')).text).toContain('starting #16')
-    expect(w.toasts.filter(t => t.endsWith("1 key couldn't be read, so the store may be bigger"))).toHaveLength(1)
+    expect(w.toasts.filter(t => t.endsWith("1 key couldn't be read and isn't counted; 1 unfinished run in 1 repository left: /issue-forge stop <N>, in a run's repository, ends one"))).toHaveLength(0)
+    expect(w.toasts.filter(t => t.endsWith(": 1 key couldn't be read and isn't counted"))).toHaveLength(1)
   })
 
   // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves another checkout's pre-0.3 record where it is.

@@ -2799,13 +2799,18 @@ describe('#140: the store under its limit', () => {
     expect(openCounts([])).toEqual({ unfinished: 0, repos: 0 })
   })
 
-  // PR #145 review round 2, finding 2: a key the sweep couldn't read weighs nothing in the plan, so the warning says so.
-  test('the warning names the keys the sweep could not read, as the store may be bigger than measured', () => {
-    const warn = storeWarning as (bytes: number, unfinished: number, repos: number, unreadable?: number) => string
-    const head = "store still 1.0 MiB of Claude Code's 4 MiB after the cleanup, with 0 unfinished runs in 0 repositories; /issue-forge stop <N>, in a run's repository, ends one"
-    expect(warn(1024 * 1024, 0, 0, 1)).toBe(`${head}; 1 key couldn't be read, so the store may be bigger`)
-    expect(warn(1024 * 1024, 0, 0, 2)).toBe(`${head}; 2 keys couldn't be read, so the store may be bigger`)
-    expect(warn(1024 * 1024, 0, 0)).toBe(head)
+  // PR #145 review round 3, finding 5: the warning names each cause that applies, not always unfinished runs, and gives the
+  // store as a share of the engine's limit, which counts characters (finding 3), not MiB of bytes. It replaces round 2's
+  // unreadable-key test and round 1's text test, which pinned the old wording.
+  test('the warning names each cause that applies, with the store as a share of the limit', () => {
+    type Warning = { size: number; unfinished: number; repos: number; unreadable: number; failed: number }
+    const warn = storeWarning as unknown as (w: Warning) => string
+    const at = 0.8 * 4 * 1024 * 1024
+    const head = "store still at 80% of Claude Code's limit after the cleanup"
+    expect(warn({ size: at, unfinished: 1, repos: 1, unreadable: 0, failed: 0 })).toBe(`${head}: 1 unfinished run in 1 repository left: /issue-forge stop <N>, in a run's repository, ends one`)
+    expect(warn({ size: at, unfinished: 3, repos: 2, unreadable: 2, failed: 1 })).toBe(`${head}: 1 trim or delete didn't go through, and the next start tries again; 2 keys couldn't be read and aren't counted; 3 unfinished runs in 2 repositories left: /issue-forge stop <N>, in a run's repository, ends one`)
+    expect(warn({ size: at, unfinished: 0, repos: 0, unreadable: 1, failed: 2 })).toBe(`${head}: 2 trims or deletes didn't go through, and the next start tries again; 1 key couldn't be read and isn't counted`)
+    expect(warn({ size: at, unfinished: 0, repos: 0, unreadable: 0, failed: 0 })).toBe(`${head}: what's left isn't a run the cleanup can remove`)
   })
 
   // PR #145 review round 1, finding 7: a record whose body isn't a string (hand-edited, or foreign) mustn't break stop or the sweep.
@@ -2882,10 +2887,7 @@ describe('#140: the store under its limit', () => {
 
   // A toast already carries the mod's name (docs/research/Mods, Use-the-mods-API.md:212), so the text doesn't repeat it. It names
   // what is left across repositories, as status names only its own repository's old runs (PR #145 review round 1, finding 2).
-  test('the warning when the store is still over the budget names the unfinished runs left and where they are', () => {
-    const warn = storeWarning
-    expect(warn(3.3 * 1024 * 1024, 1, 1)).toBe("store still 3.3 MiB of Claude Code's 4 MiB after the cleanup, with 1 unfinished run in 1 repository; /issue-forge stop <N>, in a run's repository, ends one")
-    expect(warn(3.3 * 1024 * 1024, 3, 2)).toBe("store still 3.3 MiB of Claude Code's 4 MiB after the cleanup, with 3 unfinished runs in 2 repositories; /issue-forge stop <N>, in a run's repository, ends one")
+  test('the plan counts the unfinished runs left and where they are, for the warning', () => {
     const plan = sweepPlan([
       { key: 'issue-forge:repo-run:/other/.git#1', value: run({ id: '1-1', step: 'blocked' }) },
       { key: 'issue-forge:repo-run:/other/.git#2', value: run({ id: '2-1', step: 'ready' }) },
