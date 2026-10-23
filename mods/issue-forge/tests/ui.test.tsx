@@ -124,6 +124,10 @@ type World = {
   storeGetFails?: string[]
   /** With `storeHold`, runs before each `$.store.get` answers, with the key and how many times it has been read (finding 3). */
   onStoreGet?: (key: string, reads: number) => void
+  /** With `storeHold`, the next `$.store.keys` rejects, once (PR #145 review round 3, finding 4). */
+  storeKeysFailNext?: boolean
+  /** Every `$.ui.log` line (PR #145 review round 3, finding 4). */
+  logs: string[]
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -249,6 +253,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     asked: [],
     choices: [],
     toasts: [],
+    logs: [],
     opened: [],
     opens: [],
     closed: [],
@@ -273,7 +278,11 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       hold.isHeld = true
       return hold.until.then(land)
     })
-    on('store.keys', () => ({ value: Object.keys(store) }))
+    on('store.keys', () => {
+      if (!world.storeKeysFailNext) return { value: Object.keys(store) }
+      world.storeKeysFailNext = false
+      return { deny: 'the store could not be listed' }
+    })
     on('store.delete', ($: any, e: any) => (delete store[e.key], world.storeOps?.push(`delete ${e.key}`), { value: undefined }))
   } else mock.store(on, store)
   on('session.id', () => ({ value: SESSION }))
@@ -289,6 +298,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('ui.close', ($: any, e: any) => (world.closed.push(e.id), { value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', ($: any, e: any) => (world.toasts.push(e.text ?? String(e)), { value: undefined }))
+  on('ui.log', ($: any, e: any) => (world.logs.push(e.text), { value: undefined }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
   on('session.receive', ($: any, e: any) => ({ text: e.text }))
@@ -4271,6 +4281,16 @@ describe('#140: the store under its limit', () => {
     // The id, not the record: a failure that printed 3.3 MB of title would end the test run without a report.
     expect((store[OTHER(5)] as any)?.id).toBe('5-2')
     expect(w.toasts.filter(t => t.startsWith('store still at '))).toHaveLength(1)
+  })
+
+  // PR #145 review round 3, finding 4: a sweep that fails leaves a line in the transcript, and the run still starts.
+  test('a sweep that fails writes "store sweep failed" to the transcript, and the run starts', async ($, on) => {
+    // The issue is read just before the run is begun, so the next listing of the store is the sweep's.
+    let w: World | null = null
+    w = engine(on, { storeHold: HOLD(), beforeIssueView: () => void (w && (w.storeKeysFailNext = true)) }, {})
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(w.logs.filter(line => line.startsWith('store sweep failed: '))).toHaveLength(1)
   })
 
   // PR #145 review round 3, finding 2 (Codex 4361161666): two starts at once both plan the same delete; the second finds it gone.
