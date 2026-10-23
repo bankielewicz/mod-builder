@@ -23,6 +23,8 @@ const TOOL = 'lab_report'
 const RESULTS_KEY = 'modlab:results'
 const DONE_KEY = 'modlab:done'
 const GENERATIONS_KEY = 'modlab:generations'
+/** Each names one set of a mods folder's records, `<prefix>:<modsDir>`; alone, the unkeyed set from before 0.2.9. */
+const STORE_PREFIXES = [RESULTS_KEY, DONE_KEY, GENERATIONS_KEY]
 const FRAME_MS = 250
 const NAME_COLUMN = 18
 const LABEL_COLUMN = 11
@@ -482,6 +484,31 @@ function updateGenerations($: Engine, modsDir: string, change: (current: Record<
   return updateStore($, GENERATIONS_KEY, modsDir, (stored: StoredGenerations) => change(generationsFrom(stored)))
 }
 
+/** Deletes one key in turn with `updateStore`'s writes, so a write this session started for it lands first (#138). */
+function deleteStore($: Engine, key: string): Promise<void> {
+  storeChain = storeChain.catch(() => undefined).then(() => $.store.delete(key))
+  return storeChain
+}
+
+/**
+ * Change 0.2.30 (#138): deletes the keys of mods folders that are gone, and each unkeyed key from before 0.2.9 its own
+ * keyed record has replaced. A folder is gone only when `$.fs.stat` says ENOENT: one it can't check keeps its keys.
+ * Each delete is logged; a refused one is logged and skipped.
+ */
+async function pruneStore($: Engine): Promise<void> {
+  const keys = await $.store.keys()
+  const legacyDir = legacyDirOf($)
+  const folders = Lab.storeFoldersOf(keys, STORE_PREFIXES, legacyDir)
+  const isGone = await Promise.all(folders.map(dir => $.fs.stat(dir).then(() => false, (error: unknown) => Lab.folderGone(Lab.errorText(error)))))
+  const gone = folders.filter((_, at) => isGone[at])
+  for (const { key, why } of Lab.prunableKeys(keys, STORE_PREFIXES, gone, legacyDir)) {
+    await deleteStore($, key).then(
+      () => logEvent($, 'normal', 'store', `deleted ${key} (${why})`),
+      (error: unknown) => logCaught($, 'store.delete', error, 'normal', { key }),
+    )
+  }
+}
+
 // ── Scanning ──────────────────────────────────────────────────────────────
 
 /** Every mod read again: what every scan did before 0.2.24, and still does unless a tool batch asks for less. */
@@ -582,6 +609,19 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
   // A build that reported a mod before writing its folder gets a row of its own until the folder is found (#19).
   const builds = Lab.liveReports((await read($, building))[dir] ?? {}, await $.clock.now())
   const placeholders = Lab.placeholderNames(builds, [...found.keys()], dir)
+  // A mod no longer in the folder drops out of its records (#138), unless a build reported it before writing its folder.
+  // A listing that failed reads as no folders at all, so it drops nothing.
+  const keep = unlisted.length === 0 ? [...names, ...placeholders] : null
+  if (keep && Lab.withoutGone(results, keep)) {
+    await updateStore($, RESULTS_KEY, dir, (stored: StoredResults) => Lab.withoutGone(stored, keep) ?? stored).catch((error: unknown) =>
+      logCaught($, 'store.set', error, 'normal', { key: keyOf(RESULTS_KEY, dir) }),
+    )
+  }
+  if (keep && Lab.withoutGone(generations, keep)) {
+    await updateStore($, GENERATIONS_KEY, dir, (stored: StoredGenerations) => Lab.withoutGone(stored, keep) ?? stored).catch((error: unknown) =>
+      logCaught($, 'store.set', error, 'normal', { key: keyOf(GENERATIONS_KEY, dir) }),
+    )
+  }
   const judge = (freshIds: readonly string[]): ModView[] => [
     ...[...factsByMod.values()].map(facts =>
       Lab.viewOf(
@@ -606,7 +646,7 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
       ),
     ),
   ]
-  const newlyGreen = await announceGreen($, judge([]), isAnnounced, dir)
+  const newlyGreen = await announceGreen($, judge([]), isAnnounced, dir, keep)
   const marks = await read($, fresh)
   const kept = Lab.freshIdsOf(marks, legacyDirOf($))
   const freshIds = [...new Set([...kept, ...newlyGreen.map(freshIdOf)])]
@@ -646,13 +686,16 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
 
 /**
  * The first time a mod turns all green at its current code: a toast and a
- * notification (when announced). Returns the mods that just turned green.
+ * notification (when announced). Returns the mods that just turned green. The marks of mods not in `keep`, when the
+ * scan's listing succeeded, go in the same write (#138): `done` isn't written through `updateStore`.
  */
-async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean, modsDir: string): Promise<string[]> {
+async function announceGreen($: Engine, judged: readonly ModView[], isAnnounced: boolean, modsDir: string, keep: readonly string[] | null): Promise<string[]> {
   const doneKey = keyOf(DONE_KEY, modsDir)
-  const done = ((await storedOf($, DONE_KEY, modsDir)) ?? {}) as Record<string, number | string>
+  const stored = ((await storedOf($, DONE_KEY, modsDir)) ?? {}) as Record<string, number | string>
+  const kept = keep ? Lab.withoutGone(stored, keep) : null
+  const done = kept ?? stored
   const newly: string[] = []
-  let isChanged = false
+  let isChanged = kept !== null
   for (const view of judged) {
     const stamp = factsByMod.get(view.name)?.codeSig ?? ''
     if (!Lab.isGreen(view.lights) || done[view.name] === stamp) continue
@@ -1158,6 +1201,8 @@ export const register: Register = (on, options) => {
     await clearLeftRuns($).catch((error: unknown) => logCaught($, 'session.start.runs', error))
     void logStart($).catch((error: unknown) => logCaught($, 'session.start.log', error))
     void scan($, false).catch((error: unknown) => logCaught($, 'session.start.scan', error))
+    // Detached, as the scan is: Claude Code waits for this hook before the first prompt (#138).
+    void pruneStore($).catch((error: unknown) => logCaught($, 'session.start.prune', error))
     // A running report kept from before a reload has no clock in this module: start one, so it can expire (#19).
     if (await hasRunningReport($, await $.clock.now()).catch(() => false)) startClock($)
     return next(e)
