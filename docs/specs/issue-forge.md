@@ -392,17 +392,19 @@ summary and `[ Publish ]`. `done` shows the PR URL.
 `idle → preflight → baseline → red → gateR → green → gateG → refactor → gateF → ready → publishing → done`,
 with `blocked` reachable from every step, holding the step to resume.
 
-The stored run is `{ issue, ghRepo?, title, branch, base, mergeBase, redCommit?, greenCommit?, step, attempt, baseline, lastGate, startedAt }`.
+The stored run is `{ issue, ghRepo?, title, branch, base, mergeBase, redCommit?, greenCommit?, step, attempt, baseline, lastGate, startedAt, finishedAt? }`.
+A second `/issue-forge <N>` while a run is active in the same repository answers with the active
+run's status and starts nothing.
+
 Claude Code refuses a store over 4 MiB of JSON, one store per plugin, every repository's runs together (SPEC change
 0.9.0, #140). A run that becomes `done` or `stopped` is stored without its test tails and the red agent's answers, and
 with the issue's first 500 characters: only the phases and publish read them. It records `finishedAt`. Before a new run
 is written, a sweep trims finished records saved before 0.9.0 (0.2's checkout keys included), then deletes finished runs
-of any repository, those that finished longest ago first, while the store, measured as UTF-8 JSON, is over 3 MiB. A key
-it can't read is skipped. It never deletes an unfinished run, and it warns once a session when the store is still over
-the budget, with the unfinished runs and repositories left. A command's tail is capped at 20,000 characters as well as
-200 lines, and status names unfinished runs started more than 7 days ago, except one the session itself drives.
-A second `/issue-forge <N>` while a run is active in the same repository answers with the active
-run's status and starts nothing.
+of any repository, those that finished longest ago first, while the store, measured as UTF-8 JSON, is over 3 MiB. It
+never deletes an unfinished run. It warns once a session when the store is still over the budget, naming the unfinished
+runs and repositories left, or when a key couldn't be read, which it then can't measure. A command's tail is capped at
+20,000 characters as well as 200 lines, and status names unfinished runs started more than 7 days ago, except the one
+this session drives.
 
 ### 7.5 Files
 

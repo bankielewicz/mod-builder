@@ -220,7 +220,8 @@ Claude Code keeps one store per plugin, shared by every repository's runs, and r
 - Before a new run is saved, the store is measured. Finished runs saved by older versions, under 0.2's checkout keys
   too, are trimmed the same way. While the store is over 3 MiB, the finished runs of any repository are deleted, those
   that finished longest ago first. An unfinished run is never deleted. If the store is still over 3 MiB, a toast says
-  how big it is and how many unfinished runs are left in how many repositories, once a session.
+  how big it is and how many unfinished runs are left in how many repositories, once a session. It says so too when a
+  key couldn't be read, since the store may then be bigger than measured.
 - A command's output is kept to its last 200 lines and 20,000 characters.
 - `/issue-forge status` names unfinished runs that started more than 7 days ago, other than the one this session
   drives, with the `/issue-forge stop <N>` that ends each one and keeps its branch.
