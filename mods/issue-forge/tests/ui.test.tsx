@@ -4368,5 +4368,7 @@ describe('#140: the store under its limit', () => {
     expect((await run($, 'status')).text).toContain(LINE)
     expect((await run($, 'status 8')).text).toContain(LINE)
     expect((await run($, 'status 16')).text).toContain(LINE)
+    // PR #145 review round 2, finding 8: an issue with no run here answers with the stale line too.
+    expect((await run($, 'status 99')).text).toContain(LINE)
   })
 })
