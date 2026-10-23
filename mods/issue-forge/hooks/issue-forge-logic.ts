@@ -2385,7 +2385,21 @@ export function budgetKeys(entries: readonly { key: string; run: Run; size: numb
   return out
 }
 
-export type SweepPlan = { trim: string[]; drop: string[]; left: number }
+export type SweepPlan = {
+  trim: string[]
+  drop: string[]
+  /** The store's size now, before any trim or delete. */
+  size: number
+  /** What each trim and each delete saves, by key (PR #145 review round 1, finding 4). */
+  saves: Record<string, number>
+  /** The size once every trim and delete has landed. */
+  left: number
+}
+
+/** The store's size once the trims and deletes in `landed` went through; one the re-read refused, or whose write failed, frees nothing. */
+export function leftAfter(plan: Pick<SweepPlan, 'size' | 'saves'>, landed: readonly string[]): number {
+  return landed.reduce((n, key) => n - (plan.saves[key] as number), plan.size)
+}
 
 /** The sweep before a run is written: finished records to trim, then finished runs to delete past the budget, and the size left. */
 export function sweepPlan(entries: readonly { key: string; value: unknown }[], budget = STORE_BUDGET): SweepPlan {
@@ -2399,7 +2413,12 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
   const drop = budgetKeys(runs, size, budget)
   // A record to delete isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
   const trim = trimmable.filter(key => !drop.includes(key))
-  return { trim, drop, left: runs.filter(r => drop.includes(r.key)).reduce((n, r) => n - r.size, size) }
+  const valueOf = (key: string) => entries.find(e => e.key === key)?.value
+  const saves: Record<string, number> = {}
+  for (const key of drop) saves[key] = entrySize(key, valueOf(key))
+  for (const key of trim) saves[key] = entrySize(key, valueOf(key)) - entrySize(key, finishedRecord(valueOf(key) as Run))
+  const plan = { trim, drop, size: storeSize(entries), saves }
+  return { ...plan, left: leftAfter(plan, [...trim, ...drop]) }
 }
 
 /** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */

@@ -72,6 +72,7 @@ import {
   keptWorktreePlan,
   layoutOf,
   lcovFileOf,
+  leftAfter,
   legacyAgentsKey,
   lineOf,
   lockPathOf,
@@ -1700,19 +1701,23 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
  */
 async function sweepStore($: EngineInterface): Promise<void> {
   const entries: { key: string; value: unknown }[] = []
-  for (const key of await $.store.keys()) entries.push({ key, value: await $.store.get(key) })
+  // A key whose read fails reads as undefined, which the plan leaves out (PR #145 review round 1, finding 4).
+  for (const key of await $.store.keys()) entries.push({ key, value: await $.store.get(key).catch(() => undefined) })
   const plan = sweepPlan(entries)
   const listed = (key: string) => entries.find(e => e.key === key)?.value as Run
+  const landed: string[] = []
   for (const key of plan.trim) {
-    const stored = await loadRun($, key)
-    if (stored && isPrunable(listed(key), stored)) await $.store.set(key, finishedRecord(stored)).catch(() => undefined)
+    const stored = await loadRun($, key).catch(() => null)
+    if (stored && isPrunable(listed(key), stored)) await $.store.set(key, finishedRecord(stored)).then(() => landed.push(key), () => undefined)
   }
   for (const key of plan.drop) {
-    if (isPrunable(listed(key), await loadRun($, key))) await $.store.delete(key).catch(() => undefined)
+    if (isPrunable(listed(key), await loadRun($, key).catch(() => null))) await $.store.delete(key).then(() => landed.push(key), () => undefined)
   }
-  if (plan.left > STORE_BUDGET && !isStoreWarned) {
+  // The size left counts only what landed: a refused re-read or a failed write frees nothing.
+  const left = leftAfter(plan, landed)
+  if (left > STORE_BUDGET && !isStoreWarned) {
     isStoreWarned = true
-    $.ui.toast(storeWarning(plan.left))
+    $.ui.toast(storeWarning(left))
   }
 }
 
