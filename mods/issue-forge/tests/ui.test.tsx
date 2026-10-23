@@ -4242,6 +4242,19 @@ describe('#140: the store under its limit', () => {
     expect(warnings[0]).toStartWith('saved runs take 3.')
   })
 
+  // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves another checkout's pre-0.3 record where it is.
+  test("a start trims a finished pre-0.3 record of another checkout, which migration leaves under its old key", async ($, on) => {
+    const LEGACY = 'issue-forge:run:/elsewhere'
+    const store: Record<string, unknown> = { [LEGACY]: { ...otherRun(9, 'done', 0, { lastTestTail: 'T'.repeat(30_000), body: 'b'.repeat(2000) }), root: '/elsewhere' } }
+    engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    const kept = store[LEGACY] as any
+    expect(kept).toBeDefined()
+    expect('lastTestTail' in kept).toBe(false)
+    expect(kept.body).toBe(`${'b'.repeat(500)}…`)
+  })
+
   test('a stopped run is stored trimmed', async ($, on) => {
     const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('green', { redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', body: 'b'.repeat(600) }) }
     engine(on, { storeHold: HOLD() }, store)

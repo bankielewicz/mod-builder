@@ -2711,6 +2711,17 @@ describe('#140: the store under its limit', () => {
     expect(plan).toEqual({ trim: [other(3)], drop: [other(3)], left: storeSize(entries.slice(0, 2)) })
   })
 
+  // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves a pre-0.3 record of another checkout in place.
+  test('a record under a pre-0.3 issue-forge:run:<checkout> key is a run to the sweep: trimmed when finished, deleted past the budget', () => {
+    const legacy = 'issue-forge:run:/elsewhere'
+    const entries = [
+      { key: legacy, value: full({ id: '9-1', issue: 9, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) },
+      { key: 'issue-forge:repo-run:/other/.git#2', value: run({ id: '2-1', issue: 2, step: 'blocked', startedAt: 0 }) },
+    ]
+    expect(sweepPlan(entries, 100_000).trim).toEqual([legacy])
+    expect(sweepPlan(entries, 10).drop).toEqual([legacy])
+  })
+
   test('a test tail keeps 200 lines, then its last 20,000 characters', () => {
     const cut = outputTail(`${'y'.repeat(10_000)}${'x'.repeat(20_000)}`)
     expect(cut.length).toBe(20_000)
