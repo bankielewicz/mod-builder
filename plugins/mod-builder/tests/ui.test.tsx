@@ -4080,6 +4080,15 @@ describe('#138: records of folders and mods that are gone', () => {
     expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
   })
 
+  // PR #146 review round 1, finding 2: a folder empty for a moment (a checkout, a sync) isn't every mod gone.
+  test('a listing with no mod folders in it drops nothing', OPTIONS, async ($, on) => {
+    const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate') }, duet: { Test: ok('Test') } } }
+    const { clock, stored } = world(on, { [`${MODS}/README.md`]: '# mods' }, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.settle()
+    expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
+  })
+
   // PR #146 review round 1, finding 1 (Codex 4362849420): a generation written while the scan reads the mods survives its drop.
   test('a generation written after the scan read the records survives the drop of a gone mod', OPTIONS, async ($, on) => {
     const key = `modlab:generations:${MODS}`
