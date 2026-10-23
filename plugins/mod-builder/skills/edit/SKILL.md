@@ -16,11 +16,12 @@ templates are beside it. Read it once before step 1.
 
 Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude --version`). Then:
 
-1. Find `<mods>/<mod>/`. If it doesn't exist, stop:
-   - When the marketplace lists a plugin of that name elsewhere (a `source` such as
-     `./plugins/<mod>`), it is a plugin, not a mod this skill edits. Say so, and say to change it by
-     Anthropic's plugin documentation, its skills through plugin-dev's `skill-development` skill
-     where that is installed.
+1. Find `<mods>/<mod>/`. If it isn't there, stop, and:
+   - When `<root>/.claude-plugin/marketplace.json` lists `<mod>` with a `source` outside `<mods>/`,
+     such as `./plugins/<mod>`, say that this skill edits only the mods under `<mods>/`. Say to
+     change that plugin by Anthropic's plugin documentation
+     (https://code.claude.com/docs/en/plugins/create and the pages it links), and its skills with
+     `/plugin-dev:skill-development` (the `plugin-dev` plugin, from `claude-plugins-official`).
    - Otherwise, suggest `/mod-builder:build`.
 2. Read its `SPEC.md`, `README.md`, `.claude-plugin/plugin.json`, `hooks/` and `tests/`.
 3. **Mod Lab:** if `mcp__mod-builder__lab_report` is among your tools, your **first** call is
