@@ -45,7 +45,11 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
      in `/plugin`'s Installed tab: a `--plugin-dir` copy is the row `<name>  Plugin  inline`, and an
      installed copy's row names its marketplace. The `mods active` line names mods only. If the
      request doesn't say, ask in step 1's batch.
-     - Such a folder runs as `<name>@inline`. Its hooks module reloads when the person saves a file
+     - An archive is a copy: `--plugin-url` always loads one, and so does `--plugin-dir` given a
+       `.zip`. Claude Code extracts it into a session folder of its own, so an edit to the source
+       folder never reaches it. Tell the person to load the folder instead, or to rebuild the archive
+       and start a new session. The rest of this point is about a folder.
+     - A folder runs as `<name>@inline`. Its hooks module reloads when the person saves a file
        in it, or when a turn in which you saved files ends. Its skills, agents and other components
        load their changes at `/reload-plugins` (docs, not observed).
      - Each reload runs `register` again, so module variables reset, while `$.state` and `$.store`
