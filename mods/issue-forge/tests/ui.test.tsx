@@ -4273,6 +4273,16 @@ describe('#140: the store under its limit', () => {
     expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
   })
 
+  // PR #145 review round 3, finding 2 (Codex 4361161666): two starts at once both plan the same delete; the second finds it gone.
+  test('a run another session deleted before the re-read counts as freed, so a clean store shows no warning', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && delete store[OTHER(5)]) }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(OTHER(5) in store).toBe(false)
+    expect(w.toasts.filter(t => t.startsWith('store still'))).toEqual([])
+  })
+
   // PR #145 review round 2, finding 1 (Codex 4360654720): the counts come from what the re-reads found, not the first read.
   test('the warning counts a run another session restarted before the delete as unfinished', async ($, on) => {
     const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }

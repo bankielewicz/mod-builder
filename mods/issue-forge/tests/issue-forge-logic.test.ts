@@ -2658,6 +2658,23 @@ describe('#140: the store under its limit', () => {
     expect(blocked).toMatchObject({ step: 'blocked', redAnswer: 'notes', lastTestTail: 'last', body: LONG })
   })
 
+  // PR #145 review round 3, finding 2 (Codex 4361161666): a planned key another session already deleted frees its whole size.
+  test("a re-read tells a gone key from a restarted, a replaced and the same finished run, and a gone key's whole size counts as freed", () => {
+    const L = logic as Record<string, unknown>
+    const recheckOf = L.recheckOf as ((listed: Run, stored: unknown) => string) | undefined
+    const listed = run({ id: '5-1', step: 'done' })
+    expect(typeof recheckOf).toBe('function')
+    expect([undefined, null, run({ id: '5-2', step: 'green' }), run({ id: '5-2', step: 'done' }), run({ id: '5-1', step: 'done' })].map(s => recheckOf?.(listed, s))).toEqual(['gone', 'gone', 'restarted', 'other', 'same'])
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const a = { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) }
+    const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
+    const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
+    const plan = sweepPlan([a, b, c], sweepPlan([a, b, c], Infinity).left - 1) as ReturnType<typeof sweepPlan> & { sizes?: Record<string, number> }
+    expect(plan.sizes).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) })
+    const credit = leftAfter as unknown as (p: typeof plan, landed: readonly string[], gone?: readonly string[]) => number
+    expect(credit(plan, [], [other(2)])).toBe(plan.size - entrySize(b.key, b.value))
+  })
+
   // PR #145 review round 3, findings 1 and 6: a hand-edited or foreign key or record must neither break the sweep nor count as a run.
   test('a run key without #<issue>, or a record without a string step, is no run to the sweep, and the sweep still plans', () => {
     const entries = [
