@@ -4080,19 +4080,20 @@ describe('#138: records of folders and mods that are gone', () => {
     expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
   })
 
-  test("a build's mod whose folder isn't written yet keeps the result a Validate report stored for it", OPTIONS, async ($, on) => {
-    const seed = { [`modlab:results:${MODS}`]: { duet: { Test: ok('Test') } } }
-    const { clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+  // A finished report ends a build's placeholder (withBuilding), so a result stored before the folder exists belongs to no
+  // live build. What a placeholder keeps is a build that writes its folder again, such as a scaffold run a second time.
+  test("a live build whose folder is being written again keeps its mod's results until the folder is back", OPTIONS, async ($, on) => {
+    const disk: Disk = { ...modFiles('git-branch'), ...modFiles('new-mod') }
+    const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate') }, 'new-mod': { Validate: ok('Validate') } } }
+    const { clock, stored } = world(on, disk, {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
     await start($)
     await clock.settle()
+    for (const path of Object.keys(modFiles('new-mod'))) delete disk[path]
     await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'new-mod', stage: 'Spec', status: 'running' } as never)
-    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'new-mod', stage: 'Validate', status: 'passed' } as never)
     await clock.settle()
-    expect(Object.keys(results(stored))).toContain('new-mod')
-    // A later scan keeps it while the build's report is live.
     await command($, 'new-mod')
     await clock.settle()
-    expect(Object.keys(results(stored)).sort()).toEqual(['new-mod'])
+    expect(Object.keys(results(stored)).sort()).toEqual(['git-branch', 'new-mod'])
   })
 })
 
