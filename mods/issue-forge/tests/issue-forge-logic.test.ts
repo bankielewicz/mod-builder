@@ -124,7 +124,6 @@ import {
   treeDrift,
   truncate,
   unstagedOf,
-  utf8Length,
   viewOf,
   workOf,
   workspacePlan,
@@ -2625,8 +2624,11 @@ describe('#137: the profile formatCommand', () => {
 // repositories, test output capped in characters, and old unfinished runs named.
 describe('#140: the store under its limit', () => {
   const DAY = 86_400_000
-  /** The oracle: the store's entries as one JSON object, in UTF-8 bytes, measured apart from the module (PR #145 review round 2, finding 10). */
-  const jsonBytes = (entries: readonly { key: string; value: unknown }[]) => new TextEncoder().encode(JSON.stringify(Object.fromEntries(entries.map(e => [e.key, e.value])))).length
+  /**
+   * The oracle: the store's entries as one compact JSON object, in characters, measured apart from the module (PR #145 review
+   * round 2, finding 10), as the engine's check counts them (round 3, finding 3).
+   */
+  const jsonChars = (entries: readonly { key: string; value: unknown }[]) => JSON.stringify(Object.fromEntries(entries.map(e => [e.key, e.value]))).length
   const LONG = 'b'.repeat(600)
   const full = (over: Partial<Run> = {}) => run({ body: LONG, redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', behaviourAnswer: 'held', ...over })
   const TRIMMED = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer']
@@ -2656,14 +2658,13 @@ describe('#140: the store under its limit', () => {
     expect(blocked).toMatchObject({ step: 'blocked', redAnswer: 'notes', lastTestTail: 'last', body: LONG })
   })
 
-  test('the store is measured as UTF-8 JSON, as $.store.set counts it', () => {
-    expect(utf8Length('a')).toBe(1)
-    expect(utf8Length('é')).toBe(2)
-    expect(utf8Length('€')).toBe(3)
-    expect(utf8Length('😀')).toBe(4)
-    expect(utf8Length('aé€😀')).toBe(10)
-    expect(sweepPlan([{ key: 'a', value: 1 }, { key: 'b', value: 'é' }]).size).toBe(16)
-    expect(sweepPlan([{ key: 'u', value: undefined }]).size).toBe(jsonBytes([]))
+  // PR #145 review round 3, finding 3: the 2.1.309 binary's $.store.set refuses `_(store).length > 4194304`, in characters.
+  test("the store is measured in characters of its compact JSON, as Claude Code's $.store.set check counts", () => {
+    expect(entrySize('a', 'é')).toBe(8)
+    expect(entrySize('a', '😀')).toBe(9)
+    expect(sweepPlan([{ key: 'a', value: 1 }, { key: 'b', value: 'é' }]).size).toBe(15)
+    expect(sweepPlan([{ key: 'b', value: '日本語' }]).size).toBe(jsonChars([{ key: 'b', value: '日本語' }]))
+    expect(sweepPlan([{ key: 'u', value: undefined }]).size).toBe(jsonChars([]))
     expect(entrySize('a', 1)).toBe(6)
   })
 
@@ -2696,7 +2697,7 @@ describe('#140: the store under its limit', () => {
     expect(tight.drop).toEqual([other(1), other(2)])
     expect(tight.left).toBeGreaterThan(4000)
     const after = entries.filter(e => e.key !== other(1) && e.key !== other(2))
-    expect(tight.left).toBe(jsonBytes(after))
+    expect(tight.left).toBe(jsonChars(after))
   })
 
   // Another session may delete a run between the sweep's keys() and its get(), which then reads undefined (the advisor, before the PR).
@@ -2715,7 +2716,7 @@ describe('#140: the store under its limit', () => {
     }
     expect(typeof plan).toBe('object')
     const p = plan as ReturnType<typeof sweepPlan>
-    expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], jsonBytes(entries.slice(0, 2))])
+    expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], jsonChars(entries.slice(0, 2))])
   })
 
   // PR #145 review round 1, finding 6: the session driving a run knows it is unfinished. Round 2 (Codex 4360654727): by the run
@@ -2802,7 +2803,7 @@ describe('#140: the store under its limit', () => {
     const entries = [a, b, c]
     const plan = sweepPlan(entries, sweepPlan(entries, Infinity).left - 1)
     expect([plan.trim, plan.drop]).toEqual([[other(2)], [other(1)]])
-    expect(plan.size).toBe(jsonBytes(entries))
+    expect(plan.size).toBe(jsonChars(entries))
     expect(plan.saves).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) - entrySize(b.key, finishedRecord(b.value)) })
     expect(leftAfter(plan, [other(1), other(2)])).toBe(plan.left)
     expect(leftAfter(plan, [])).toBe(plan.size)
