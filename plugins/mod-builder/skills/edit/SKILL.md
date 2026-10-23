@@ -29,7 +29,10 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
    - **How it's installed.** Run `claude plugin list --json` and find the mod's row: an `id` of
      `<entry name>@<marketplace>`, where the entry name is the marketplace's name for it. The same
      name can have more than one row, such as `@synced`, so take the one from this marketplace.
-     - `enabled` is false: nothing of it runs.
+     - `enabled` is false: it won't load at the next `/reload-plugins` or session. A session that
+       loaded it before it was turned off may still run it, since settings reach a running session
+       only at `/reload-plugins` (docs, not observed). `/plugin`'s Installed tab shows what this
+       session runs.
      - The row has a `readFromFolder` key (the text form prints `Read from:`): the mod was installed
        from a marketplace added from a local folder, and it loads in place. Edits to *that* folder
        load at `/reload-plugins` or the next session. If you're editing another folder, such as a
