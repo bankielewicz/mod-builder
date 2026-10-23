@@ -4080,6 +4080,26 @@ describe('#138: records of folders and mods that are gone', () => {
     expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
   })
 
+  // PR #146 review round 1, finding 1 (Codex 4362849420): a generation written while the scan reads the mods survives its drop.
+  test('a generation written after the scan read the records survives the drop of a gone mod', OPTIONS, async ($, on) => {
+    const key = `modlab:generations:${MODS}`
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 })
+    await start($)
+    await clock.settle()
+    stored.set(key, JSON.stringify({ duet: { since: 1000, fromVersion: '0.1.0' } }))
+    let release = () => {}
+    seen.holdList = { path: `${MODS}/git-branch`, until: new Promise<void>(resolve => (release = resolve)), isReached: false }
+    const scanning = command($, 'git-branch')
+    await clock.advance(10)
+    expect(seen.holdList.isReached).toBe(true)
+    // As a Spec report on a mod whose folder is being written again starts its edit, after the scan read the generations.
+    stored.set(key, JSON.stringify({ duet: { since: 1000, fromVersion: '0.1.0' }, 'other-mod': { since: 3000, fromVersion: '0.2.0' } }))
+    release()
+    await scanning
+    await clock.settle()
+    expect(Object.keys(JSON.parse(stored.get(key) ?? '{}'))).toEqual(['other-mod'])
+  })
+
   // A finished report ends a build's placeholder (withBuilding), so a result stored before the folder exists belongs to no
   // live build. What a placeholder keeps is a build that writes its folder again, such as a scaffold run a second time.
   test("a live build whose folder is being written again keeps its mod's results until the folder is back", OPTIONS, async ($, on) => {

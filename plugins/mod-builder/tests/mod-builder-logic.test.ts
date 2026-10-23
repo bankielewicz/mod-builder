@@ -1764,4 +1764,13 @@ describe('the store keeps records only for folders and mods that exist (#138)', 
     expect(without({}, [])).toBe(null)
     expect(without(record, [])).toEqual({})
   })
+
+  // PR #146 review round 1, finding 1 (Codex 4362849420): `keep` is taken before the scan's later awaits.
+  test('withoutGone with what the scan read: drops a name only while its entry is still the one read', () => {
+    const read = { duet: { since: 1000 }, gone: { since: 500 } }
+    // Since the read: other-mod got a generation, gone's changed; duet's is as read.
+    const stored = { duet: { since: 1000 }, gone: { since: 2000 }, 'other-mod': { since: 3000 } }
+    expect(withoutGone(stored, ['alpha'], read)).toEqual({ gone: { since: 2000 }, 'other-mod': { since: 3000 } })
+    expect(withoutGone({ 'other-mod': { since: 3000 } }, ['alpha'], read)).toBe(null)
+  })
 })
