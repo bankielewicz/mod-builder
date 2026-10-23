@@ -35,9 +35,11 @@ The detail behind each rule is in `docs/contributing/`, and each rule names the 
 - **Never edit, commit or switch branches in the main folder.** `main` is protected, and the main folder
   is shared. Several Claude sessions work in it at once, and the installed plugins
   (`mod-builder@claudemod`, `git-branch@claudemod` and `issue-forge@claudemod`) load from whatever branch
-  it is on. There is one exception: bringing the main folder up to date after a PR merges. Before doing
-  that, read `docs/contributing/workflow.md`, the first paragraph of "Changing files: a worktree, then a
-  PR", for the command and the three conditions it needs.
+  it is on. There is one exception: after a PR merges, the main folder may be brought up to date so the
+  installed plugins get the merge. Do that only when the person asks or agrees, the folder has no
+  uncommitted changes, and no issue-forge run or other session is working in it. Before doing it, read
+  the command in `docs/contributing/workflow.md`, the first paragraph of "Changing files: a worktree,
+  then a PR".
 - **Every change to this repo happens in its own worktree and reaches `main` through a PR.** Before
   starting a change, read `docs/contributing/workflow.md`, "Changing files: a worktree, then a PR": the
   worktree command, testing the worktree's code rather than the installed copy, Codex's review, the
@@ -56,8 +58,10 @@ The detail behind each rule is in `docs/contributing/`, and each rule names the 
      green, refactor, QA", lists under QA, and put the results in the PR description.
 
   A test that turns out to be wrong is fixed in its own commit, which says why. It is never loosened to
-  let code pass. Before writing the first test, read that section: where a mod's tests go, QA's checks
-  in full, and `/issue-forge <N>`, which automates red, green and refactor behind these gates.
+  let code pass. Before writing the first test, and before running `/issue-forge <N>` (which automates
+  red, green and refactor for a GitHub issue behind these gates), read that section: where a mod's pure
+  rules and its tests go, the `on(...)` stub every `$` call needs in a UI test, QA's checks and pass
+  criteria in full, and the worktree each `/issue-forge` run adds.
 
 ## Repo conventions
 
@@ -76,6 +80,6 @@ The detail behind each rule is in `docs/contributing/`, and each rule names the 
 | File | Read it | It holds |
 | --- | --- | --- |
 | [`docs/contributing/commands.md`](docs/contributing/commands.md) | before running a check, a test, the typecheck or a live session, and before changing CI | validate, test, the archetype and sandbox checks and the live smoke test; one test file under node; the typecheck; what CI runs, and its two copies to change together |
-| [`docs/contributing/workflow.md`](docs/contributing/workflow.md) | before starting a change, before bringing the main folder up to date, and before a code change's first test | the worktree steps and the main folder's one exception; TDD and QA in full |
+| [`docs/contributing/workflow.md`](docs/contributing/workflow.md) | before starting a change, before bringing the main folder up to date, before a code change's first test, and before running `/issue-forge <N>` | the worktree steps and the main folder's one exception; TDD and QA in full; `/issue-forge` runs and their worktrees |
 | [`docs/contributing/architecture.md`](docs/contributing/architecture.md) | before changing `plugins/mod-builder` or a mod under `mods/` | mod-builder's skills and Mod Lab, Mod Lab's stages and store keys, the mods, and why templates are `*.tpl` |
 | [`docs/contributing/engine-rules.md`](docs/contributing/engine-rules.md) | before writing hooks or tests, with `gotchas.md` before hooks | where `$` may be passed, literal atoms and matchers, one hook per event, what a test must stub, `$.store` sharing, the hook budget, and where runtime data goes |

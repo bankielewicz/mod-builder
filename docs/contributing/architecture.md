@@ -1,7 +1,7 @@
 # Architecture
 
 Read before changing `plugins/mod-builder` (its skills or Mod Lab) or a mod under `mods/`, to find
-which file holds what and which `SPEC.md` records why. Paths are from the repository root.
+which file holds what and which `SPEC.md` records why.
 
 **`plugins/mod-builder/`** has three parts:
 - `skills/build/SKILL.md` (`/mod-builder:build`): request → slot-filled `SPEC.md` (the single approval

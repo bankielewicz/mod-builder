@@ -1,8 +1,8 @@
 # Commands
 
 Read before running a check, a test, the typecheck or a live session in this repository, and before
-changing CI. The QA phase in [workflow.md](workflow.md) ("TDD: red, green, refactor, QA") runs them.
-Paths are from the repository root.
+changing CI. The QA phase in [workflow.md](workflow.md) ("TDD: red, green, refactor, QA") lists which
+of them to run before pushing.
 
 ## Checks and tests
 

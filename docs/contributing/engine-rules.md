@@ -1,7 +1,7 @@
 # Rules the engine enforces
 
 Read before writing hooks or tests. Before writing hooks, read `gotchas.md` too
-(`plugins/mod-builder/skills/build/references/gotchas.md`). Paths are from the repository root.
+(`plugins/mod-builder/skills/build/references/gotchas.md`).
 
 - `$` may only be passed to functions **declared at the top level of `register.tsx`**, never to
   imported functions or closures inside `register`. Module state lives in top-level `let`s.
