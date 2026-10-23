@@ -77,6 +77,8 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denyStoreGet: '',
     /** A store key whose delete is refused (#138). */
     denyStoreDelete: '',
+    /** While set, `$.store.keys` is refused (PR #146 review, finding 9). */
+    denyStoreKeys: false,
     /** Every store key deleted, in order (#138). */
     deleted: [] as string[],
     /** Paths whose `$.fs.stat` rejects with this ending in place of the disk's answer, as `failed: EACCES` (#138). */
@@ -132,7 +134,7 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
   })
-  on('store.keys', () => ({ value: [...stored.keys()] }) as never)
+  on('store.keys', () => (seen.denyStoreKeys ? { deny: 'EIO: store read failed' } : ({ value: [...stored.keys()] } as never)))
   on('store.delete', ($, e) => {
     const key = (e as { key: string }).key
     if (seen.denyStoreDelete === key) return { deny: 'EIO: store write failed' }
@@ -4087,6 +4089,27 @@ describe('#138: records of folders and mods that are gone', () => {
     await start($)
     await clock.settle()
     expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
+  })
+
+  // PR #146 review round 1, finding 6: a reworded message would stop all pruning; the rejection it couldn't read says so.
+  test("a stat rejection that isn't the engine's ENOENT keeps the folder and writes a debug line naming it", { options: { modsDir: MODS, logging: 'debug' } }, async ($, on) => {
+    const seed = { [`modlab:results:${LOCKED}`]: {} }
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    seen.statFails[LOCKED] = 'failed: EACCES'
+    await start($)
+    await clock.settle()
+    expect(stored.has(`modlab:results:${LOCKED}`)).toBe(true)
+    expect(seen.logs.filter(line => line.includes('store.prune') && line.includes(`$.fs.stat(${LOCKED}) failed: EACCES`))).toHaveLength(1)
+  })
+
+  test('a refused key listing prunes nothing', OPTIONS, async ($, on) => {
+    const seed = { [`modlab:results:${GONE}`]: {} }
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    seen.denyStoreKeys = true
+    await start($)
+    await clock.settle()
+    expect(seen.deleted).toEqual([])
+    expect(stored.has(`modlab:results:${GONE}`)).toBe(true)
   })
 
   // PR #146 review round 1, finding 5: each delete stats its folder again in its own turn on the chain.
