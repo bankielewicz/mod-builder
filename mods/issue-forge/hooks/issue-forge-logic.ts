@@ -2384,7 +2384,8 @@ export function entrySize(key: string, value: unknown): number {
 export function budgetKeys(entries: readonly { key: string; run: Run; size: number }[], total: number, budget = STORE_BUDGET): string[] {
   const out: string[] = []
   let left = total
-  const finished = (r: Run) => r.finishedAt ?? r.startedAt
+  // A record with neither date (hand-edited, or foreign) counts as 0, the oldest, not NaN (PR #145 review round 2, finding 7).
+  const finished = (r: Run) => Number(r.finishedAt ?? r.startedAt) || 0
   for (const e of entries.filter(e => !isActive(e.run)).sort((a, b) => finished(a.run) - finished(b.run))) {
     if (left <= budget) break
     out.push(e.key)
