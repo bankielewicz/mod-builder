@@ -2389,8 +2389,9 @@ export type SweepPlan = { trim: string[]; drop: string[]; left: number }
 
 /** The sweep before a run is written: finished records to trim, then finished runs to delete past the budget, and the size left. */
 export function sweepPlan(entries: readonly { key: string; value: unknown }[], budget = STORE_BUDGET): SweepPlan {
-  // A key another session deleted after keys() reads as undefined: it is no run to trim or delete.
-  const isRun = (e: { key: string; value: unknown }) => e.key.startsWith(RUN_PREFIX) && typeof e.value === 'object' && e.value !== null
+  // A key another session deleted after keys() reads as undefined: it is no run to trim or delete. A pre-0.3 key that
+  // migrate() left in place (another checkout's, PR #145 review, Codex 4359421020) holds a run like any other.
+  const isRun = (e: { key: string; value: unknown }) => (e.key.startsWith(RUN_PREFIX) || e.key.startsWith(LEGACY_RUN_PREFIX)) && typeof e.value === 'object' && e.value !== null
   const trim = entries.filter(e => isRun(e) && !isActive(e.value as Run) && !isTrimmed(e.value as Run)).map(e => e.key)
   const after = entries.map(e => (trim.includes(e.key) ? { key: e.key, value: finishedRecord(e.value as Run) } : e))
   const runs = after.filter(isRun).map(e => ({ key: e.key, run: e.value as Run, size: entrySize(e.key, e.value) }))
