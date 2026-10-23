@@ -15,7 +15,8 @@ claude --plugin-dir plugins/mod-builder
 `main` is protected, so every change reaches it through a pull request, and Codex reviews each one.
 Work on a branch (this repo's own sessions use a git worktree under the gitignored `scratch/`), and
 take each code change test-first: red (a test that fails by assertion), green (the least code that
-makes it pass), refactor, then the checks below. [CLAUDE.md](CLAUDE.md) has the full rules.
+makes it pass), refactor, then the checks below. [docs/contributing/workflow.md](docs/contributing/workflow.md)
+has the full rules.
 
 ## Check before a pull request
 
@@ -29,8 +30,9 @@ node --import ./plugins/mod-builder/skills/build/scripts/coverage/register.mjs -
 ```
 
 Cover the changed lines and branches of the logic without lowering total coverage, run the
-type-check and a live check described in [CLAUDE.md](CLAUDE.md), and put the results in the pull
-request description.
+type-check described in [docs/contributing/commands.md](docs/contributing/commands.md) and the live
+check described in [docs/contributing/workflow.md](docs/contributing/workflow.md), and put the results
+in the pull request description.
 
 CI validates the marketplace, validates and tests every plugin under `plugins/` and `mods/`, and
 runs the archetype check, on Claude Code 2.1.296, for every push to `main` and every pull request.
@@ -55,7 +57,7 @@ runs the archetype check, on Claude Code 2.1.296, for every push to `main` and e
 ```text
 .claude-plugin/marketplace.json     the "claudemod" folder marketplace
 .issue-forge.json                   issue-forge's profile for this repo
-CLAUDE.md                           workflow, commands and engine rules for Claude Code sessions
+CLAUDE.md                           the rules every Claude Code session needs, pointing into docs/contributing/
 plugins/mod-builder/                the plugin
   skills/build/                     SKILL.md, templates/, references/, scripts/ (coverage/ kit), ci/
   skills/edit/                      SKILL.md (reuses build's references and templates)
@@ -64,5 +66,6 @@ plugins/mod-builder/                the plugin
   tests/  types/  SPEC.md  README.md  NOTICE.md  design/
 mods/                               example mods: git-branch, issue-forge, turn-counter
 docs/                               guides, README images, and specs/ (issue-forge's design)
+  contributing/                     commands, workflow (worktree, TDD, QA), architecture, engine rules
 .github/workflows/ci.yml            validate + test every plugin, regenerate every archetype
 ```
