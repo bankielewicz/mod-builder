@@ -1735,8 +1735,10 @@ async function sweepStore($: EngineInterface): Promise<void> {
   const left = leftAfter(plan, landed, gone)
   if ((left > STORE_BUDGET || unreadable.length > 0) && !isStoreWarned) {
     isStoreWarned = true
-    const counts = openCounts([...plan.open, ...restarted])
-    $.ui.toast(storeWarning(left, counts.unfinished, counts.repos, unreadable.length))
+    // What didn't go through: neither landed, nor gone, nor restarted (round 3, finding 5).
+    const settled = new Set([...landed, ...gone, ...restarted])
+    const failed = [...plan.trim, ...plan.drop].filter(key => !settled.has(key)).length
+    $.ui.toast(storeWarning({ size: left, ...openCounts([...plan.open, ...restarted]), unreadable: unreadable.length, failed }))
   }
 }
 

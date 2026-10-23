@@ -2329,7 +2329,9 @@ export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = 
 
 // ── The store's size (Change 0.9.0, #140) ─────────────────────────────────
 
-/** issue-forge's budget for its store: under Claude Code's 4 MiB of JSON for one plugin, every repository's runs together. */
+/** Claude Code's limit for one plugin's store: characters of its compact JSON, every repository's runs together (2.1.309's `Kye`). */
+export const STORE_LIMIT = 4 * 1024 * 1024
+/** issue-forge's budget for its store: three quarters of the limit. */
 export const STORE_BUDGET = 3 * 1024 * 1024
 /** How much of the issue's text a finished record keeps. */
 export const BODY_EXCERPT_CHARS = 500
@@ -2338,7 +2340,6 @@ export const TAIL_MAX_CHARS = RED_ANSWER_MAX_CHARS
 /** Status names an unfinished run older than this. */
 export const STALE_DAYS = 7
 const DAY_MS = 86_400_000
-const MIB = 1024 * 1024
 /** What only a phase or publish reads, which a finished record drops. */
 const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer'] as const
 
@@ -2486,14 +2487,24 @@ export function staleLine(runs: readonly Run[], now: number, drivenId: string | 
   return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
 }
 
+/** What the warning reports: the size measured, and the causes the sweep left (PR #145 review round 3, finding 5). */
+export type StoreWarning = { size: number; unfinished: number; repos: number; unreadable: number; failed: number }
+
 /**
  * The toast when the store is still over the budget after the sweep, or keys couldn't be read (PR #145 review round 2,
- * finding 2: those weigh nothing in `bytes`); a toast already names the mod.
+ * finding 2: those weigh nothing in `size`), naming each cause that applies (round 3, finding 5). The store is a share of
+ * the engine's limit, which counts characters (round 3, finding 3); a toast already names the mod.
  */
-export function storeWarning(bytes: number, unfinished: number, repos: number, unreadable = 0): string {
-  const runs = `${unfinished} unfinished run${unfinished === 1 ? '' : 's'} in ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
-  const head = `store still ${(bytes / MIB).toFixed(1)} MiB of Claude Code's 4 MiB after the cleanup, with ${runs}; /issue-forge stop <N>, in a run's repository, ends one`
-  return unreadable === 0 ? head : `${head}; ${unreadable} key${unreadable === 1 ? '' : 's'} couldn't be read, so the store may be bigger`
+export function storeWarning(w: StoreWarning): string {
+  const causes: string[] = []
+  if (w.failed > 0) causes.push(w.failed === 1 ? "1 trim or delete didn't go through, and the next start tries again" : `${w.failed} trims or deletes didn't go through, and the next start tries again`)
+  if (w.unreadable > 0) causes.push(w.unreadable === 1 ? "1 key couldn't be read and isn't counted" : `${w.unreadable} keys couldn't be read and aren't counted`)
+  if (w.unfinished > 0) {
+    const runs = `${w.unfinished} unfinished run${w.unfinished === 1 ? '' : 's'} in ${w.repos} ${w.repos === 1 ? 'repository' : 'repositories'}`
+    causes.push(`${runs} left: /issue-forge stop <N>, in a run's repository, ends one`)
+  }
+  const head = `store still at ${Math.round((w.size / STORE_LIMIT) * 100)}% of Claude Code's limit after the cleanup`
+  return `${head}: ${causes.length > 0 ? causes.join('; ') : "what's left isn't a run the cleanup can remove"}`
 }
 
 /** What the driving session finds in the store: its run stopped, taken over or replaced, or nothing changed. */
