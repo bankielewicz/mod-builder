@@ -161,6 +161,9 @@ Edits to the folder load with `/reload-plugins`. While developing:
 Each way of loading the plugin (`--plugin-dir`, or an installed copy) keeps its own store, and
 within it each mods folder keeps its own results. If you switch either one (another way of loading,
 or a `/cd` into another worktree), Validate and Test show `○` until you press V and T once.
+Results don't build up (0.2.30): at session start, Mod Lab deletes those of a mods folder that's gone, such as a
+removed worktree, and each scan drops a mod that's no longer in its folder. A folder it can't check, such as one it
+has no permission to read, keeps its results. A drive that isn't mounted reads as gone.
 
 ## Options
 
@@ -183,13 +186,13 @@ table lists everything this one can touch. It is taken from `claude plugin valid
 | --- | --- |
 | Hooks | `session.start`, `command.run{mod-builder}` (gating, with `.catch`), `command.run{modlab}` (answers its own command; `/modlab` runs while Claude is working, 0.2.28), `command.run{mod-builder:build}` and `command.run{mod-builder:edit}` (gating, with `.catch`: open the pane, then run the skill), `tool.call{mcp__mod-builder__lab_report}`, `classic.PostToolBatch` (gating, with `.catch`: starts the mid-turn rescan and returns; validate notes it doesn't run for an installed plugin where an organization manages Claude Code), `classic.SessionStart{source=clear\|resume\|fork}` (gating, with `.catch`, 0.2.28: after `/clear`, `/resume` and `/branch` writes the build's pinned folder back and rescans, detached; the same organization note applies), `turn.complete`, `session.end`, `ui.close`, `ui.render{Pane modlab}`, `ui.render{AbovePrompt}` |
 | Processes | `claude plugin validate --json <mod>` and `npx -y -p typescript@5.6 tsc -p <mod>` (`$.process.run`); `claude plugin test <mod>` streamed with `$.process.spawn` so the band fills on real progress (it falls back to `$.process.run` if the stream can't start). Only when you press V, T or K, when a skill reports a Validate or Test stage, or (with `autoRerun`) at the end of a turn for a mod whose checks went stale. Never on a timer. A check still running after `testTimeoutMinutes` is stopped (its child is killed) and shown as timed out. |
-| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. When a build reports a folder, checks its marketplace file and reads `.git` in the folder above it and at or above the project root, to tell whether it is the project's own repository or a worktree of it. With `modsDir` empty and no build's folder kept, checks whether `.claude-plugin/marketplace.json` exists in the project root (the working directory when the root can't be read) and then each folder above it, stopping at the first found, at each scan. Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
+| Files | Reads under `modsDir`, the marketplace file beside it and its own `plugin.json`. When a build reports a folder, checks its marketplace file and reads `.git` in the folder above it and at or above the project root, to tell whether it is the project's own repository or a worktree of it. With `modsDir` empty and no build's folder kept, checks whether `.claude-plugin/marketplace.json` exists in the project root (the working directory when the root can't be read) and then each folder above it, stopping at the first found, at each scan. At session start, stats each mods folder its store has keys for (`$.fs.stat`, 0.2.30). Writes only its log, `~/.claude/mod-builder-data/logs/<date>-<session>.log`, unless `logging` is `off`. |
 | Prompt box | `$.prompt.fill` puts `/mod-builder:build ` (N, or `/modlab new <idea>`) or a fix request (F) in the prompt box; it never submits |
 | Notifications | `$.ui.notify`: a native notification when a mod is ready to share |
 | Settings | Its own `/config` rows (`$.config.list` / `$.config.set`), when you run `/mod-builder config <option> <value>` |
 | Environment | Reads `HOME`, `USERPROFILE` (to place the log file) |
 | Session | Reads the project root (to find the mods folder when `modsDir` is empty, and to keep a build's folder until a `/cd`), the working directory (to name a mod's folder the way the session reads it, and to find the mods folder when the root can't be read) and the session id (to name the log file). Keeps the folder a build reported in its own session state. |
-| Store | Its own `$.store`, one set of keys per mods folder: last results per mod, which mods were announced, and edit generations |
+| Store | Its own `$.store`, one set of keys per mods folder: last results per mod, which mods were announced, and edit generations. At session start it lists its keys and deletes those of a folder that's gone, and the unkeyed ones from before 0.2.9 once replaced; each scan drops a mod no longer in its folder (0.2.30) |
 | Network | None from the mod itself. The first Type-check makes `npx` download TypeScript. |
 | Model calls | None |
 | Tools it adds | `lab_report`, which records progress (with `path`, the folder being built in) and runs nothing beyond the Validate and Test above |
@@ -213,4 +216,4 @@ bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # all five a
   and the pane mockups (superseded, kept for history).
 
 CI tests it on Claude Code 2.1.296. 0.2.29's tests, archetype check, typecheck and `-p` live checks
-ran on 2.1.308. Function hooks are early access, so the API may change between releases.
+ran on 2.1.308; 0.2.30's tests, typecheck and `-p` live check ran on 2.1.309. Function hooks are early access, so the API may change between releases.
