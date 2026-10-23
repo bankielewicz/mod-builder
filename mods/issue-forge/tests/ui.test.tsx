@@ -84,6 +84,10 @@ type World = {
   replacedTree?: string
   /** The parent `cat-file commit` names for HEAD (PR #136 review round 2: another commit moved the branch); absent, the commit before. */
   headParent?: string
+  /** The profile's format command `f` (#137) exits with this, printing a parse error; absent, 0. */
+  formatExit?: number
+  /** What `f` leaves unstaged, as `git status --porcelain -z` prints it, until the next `git add -A` stages it (#137). */
+  formatWrites?: string
   /** The profile in the checkout the session started in; absent, PROFILE. */
   localProfile?: Record<string, unknown>
   /** The profile on origin/<base>, read after the switch; absent, the same profile. */
@@ -320,6 +324,10 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'c') world.lcovRoot = e.init?.cwd ?? ROOT
     if (cmd === 'c' || cmd === 't2') return ok('ran')
     if (cmd === 'sh') return ok('/usr/bin/x')
+    if (cmd === 'f') {
+      if (world.formatWrites !== undefined) world.porcelainZ = world.formatWrites
+      return world.formatExit ? fail('src/a.ts: SyntaxError: Unexpected token (3:1)', world.formatExit) : ok('formatted')
+    }
     if (cmd === 'gh') {
       if (s === 'auth status') return ok()
       if (s === 'repo view --json nameWithOwner,url') return world.repoView ? { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...world.repoView } } : ok(JSON.stringify({ nameWithOwner: 'o/r', url: 'https://github.com/o/r' }))
@@ -362,6 +370,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       world.stashLockFile = next?.isStashLocked ?? false
       if (next) return fail(next.stderr, next.code)
     }
+    // What the format command wrote is staged by the next git add -A (#137).
+    if (s === 'add -A' && world.formatWrites !== undefined && world.porcelainZ === world.formatWrites) world.porcelainZ = undefined
     if (s === 'write-tree') {
       const trees = world.trees ?? []
       // Absent `trees`: each staging with changes gives a new tree; with none, the index is HEAD's tree.
@@ -4049,5 +4059,122 @@ describe('PR #136 review round 2: errors during the commit', () => {
     await w.clock.settle()
     expect((await run($, 'status')).text).toContain(`blocked at gateG: another git process is using ${LOCK_PATH}`)
     expect(storedOf(store).gates?.G?.passed).toBe(true)
+  })
+})
+
+// #137 (Change 0.8.0): with a profile formatCommand, each gate stages, formats, stages again, then records the tree it tests;
+// a format command that fails fails the gate before anything is tested, and the phase gets another attempt.
+describe('#137: the profile formatCommand', () => {
+  const held = () => new Promise<void>(() => undefined)
+  const isBlocked = (w: World) => w.toasts.some(t => t.includes('blocked'))
+  const isGit = (sub: string) => (a: string[]) => a[0] === 'git' && a.slice(1).join(' ') === sub
+  const FORMATTED = { ...storedRun('gateG').profile, formatCommand: ['f', '--write'], checks: [['t2']] }
+  const R_RUN = { redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], profile: FORMATTED }
+  const R_WORLD = { head: BRANCH, testsExit: 1, staged: ['tests/a.test.ts'], redPaths: ['tests/a.test.ts'] }
+  const G_WORLD = { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'] }
+  const G_RUN = { profile: FORMATTED }
+  const F_RUN = { greenCommit: 'g1', used: { red: 1, green: 1, refactor: 1 }, profile: { ...FORMATTED, attempts: { red: 2, green: 3, refactor: 2 } } }
+  /** The gate's staging, format, tree and test calls, in order, up to the first test run. */
+  const sequence = (w: World) => {
+    const tests = w.argv.findIndex(a => a[0] === 't')
+    return w.argv
+      .slice(0, tests === -1 ? undefined : tests + 1)
+      .filter(a => isGit('add -A')(a) || isGit('write-tree')(a) || a[0] === 'f' || a[0] === 't')
+      .map(a => a.join(' '))
+  }
+  /** What ran after the format command: no tree, test, coverage or check may follow a failed one. */
+  const afterFormat = (w: World) => {
+    const at = w.argv.findIndex(a => a[0] === 'f')
+    return at === -1 ? ['the format command never ran'] : w.argv.slice(at + 1).filter(a => isGit('write-tree')(a) || isGit('add -A')(a) || ['t', 'c', 't2'].includes(a[0] ?? '')).map(a => a.join(' '))
+  }
+
+  test('gate R: add -A, the format command, add -A again, then write-tree and the tests', async ($, on) => {
+    const w = engine(on, { ...R_WORLD, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', R_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or green')
+    expect(sequence(w)).toEqual(['git add -A', 'f --write', 'git add -A', 'git write-tree', 't'])
+    expect(w.commits.length).toBe(1)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+  })
+
+  test('gate G: the same order, before the tests, coverage and checks', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG', G_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
+    expect(sequence(w)).toEqual(['git add -A', 'f --write', 'git add -A', 'git write-tree', 't'])
+    expect(w.argv.findIndex(a => a[0] === 'f')).toBeLessThan(w.argv.findIndex(a => a[0] === 't2'))
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+  })
+
+  test('gate F: the same order', async ($, on) => {
+    const w = engine(on, { ...G_WORLD }, { [`issue-forge:run:${ROOT}`]: storedRun('gateF', F_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.asked.length > 0, 'a block or the push question')
+    expect(sequence(w)).toEqual(['git add -A', 'f --write', 'git add -A', 'git write-tree', 't'])
+  })
+
+  test('gate R: a format command that fails fails gate R with R5 before anything is tested, and red gets another attempt with its output', async ($, on) => {
+    const w = engine(on, { ...R_WORLD, formatExit: 2, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateR', R_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or red')
+    expect(afterFormat(w)).toEqual([])
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:red' })
+    expect(w.spawned[0]?.prompt).toContain('- R5: format command failed: f --write (exit 2)')
+    expect(w.spawned[0]?.prompt).toContain('src/a.ts: SyntaxError: Unexpected token (3:1)')
+  })
+
+  test('gate G: a format command that fails fails gate G with G9, no tree, test, coverage or check follows, and green tries again', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, formatExit: 1, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG', G_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or green')
+    expect(afterFormat(w)).toEqual([])
+    expect(w.commits.length).toBe(0)
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green' })
+    expect(w.spawned[0]?.prompt).toContain('- G9: format command failed: f --write (exit 1)')
+    expect(w.spawned[0]?.prompt).toContain("The last lines of the format command's output:")
+  })
+
+  test('gate F: a format command that fails fails gate F with G9, and refactor tries again', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, formatExit: 1, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateF', F_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0 || w.asked.length > 0, 'a block, refactor or the push question')
+    expect(afterFormat(w)).toEqual([])
+    expect(w.commits.length).toBe(0)
+    expect(w.asked).toEqual([])
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:refactor' })
+    expect(w.spawned[0]?.prompt).toContain('- G9: format command failed: f --write (exit 1)')
+  })
+
+  test("gate G: what the format command rewrites is staged by the second add -A, so the rewritten-files look doesn't block", async ($, on) => {
+    const w = engine(on, { ...G_WORLD, formatWrites: ' M src/a.ts\0', spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG', G_RUN) })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
+    expect(w.argv.some(a => a[0] === 'f')).toBe(true)
+    expect(w.toasts.filter(t => t.includes('blocked'))).toEqual([])
+    expect(w.commits.length).toBe(1)
+  })
+
+  test('without the key, nothing extra runs: one add -A, then write-tree, as in 0.7.5', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w) || w.spawned.length > 0, 'a block or refactor')
+    expect(sequence(w)).toEqual(['git add -A', 'git write-tree', 't'])
+  })
+
+  test('a command that rewrites files after staging is pointed at formatCommand', async ($, on) => {
+    const w = engine(on, { ...G_WORLD, porcelainZ: ' M src/a.ts\0' }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => isBlocked(w), 'the block')
+    expect((await run($, 'status')).text).toContain('next: make the profile commands leave the tree as they found it, or put the formatter in formatCommand')
   })
 })

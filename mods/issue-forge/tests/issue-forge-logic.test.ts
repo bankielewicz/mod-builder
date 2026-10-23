@@ -121,7 +121,7 @@ import {
   worktreeStateOf,
 } from '../hooks/issue-forge-logic'
 import * as logic from '../hooks/issue-forge-logic'
-import type { CommandResult, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
+import type { CommandResult, Gate, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
 import { DIFF_REAL, LCOV_REAL, STASH_LIST_REAL } from './fixtures/real'
 
 const HOME = '/home/u'
@@ -2530,5 +2530,86 @@ describe('PR #136 review round 2: a refused commit', () => {
   test("git's own refusal (fatal or error) isn't blamed on a hook: it stays the unexpected block", () => {
     expect(refused('R', 'git commit failed: fatal: empty ident name (for <u@h>) not allowed')).toEqual({ reason: 'unexpected: git commit failed: fatal: empty ident name (for <u@h>) not allowed', next: 'see /issue-forge status' })
     expect(refused('F', 'git commit failed: error: pathspec')).toMatchObject({ reason: 'unexpected: git commit failed: error: pathspec' })
+  })
+})
+
+// #137 (Change 0.8.0): a profile formatCommand, run between two git add -A at gates R, G and F; its failure fails the gate.
+describe('#137: the profile formatCommand', () => {
+  type FormatGate = (which: 'R' | 'G' | 'F', p: Profile, result: CommandResult) => Gate | null
+  const formatGate = (which: 'R' | 'G' | 'F', p: Profile, result: CommandResult): Gate | null | string => {
+    const of = (logic as Record<string, unknown>).formatGate as FormatGate | undefined
+    return of ? of(which, p, result) : 'formatGate is missing'
+  }
+  const formatOf = (p: Profile) => (p as { formatCommand?: string[] }).formatCommand
+  const LINT = ['npx', 'lint-staged']
+  const FAILED = 'format command failed: npx lint-staged (exit 1)'
+
+  test('the profile takes formatCommand as an argv, absent by default; anything else is refused', () => {
+    expect(formatOf(profile({ formatCommand: LINT }))).toEqual(LINT)
+    expect(formatOf(profile())).toBeUndefined()
+    expect('formatCommand' in profile()).toBe(false)
+    for (const bad of ['npx lint-staged', [], [''], [1]]) {
+      expect(parseProfile(JSON.stringify({ ...MIN_PROFILE, formatCommand: bad }), HOME).errors).toEqual(['formatCommand must be a non-empty array of strings (argv)'])
+    }
+  })
+
+  test("preflight looks up the format command's first word only when it is set (§4.2)", () => {
+    expect(outsideChecks(profile({ formatCommand: ['./fmt.sh', '--write'], checks: [['eslint', '.']] }), ROOT).commands).toEqual([
+      { argv0: 'npm', kind: 'name' },
+      { argv0: './fmt.sh', kind: 'path' },
+      { argv0: 'eslint', kind: 'name' },
+    ])
+    expect(outsideChecks(profile(), ROOT).commands.map(c => c.argv0)).toEqual(['npm'])
+  })
+
+  test('a failed format command fails the gate alone, with R5 or G9, and no new plugin: it is not a final block', () => {
+    const p = profile({ formatCommand: LINT })
+    expect(formatGate('R', p, ok)).toBe(null)
+    expect(formatGate('R', p, fail)).toEqual({ gate: 'R', passed: false, checks: [{ id: 'R5', passed: false, detail: FAILED }] })
+    expect(formatGate('G', p, timedOut)).toEqual({ gate: 'G', passed: false, checks: [{ id: 'G9', passed: false, detail: 'format command failed: npx lint-staged (timed out after 15 min)' }] })
+    expect(formatGate('F', p, fail)).toEqual({ gate: 'F', passed: false, checks: [{ id: 'G9', passed: false, detail: FAILED }] })
+  })
+
+  test('gates R and G add a passing R5 or G9 row when the format command ran, and none without it', () => {
+    const p = profile({ formatCommand: LINT })
+    const r = gateR(p, { staged: ['tests/a.test.ts'], tests: fail, format: ok } as Parameters<typeof gateR>[1])
+    expect(r.passed).toBe(true)
+    expect(r.checks.map(c => c.id)).toEqual(['R1', 'R2', 'R3', 'R5'])
+    expect(r.checks[3]).toEqual({ id: 'R5', passed: true, detail: 'format command ran (exit 0)' })
+    const f = gateG(p, null, { ...gFacts(), format: ok } as GateGFacts, ROOT, 'F')
+    expect(f.passed).toBe(true)
+    expect(f.checks.map(c => c.id)).toEqual(['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G9'])
+    expect(f.checks[7]).toEqual({ id: 'G9', passed: true, detail: 'format command ran (exit 0)' })
+    expect(gateR(p, { staged: ['tests/a.test.ts'], tests: fail }).checks.map(c => c.id)).toEqual(['R1', 'R2', 'R3'])
+    expect(gateG(p, null, gFacts(), ROOT).checks.map(c => c.id)).toEqual(['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7'])
+  })
+
+  test('a failed format gate retries the phase, then blocks (gates R and G) or rejects the refactor (gate F), as any failed gate', () => {
+    const p = profile({ formatCommand: LINT })
+    const gates = (['R', 'G', 'F'] as const).map(which => formatGate(which, p, fail))
+    expect(gates.every(g => typeof g === 'object' && g !== null)).toBe(true)
+    const [r5, g9, f9] = gates as Gate[]
+    expect(advance(run({ step: 'gateR', profile: p, used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: r5!, testTail: 'x' }, 1)).toMatchObject({ step: 'red', lastTestTail: 'x' })
+    expect(advance(run({ step: 'gateR', profile: p, used: { red: 2, green: 0, refactor: 0 } }), { type: 'gated', gate: r5! }, 1)).toMatchObject({ step: 'blocked', blocked: { at: 'gateR', reason: `gate R failed after 2 attempts: ${FAILED}` } })
+    expect(advance(run({ step: 'gateG', profile: p, used: { red: 1, green: 3, refactor: 0 } }), { type: 'gated', gate: g9! }, 1)).toMatchObject({ step: 'blocked', blocked: { at: 'gateG', reason: `gate G failed after 3 attempts: ${FAILED}` } })
+    expect(advance(run({ step: 'gateF', profile: p, used: { red: 1, green: 1, refactor: 1 } }), { type: 'gated', gate: f9! }, 1)).toMatchObject({ step: 'ready', isRefactorRejected: true })
+  })
+
+  test("a retry after R5 or G9 gets the format command's output under its own heading; the prompt names the command", () => {
+    const p = profile({ formatCommand: LINT })
+    const failedAt = (gate: 'R' | 'G', id: string) => ({ gate, passed: false, checks: [{ id, passed: false, detail: FAILED }] })
+    const TAIL = 'src/a.ts: SyntaxError: Unexpected token (3:1)'
+    const r = run({ profile: p, lastTestTail: TAIL })
+    const green = promptExtraOf('green', { ...r, lastGate: failedAt('G', 'G9') }) as ReturnType<typeof promptExtraOf> & { formatTail?: string }
+    expect(green.failures).toEqual([`G9: ${FAILED}`])
+    expect(green.testTail).toBeUndefined()
+    expect(green.formatTail).toBe(TAIL)
+    expect((promptExtraOf('red', { ...r, lastGate: failedAt('R', 'R5') }) as { formatTail?: string }).formatTail).toBe(TAIL)
+    expect('formatTail' in promptExtraOf('green', { ...r, lastGate: failedAt('G', 'G2') })).toBe(false)
+    const text = phasePrompt('green', r, green)
+    expect(text).toContain(`The last lines of the format command's output:\n\`\`\`\n${TAIL}\n\`\`\``)
+    expect(text).not.toContain('The last lines of the failing test run')
+    expect(text).toContain('Format command: npx lint-staged')
+    expect(phasePrompt('green', run())).not.toContain('Format command')
   })
 })
