@@ -2658,6 +2658,26 @@ describe('#140: the store under its limit', () => {
     expect(blocked).toMatchObject({ step: 'blocked', redAnswer: 'notes', lastTestTail: 'last', body: LONG })
   })
 
+  // PR #145 review round 3, findings 1 and 6: a hand-edited or foreign key or record must neither break the sweep nor count as a run.
+  test('a run key without #<issue>, or a record without a string step, is no run to the sweep, and the sweep still plans', () => {
+    const entries = [
+      { key: 'issue-forge:repo-run:/x/.git', value: run({ step: 'green' }) },
+      { key: 'issue-forge:repo-run:/y/.git#1', value: {} },
+      { key: 'issue-forge:repo-run:/y/.git#2', value: [] },
+      { key: 'issue-forge:repo-run:/y/.git#3', value: run({ id: '3-1', step: 'blocked' }) },
+    ]
+    let plan: ReturnType<typeof sweepPlan> | string
+    try {
+      plan = sweepPlan(entries, 10)
+    } catch (err) {
+      plan = `threw: ${String(err)}`
+    }
+    expect(typeof plan).toBe('object')
+    const p = plan as ReturnType<typeof sweepPlan>
+    expect(p.open).toEqual(['issue-forge:repo-run:/y/.git#3'])
+    expect([p.trim, p.drop, p.size]).toEqual([[], [], jsonChars(entries)])
+  })
+
   // PR #145 review round 3, finding 3: the 2.1.309 binary's $.store.set refuses `_(store).length > 4194304`, in characters.
   test("the store is measured in characters of its compact JSON, as Claude Code's $.store.set check counts", () => {
     expect(entrySize('a', 'é')).toBe(8)
