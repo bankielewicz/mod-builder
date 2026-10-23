@@ -1064,5 +1064,24 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - The sandbox check passes, with the canary list matching gotchas.md.
     - **Live check with a fresh log:** `hooks module issue-forge@inline loaded`, `plugin.register: issue-forge (user, issue-forge@inline), judged by core alone: admitted` and `--plugin-dir <worktree>/mods/issue-forge is one plugin` each appear once, and none of the failure lines.
     - **The same run with `--plugin-dir <worktree>/mods/no-such-mod`:** the demo still answered, from the installed copy. The log had no `@inline loaded` and one `Plugin path does not exist`, so the check fails it.
+- **PR #142 review round 2** (2026-10-23). Codex reviewed `bf69e84` and raised five P2 findings. The owner asked whether each has merit by Anthropic's plugin documents (the main folder's untracked `docs/research/claude-plugins/`), and the advisor agreed with each verdict below.
+  - **4353802792, a missing-path line from an unrelated path fails the check: reproduced.**
+    - `CLAUDE_CODE_PLUGIN_DIRS` paths load "in addition to any you pass with `--plugin-dir`" (Create-a-Claude-Code-plugin.md:213).
+    - With a stale entry in it, the target's `is one plugin`, `loaded` and `admitted` lines were all present, beside an unrelated `Plugin path does not exist`.
+    - Only that line for `<mods>/<name>` now fails the check (`25020c5`).
+  - **4353802800, an archive isn't watched: reproduced.** A `.zip` given to `--plugin-dir` logged `Extracted ZIP to /tmp/claude-plugin-session-…/inline-0-issue-forge`. `--plugin-url` always loads one (Create-a-Claude-Code-plugin.md:164-165, :176-179). Round 1's `ba4104b` had attached the hot-reload sentence to `--plugin-url`. Step 0.4 now treats an archive as an extracted copy that no edit reaches, and only a folder hot-reloads (`322633e`).
+  - **4353802814, `enabled: false` isn't the live session: taken from the docs, not probed.**
+    - Disk and settings changes reach a running session at `/reload-plugins` or a new session (Create-a-Claude-Code-plugin.md:250, Add-components-to-a-plugin.md:13).
+    - The step now says the mod won't load next time, that an earlier session may still run it, and that the Installed tab shows what runs (`b8b8517`).
+  - **4353802805, a same-named `@skills-dir` or `@synced` copy can be the one running: taken from the docs, not probed, one clause.**
+    - The two origins are documented at Create-a-Claude-Code-plugin.md:219-239 and Publish-and-distribute-a-plugin.md:160.
+    - An enabled marketplace copy takes precedence over both, so the clause applies only when this marketplace's row is missing or disabled (`c3d7d7e`).
+  - **4353802828, this release breaks the "Built on" rule it adds: real.** `plugins/mod-builder/README.md:215` said only "CI tests it on Claude Code 2.1.296". It now names what ran on 2.1.308 for 0.2.29 (`176913f`), which adds the README to What gets touched.
+  - **Not new:** 4353504735 showing at `bf69e84:125` is GitHub re-anchoring the round-1 comment, which round 1 answered.
+  - **QA after the round** (2.1.308):
+    - Validate passes, with 357 of 357 tests.
+    - The archetype check passes, and the typecheck exits 0.
+    - **Live check with a fresh log:** `loaded`, `admitted` and the folder line once each, and no failure line.
+    - **The same run with a stale `CLAUDE_CODE_PLUGIN_DIRS` entry:** the same lines, plus one unrelated missing-path line, and it passes the scoped rule.
 - **Version:** 0.2.29 (patch: skill text).
 
