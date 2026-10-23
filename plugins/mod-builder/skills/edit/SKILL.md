@@ -67,12 +67,11 @@ change to commands, options or the state contract. Then stop for approval, as in
 
 Build's step 3, without the scaffold (the mod exists, and `scaffold.mjs` refuses to overwrite it):
 
-1. **Logic first:** change or add pure functions in `hooks/<name>-logic.ts` (`<name>` is the
-   plugin's name, the folder's name for a scaffolded mod) with tests, and keep `claude plugin test`
-   green throughout.
+1. **Logic first:** change or add pure functions in `hooks/<mod>-logic.ts` with tests, and keep
+   `claude plugin test` green throughout.
 2. **Register:** keep `register.tsx` thin. A new atom goes in `types/index.d.ts`.
 3. **UI tests:** cover every state the change adds or alters.
-4. **Demo:** `/<name> demo` shows every state the change adds or alters.
+4. **Demo:** `/<mod> demo` shows every state the change adds or alters.
 
 ## 4. Verify
 
@@ -92,8 +91,8 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
    - Leave no template comments.
 3. **Hand off** as in build's step 5. Its pointer to `../build/references/loading.md` ("How later
    edits reach the copy that runs" and "Check which copy loaded") covers a local-folder marketplace,
-   a remote one and a `--plugin-dir` folder. Add what changed in one line, and the cases that file's
-   section doesn't spell out:
+   a remote one and a `--plugin-dir` folder. Add what changed in one line, and the cases those two
+   sections don't spell out:
    - **Locked by managed settings:** say that the folder's copy couldn't be checked, and that the
      managed copy is the one running.
    - **An installed copy and a `--plugin-dir` session together**, as when an in-place install is

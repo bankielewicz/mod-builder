@@ -25,19 +25,19 @@ also `${CLAUDE_PLUGIN_ROOT}/skills/build`). Read each when its step says to, not
 - `references/gotchas.md`: engine rules that have broken mods before (verified only)
 - `references/patterns.md`: idioms, each with a real mod to read
 - `references/ui-states.md`: the states every drawn mod must cover
-- `references/verify.md`: step 4's detail: the smoke test's log checks, options in a `-p` run, and
-  the typecheck procedure
+- `references/verify.md`: step 4's detail: the smoke test's log checks, the installed copy and
+  options in a `-p` run, the typecheck procedure, and tests that touch real config
 - `references/loading.md`: which copy of a mod runs, how to load it live, and how later edits reach
   it (steps 4 and 5)
 - `ci/marketplace.json`: a folder marketplace, offered at step 0.2 when there is none
 - `ci/ci.yml`: a GitHub Actions workflow the person can copy into `.github/workflows/`
 
-Maintainer checks for this repository, not part of a build: `scripts/check-archetypes.sh`
+Maintainer checks for mod-builder's own repository, not part of a build: `scripts/check-archetypes.sh`
 regenerates all five archetypes and runs validate, test and tsc, and `scripts/check-sandbox.mjs`
 checks that the test loader still refuses `import()` and `node:fs`.
 
 **Ground rule: our own code only.** Other people's mods are reading material. Borrow the idea and
-write the code anew. Never copy-paste their code, and never install, `--plugin-dir`, or
+write our own code. Never copy-paste their code, and never install, `--plugin-dir`, or
 `claude plugin test` a mod someone else wrote. Mods run unsandboxed, with the person's full access.
 
 ## 0. Orient (no questions yet)
@@ -141,20 +141,22 @@ claude plugin validate <mods>/<name>   # clean; every gating hook has .catch
 claude plugin test <mods>/<name>       # all pass
 rm -f <scratchpad>/<name>-debug.log    # the log is appended to, never replaced
 claude -p --debug-file <scratchpad>/<name>-debug.log --plugin-dir <mods>/<name> "/<name> demo"   # live smoke test
-npx -y -p typescript@5.6 tsc -p <scratchpad>/<copy of tsconfig.check.json>   # typecheck; make the copy as references/verify.md says
+npx -y -p typescript@5.6 tsc -p <scratchpad>/<copy of tsconfig.check.json>   # typecheck; until the mod has loaded once, a copy made as references/verify.md says, then tsc -p <mods>/<name>
 ```
 
 The smoke test passes when it prints the command's text **and** its debug log shows that this
 folder's code is what ran (`grep -n '<name>' <log>`). Start each run with no log: `--debug-file`
 appends, so an earlier run's lines would pass or fail this one. Before calling it passed, check the
-log as `references/verify.md` says, under "Check the smoke test's debug log". A demo that needs an
-option, and the typecheck before the mod has ever loaded, are in the same file.
+log as `references/verify.md` says, under "Check the smoke test's debug log". The same file says
+why an installed copy needn't be turned off, how a demo that needs an option passes it, how to make
+the typecheck copy, and what to do when tests touch real config.
 
 If validate prints a gating hook without `.catch`, add one or say why it is deliberate.
 
 Then load the mod live, one of the two ways `references/loading.md` describes under "Load a mod
 live". The person walks through the demo and every "Done means" bullet in that live session, since a
-headless run can't press keys; report that walk-through as pending until they have done it.
+headless run can't press keys. That walk-through is the one item of this step that may be reported as
+pending at hand-off, until the person has done it; everything else here must pass.
 
 Report failures as failures, with the output. Any edit to the mod's code after Verify passed makes
 those results stale: run Verify again (and report Validate and Test again) before handing off.

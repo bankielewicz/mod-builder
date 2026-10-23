@@ -5,12 +5,13 @@ the session's scratchpad directory: a temporary folder outside the repository an
 
 ## Check the smoke test's debug log
 
-The smoke test passes only when every point below holds. Check each before calling it passed.
+The smoke test passes only when the first three points below hold. Check each before calling it
+passed. The fourth is a third outcome, neither a pass nor a fail: blocked by policy.
 
 - The log has a `hooks module <name>@inline loaded` line, and after it a
   `plugin.register: <name> (user, <name>@inline), … admitted` line. A policy refusal comes after
   `loaded`, so `loaded` alone isn't enough.
-- Its `--plugin-dir <path> is one plugin` line names `<mods>/<name>`, the folder this build wrote.
+- Its `--plugin-dir <path> is one plugin` line names `<mods>/<name>`, the mod folder under test.
 - It has no line for the mod that says `did not load`, `not loaded`, `ignored`, `hook skipped` or
   `refused`, and no `Plugin path does not exist: <mods>/<name>`. With a wrong path the installed
   copy, if there is one, answers the demo, and only that log line says so. The same line for another
@@ -22,7 +23,7 @@ The smoke test passes only when every point below holds. Check each before calli
   Either way, report the smoke test as blocked by policy, quote what the session printed, and don't
   work around it.
 
-## Options in a `-p` run
+## The installed copy, and options in a `-p` run
 
 A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off.
 The run reads options from user settings, `--settings` and managed settings, under

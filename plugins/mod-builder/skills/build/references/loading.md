@@ -2,7 +2,9 @@
 
 Read by the build skill at step 4, when loading the mod live, and at step 5, in the hand-off. The edit
 skill reads it at step 0.4 and in its hand-off. Two answers decide what makes an edit to a mod run:
-how the mod is installed, and whether this session loaded it with `--plugin-dir`.
+how the mod is installed, and whether this session loaded it with `--plugin-dir`. Where a command
+below names `<name>@<marketplace>`, that is the row's `id`: the marketplace entry's name and the
+marketplace.
 
 ## How it's installed
 
@@ -30,10 +32,10 @@ name can have more than one row, such as `@synced`, so take the one from this ma
 
 ## Whether this session loaded it with `--plugin-dir`
 
-Or the same way, through `--plugin-url` or `CLAUDE_CODE_PLUGIN_DIRS`. The install records can't tell,
-because the marketplace row stays enabled while an inline copy replaces it. The person sees it
-in `/plugin`'s Installed tab, as "Check which copy loaded" below says. If the request doesn't say,
-ask the person (the edit skill asks in its step 1 batch).
+This covers `--plugin-url` and `CLAUDE_CODE_PLUGIN_DIRS` too, which load a plugin the same way. The
+install records can't tell, because the marketplace row stays enabled while an inline copy replaces
+it. The person sees it in `/plugin`'s Installed tab, as "Check which copy loaded" below says. The
+edit skill asks this in its step 1 batch when the request doesn't say.
 
 - When managed settings' `enabledPlugins` names the plugin, a `--plugin-dir` copy never replaces
   it (docs, not observed): the managed copy runs, the Installed tab shows its marketplace row,
@@ -56,8 +58,8 @@ ask the person (the edit skill asks in its step 1 batch).
 
 Load it in one of two ways:
 
-- **A new session with `claude --plugin-dir <mods>/<name>`** (fastest). It reloads as "A folder"
-  above says.
+- **A new session with `claude --plugin-dir <mods>/<name>`** (fastest). Its hooks module reloads as
+  the "A folder runs as `<name>@inline`" bullet above says.
 - **Install it once** from the marketplace (Share) with `/plugin install <name>@<marketplace>`. From
   a marketplace added from a local folder it loads in place, and `/reload-plugins` picks up later
   edits (it prints `re-read from its folder`). From a GitHub or other remote marketplace it is a copy
@@ -73,8 +75,7 @@ Load it in one of two ways:
 - From GitHub or another remote marketplace: a version bump, a push and
   `claude plugin update <name>@<marketplace>` (it ends with `Restart to apply changes.`), then
   `/reload-plugins`.
-- With `--plugin-dir`: as "A folder" above says. A save reloads the hooks module, and
-  `/reload-plugins` loads the rest (docs, not observed).
+- With `--plugin-dir`: as the "A folder runs as `<name>@inline`" bullet above says.
 
 ## Check which copy loaded
 
