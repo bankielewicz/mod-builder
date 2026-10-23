@@ -471,12 +471,20 @@ const isSameGeneration = (latest: Generation | undefined, read: Generation | und
  * write can still race. A failed update rejects for its caller; the next one runs regardless.
  */
 function updateStore<T>($: Engine, base: string, modsDir: string, change: (current: T) => T): Promise<void> {
-  storeChain = storeChain
-    .catch(() => undefined)
-    .then(async () => {
-      await $.store.set(keyOf(base, modsDir), change(((await storedOf($, base, modsDir)) ?? {}) as T))
-    })
-  return storeChain
+  return enqueueStore(async () => {
+    await $.store.set(keyOf(base, modsDir), change(((await storedOf($, base, modsDir)) ?? {}) as T))
+  })
+}
+
+/** Runs `task` after every store write and delete this session queued before it; one that fails doesn't hold up the next. */
+function enqueueStore<T>(task: () => Promise<T>): Promise<T> {
+  const turn = storeChain.then(task)
+  // The caller handles the turn's failure; the chain itself never rejects, so no failure goes unhandled.
+  storeChain = turn.then(
+    () => undefined,
+    () => undefined,
+  )
+  return turn
 }
 
 /** Updates one folder's build generations, as `updateStore` does, from their current value. */
@@ -489,13 +497,11 @@ function updateGenerations($: Engine, modsDir: string, change: (current: Record<
  * `isStillGone` says so in that same turn (PR #146 review, finding 5). Resolves to whether it deleted the key.
  */
 function deleteStore($: Engine, key: string, isStillGone: () => Promise<boolean>): Promise<boolean> {
-  const task = storeChain.catch(() => undefined).then(async () => {
+  return enqueueStore(async () => {
     if (!(await isStillGone())) return false
     await $.store.delete(key)
     return true
   })
-  storeChain = task.then(() => undefined)
-  return task
 }
 
 /**
