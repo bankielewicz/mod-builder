@@ -2714,6 +2714,25 @@ describe('#140: the store under its limit', () => {
     expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], storeSize(entries.slice(0, 2))])
   })
 
+  // PR #145 review round 1, finding 4: a trim or delete the re-read refused, or whose write failed, frees nothing.
+  test('the size left counts the trims and deletes that landed, each by what it saves', () => {
+    type Planned = ReturnType<typeof sweepPlan> & { size?: number; saves?: Record<string, number> }
+    const leftAfter = (logic as Record<string, unknown>).leftAfter as ((plan: Planned, landed: readonly string[]) => number) | undefined
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const a = { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) }
+    const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
+    const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
+    const entries = [a, b, c]
+    const plan: Planned = sweepPlan(entries, sweepPlan(entries, Infinity).left - 1)
+    expect([plan.trim, plan.drop]).toEqual([[other(2)], [other(1)]])
+    expect(plan.size).toBe(storeSize(entries))
+    expect(plan.saves).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) - entrySize(b.key, finishedRecord(b.value)) })
+    expect(typeof leftAfter).toBe('function')
+    expect(leftAfter?.(plan, [other(1), other(2)])).toBe(plan.left)
+    expect(leftAfter?.(plan, [])).toBe(plan.size)
+    expect(leftAfter?.(plan, [other(2)])).toBe((plan.size ?? 0) - (plan.saves?.[other(2)] ?? 0))
+  })
+
   // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves a pre-0.3 record of another checkout in place.
   test('a record under a pre-0.3 issue-forge:run:<checkout> key is a run to the sweep: trimmed when finished, deleted past the budget', () => {
     const legacy = 'issue-forge:run:/elsewhere'

@@ -120,6 +120,8 @@ type World = {
   storeHold?: StoreHold
   /** With `storeHold`, each write and delete that lands, in order, as `set <key>` or `delete <key>` (#140). */
   storeOps?: string[]
+  /** With `storeHold`, keys whose `$.store.get` rejects (PR #145 review round 1, finding 4). */
+  storeGetFails?: string[]
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -256,7 +258,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   world.clock = mock.clock(on, { now: 1_000_000 })
   const hold = world.storeHold
   if (hold) {
-    on('store.get', ($: any, e: any) => ({ value: store[e.key] }))
+    on('store.get', ($: any, e: any) => (world.storeGetFails?.includes(e.key) ? { deny: 'the store could not be read' } : { value: store[e.key] }))
     on('store.set', ($: any, e: any) => {
       const land = () => ((store[e.key] = e.value), world.storeOps?.push(`set ${e.key}`), { value: undefined })
       if (hold.isHeld || !hold.when(e.value)) return land()
@@ -4240,6 +4242,19 @@ describe('#140: the store under its limit', () => {
     const warnings = w.toasts.filter(t => t.includes("MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop"))
     expect(warnings.length).toBe(1)
     expect(warnings[0]).toStartWith('saved runs take 3.')
+  })
+
+  // PR #145 review round 1, finding 4: one failed read is skipped, not the end of the sweep.
+  test('a key whose read fails is skipped, and the sweep still trims the rest', async ($, on) => {
+    const store: Record<string, unknown> = {
+      [OTHER(4)]: otherRun(4, 'done', 0, { lastTestTail: 'T'.repeat(30_000) }),
+      [OTHER(5)]: otherRun(5, 'done', 1, { lastTestTail: 'T'.repeat(30_000) }),
+    }
+    engine(on, { storeHold: HOLD(), storeGetFails: [OTHER(4)] }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect('lastTestTail' in (store[OTHER(5)] as any)).toBe(false)
+    expect('lastTestTail' in (store[OTHER(4)] as any)).toBe(true)
   })
 
   // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves another checkout's pre-0.3 record where it is.
