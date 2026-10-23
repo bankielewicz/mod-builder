@@ -2467,10 +2467,14 @@ export function staleLine(runs: readonly Run[], now: number, drivenId: string | 
   return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
 }
 
-/** The toast when the store is still over the budget after the sweep; a toast already names the mod. */
-export function storeWarning(bytes: number, unfinished: number, repos: number): string {
+/**
+ * The toast when the store is still over the budget after the sweep, or keys couldn't be read (PR #145 review round 2,
+ * finding 2: those weigh nothing in `bytes`); a toast already names the mod.
+ */
+export function storeWarning(bytes: number, unfinished: number, repos: number, unreadable = 0): string {
   const runs = `${unfinished} unfinished run${unfinished === 1 ? '' : 's'} in ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
-  return `store still ${(bytes / MIB).toFixed(1)} MiB of Claude Code's 4 MiB after the cleanup, with ${runs}; /issue-forge stop <N>, in a run's repository, ends one`
+  const head = `store still ${(bytes / MIB).toFixed(1)} MiB of Claude Code's 4 MiB after the cleanup, with ${runs}; /issue-forge stop <N>, in a run's repository, ends one`
+  return unreadable === 0 ? head : `${head}; ${unreadable} key${unreadable === 1 ? '' : 's'} couldn't be read, so the store may be bigger`
 }
 
 /** What the driving session finds in the store: its run stopped, taken over or replaced, or nothing changed. */

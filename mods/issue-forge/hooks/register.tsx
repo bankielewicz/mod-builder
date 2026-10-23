@@ -1702,8 +1702,10 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
  */
 async function sweepStore($: EngineInterface): Promise<void> {
   const entries: { key: string; value: unknown }[] = []
-  // A key whose read fails reads as undefined, which the plan leaves out (PR #145 review round 1, finding 4).
-  for (const key of await $.store.keys()) entries.push({ key, value: await $.store.get(key).catch(() => undefined) })
+  // A key whose read fails reads as undefined, which the plan leaves out (PR #145 review round 1, finding 4), and is counted
+  // apart: it weighs nothing in the plan, so the warning names it (round 2, finding 2).
+  const unreadable: string[] = []
+  for (const key of await $.store.keys()) entries.push({ key, value: await $.store.get(key).catch(() => void unreadable.push(key)) })
   const plan = sweepPlan(entries)
   const listed = (key: string) => entries.find(e => e.key === key)?.value as Run
   const landed: string[] = []
@@ -1723,10 +1725,10 @@ async function sweepStore($: EngineInterface): Promise<void> {
   }
   // The size left counts only what landed: a refused re-read or a failed write frees nothing.
   const left = leftAfter(plan, landed)
-  if (left > STORE_BUDGET && !isStoreWarned) {
+  if ((left > STORE_BUDGET || unreadable.length > 0) && !isStoreWarned) {
     isStoreWarned = true
     const counts = openCounts([...plan.open, ...restarted])
-    $.ui.toast(storeWarning(left, counts.unfinished, counts.repos))
+    $.ui.toast(storeWarning(left, counts.unfinished, counts.repos, unreadable.length))
   }
 }
 
