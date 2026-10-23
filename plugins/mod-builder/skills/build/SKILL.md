@@ -133,9 +133,10 @@ appends, so an earlier run's lines would pass or fail this one.
   `loaded`, so `loaded` alone isn't enough.
 - Its `--plugin-dir <path> is one plugin` line names `<mods>/<name>`, the folder you built.
 - It has no line for the mod that says `did not load`, `not loaded`, `ignored`, `hook skipped` or
-  `refused`, and no `Plugin path does not exist`. With a wrong path the installed copy, if there is
-  one, answers the demo, and only that log line says so. In a `-p` run, another mod's refusal goes
-  to the debug log only.
+  `refused`, and no `Plugin path does not exist: <mods>/<name>`. With a wrong path the installed
+  copy, if there is one, answers the demo, and only that log line says so. The same line for another
+  path, such as a stale entry in `CLAUDE_CODE_PLUGIN_DIRS`, doesn't fail the check. In a `-p` run,
+  another mod's refusal goes to the debug log only.
 
 A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off.
 The run reads options from user settings, `--settings` and managed settings, under
