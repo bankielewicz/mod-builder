@@ -75,6 +75,12 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     denyStoreSet: '',
     /** A store key whose reads are refused. */
     denyStoreGet: '',
+    /** A store key whose delete is refused (#138). */
+    denyStoreDelete: '',
+    /** Every store key deleted, in order (#138). */
+    deleted: [] as string[],
+    /** Paths whose `$.fs.stat` rejects with this ending in place of the disk's answer, as `failed: EACCES` (#138). */
+    statFails: {} as Record<string, string>,
     /** Arm mid-test: the next write of `key` waits for `until`, and sets `isReached`. */
     holdStoreSet: null as { key: string; until: Promise<void>; isReached: boolean } | null,
     /** Arm mid-test: the next read of `key` waits for `until`, and sets `isReached`. */
@@ -123,6 +129,22 @@ function world(on: On, disk: Disk, outputs: { validate?: Output; test?: Output }
     }
     stored.set(key, JSON.stringify(value))
     return { value: undefined } as never
+  })
+  on('store.keys', () => ({ value: [...stored.keys()] }) as never)
+  on('store.delete', ($, e) => {
+    const key = (e as { key: string }).key
+    if (seen.denyStoreDelete === key) return { deny: 'EIO: store write failed' }
+    stored.delete(key)
+    seen.deleted.push(key)
+    return { value: undefined } as never
+  })
+  // A path is a folder when the disk holds a file under it; a missing one rejects as the engine's does (probed on 2.1.309).
+  on('fs.stat', ($, e) => {
+    const path = (e as { path: string }).path
+    if (seen.statFails[path]) return { deny: `$.fs.stat(${path}) ${seen.statFails[path]}` }
+    if (path in disk) return { value: { kind: 'file', size: 0, mtimeMs: mtime.ms, isLink: false } } as never
+    if (Object.keys(disk).some(file => file.startsWith(`${path}/`))) return { value: { kind: 'dir', size: 0, mtimeMs: mtime.ms, isLink: false } } as never
+    return { deny: `$.fs.stat(${path}) failed: ENOENT` }
   })
   const entriesOf = (dir: string) => {
     const names = new Map<string, 'file' | 'dir'>()
@@ -3982,6 +4004,95 @@ describe('a rescan after a tool batch follows the folder a report pinned (#100)'
     await clock.settle()
     expect(seen.reads.slice(next).filter(path => path.startsWith(`${MAIN}/mods/`))).toEqual([])
     expect(seen.listed.slice(listedFrom).filter(path => path.startsWith(`${MAIN}/mods`))).toEqual([])
+  })
+})
+
+// #138 (Change 0.2.30): the store keeps records only for mods folders and mods that exist.
+describe('#138: records of folders and mods that are gone', () => {
+  const ok = (kind: string) => ({ kind, ok: true, stampMs: 5000, atMs: 5000, durationMs: 100, summary: 'ok', errors: [] })
+  const GONE = '/m/scratch/old/mods'
+  const LOCKED = '/m/locked/mods'
+  const results = (stored: Map<string, string>, dir = MODS) => JSON.parse(stored.get(`modlab:results:${dir}`) ?? '{}') as Record<string, unknown>
+
+  test("a session start deletes a gone folder's keys, logging each, and keeps a folder that is there or can't be checked", OPTIONS, async ($, on) => {
+    const seed = {
+      [`modlab:results:${GONE}`]: { alpha: { Validate: ok('Validate') } },
+      [`modlab:done:${GONE}`]: { alpha: 'sig' },
+      [`modlab:generations:${GONE}`]: {},
+      [`modlab:results:${LOCKED}`]: { alpha: { Validate: ok('Validate') } },
+      [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate') } },
+      count: 7,
+    }
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    seen.statFails[LOCKED] = 'failed: EACCES'
+    await start($)
+    await clock.settle()
+    expect(seen.deleted).toEqual([`modlab:results:${GONE}`, `modlab:done:${GONE}`, `modlab:generations:${GONE}`])
+    for (const key of seen.deleted) expect(seen.logs.filter(line => line.includes(`deleted ${key} (${GONE} is gone)`))).toHaveLength(1)
+    expect([`modlab:results:${LOCKED}`, `modlab:results:${MODS}`, 'count'].filter(key => stored.has(key))).toHaveLength(3)
+  })
+
+  test('a refused delete is logged and skipped, and the others still go', OPTIONS, async ($, on) => {
+    const seed = { [`modlab:results:${GONE}`]: {}, [`modlab:done:${GONE}`]: {}, [`modlab:generations:${GONE}`]: {} }
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    seen.denyStoreDelete = `modlab:done:${GONE}`
+    await start($)
+    await clock.settle()
+    expect(seen.deleted).toEqual([`modlab:results:${GONE}`, `modlab:generations:${GONE}`])
+    expect(stored.has(`modlab:done:${GONE}`)).toBe(true)
+    expect(seen.logs.filter(line => line.includes('EIO: store write failed'))).toHaveLength(1)
+  })
+
+  test('the unkeyed keys from before 0.2.9 go once the folder has its own, one prefix at a time', OPTIONS, async ($, on) => {
+    const seed = {
+      'modlab:results': { 'git-branch': { Validate: ok('Validate') } },
+      'modlab:generations': { 'git-branch': 1000 },
+      [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate') } },
+    }
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.settle()
+    expect(seen.deleted).toEqual(['modlab:results'])
+    expect(seen.logs.filter(line => line.includes(`deleted modlab:results (${MODS} has its own record)`))).toHaveLength(1)
+    expect(stored.has('modlab:generations')).toBe(true)
+  })
+
+  test('a scan drops a mod no longer in the folder from its results, done marks and generations', OPTIONS, async ($, on) => {
+    const seed = {
+      [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate') }, duet: { Test: ok('Test') } },
+      [`modlab:done:${MODS}`]: { duet: 'sig' },
+      [`modlab:generations:${MODS}`]: { duet: { since: 1000, fromVersion: '0.1.0' } },
+    }
+    const { clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.settle()
+    expect(Object.keys(results(stored))).toEqual(['git-branch'])
+    expect(Object.keys(JSON.parse(stored.get(`modlab:done:${MODS}`) ?? '{}'))).not.toContain('duet')
+    expect(Object.keys(JSON.parse(stored.get(`modlab:generations:${MODS}`) ?? '{}'))).not.toContain('duet')
+  })
+
+  test("a scan whose listing of the folder fails drops nothing", OPTIONS, async ($, on) => {
+    const seed = { [`modlab:results:${MODS}`]: { 'git-branch': { Validate: ok('Validate') }, duet: { Test: ok('Test') } } }
+    const { seen, clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    seen.failLists.push(MODS)
+    await start($)
+    await clock.settle()
+    expect(Object.keys(results(stored)).sort()).toEqual(['duet', 'git-branch'])
+  })
+
+  test("a build's mod whose folder isn't written yet keeps the result a Validate report stored for it", OPTIONS, async ($, on) => {
+    const seed = { [`modlab:results:${MODS}`]: { duet: { Test: ok('Test') } } }
+    const { clock, stored } = world(on, modFiles('git-branch'), {}, true, undefined, { ms: 1000 }, undefined, undefined, seed)
+    await start($)
+    await clock.settle()
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'new-mod', stage: 'Spec', status: 'running' } as never)
+    await $.tool.call({ tool: 'mcp__mod-builder__lab_report', mod: 'new-mod', stage: 'Validate', status: 'passed' } as never)
+    await clock.settle()
+    expect(Object.keys(results(stored))).toContain('new-mod')
+    // A later scan keeps it while the build's report is live.
+    await command($, 'new-mod')
+    await clock.settle()
+    expect(Object.keys(results(stored)).sort()).toEqual(['new-mod'])
   })
 })
 
