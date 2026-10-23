@@ -1892,7 +1892,7 @@ async function statusOf($: EngineInterface, at: Repo | null, issue: number | nul
     return withStale([`${pick.runs.length} runs in this repository:`, ...pick.runs.map(r => lineOf(r, ctx))].join('\n'))
   }
   if (pick.kind === 'none') {
-    if (issue !== null) return noneText(issue, '')
+    if (issue !== null) return withStale(noneText(issue, ''))
     const { profile, errors } = await loadProfile($, at.root)
     return profileStatusText(errors, profile)
   }
