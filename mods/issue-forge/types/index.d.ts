@@ -114,6 +114,7 @@ export type Run = {
   workRoot?: string
   issue: number
   title: string
+  /** The issue's text; a `done` or `stopped` record keeps its first 500 characters and `…` (0.9.0). */
   body: string
   url: string
   branch: string
@@ -130,11 +131,11 @@ export type Run = {
   /** The latest result of each gate. */
   gates: { R?: Gate; G?: Gate; F?: Gate }
   lastGate?: Gate
-  /** Last 200 lines of the test output red's gate saw: green's first prompt gets them. */
+  /** Last 200 lines, at most 20,000 characters, of the test output red's gate saw: green's first prompt gets them. Dropped once `done` or `stopped` (0.9.0). */
   redTestTail?: string
-  /** Last 200 lines of the latest gate's test output, or of its format command's when that failed it (R5, G9; 0.8.0): a retry's prompt gets them. */
+  /** Last 200 lines, at most 20,000 characters, of the latest gate's test output, or of its format command's when that failed it (R5, G9; 0.8.0): a retry's prompt gets them. Dropped once `done` or `stopped` (0.9.0). */
   lastTestTail?: string
-  /** The red agent's final answer, plus a behaviour detour's once its gate R passed: each green prompt and the PR body get it. */
+  /** The red agent's final answer, plus a behaviour detour's once its gate R passed: each green prompt and the PR body get it. Dropped once `done` or `stopped` (0.9.0). */
   redAnswer?: string
   /** Set while red adds a behaviour test for these files (G6's one return). */
   behaviourFor?: string[]
