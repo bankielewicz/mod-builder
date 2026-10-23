@@ -222,6 +222,8 @@ Claude Code keeps one store per plugin, shared by every repository's runs, and r
   deleted, those that finished longest ago first. An unfinished run is never deleted. If the store is still over, a toast
   says so once a session, as a share of the limit, with each cause: trims or deletes that didn't go through, keys that
   couldn't be read, and the unfinished runs left in how many repositories. A sweep that fails writes a transcript line.
+  When unfinished runs alone leave no room and Claude Code refuses the new run, the start answers that it wasn't
+  started, with Claude Code's reason, and that `/issue-forge stop <N>` in a run's repository ends one.
 - A command's output is kept to its last 200 lines and 20,000 characters.
 - `/issue-forge status` names unfinished runs that started more than 7 days ago, other than the one this session
   drives, with the `/issue-forge stop <N>` that ends each one and keeps its branch.
