@@ -1695,7 +1695,8 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
 /**
  * Change 0.9.0 (#140), before a new run is written, so a full store can't refuse it: finished records written before 0.9.0
  * are trimmed, then the oldest finished runs of any repository deleted while the store is over its budget. Each write reads
- * its key again and acts only on the same finished run, as prune does; a write that fails is skipped.
+ * its key again and acts only on the same finished run, as prune does; a write that fails is skipped. The writes don't go
+ * through updateRun: no drive writes a finished run, and reflect has nothing to show for another repository's.
  */
 async function sweepStore($: EngineInterface): Promise<void> {
   const entries: { key: string; value: unknown }[] = []
