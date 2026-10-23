@@ -2756,6 +2756,14 @@ describe('#140: the store under its limit', () => {
     expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], jsonChars(entries.slice(0, 2))])
   })
 
+  // PR #145 review round 3, finding 7: now - startedAt is NaN for a record without a numeric startedAt, so it was never named.
+  test('an unfinished run with no numeric startedAt is named first, as (start unknown)', () => {
+    const now = 10 * DAY
+    const unknown = { ...run({ id: '7-1', issue: 7, step: 'blocked' }), startedAt: undefined } as unknown as Run
+    const old = run({ id: '8-1', issue: 8, step: 'ready', startedAt: 1 * DAY })
+    expect(staleLine([old, unknown], now)).toBe('unfinished for over 7 days: #7 blocked (start unknown) · #8 ready (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+  })
+
   // PR #145 review round 1, finding 6: the session driving a run knows it is unfinished. Round 2 (Codex 4360654727): by the run
   // this module drives, as a reload of the module ends the drive while the stored driver still names this session.
   test('the stale line leaves out the run this module drives, and keeps one whose stored driver is this session after a reload', () => {
