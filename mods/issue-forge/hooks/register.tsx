@@ -88,6 +88,7 @@ import {
   newRun,
   nextDemoState,
   normalizePath,
+  openCounts,
   othersLine,
   othersOf,
   outputTail,
@@ -1706,18 +1707,26 @@ async function sweepStore($: EngineInterface): Promise<void> {
   const plan = sweepPlan(entries)
   const listed = (key: string) => entries.find(e => e.key === key)?.value as Run
   const landed: string[] = []
-  for (const key of plan.trim) {
+  // A re-read that finds the run unfinished again (another session restarted it) counts it (PR #145 review round 2, Codex 4360654720).
+  const restarted: string[] = []
+  const reread = async (key: string) => {
     const stored = await loadRun($, key).catch(() => null)
+    if (isActive(stored)) restarted.push(key)
+    return stored
+  }
+  for (const key of plan.trim) {
+    const stored = await reread(key)
     if (stored && isPrunable(listed(key), stored)) await $.store.set(key, finishedRecord(stored)).then(() => landed.push(key), () => undefined)
   }
   for (const key of plan.drop) {
-    if (isPrunable(listed(key), await loadRun($, key).catch(() => null))) await $.store.delete(key).then(() => landed.push(key), () => undefined)
+    if (isPrunable(listed(key), await reread(key))) await $.store.delete(key).then(() => landed.push(key), () => undefined)
   }
   // The size left counts only what landed: a refused re-read or a failed write frees nothing.
   const left = leftAfter(plan, landed)
   if (left > STORE_BUDGET && !isStoreWarned) {
     isStoreWarned = true
-    $.ui.toast(storeWarning(left, plan.unfinished, plan.repos))
+    const counts = openCounts([...plan.open, ...restarted])
+    $.ui.toast(storeWarning(left, counts.unfinished, counts.repos))
   }
 }
 

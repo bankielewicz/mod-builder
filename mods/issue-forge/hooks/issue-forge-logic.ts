@@ -2402,9 +2402,18 @@ export type SweepPlan = {
   saves: Record<string, number>
   /** The size once every trim and delete has landed. */
   left: number
-  /** The unfinished runs, which the sweep never deletes, and the repositories (or pre-0.3 checkouts) they're in. */
+  /** The unfinished runs' keys, which the sweep never deletes. */
+  open: string[]
+  /** How many there are, and the repositories (or pre-0.3 checkouts) they're in. */
   unfinished: number
   repos: number
+}
+
+/** The warning's counts for unfinished run keys: the runs, and the repositories (or pre-0.3 checkouts) they're in. */
+export function openCounts(keys: readonly string[]): { unfinished: number; repos: number } {
+  // A run key's repository: the key without its prefix and `#<issue>`; a pre-0.3 key names its checkout.
+  const repos = new Set(keys.map(key => key.replace(/^issue-forge:(?:repo-)?run:/, '').replace(/#\d+$/, '')))
+  return { unfinished: keys.length, repos: repos.size }
 }
 
 /** The store's size once the trims and deletes in `landed` went through; one the re-read refused, or whose write failed, frees nothing. */
@@ -2433,9 +2442,8 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
     else if (m.trimmed) saves[m.key] = m.before - m.after
   }
   const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves }
-  // A run key's repository: the key without its prefix and `#<issue>`; a pre-0.3 key names its checkout.
-  const open = runs.filter(r => isActive(r.run)).map(r => r.key.replace(/^issue-forge:(?:repo-)?run:/, '').replace(/#\d+$/, ''))
-  return { ...plan, left: leftAfter(plan, [...trim, ...drop]), unfinished: open.length, repos: new Set(open).size }
+  const open = runs.filter(r => isActive(r.run)).map(r => r.key)
+  return { ...plan, left: leftAfter(plan, [...trim, ...drop]), open, ...openCounts(open) }
 }
 
 /** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */
