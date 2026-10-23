@@ -37,6 +37,7 @@ import {
   firstFailure,
   findStash,
   foreignChange,
+  formatGate,
   gateG,
   gateR,
   gitFailure,
@@ -2535,12 +2536,7 @@ describe('PR #136 review round 2: a refused commit', () => {
 
 // #137 (Change 0.8.0): a profile formatCommand, run between two git add -A at gates R, G and F; its failure fails the gate.
 describe('#137: the profile formatCommand', () => {
-  type FormatGate = (which: 'R' | 'G' | 'F', p: Profile, result: CommandResult) => Gate | null
-  const formatGate = (which: 'R' | 'G' | 'F', p: Profile, result: CommandResult): Gate | null | string => {
-    const of = (logic as Record<string, unknown>).formatGate as FormatGate | undefined
-    return of ? of(which, p, result) : 'formatGate is missing'
-  }
-  const formatOf = (p: Profile) => (p as { formatCommand?: string[] }).formatCommand
+  const formatOf = (p: Profile) => p.formatCommand
   const LINT = ['npx', 'lint-staged']
   const FAILED = 'format command failed: npx lint-staged (exit 1)'
 
@@ -2572,11 +2568,11 @@ describe('#137: the profile formatCommand', () => {
 
   test('gates R and G add a passing R5 or G9 row when the format command ran, and none without it', () => {
     const p = profile({ formatCommand: LINT })
-    const r = gateR(p, { staged: ['tests/a.test.ts'], tests: fail, format: ok } as Parameters<typeof gateR>[1])
+    const r = gateR(p, { staged: ['tests/a.test.ts'], tests: fail, format: ok })
     expect(r.passed).toBe(true)
     expect(r.checks.map(c => c.id)).toEqual(['R1', 'R2', 'R3', 'R5'])
     expect(r.checks[3]).toEqual({ id: 'R5', passed: true, detail: 'format command ran (exit 0)' })
-    const f = gateG(p, null, { ...gFacts(), format: ok } as GateGFacts, ROOT, 'F')
+    const f = gateG(p, null, gFacts({ format: ok }), ROOT, 'F')
     expect(f.passed).toBe(true)
     expect(f.checks.map(c => c.id)).toEqual(['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G9'])
     expect(f.checks[7]).toEqual({ id: 'G9', passed: true, detail: 'format command ran (exit 0)' })
@@ -2587,7 +2583,7 @@ describe('#137: the profile formatCommand', () => {
   test('a failed format gate retries the phase, then blocks (gates R and G) or rejects the refactor (gate F), as any failed gate', () => {
     const p = profile({ formatCommand: LINT })
     const gates = (['R', 'G', 'F'] as const).map(which => formatGate(which, p, fail))
-    expect(gates.every(g => typeof g === 'object' && g !== null)).toBe(true)
+    expect(gates.every(g => g !== null)).toBe(true)
     const [r5, g9, f9] = gates as Gate[]
     expect(advance(run({ step: 'gateR', profile: p, used: { red: 1, green: 0, refactor: 0 } }), { type: 'gated', gate: r5!, testTail: 'x' }, 1)).toMatchObject({ step: 'red', lastTestTail: 'x' })
     expect(advance(run({ step: 'gateR', profile: p, used: { red: 2, green: 0, refactor: 0 } }), { type: 'gated', gate: r5! }, 1)).toMatchObject({ step: 'blocked', blocked: { at: 'gateR', reason: `gate R failed after 2 attempts: ${FAILED}` } })
@@ -2600,11 +2596,11 @@ describe('#137: the profile formatCommand', () => {
     const failedAt = (gate: 'R' | 'G', id: string) => ({ gate, passed: false, checks: [{ id, passed: false, detail: FAILED }] })
     const TAIL = 'src/a.ts: SyntaxError: Unexpected token (3:1)'
     const r = run({ profile: p, lastTestTail: TAIL })
-    const green = promptExtraOf('green', { ...r, lastGate: failedAt('G', 'G9') }) as ReturnType<typeof promptExtraOf> & { formatTail?: string }
+    const green = promptExtraOf('green', { ...r, lastGate: failedAt('G', 'G9') })
     expect(green.failures).toEqual([`G9: ${FAILED}`])
     expect(green.testTail).toBeUndefined()
     expect(green.formatTail).toBe(TAIL)
-    expect((promptExtraOf('red', { ...r, lastGate: failedAt('R', 'R5') }) as { formatTail?: string }).formatTail).toBe(TAIL)
+    expect(promptExtraOf('red', { ...r, lastGate: failedAt('R', 'R5') }).formatTail).toBe(TAIL)
     expect('formatTail' in promptExtraOf('green', { ...r, lastGate: failedAt('G', 'G2') })).toBe(false)
     const text = phasePrompt('green', r, green)
     expect(text).toContain(`The last lines of the format command's output:\n\`\`\`\n${TAIL}\n\`\`\``)
