@@ -12,6 +12,18 @@ early access and changes between builds. CI pins **Claude Code 2.1.296** (`CLAUD
 local sessions run whatever build is installed (`claude --version`), and `gotchas.md` names the
 build each finding was probed on.
 
+## Read first: Anthropic's documents
+
+Required reading before changing anything here (the owner, 2026-10-23):
+
+- **Mods** (`mods/*`, and every mod mod-builder builds): read `docs/research/Mods`. Build and change them
+  through `/mod-builder:build` and `/mod-builder:edit`.
+- **Plugins**, mod-builder included (`plugins/mod-builder`: Mod Lab and its skills): read
+  `docs/research/claude-plugins`. mod-builder is a plugin that builds mods, not a mod: change it by those
+  documents, never through `/mod-builder:edit`, and change its skills through `/plugin-dev:skill-development`.
+  `docs/research/claude-plugins` is kept untracked, so it exists only in the main folder (the first line of
+  `git worktree list`); from a worktree, read it there.
+
 ## Commands
 
 There is no build step and no package.json: the engine loads the TypeScript directly.
