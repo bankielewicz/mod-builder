@@ -1748,7 +1748,8 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now, ghRepo), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
   const run = advance(fresh, { type: 'drive', session: sessionId }, now)
   await writeFocus($, issue)
-  await sweepStore($).catch(() => undefined)
+  // A sweep that fails mustn't stop the start, nor pass unseen (PR #145 review round 3, finding 4).
+  await sweepStore($).catch(err => $.ui.log(`store sweep failed: ${err instanceof Error ? err.message : String(err)}`))
   const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
   await prune($, at.repo)
