@@ -101,6 +101,7 @@ import {
   publishQuestion,
   ranges,
   readdWorktreeCommand,
+  recheckOf,
   relativeTo,
   repoRunKeys,
   routedRedBlock,
@@ -2629,6 +2630,10 @@ describe('#140: the store under its limit', () => {
    * round 2, finding 10), as the engine's check counts them (round 3, finding 3).
    */
   const jsonChars = (entries: readonly { key: string; value: unknown }[]) => JSON.stringify(Object.fromEntries(entries.map(e => [e.key, e.value]))).length
+  /** The size once a plan's trims and deletes all land, as the sweep counts it (round 3, finding 8). */
+  const leftOf = (plan: ReturnType<typeof sweepPlan>) => leftAfter(plan, [...plan.trim, ...plan.drop])
+  /** The size with every finished record trimmed and nothing deleted. */
+  const trimmedSize = (entries: readonly { key: string; value: unknown }[]) => leftOf(sweepPlan(entries, Infinity))
   const LONG = 'b'.repeat(600)
   const full = (over: Partial<Run> = {}) => run({ body: LONG, redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', behaviourAnswer: 'held', ...over })
   const TRIMMED = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer']
@@ -2660,19 +2665,15 @@ describe('#140: the store under its limit', () => {
 
   // PR #145 review round 3, finding 2 (Codex 4361161666): a planned key another session already deleted frees its whole size.
   test("a re-read tells a gone key from a restarted, a replaced and the same finished run, and a gone key's whole size counts as freed", () => {
-    const L = logic as Record<string, unknown>
-    const recheckOf = L.recheckOf as ((listed: Run, stored: unknown) => string) | undefined
     const listed = run({ id: '5-1', step: 'done' })
-    expect(typeof recheckOf).toBe('function')
-    expect([undefined, null, run({ id: '5-2', step: 'green' }), run({ id: '5-2', step: 'done' }), run({ id: '5-1', step: 'done' })].map(s => recheckOf?.(listed, s))).toEqual(['gone', 'gone', 'restarted', 'other', 'same'])
+    expect([undefined, null, run({ id: '5-2', step: 'green' }), run({ id: '5-2', step: 'done' }), run({ id: '5-1', step: 'done' })].map(s => recheckOf(listed, s))).toEqual(['gone', 'gone', 'restarted', 'other', 'same'])
     const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
     const a = { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) }
     const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
     const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
-    const plan = sweepPlan([a, b, c], sweepPlan([a, b, c], Infinity).left - 1) as ReturnType<typeof sweepPlan> & { sizes?: Record<string, number> }
+    const plan = sweepPlan([a, b, c], trimmedSize([a, b, c]) - 1)
     expect(plan.sizes).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) })
-    const credit = leftAfter as unknown as (p: typeof plan, landed: readonly string[], gone?: readonly string[]) => number
-    expect(credit(plan, [], [other(2)])).toBe(plan.size - entrySize(b.key, b.value))
+    expect(leftAfter(plan, [], [other(2)])).toBe(plan.size - entrySize(b.key, b.value))
   })
 
   // PR #145 review round 3, findings 1 and 6: a hand-edited or foreign key or record must neither break the sweep nor count as a run.
@@ -2732,9 +2733,9 @@ describe('#140: the store under its limit', () => {
     // A record the plan deletes isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
     expect(tight.trim).toEqual([])
     expect(tight.drop).toEqual([other(1), other(2)])
-    expect(tight.left).toBeGreaterThan(4000)
+    expect(leftOf(tight)).toBeGreaterThan(4000)
     const after = entries.filter(e => e.key !== other(1) && e.key !== other(2))
-    expect(tight.left).toBe(jsonChars(after))
+    expect(leftOf(tight)).toBe(jsonChars(after))
   })
 
   // Another session may delete a run between the sweep's keys() and its get(), which then reads undefined (the advisor, before the PR).
@@ -2753,7 +2754,7 @@ describe('#140: the store under its limit', () => {
     }
     expect(typeof plan).toBe('object')
     const p = plan as ReturnType<typeof sweepPlan>
-    expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], jsonChars(entries.slice(0, 2))])
+    expect([p.trim, p.drop, leftOf(p)]).toEqual([[], [other(3)], jsonChars(entries.slice(0, 2))])
   })
 
   // PR #145 review round 3, finding 7: now - startedAt is NaN for a record without a numeric startedAt, so it was never named.
@@ -2811,8 +2812,7 @@ describe('#140: the store under its limit', () => {
   // store as a share of the engine's limit, which counts characters (finding 3), not MiB of bytes. It replaces round 2's
   // unreadable-key test and round 1's text test, which pinned the old wording.
   test('the warning names each cause that applies, with the store as a share of the limit', () => {
-    type Warning = { size: number; unfinished: number; repos: number; unreadable: number; failed: number }
-    const warn = storeWarning as unknown as (w: Warning) => string
+    const warn = storeWarning
     const at = 0.8 * 4 * 1024 * 1024
     const head = "store still at 80% of Claude Code's limit after the cleanup"
     expect(warn({ size: at, unfinished: 1, repos: 1, unreadable: 0, failed: 0 })).toBe(`${head}: 1 unfinished run in 1 repository left: /issue-forge stop <N>, in a run's repository, ends one`)
@@ -2851,11 +2851,12 @@ describe('#140: the store under its limit', () => {
     const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
     const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
     const entries = [a, b, c]
-    const plan = sweepPlan(entries, sweepPlan(entries, Infinity).left - 1)
+    const plan = sweepPlan(entries, trimmedSize(entries) - 1)
     expect([plan.trim, plan.drop]).toEqual([[other(2)], [other(1)]])
     expect(plan.size).toBe(jsonChars(entries))
     expect(plan.saves).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) - entrySize(b.key, finishedRecord(b.value)) })
-    expect(leftAfter(plan, [other(1), other(2)])).toBe(plan.left)
+    // Measured apart: the store with a deleted and b trimmed.
+    expect(leftAfter(plan, [other(1), other(2)])).toBe(jsonChars([{ key: b.key, value: finishedRecord(b.value) }, c]))
     expect(leftAfter(plan, [])).toBe(plan.size)
     expect(leftAfter(plan, [other(2)])).toBe(plan.size - (plan.saves[other(2)] as number))
   })
@@ -2902,6 +2903,6 @@ describe('#140: the store under its limit', () => {
       { key: 'issue-forge:run:/elsewhere', value: run({ id: '3-1', step: 'green' }) },
       { key: 'issue-forge:repo-run:/other/.git#4', value: run({ id: '4-1', step: 'done' }) },
     ])
-    expect([plan.unfinished, plan.repos]).toEqual([3, 2])
+    expect(openCounts(plan.open)).toEqual({ unfinished: 3, repos: 2 })
   })
 })
