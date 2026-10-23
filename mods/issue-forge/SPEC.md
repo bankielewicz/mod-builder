@@ -2102,3 +2102,14 @@ count set in the pane.
   - Existing tests that pin a finished run's fields after `stop` get fixed in their own commit, saying why.
 - **Done means:** issue-forge's store stays under 3 MiB as runs accumulate across repositories, finished runs take a few kilobytes each, and `/issue-forge status` points at old unfinished runs to stop.
 - **Version:** 0.9.0 (minor: new behaviour; no command, option or state contract changes).
+- **Built** with `/mod-builder:edit`, in the worktree `scratch/issue-140-store-budget` from `main` at `ac5e63f`. The owner approved this section on 2026-10-23 ("option 1", after a plain-words summary), asking first for the check against `docs/research/Mods` recorded above.
+  - **TDD:** SPEC `19431d1`. Red `c0143b4`: 14 of 521 failed, by assertion. Green `441f94e`: 521 of 521; no existing test pinned a finished run's trimmed fields, so none needed fixing. Refactor `1b1cabf`: the store tests call the new functions directly.
+  - **As built, against the text above:**
+    - The warning reads `saved runs take <n> MiB of Claude Code's 4 MiB store, all unfinished; …`. A toast already names the mod (`Use-the-mods-API.md:212`), so it drops the `issue-forge:` prefix, and it gives the size in MiB, as the limit is.
+    - The stale line reads `(started <n> days ago)` for every run listed.
+    - The README's "What it reaches" table gains a Store row, from validate's `$.store.get`, `set`, `keys` and `delete` lines.
+  - **Live check** (Claude Code 2.1.309):
+    - `claude -p --debug-file … --plugin-dir <worktree>/mods/issue-forge "/issue-forge demo"` answered the demo. The fresh log reads `is one plugin` for the worktree's folder, `overrides installed version`, `hooks module issue-forge@inline loaded`, and then `admitted`, with no failure line.
+    - `/issue-forge status` the same way read the `--plugin-dir` copy's own store, which holds 24 keys, and answered `2 runs in this repository:` with `#27 ready` and `#16 ready`, then `unfinished for over 7 days: #16 ready (started 9 days ago) · #27 ready (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits`.
+    - No run was started live, since that needs a GitHub issue and model calls, so the sweep ran only in the tests.
+  - **QA:** `claude plugin validate .` and `claude plugin validate mods/issue-forge` passed. The typecheck (`tsconfig.check.json` against 2.1.309's types, the tests included) exited 0. Logic coverage: lines 100.00%, branches 99.80%, functions 99.35%, against 100.00%, 99.79% and 99.30% at `ac5e63f`; LCOV has no untaken branch on a changed line.
