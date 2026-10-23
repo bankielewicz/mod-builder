@@ -262,8 +262,9 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   if (hold) {
     const reads: Record<string, number> = {}
     on('store.get', ($: any, e: any) => {
-      reads[e.key] = (reads[e.key] ?? 0) + 1
-      world.onStoreGet?.(e.key, reads[e.key])
+      const n = (reads[e.key] ?? 0) + 1
+      reads[e.key] = n
+      world.onStoreGet?.(e.key, n)
       return world.storeGetFails?.includes(e.key) ? { deny: 'the store could not be read' } : { value: store[e.key] }
     })
     on('store.set', ($: any, e: any) => {

@@ -62,6 +62,7 @@ import {
   kindOf,
   layoutOf,
   lcovFileOf,
+  leftAfter,
   legacyAgentsKey,
   lineOf,
   matchesAny,
@@ -2725,12 +2726,12 @@ describe('#140: the store under its limit', () => {
 
   // PR #145 review round 1, finding 14: a run blocked for days and stopped today isn't the oldest finished run.
   test('a run that finishes records finishedAt, and the budget deletes by it (by startedAt for a record without one)', () => {
-    const finishedAt = (r: Run) => (r as { finishedAt?: number }).finishedAt
+    const finishedAt = (r: Run) => r.finishedAt
     expect(finishedAt(advance(full({ step: 'green', startedAt: 1 }), { type: 'stop' }, 900))).toBe(900)
     expect(finishedAt(advance(full({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1' }, 950))).toBe(950)
     expect(finishedAt(advance(full({ step: 'green' }), { type: 'block', reason: 'why', next: 'do this' }, 990))).toBeUndefined()
     const entries = [
-      { key: 'stoppedToday', run: run({ step: 'stopped', startedAt: 1, finishedAt: 100 } as Partial<Run>), size: 100 },
+      { key: 'stoppedToday', run: run({ step: 'stopped', startedAt: 1, finishedAt: 100 }), size: 100 },
       { key: 'doneLongAgo', run: run({ step: 'done', startedAt: 2 }), size: 100 },
     ]
     expect(budgetKeys(entries, 200, 150)).toEqual(['doneLongAgo'])
@@ -2761,21 +2762,18 @@ describe('#140: the store under its limit', () => {
 
   // PR #145 review round 1, finding 4: a trim or delete the re-read refused, or whose write failed, frees nothing.
   test('the size left counts the trims and deletes that landed, each by what it saves', () => {
-    type Planned = ReturnType<typeof sweepPlan> & { size?: number; saves?: Record<string, number> }
-    const leftAfter = (logic as Record<string, unknown>).leftAfter as ((plan: Planned, landed: readonly string[]) => number) | undefined
     const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
     const a = { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) }
     const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
     const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
     const entries = [a, b, c]
-    const plan: Planned = sweepPlan(entries, sweepPlan(entries, Infinity).left - 1)
+    const plan = sweepPlan(entries, sweepPlan(entries, Infinity).left - 1)
     expect([plan.trim, plan.drop]).toEqual([[other(2)], [other(1)]])
     expect(plan.size).toBe(storeSize(entries))
     expect(plan.saves).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) - entrySize(b.key, finishedRecord(b.value)) })
-    expect(typeof leftAfter).toBe('function')
-    expect(leftAfter?.(plan, [other(1), other(2)])).toBe(plan.left)
-    expect(leftAfter?.(plan, [])).toBe(plan.size)
-    expect(leftAfter?.(plan, [other(2)])).toBe((plan.size ?? 0) - (plan.saves?.[other(2)] ?? 0))
+    expect(leftAfter(plan, [other(1), other(2)])).toBe(plan.left)
+    expect(leftAfter(plan, [])).toBe(plan.size)
+    expect(leftAfter(plan, [other(2)])).toBe(plan.size - (plan.saves[other(2)] as number))
   })
 
   // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves a pre-0.3 record of another checkout in place.
@@ -2814,7 +2812,7 @@ describe('#140: the store under its limit', () => {
   // A toast already carries the mod's name (docs/research/Mods, Use-the-mods-API.md:212), so the text doesn't repeat it. It names
   // what is left across repositories, as status names only its own repository's old runs (PR #145 review round 1, finding 2).
   test('the warning when the store is still over the budget names the unfinished runs left and where they are', () => {
-    const warn = storeWarning as unknown as (bytes: number, unfinished: number, repos: number) => string
+    const warn = storeWarning
     expect(warn(3.3 * 1024 * 1024, 1, 1)).toBe("store still 3.3 MiB of Claude Code's 4 MiB after the cleanup, with 1 unfinished run in 1 repository; /issue-forge stop <N>, in a run's repository, ends one")
     expect(warn(3.3 * 1024 * 1024, 3, 2)).toBe("store still 3.3 MiB of Claude Code's 4 MiB after the cleanup, with 3 unfinished runs in 2 repositories; /issue-forge stop <N>, in a run's repository, ends one")
     const plan = sweepPlan([
@@ -2822,7 +2820,7 @@ describe('#140: the store under its limit', () => {
       { key: 'issue-forge:repo-run:/other/.git#2', value: run({ id: '2-1', step: 'ready' }) },
       { key: 'issue-forge:run:/elsewhere', value: run({ id: '3-1', step: 'green' }) },
       { key: 'issue-forge:repo-run:/other/.git#4', value: run({ id: '4-1', step: 'done' }) },
-    ]) as ReturnType<typeof sweepPlan> & { unfinished?: number; repos?: number }
+    ])
     expect([plan.unfinished, plan.repos]).toEqual([3, 2])
   })
 })
