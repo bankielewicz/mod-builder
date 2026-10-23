@@ -273,6 +273,32 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** The engine writes `<mod>/.claude-plugin/types/` only when an *interactive* session
   loads the mod. `claude -p --plugin-dir` doesn't write it. Until then, typecheck with a scratch
   tsconfig outside the mod (`templates/tsconfig.check.json`).
+- **[probe]** A `--plugin-dir` copy replaces an installed plugin of the same name. The debug log reads
+  `Plugin "<name>" from --plugin-dir overrides installed version`, then
+  `hooks module <name>@inline loaded (…)`, with no module line for `<name>@<marketplace>`. The
+  admission comes after `loaded`: `plugin.register: <name> (user, <name>@inline), judged by core
+  alone: admitted`. The folder shows as `--plugin-dir <path> is one plugin`. Probed on 2.1.308 (#135)
+  with issue-forge and mod-builder.
+- **[probe]** A `--plugin-dir` path that doesn't exist is skipped with only
+  `[WARN] Plugin path does not exist: <path> (ENOENT), skipping` in the debug log. The installed copy,
+  if there is one, then answers the command as though nothing were wrong. Probed on 2.1.308 (#135): a
+  relative path from the wrong folder, and `/issue-forge demo` answered.
+- **[probe]** `--debug-file <path>` appends to the file. A line already in it stays first after a
+  run. Start a check that reads the log with no file. Probed on 2.1.308 (PR #142).
+- **[probe]** `claude plugin list --json`:
+  - A plugin installed from a marketplace added from a local folder has `readFromFolder` (the
+    folder) and `folderVersion` (its version now), while `version` is the one recorded at install.
+    The text form prints `Read from: <folder>`.
+  - A copied plugin has no `readFromFolder` key, and an `installPath` under
+    `~/.claude/plugins/cache/<marketplace>/<name>/<version>`.
+  - A disabled plugin has `enabled: false`.
+
+  Probed on 2.1.308 (#135).
+- **[probe]** `/plugin`'s `mods active` line names mods only, as in `5 mods active · issue-forge, …`.
+  The Installed tab shows the copy: `issue-forge  Plugin  inline` for a `--plugin-dir` copy, and
+  `mod-builder  Plugin  claudemod` for an installed one. The details read `issue-forge @ inline`,
+  `Version: 0.7.5`. Probed on 2.1.308 (PR #142 review), in an interactive session with the installed
+  copy enabled.
 
 ## In a live terminal
 

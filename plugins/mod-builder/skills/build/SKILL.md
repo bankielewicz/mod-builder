@@ -121,8 +121,30 @@ through this gate. (lab_report: Spec passed once approved.)
 ```
 claude plugin validate <mods>/<name>   # clean; every gating hook has .catch
 claude plugin test <mods>/<name>       # all pass
-claude -p --plugin-dir <mods>/<name> "/<name> demo"   # live smoke test: prints the command's text
+rm -f <scratchpad>/<name>-debug.log    # the log is appended to, never replaced
+claude -p --debug-file <scratchpad>/<name>-debug.log --plugin-dir <mods>/<name> "/<name> demo"   # live smoke test
 ```
+
+The smoke test passes when it prints the command's text **and** its debug log shows that this
+folder's code is what ran (`grep -n '<name>' <log>`). Start each run with no log: `--debug-file`
+appends, so an earlier run's lines would pass or fail this one.
+- The log has a `hooks module <name>@inline loaded` line, and after it a
+  `plugin.register: <name> (user, <name>@inline), … admitted` line. A policy refusal comes after
+  `loaded`, so `loaded` alone isn't enough.
+- Its `--plugin-dir <path> is one plugin` line names `<mods>/<name>`, the folder you built.
+- It has no line for the mod that says `did not load`, `not loaded`, `ignored`, `hook skipped` or
+  `refused`, and no `Plugin path does not exist: <mods>/<name>`. With a wrong path the installed
+  copy, if there is one, answers the demo, and only that log line says so. The same line for another
+  path, such as a stale entry in `CLAUDE_CODE_PLUGIN_DIRS`, doesn't fail the check. In a `-p` run,
+  another mod's refusal goes to the debug log only.
+
+A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off.
+The run reads options from user settings, `--settings` and managed settings, under
+`pluginConfigs."<name>"` or `pluginConfigs."<name>@inline"` (the log's own line names them). Where
+none is set, the log says `every option is its default`. A demo that needs an option passes it:
+`--settings '{"pluginConfigs":{"<name>@inline":{"options":{…}}}}'`. Which source wins when
+managed settings also set it hasn't been probed, so read the options the log reports before trusting
+the result.
 
 Typecheck. During a build the mod has never loaded in an interactive session, so its
 `tsconfig.json` (which extends `.claude-plugin/types/`) has nothing to extend yet. Instead, copy
@@ -133,9 +155,19 @@ the d.ts path plugin-authoring printed and `__MOD__` with the mod folder, then r
 
 If validate prints a gating hook without `.catch`, add one or say why it is deliberate. Run
 tests inside a session with `CLAUDE_CONFIG_DIR=$(mktemp -d)` if they touch real config.
-Load it live. Fastest: a new session with `claude --plugin-dir <mods>/<name>`. Or, once it's listed
-in the marketplace (Share), install it once with `/plugin install <name>@<marketplace>`. After that,
-`/reload-plugins` picks up edits. `/reload-plugins` alone never loads a plugin that isn't installed. Walk through the demo and every "Done means" bullet.
+Load it live, in one of two ways:
+- **A new session with `claude --plugin-dir <mods>/<name>`** (fastest). Its hooks module reloads
+  when a file in it is saved, and the transcript's reload line names the mod. `reload failed, the
+  previous version stays loaded:` is a failure: the old version is still the one running (docs, not
+  observed). A change to a skill or other component loads at `/reload-plugins` (docs, not observed).
+- **Install it once** from the marketplace (Share) with `/plugin install <name>@<marketplace>`. From
+  a marketplace added from a local folder it loads in place, and `/reload-plugins` picks up later
+  edits (it prints `re-read from its folder`). From a GitHub or other remote marketplace it is a copy
+  of one version: an edit reaches it only after a version bump (the scaffold's `plugin.json` pins
+  `version`), a push, `claude plugin update <name>@<marketplace>` and then `/reload-plugins`.
+
+`/reload-plugins` alone never loads a plugin that isn't installed. Walk through the demo and every
+"Done means" bullet.
 Report failures as failures, with the output. Any edit to the mod's code after Verify passed makes
 those results stale: run Verify again (and report Validate and Test again) before you hand off.
 
@@ -157,5 +189,17 @@ those results stale: run Verify again (and report Validate and Test again) befor
      `Esc` returns the keys from any tab; a click on a tab shows it where the terminal passes clicks
      (`[d.ts]`, not observed)
    - how to configure it (the config menu for `userConfig`)
-   - that `/reload-plugins` picks up later edits
+   - how later edits reach the copy they run:
+     - from a marketplace added from a local folder: `/reload-plugins`, which prints
+       `re-read from its folder`;
+     - from GitHub or another remote marketplace: a version bump, a push and
+       `claude plugin update <name>@<marketplace>` (it ends with `Restart to apply changes.`), then
+       `/reload-plugins`;
+     - with `--plugin-dir`: a save reloads the hooks module, and the transcript's reload line names
+       the mod. `reload failed, the previous version stays loaded:` means the old code still runs.
+       `/reload-plugins` loads the rest. Both are from the docs, not observed.
+
+     `/plugin`'s Installed tab shows which copy loaded: the row `<name>  Plugin  inline` is a
+     `--plugin-dir` copy, and an installed copy's row names its marketplace. The row's details give
+     the version. The `mods active` line names mods only, not which copy or version.
    - `/modlab` to see its pipeline, if Mod Lab is installed

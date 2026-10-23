@@ -24,6 +24,45 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
    that was built before, that starts a new **build generation**: every stage whose evidence is
    older than now turns `◌` stale in the pane, and turns green again as you redo it. Report each
    stage as build's step 0 describes. Scaffold isn't redone; it stays green.
+4. **Which copy runs.** Two answers decide what makes your edit run. Note both for step 4 and the
+   hand-off.
+   - **How it's installed.** Run `claude plugin list --json` and find the mod's row: an `id` of
+     `<entry name>@<marketplace>`, where the entry name is the marketplace's name for it. The same
+     name can have more than one row, such as `@synced`, so take the one from this marketplace.
+     - `enabled` is false: it won't load at the next `/reload-plugins` or session. A session that
+       loaded it before it was turned off may still run it, since settings reach a running session
+       only at `/reload-plugins` (docs, not observed). `/plugin`'s Installed tab shows what this
+       session runs.
+     - The row has a `readFromFolder` key (the text form prints `Read from:`): the mod was installed
+       from a marketplace added from a local folder, and it loads in place. Edits to *that* folder
+       load at `/reload-plugins` or the next session. If you're editing another folder, such as a
+       git worktree, the installed copy keeps running the other folder's code. `folderVersion` is the
+       folder's version now, and `version` is the one recorded at install.
+     - The row has no `readFromFolder` key: the mod is a copy of one version, under `installPath`. An
+       edit reaches it only after the version is bumped, the marketplace holds the change (pushed),
+       and `claude plugin update <id>` or `/plugin` updates it. Then `/reload-plugins` loads it.
+     - No row: the mod isn't installed from this marketplace.
+     - When this marketplace's row is missing or disabled, a row of the same name from another
+       origin, `@skills-dir` or `@synced`, may be the copy running (docs, not observed). An enabled
+       marketplace copy takes precedence over both. The Installed tab shows which one this session
+       runs.
+   - **Whether this session loaded it with `--plugin-dir`**, or the same way through `--plugin-url`
+     or `CLAUDE_CODE_PLUGIN_DIRS`. The install records can't tell you,
+     because the marketplace row stays enabled while an inline copy replaces it. The person sees it
+     in `/plugin`'s Installed tab: a `--plugin-dir` copy is the row `<name>  Plugin  inline`, and an
+     installed copy's row names its marketplace. The `mods active` line names mods only. If the
+     request doesn't say, ask in step 1's batch.
+     - An archive is a copy: `--plugin-url` always loads one, and so does `--plugin-dir` given a
+       `.zip`. Claude Code extracts it into a session folder of its own, so an edit to the source
+       folder never reaches it. Tell the person to load the folder instead, or to rebuild the archive
+       and start a new session. The rest of this point is about a folder.
+     - A folder runs as `<name>@inline`. Its hooks module reloads when the person saves a file
+       in it, or when a turn in which you saved files ends. Its skills, agents and other components
+       load their changes at `/reload-plugins` (docs, not observed).
+     - Each reload runs `register` again, so module variables reset, while `$.state` and `$.store`
+       stay.
+     - The folder is a protected path, so in the `default` and `acceptEdits` modes each of your edits
+       to it asks the person for approval.
 
 ## 1. Slots for the change
 
@@ -66,8 +105,19 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
 
 1. **Version:** set the new version in `plugin.json` **and** the marketplace entry. Mod Lab's
    Share stage re-passes when they match.
-2. **README:** describe the change where it matters to a user, update the options and commands,
-   and regenerate the "What it reaches" table from `claude plugin validate`, plus any command
-   hook or MCP server it doesn't list (build's step 5). No template comments left.
-3. **Hand off** as in build's step 5. Add what changed in one line, and that `/reload-plugins`
-   (or a new session) loads the new version.
+2. **README:**
+   - Describe the change where it matters to a user, and update the options and commands.
+   - Regenerate the "What it reaches" table from `claude plugin validate`, plus any command hook or
+     MCP server it doesn't list (build's step 5).
+   - Refresh the "Built on Claude Code <version>" line. Keep the build it names, and add the new
+     version with what ran on the build from step 0: the tests, the `-p` demo, or an interactive
+     session. For example: `Built on Claude Code 2.1.296; 0.1.3's tests and demo ran on 2.1.308.`
+   - Leave no template comments.
+3. **Hand off** as in build's step 5. Its "how later edits reach the copy they run" bullet covers
+   each case from step 0.4, and the Installed tab check. Add what changed in one line, and the two
+   cases that bullet doesn't spell out:
+   - **An installed copy and a `--plugin-dir` session together**, as when an in-place install is
+     checked with `--plugin-dir` on a git worktree. This session runs the `--plugin-dir` copy, and
+     the installed copy keeps reading the folder `readFromFolder` names. Say that the edit reaches
+     the installed copy only once the change is in that folder.
+   - **Neither installed nor loaded:** say how to load it the first time, as build's hand-off does.
