@@ -2481,9 +2481,11 @@ export function outputTail(text: string): string {
  * driver, which still names the session after a reload ends its drive (round 2, Codex 4360654727).
  */
 export function staleLine(runs: readonly Run[], now: number, drivenId: string | null = null): string | null {
-  const old = runs.filter(r => isActive(r) && r.id !== drivenId && now - r.startedAt > STALE_DAYS * DAY_MS).sort((a, b) => a.startedAt - b.startedAt)
+  // A record without a numeric startedAt (hand-edited, or foreign) is the oldest, named first (PR #145 review round 3, finding 7).
+  const at = (r: Run) => (Number.isFinite(r.startedAt) ? r.startedAt : -Infinity)
+  const old = runs.filter(r => isActive(r) && r.id !== drivenId && now - at(r) > STALE_DAYS * DAY_MS).sort((a, b) => at(a) - at(b))
   if (old.length === 0) return null
-  const items = old.map(r => `#${r.issue} ${r.step} (started ${Math.floor((now - r.startedAt) / DAY_MS)} days ago)`)
+  const items = old.map(r => `#${r.issue} ${r.step} (${Number.isFinite(r.startedAt) ? `started ${Math.floor((now - r.startedAt) / DAY_MS)} days ago` : 'start unknown'})`)
   return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
 }
 
