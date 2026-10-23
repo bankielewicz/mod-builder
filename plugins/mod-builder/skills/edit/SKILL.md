@@ -57,6 +57,9 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
      in `/plugin`'s Installed tab: a `--plugin-dir` copy is the row `<name>  Plugin  inline`, and an
      installed copy's row names its marketplace. The `mods active` line names mods only. If the
      request doesn't say, ask in step 1's batch.
+     - When managed settings' `enabledPlugins` names the plugin, a `--plugin-dir` copy never replaces
+       it (docs, not observed): the managed copy runs, the Installed tab shows its marketplace row,
+       and build's step 4 smoke test is blocked by policy.
      - An archive is a copy: `--plugin-url` always loads one, and so does `--plugin-dir` given a
        `.zip`. Claude Code extracts it into a session folder of its own, so an edit to the source
        folder never reaches it. Tell the person to load the folder instead, or to rebuild the archive
@@ -68,10 +71,6 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
        stay.
      - The folder is a protected path, so in the `default` and `acceptEdits` modes each of your edits
        to it asks the person for approval.
-     - A plugin that managed settings' `enabledPlugins` names is never replaced by a `--plugin-dir`
-       copy: the debug log says `--plugin-dir copy of "<name>" ignored: plugin is locked by managed
-       settings`, and the edit can't be checked from the folder until that policy changes (docs, not
-       observed).
 
 ## 1. Slots for the change
 
@@ -122,9 +121,11 @@ Build's step 4, in full. Any edit after Verify passed makes it stale: run it aga
      version with what ran on the build from step 0: the tests, the `-p` demo, or an interactive
      session. For example: `Built on Claude Code 2.1.296; 0.1.3's tests and demo ran on 2.1.308.`
    - Leave no template comments.
-3. **Hand off** as in build's step 5. Its "how later edits reach the copy they run" bullet covers
-   each case from step 0.4, and the Installed tab check. Add what changed in one line, and the two
-   cases that bullet doesn't spell out:
+3. **Hand off** as in build's step 5. Its "how later edits reach the copy they run" bullet covers a
+   local-folder marketplace, a remote one and a `--plugin-dir` folder, and the Installed tab check.
+   Add what changed in one line, and the cases that bullet doesn't spell out:
+   - **Locked by managed settings:** say that the folder's copy couldn't be checked, and that the
+     managed copy is the one running.
    - **An installed copy and a `--plugin-dir` session together**, as when an in-place install is
      checked with `--plugin-dir` on a git worktree. This session runs the `--plugin-dir` copy, and
      the installed copy keeps reading the folder `readFromFolder` names. Say that the edit reaches

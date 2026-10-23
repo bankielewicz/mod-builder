@@ -144,11 +144,13 @@ appends, so an earlier run's lines would pass or fail this one.
   copy, if there is one, answers the demo, and only that log line says so. The same line for another
   path, such as a stale entry in `CLAUDE_CODE_PLUGIN_DIRS`, doesn't fail the check. In a `-p` run,
   another mod's refusal goes to the debug log only.
+- Managed settings can block the check (docs, not observed). When their `enabledPlugins` names the
+  plugin, the log says `--plugin-dir copy of "<name>" ignored: plugin is locked by managed settings`
+  and the installed copy answers; their `disableSideloadFlags` rejects `--plugin-dir` at startup.
+  Either way, report the smoke test as blocked by policy, quote what the session printed, and don't
+  work around it.
 
-A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off,
-except where managed settings' `enabledPlugins` names the plugin: the log then says
-`--plugin-dir copy of "<name>" ignored: plugin is locked by managed settings`, and the folder's
-copy can't be checked until that policy changes (docs, not observed).
+A `--plugin-dir` copy replaces an installed one of the same name, so there is nothing to turn off.
 The run reads options from user settings, `--settings` and managed settings, under
 `pluginConfigs."<name>"` or `pluginConfigs."<name>@inline"` (the log's own line names them). Where
 none is set, the log says `every option is its default`. A demo that needs an option passes it:
