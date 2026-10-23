@@ -126,6 +126,8 @@ type World = {
   onStoreGet?: (key: string, reads: number) => void
   /** With `storeHold`, the next `$.store.keys` rejects, once (PR #145 review round 3, finding 4). */
   storeKeysFailNext?: boolean
+  /** With `storeHold`, a write that would take the store's compact JSON past this many characters rejects, as Claude Code's does (round 4). */
+  storeLimit?: number
   /** Every `$.ui.log` line (PR #145 review round 3, finding 4). */
   logs: string[]
   /** When set, the next `git merge-tree` waits for it (once). */
@@ -273,6 +275,9 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
       return world.storeGetFails?.includes(e.key) ? { deny: 'the store could not be read' } : { value: store[e.key] }
     })
     on('store.set', ($: any, e: any) => {
+      // Claude Code's check, read in the 2.1.309 binary: the new store as compact JSON, in characters.
+      const size = world.storeLimit === undefined ? 0 : JSON.stringify({ ...store, [e.key]: e.value }).length
+      if (world.storeLimit !== undefined && size > world.storeLimit) return { deny: `the store would be ${size} characters, over the ${world.storeLimit} limit` }
       const land = () => ((store[e.key] = e.value), world.storeOps?.push(`set ${e.key}`), { value: undefined })
       if (hold.isHeld || !hold.when(e.value)) return land()
       hold.isHeld = true
@@ -4291,6 +4296,23 @@ describe('#140: the store under its limit', () => {
     await start($)
     expect((await run($, '16')).text).toContain('starting #16')
     expect(w.logs.filter(line => line.startsWith('store sweep failed: '))).toHaveLength(1)
+  })
+
+  // PR #145 review round 4 (Codex 4361674892): unfinished runs alone fill the store, which the sweep never empties, so
+  // Claude Code refuses the new run; the answer says so and how to free it.
+  test("a start the store refuses answers that it wasn't started and how to free the store, and starts nothing", async ($, on) => {
+    const LIMIT = 4_194_304
+    // One unfinished run 100 characters under Claude Code's limit: any new run takes it over.
+    const pad = LIMIT - JSON.stringify({ [OTHER(7)]: otherRun(7, 'blocked', 0, { title: '' }) }).length - 100
+    const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(pad) }) }
+    const w = engine(on, { storeHold: HOLD(), storeLimit: LIMIT }, store)
+    await start($)
+    const text = (await run($, '16')).text
+    expect(text).toContain("#16 wasn't started")
+    expect(text).toContain(`over the ${LIMIT} limit`)
+    expect(text).toContain('/issue-forge stop <N>')
+    expect(key(16) in store).toBe(false)
+    expect(w.spawned).toHaveLength(0)
   })
 
   // PR #145 review round 3, finding 2 (Codex 4361161666): two starts at once both plan the same delete; the second finds it gone.
