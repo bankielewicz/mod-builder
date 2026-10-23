@@ -2357,17 +2357,21 @@ export function isTrimmed(run: Run): boolean {
   return !TRIMMED_FIELDS.some(field => field in run) && finishedRecord(run).body === run.body
 }
 
-/** UTF-8 bytes of a string, as it would be written: a lone surrogate becomes U+FFFD, 3 bytes (PR #145 review round 1, finding 13). */
+/** One encoder for every measure (PR #145 review round 2, finding 13). */
+const UTF8 = new TextEncoder()
+
+/**
+ * UTF-8 bytes of a string (PR #145 review round 1, finding 13). The sweep measures `JSON.stringify` output, where a lone
+ * surrogate is already an ASCII `\ud83d` escape (round 2, finding 10).
+ */
 export function utf8Length(text: string): number {
-  return new TextEncoder().encode(text).length
+  return UTF8.encode(text).length
 }
 
-/** The store as `$.store.set` measures it ("4 MiB of JSON text in all"): its entries as one JSON object, in UTF-8 bytes. */
-export function storeSize(entries: readonly { key: string; value: unknown }[]): number {
-  return sizeOfEntries(entries.map(e => entrySize(e.key, e.value)))
-}
-
-/** The JSON object's size from its entries' sizes: `{`, each entry with its comma (the last one's is the `}`), and `{}` at least. */
+/**
+ * The store as `$.store.set` measures it ("4 MiB of JSON text in all") is its entries as one JSON object, in UTF-8 bytes:
+ * `{`, each entry with its comma (the last one's is the `}`), and `{}` at least.
+ */
 function sizeOfEntries(sizes: readonly number[]): number {
   return Math.max(2, sizes.reduce((n, size) => n + size, 1))
 }
@@ -2439,11 +2443,12 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
   })
   const runs = measured.filter(isRun).map(m => ({ key: m.key, run: (m.trimmed ?? m.value) as Run, size: m.after }))
   const drop = budgetKeys(runs, sizeOfEntries(measured.map(m => m.after)), budget)
+  const dropped = new Set(drop)
   // A record to delete isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
-  const trim = measured.filter(m => m.trimmed && !drop.includes(m.key)).map(m => m.key)
+  const trim = measured.filter(m => m.trimmed && !dropped.has(m.key)).map(m => m.key)
   const saves: Record<string, number> = {}
   for (const m of measured) {
-    if (drop.includes(m.key)) saves[m.key] = m.before
+    if (dropped.has(m.key)) saves[m.key] = m.before
     else if (m.trimmed) saves[m.key] = m.before - m.after
   }
   const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves }

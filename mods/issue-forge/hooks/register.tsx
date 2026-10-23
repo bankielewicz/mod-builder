@@ -1701,13 +1701,14 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
  * through updateRun: no drive writes a finished run, and reflect has nothing to show for another repository's.
  */
 async function sweepStore($: EngineInterface): Promise<void> {
-  const entries: { key: string; value: unknown }[] = []
   // A key whose read fails reads as undefined, which the plan leaves out (PR #145 review round 1, finding 4), and is counted
-  // apart: it weighs nothing in the plan, so the warning names it (round 2, finding 2).
+  // apart: it weighs nothing in the plan, so the warning names it (round 2, finding 2). The reads go out together (finding 13).
   const unreadable: string[] = []
-  for (const key of await $.store.keys()) entries.push({ key, value: await $.store.get(key).catch(() => void unreadable.push(key)) })
+  const keys = await $.store.keys()
+  const entries = await Promise.all(keys.map(async key => ({ key, value: await $.store.get(key).catch(() => void unreadable.push(key)) })))
   const plan = sweepPlan(entries)
-  const listed = (key: string) => entries.find(e => e.key === key)?.value as Run
+  const values = new Map(entries.map(e => [e.key, e.value]))
+  const listed = (key: string) => values.get(key) as Run
   const landed: string[] = []
   // A re-read that finds the run unfinished again (another session restarted it) counts it (PR #145 review round 2, Codex 4360654720).
   const restarted: string[] = []
