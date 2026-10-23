@@ -2333,8 +2333,8 @@ export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = 
 export const STORE_BUDGET = 3 * 1024 * 1024
 /** How much of the issue's text a finished record keeps. */
 export const BODY_EXCERPT_CHARS = 500
-/** A command's output as a run keeps it: its last 200 lines, then at most this many characters, as a red answer in a prompt. */
-export const TAIL_MAX_CHARS = 20_000
+/** A command's output as a run keeps it: its last 200 lines, then at most this many characters, the red answer's cap in a prompt. */
+export const TAIL_MAX_CHARS = RED_ANSWER_MAX_CHARS
 /** Status names an unfinished run older than this. */
 export const STALE_DAYS = 7
 const DAY_MS = 86_400_000
@@ -2357,14 +2357,9 @@ export function isTrimmed(run: Run): boolean {
   return !TRIMMED_FIELDS.some(field => field in run) && finishedRecord(run).body === run.body
 }
 
-/** UTF-8 bytes of a string: 1 per ASCII unit, 2 up to U+07FF and per surrogate (a pair is 4), 3 for the rest. */
+/** UTF-8 bytes of a string, as it would be written: a lone surrogate becomes U+FFFD, 3 bytes (PR #145 review round 1, finding 13). */
 export function utf8Length(text: string): number {
-  let n = 0
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i)
-    n += c < 0x80 ? 1 : c < 0x800 || (c >= 0xd800 && c <= 0xdfff) ? 2 : 3
-  }
-  return n
+  return new TextEncoder().encode(text).length
 }
 
 /** The store as `$.store.set` measures it ("4 MiB of JSON text in all"): its entries as one JSON object, in UTF-8 bytes. */
