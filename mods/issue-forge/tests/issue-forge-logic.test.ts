@@ -2740,6 +2740,18 @@ describe('#140: the store under its limit', () => {
     expect(budgetKeys(entries, 200, 150)).toEqual(['doneLongAgo'])
   })
 
+  // PR #145 review round 2, finding 7: finished(a) - finished(b) is NaN for a record with neither date, which sorts in no defined order.
+  test('a finished record with no finishedAt and no startedAt counts as the oldest', () => {
+    const dateless = { ...run({ step: 'done' }), startedAt: undefined } as unknown as Run
+    const entries = [
+      { key: 'a', run: run({ step: 'done', startedAt: 5 }), size: 100 },
+      { key: 'b', run: dateless, size: 100 },
+      { key: 'c', run: run({ step: 'done', startedAt: 3 }), size: 100 },
+    ]
+    expect(budgetKeys(entries, 300, 0)).toEqual(['b', 'c', 'a'])
+    expect(budgetKeys([entries[0]!, entries[2]!, entries[1]!], 300, 0)).toEqual(['b', 'c', 'a'])
+  })
+
   // PR #145 review round 2, finding 5: keys are read as parseRunKey reads them; a folder may be called project#2 (Codex 4278707570).
   test("the warning's repositories: two checkouts named like issue keys are two, and one repository under both key forms is one", () => {
     expect(openCounts(['issue-forge:run:/w/project#2', 'issue-forge:run:/w/project#3'])).toEqual({ unfinished: 2, repos: 2 })
