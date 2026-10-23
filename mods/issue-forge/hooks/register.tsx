@@ -1717,7 +1717,7 @@ async function sweepStore($: EngineInterface): Promise<void> {
   const left = leftAfter(plan, landed)
   if (left > STORE_BUDGET && !isStoreWarned) {
     isStoreWarned = true
-    $.ui.toast(storeWarning(left))
+    $.ui.toast(storeWarning(left, plan.unfinished, plan.repos))
   }
 }
 

@@ -2402,6 +2402,9 @@ export type SweepPlan = {
   saves: Record<string, number>
   /** The size once every trim and delete has landed. */
   left: number
+  /** The unfinished runs, which the sweep never deletes, and the repositories (or pre-0.3 checkouts) they're in. */
+  unfinished: number
+  repos: number
 }
 
 /** The store's size once the trims and deletes in `landed` went through; one the re-read refused, or whose write failed, frees nothing. */
@@ -2430,7 +2433,9 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
     else if (m.trimmed) saves[m.key] = m.before - m.after
   }
   const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves }
-  return { ...plan, left: leftAfter(plan, [...trim, ...drop]) }
+  // A run key's repository: the key without its prefix and `#<issue>`; a pre-0.3 key names its checkout.
+  const open = runs.filter(r => isActive(r.run)).map(r => r.key.replace(/^issue-forge:(?:repo-)?run:/, '').replace(/#\d+$/, ''))
+  return { ...plan, left: leftAfter(plan, [...trim, ...drop]), unfinished: open.length, repos: new Set(open).size }
 }
 
 /** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */
@@ -2453,9 +2458,10 @@ export function staleLine(runs: readonly Run[], now: number, me = ''): string | 
   return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
 }
 
-/** The toast when only unfinished runs are left over the budget; a toast already names the mod. */
-export function storeWarning(bytes: number): string {
-  return `saved runs take ${(bytes / MIB).toFixed(1)} MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop`
+/** The toast when the store is still over the budget after the sweep; a toast already names the mod. */
+export function storeWarning(bytes: number, unfinished: number, repos: number): string {
+  const runs = `${unfinished} unfinished run${unfinished === 1 ? '' : 's'} in ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
+  return `store still ${(bytes / MIB).toFixed(1)} MiB of Claude Code's 4 MiB after the cleanup, with ${runs}; /issue-forge stop <N>, in a run's repository, ends one`
 }
 
 /** What the driving session finds in the store: its run stopped, taken over or replaced, or nothing changed. */
