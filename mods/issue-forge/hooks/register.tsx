@@ -112,6 +112,7 @@ import {
   pressQuestion,
   publishQuestion,
   readdWorktreeCommand,
+  recheckOf,
   releasesOnEnd,
   remoteVerdict,
   repoLabel,
@@ -1710,22 +1711,28 @@ async function sweepStore($: EngineInterface): Promise<void> {
   const values = new Map(entries.map(e => [e.key, e.value]))
   const listed = (key: string) => values.get(key) as Run
   const landed: string[] = []
-  // A re-read that finds the run unfinished again (another session restarted it) counts it (PR #145 review round 2, Codex 4360654720).
+  // A re-read that finds the run unfinished again (another session restarted it) counts it (PR #145 review round 2, Codex
+  // 4360654720); one that finds the key gone (another session deleted it) frees its whole size (round 3, Codex 4361161666).
   const restarted: string[] = []
-  const reread = async (key: string) => {
-    const stored = await loadRun($, key).catch(() => null)
-    if (isActive(stored)) restarted.push(key)
-    return stored
+  const gone: string[] = []
+  /** The same finished run, which the sweep may now change, or null: gone, restarted, replaced, or a read that failed. */
+  const reread = async (key: string): Promise<Run | null> => {
+    const read = await $.store.get(key).then(value => ({ value }), () => null)
+    if (!read) return null
+    const found = recheckOf(listed(key), read.value)
+    if (found === 'gone') gone.push(key)
+    if (found === 'restarted') restarted.push(key)
+    return found === 'same' ? (read.value as Run) : null
   }
   for (const key of plan.trim) {
-    const stored = await reread(key)
-    if (stored && isPrunable(listed(key), stored)) await $.store.set(key, finishedRecord(stored)).then(() => landed.push(key), () => undefined)
+    const same = await reread(key)
+    if (same) await $.store.set(key, finishedRecord(same)).then(() => landed.push(key), () => undefined)
   }
   for (const key of plan.drop) {
-    if (isPrunable(listed(key), await reread(key))) await $.store.delete(key).then(() => landed.push(key), () => undefined)
+    if (await reread(key)) await $.store.delete(key).then(() => landed.push(key), () => undefined)
   }
-  // The size left counts only what landed: a refused re-read or a failed write frees nothing.
-  const left = leftAfter(plan, landed)
+  // The size left counts only what landed or was gone: a refused re-read or a failed write frees nothing.
+  const left = leftAfter(plan, landed, gone)
   if ((left > STORE_BUDGET || unreadable.length > 0) && !isStoreWarned) {
     isStoreWarned = true
     const counts = openCounts([...plan.open, ...restarted])

@@ -2395,6 +2395,8 @@ export type SweepPlan = {
   size: number
   /** What each trim and each delete saves, by key (PR #145 review round 1, finding 4). */
   saves: Record<string, number>
+  /** Each trimmed or deleted key's whole size, freed if another session deleted it first (round 3, Codex 4361161666). */
+  sizes: Record<string, number>
   /** The size once every trim and delete has landed. */
   left: number
   /** The unfinished runs' keys, which the sweep never deletes. */
@@ -2416,8 +2418,19 @@ export function openCounts(keys: readonly string[]): { unfinished: number; repos
 }
 
 /** The store's size once the trims and deletes in `landed` went through; one the re-read refused, or whose write failed, frees nothing. */
-export function leftAfter(plan: Pick<SweepPlan, 'size' | 'saves'>, landed: readonly string[]): number {
-  return landed.reduce((n, key) => n - (plan.saves[key] as number), plan.size)
+export function leftAfter(plan: Pick<SweepPlan, 'size' | 'saves' | 'sizes'>, landed: readonly string[], gone: readonly string[] = []): number {
+  const afterLanded = landed.reduce((n, key) => n - (plan.saves[key] as number), plan.size)
+  return gone.reduce((n, key) => n - (plan.sizes[key] as number), afterLanded)
+}
+
+/**
+ * What a re-read before a trim or delete found (PR #145 review round 3, Codex 4361161666): the key gone (another session
+ * deleted it), the run restarted, another finished run in its place, or the same finished run, which the sweep may change.
+ */
+export function recheckOf(listed: Run, stored: unknown): 'gone' | 'restarted' | 'other' | 'same' {
+  if (stored === undefined || stored === null) return 'gone'
+  if (isActive(stored as Run)) return 'restarted'
+  return isPrunable(listed, stored as Run) ? 'same' : 'other'
 }
 
 /** The sweep before a run is written: finished records to trim, then finished runs to delete past the budget, and the size left. */
@@ -2441,11 +2454,13 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
   // A record to delete isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
   const trim = measured.filter(m => m.trimmed && !dropped.has(m.key)).map(m => m.key)
   const saves: Record<string, number> = {}
+  const sizes: Record<string, number> = {}
   for (const m of measured) {
     if (dropped.has(m.key)) saves[m.key] = m.before
     else if (m.trimmed) saves[m.key] = m.before - m.after
+    if (dropped.has(m.key) || m.trimmed) sizes[m.key] = m.before
   }
-  const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves }
+  const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves, sizes }
   const open = runs.filter(r => isActive(r.run)).map(r => r.key)
   return { ...plan, left: leftAfter(plan, [...trim, ...drop]), open, ...openCounts(open) }
 }
