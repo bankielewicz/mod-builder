@@ -122,6 +122,8 @@ type World = {
   storeOps?: string[]
   /** With `storeHold`, keys whose `$.store.get` rejects (PR #145 review round 1, finding 4). */
   storeGetFails?: string[]
+  /** With `storeHold`, runs before each `$.store.get` answers, with the key and how many times it has been read (finding 3). */
+  onStoreGet?: (key: string, reads: number) => void
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -258,7 +260,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   world.clock = mock.clock(on, { now: 1_000_000 })
   const hold = world.storeHold
   if (hold) {
-    on('store.get', ($: any, e: any) => (world.storeGetFails?.includes(e.key) ? { deny: 'the store could not be read' } : { value: store[e.key] }))
+    const reads: Record<string, number> = {}
+    on('store.get', ($: any, e: any) => {
+      reads[e.key] = (reads[e.key] ?? 0) + 1
+      world.onStoreGet?.(e.key, reads[e.key])
+      return world.storeGetFails?.includes(e.key) ? { deny: 'the store could not be read' } : { value: store[e.key] }
+    })
     on('store.set', ($: any, e: any) => {
       const land = () => ((store[e.key] = e.value), world.storeOps?.push(`set ${e.key}`), { value: undefined })
       if (hold.isHeld || !hold.when(e.value)) return land()
@@ -4242,6 +4249,39 @@ describe('#140: the store under its limit', () => {
     const warnings = w.toasts.filter(t => t.includes("MiB of Claude Code's 4 MiB after the cleanup, with 1 unfinished run in 1 repository"))
     expect(warnings.length).toBe(1)
     expect(warnings[0]).toStartWith('store still 3.')
+  })
+
+  // PR #145 review round 1, finding 3: the sweep's guards. Its second read of a key is the re-read before the write.
+  test('a finished record another session restarted between the sweep\'s read and its re-read is left alone, not trimmed', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { lastTestTail: 'T'.repeat(30_000) }) }
+    const restarted = otherRun(5, 'green', 5, { id: '5-2', lastTestTail: 'live tail' })
+    engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(store[OTHER(5)]).toEqual(restarted)
+  })
+
+  test('a finished run another session restarted before the delete is kept, and the size it would have freed still counts', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }
+    const restarted = otherRun(5, 'green', 5, { id: '5-2', title: 'x'.repeat(3_300_000) })
+    const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(store[OTHER(5)]).toEqual(restarted)
+    expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
+  })
+
+  test('the warning shows once a session: a second start over the budget shows no second toast', async ($, on) => {
+    const HERE = { ...PROFILE, workspace: 'here' }
+    const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD(), isDirty: true, localProfile: HERE, baseProfile: HERE }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), "#16's block")
+    w.answer = 'Start #17 here (Recommended)'
+    await run($, '17')
+    await until(w, () => w.toasts.some(t => t.startsWith('#17 blocked')), "#17's block")
+    expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
   })
 
   // PR #145 review round 1, finding 4: one failed read is skipped, not the end of the sweep.
