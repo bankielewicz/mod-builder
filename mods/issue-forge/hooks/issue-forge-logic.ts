@@ -2365,12 +2365,17 @@ export function utf8Length(text: string): number {
 
 /** The store as `$.store.set` measures it ("4 MiB of JSON text in all"): its entries as one JSON object, in UTF-8 bytes. */
 export function storeSize(entries: readonly { key: string; value: unknown }[]): number {
-  return utf8Length(JSON.stringify(Object.fromEntries(entries.map(e => [e.key, e.value]))))
+  return sizeOfEntries(entries.map(e => entrySize(e.key, e.value)))
 }
 
-/** What one key adds to that text: `"key":value` and the comma after it. */
+/** The JSON object's size from its entries' sizes: `{`, each entry with its comma (the last one's is the `}`), and `{}` at least. */
+function sizeOfEntries(sizes: readonly number[]): number {
+  return Math.max(2, sizes.reduce((n, size) => n + size, 1))
+}
+
+/** What one key adds to that text: `"key":value` and the comma after it; nothing for `undefined`, which JSON leaves out. */
 export function entrySize(key: string, value: unknown): number {
-  return utf8Length(`${JSON.stringify(key)}:${JSON.stringify(value)}`) + 1
+  return value === undefined ? 0 : utf8Length(`${JSON.stringify(key)}:${JSON.stringify(value)}`) + 1
 }
 
 /** Finished runs to delete, oldest first across repositories, until `total` is at or under `budget`; never an unfinished run. */
@@ -2406,18 +2411,22 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
   // A key another session deleted after keys() reads as undefined: it is no run to trim or delete. A pre-0.3 key that
   // migrate() left in place (another checkout's, PR #145 review, Codex 4359421020) holds a run like any other.
   const isRun = (e: { key: string; value: unknown }) => (e.key.startsWith(RUN_PREFIX) || e.key.startsWith(LEGACY_RUN_PREFIX)) && typeof e.value === 'object' && e.value !== null
-  const trimmable = entries.filter(e => isRun(e) && !isActive(e.value as Run) && !isTrimmed(e.value as Run)).map(e => e.key)
-  const after = entries.map(e => (trimmable.includes(e.key) ? { key: e.key, value: finishedRecord(e.value as Run) } : e))
-  const runs = after.filter(isRun).map(e => ({ key: e.key, run: e.value as Run, size: entrySize(e.key, e.value) }))
-  const size = storeSize(after)
-  const drop = budgetKeys(runs, size, budget)
+  // Each entry is measured once, as it is and, for a finished record still to trim, as trimmed (PR #145 review round 1, finding 11).
+  const measured = entries.map(e => {
+    const before = entrySize(e.key, e.value)
+    const trimmed = isRun(e) && !isActive(e.value as Run) && !isTrimmed(e.value as Run) ? finishedRecord(e.value as Run) : null
+    return { key: e.key, value: e.value, before, trimmed, after: trimmed ? entrySize(e.key, trimmed) : before }
+  })
+  const runs = measured.filter(isRun).map(m => ({ key: m.key, run: (m.trimmed ?? m.value) as Run, size: m.after }))
+  const drop = budgetKeys(runs, sizeOfEntries(measured.map(m => m.after)), budget)
   // A record to delete isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
-  const trim = trimmable.filter(key => !drop.includes(key))
-  const valueOf = (key: string) => entries.find(e => e.key === key)?.value
+  const trim = measured.filter(m => m.trimmed && !drop.includes(m.key)).map(m => m.key)
   const saves: Record<string, number> = {}
-  for (const key of drop) saves[key] = entrySize(key, valueOf(key))
-  for (const key of trim) saves[key] = entrySize(key, valueOf(key)) - entrySize(key, finishedRecord(valueOf(key) as Run))
-  const plan = { trim, drop, size: storeSize(entries), saves }
+  for (const m of measured) {
+    if (drop.includes(m.key)) saves[m.key] = m.before
+    else if (m.trimmed) saves[m.key] = m.before - m.after
+  }
+  const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves }
   return { ...plan, left: leftAfter(plan, [...trim, ...drop]) }
 }
 
