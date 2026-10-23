@@ -2411,8 +2411,12 @@ export type SweepPlan = {
 
 /** The warning's counts for unfinished run keys: the runs, and the repositories (or pre-0.3 checkouts) they're in. */
 export function openCounts(keys: readonly string[]): { unfinished: number; repos: number } {
-  // A run key's repository: the key without its prefix and `#<issue>`; a pre-0.3 key names its checkout.
-  const repos = new Set(keys.map(key => key.replace(/^issue-forge:(?:repo-)?run:/, '').replace(/#\d+$/, '')))
+  // Each key as parseRunKey reads it: a pre-0.3 key names its checkout, whatever its name ends in (PR #145 review round 2,
+  // finding 5). A repository's git folder `<root>/.git` is its checkout, so one repository under both key forms counts once.
+  const repos = new Set(keys.map(key => {
+    const parsed = parseRunKey(key) as { repo?: string; root?: string }
+    return (parsed.repo ?? (parsed.root as string)).replace(/\/\.git$/, '')
+  }))
   return { unfinished: keys.length, repos: repos.size }
 }
 
