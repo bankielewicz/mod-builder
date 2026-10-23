@@ -4152,6 +4152,18 @@ describe('#137: the profile formatCommand', () => {
     expect(w.spawned[0]?.prompt).toContain('- G9: format command failed: f --write (exit 1)')
   })
 
+  test("gate F: a format command that fails on the refactor's last attempt rejects it as any failed check does: stashed, green's commit to publish", async ($, on) => {
+    // Resume gives the phase its attempts again, so a profile with no refactor retry is what rejects the refactor.
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('gateF', { ...F_RUN, profile: { ...FORMATTED, attempts: { red: 2, green: 3, refactor: 0 } } }) }
+    const w = engine(on, { ...G_WORLD, formatExit: 1, storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.asked.length > 0 || isBlocked(w), 'the push question or a block')
+    expect(w.argv.some(a => a[0] === 'git' && a[1] === 'stash' && a[2] === 'push')).toBe(true)
+    const stored = (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+    expect(stored).toMatchObject({ step: 'ready', isRefactorRejected: true, gatedHead: 'g1' })
+  })
+
   test("gate G: what the format command rewrites is staged by the second add -A, so the rewritten-files look doesn't block", async ($, on) => {
     const w = engine(on, { ...G_WORLD, formatWrites: ' M src/a.ts\0', spawnHold: held() }, { [`issue-forge:run:${ROOT}`]: storedRun('gateG', G_RUN) })
     await start($)
