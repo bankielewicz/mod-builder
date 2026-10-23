@@ -92,4 +92,6 @@ Commit the folder. Teammates run:
 
 Copy [`plugins/mod-builder/skills/build/ci/ci.yml`](../plugins/mod-builder/skills/build/ci/ci.yml)
 into `.github/workflows/`. On every push to `main` and every pull request it validates your
-marketplace, then validates and tests every plugin under `plugins/` and `mods/`.
+marketplace, then validates and tests every plugin under `plugins/` and `mods/`. It validates with
+`claude plugin validate --strict`, so a warning, such as an unknown manifest field or a missing
+`version`, fails the run.

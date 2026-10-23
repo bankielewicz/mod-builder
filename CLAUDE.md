@@ -21,8 +21,6 @@ Required reading before changing anything here (the owner, 2026-10-23):
 - **Plugins**, mod-builder included (`plugins/mod-builder`: Mod Lab and its skills): read
   `docs/research/claude-plugins`. mod-builder is a plugin that builds mods, not a mod: change it by those
   documents, never through `/mod-builder:edit`, and change its skills through `/plugin-dev:skill-development`.
-  `docs/research/claude-plugins` is kept untracked, so it exists only in the main folder (the first line of
-  `git worktree list`); from a worktree, read it there.
 
 ## Commands
 
@@ -56,7 +54,7 @@ replace `__TYPES__` and `__MOD__`, then `npx -y -p typescript@5.6 tsc -p <copy>`
 `tsconfig.json` extends `.claude-plugin/types/tsconfig.json`, which the engine writes only when an
 interactive session loads the mod (gitignored).
 
-CI (`.github/workflows/ci.yml`) runs validate + test for every `:(glob)plugins/*` and `:(glob)mods/*`
+CI (`.github/workflows/ci.yml`) runs `validate --strict` + test for every `:(glob)plugins/*` and `:(glob)mods/*`
 plugin, the archetype check and the sandbox check (`check-sandbox.mjs`: the loader still refuses `import()`
 and `node:fs` test files, and the canary's list matches `gotchas.md`'s). It is a byte-for-byte copy of the
 build skill's template `plugins/mod-builder/skills/build/ci/ci.yml`, so change both together, the version
