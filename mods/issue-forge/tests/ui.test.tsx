@@ -4267,7 +4267,8 @@ describe('#140: the store under its limit', () => {
     const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
     await start($)
     expect((await run($, '16')).text).toContain('starting #16')
-    expect(store[OTHER(5)]).toEqual(restarted)
+    // The id, not the record: a failure that printed 3.3 MB of title would end the test run without a report.
+    expect((store[OTHER(5)] as any)?.id).toBe('5-2')
     expect(w.toasts.filter(t => t.startsWith('store still 3.'))).toHaveLength(1)
   })
 
