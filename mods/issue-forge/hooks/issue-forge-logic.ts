@@ -2422,9 +2422,13 @@ export function leftAfter(plan: Pick<SweepPlan, 'size' | 'saves'>, landed: reado
 
 /** The sweep before a run is written: finished records to trim, then finished runs to delete past the budget, and the size left. */
 export function sweepPlan(entries: readonly { key: string; value: unknown }[], budget = STORE_BUDGET): SweepPlan {
-  // A key another session deleted after keys() reads as undefined: it is no run to trim or delete. A pre-0.3 key that
-  // migrate() left in place (another checkout's, PR #145 review, Codex 4359421020) holds a run like any other.
-  const isRun = (e: { key: string; value: unknown }) => (e.key.startsWith(RUN_PREFIX) || e.key.startsWith(LEGACY_RUN_PREFIX)) && typeof e.value === 'object' && e.value !== null
+  // A run is a key parseRunKey reads as a run, 0.3's or one migrate() left in place (PR #145 review, Codex 4359421020), that
+  // holds a record with a string step. A key another session deleted after keys() reads as undefined, and a hand-edited or
+  // foreign key or record (round 3, findings 1 and 6) stays out of the runs and counts toward the size only.
+  const isRun = (e: { key: string; value: unknown }) => {
+    const kind = parseRunKey(e.key)?.kind
+    return (kind === 'run' || kind === 'legacyRun') && typeof (e.value as { step?: unknown } | null)?.step === 'string'
+  }
   // Each entry is measured once, as it is and, for a finished record still to trim, as trimmed (PR #145 review round 1, finding 11).
   const measured = entries.map(e => {
     const before = entrySize(e.key, e.value)
