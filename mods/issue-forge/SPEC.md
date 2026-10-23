@@ -2048,3 +2048,57 @@ count set in the pane.
     - Not probed: lint-staged's backup stash goes on the stash list that a repository's worktrees share. [inference] A run that pushes a stash in another worktree while lint-staged runs could interleave with it; `--no-stash` turns the backup off.
     - An earlier git-only probe of the same sequence was held by the blast-radius hook (an `rm -rf` of a shell-variable path) and not rerun; this one covers it.
   - **QA:** `claude plugin validate .` and `claude plugin validate mods/issue-forge` passed; the second also printed one new plugin-directory warning on 2.1.309, `ICON_MISSING`, which doesn't change the result and isn't this change's. The typecheck (`tsconfig.check.json` against 2.1.309's types, the tests included) exited 0. Logic coverage: lines 100.00%, branches 99.79% and functions 99.30%, against 100.00%, 99.79% and 99.29% on `main`; LCOV has no untaken branch on a changed line.
+
+## Change 0.9.0 (2026-10-23)
+
+> Issue #140. The owner, 2026-10-22, asked whether to file an issue to keep issue-forge's saved data under Claude Code's 4 MiB limit: "File it (Recommended)". That option read: "Three parts: a size budget across all repositories, deleting the oldest finished runs when the data nears the limit; trimming test output and issue text from finished runs; and a way for old blocked or ready runs to be cleared. Built through /mod-builder:edit." Then, 2026-10-23, the next issue: "#140 issue-forge store".
+
+- **Why:** `$.store.set` "rejects … a store over 4 MiB of JSON text in all" [d.ts 2.1.309, `store.set`], and the limit is per plugin. issue-forge bounds its runs per repository only (20 finished, `KEEP_FINISHED`), and a full store fails every write, a run's own saves included.
+- **The store now** [ran: a read-only breakdown of `~/.claude/plugins/store/issue-forge_claudemod-740809c4408b.json`, 2026-10-23]:
+  - 44 keys, 1,341,445 bytes of JSON: 22 `repo-run` keys (1,332,096 characters) and 22 `repo-agents` keys (5,912), all in this repository.
+  - The runs are 18 done and 4 stopped; the owner stopped #8, #9, #22 and #23 on 2026-10-22.
+  - With the trim below, those 22 records would come to about 121,614 characters.
+- **Who reads the fields to be trimmed** [ran: `grep -n '\.body\b\|redAnswer\|lastTestTail\|redTestTail\|behaviourAnswer'` over `hooks/`, 2026-10-23]: `body`, `lastTestTail` and `redTestTail` reach only the phase prompts (`phasePrompt`, `promptExtraOf`), and `redAnswer` the green prompt and `prBody`, which publish writes before the run is `done`. Resume refuses a finished run ("no run to resume here."). So nothing reads them once a run is `done` or `stopped`; #140 had left this check open.
+- **What changes:**
+  - **A finished record is trimmed** when a run becomes `done` or `stopped`, in `advance` (the `stop` and `published` transitions): `lastTestTail`, `redTestTail`, `redAnswer` and `behaviourAnswer` go, and `body` is cut to its first 500 characters, then `…`. Gates, commits, times, the pull request's URL and the branch stay, so status and the pane show a finished run as before.
+  - **A sweep before each new run is written.** When a run starts, before the new run's record is stored:
+    1. Read every key in the store and measure it as UTF-8 JSON, the way the limit counts it (a pure count, no `TextEncoder`).
+    2. Trim each finished record, of any repository, that still holds those fields (records written before 0.9.0), after reading it again: written only if it is still the same finished run, as `prune` checks with `isPrunable`.
+    3. While the store is over the budget, **3 MiB**, delete the oldest finished run of any repository, read again first in the same way. An unfinished run is never deleted.
+    4. If it is still over the budget with only unfinished runs left, one toast per session: `issue-forge: saved runs take <n> MB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop`. The start goes on.
+    - **This departs from the issue's order** ("after the per-repository prune"). `begin` stores the new run before `prune` runs, so a full store would reject that first write, and the sweep that frees the space would never run. The per-repository prune stays after the claim, where it is (Codex 4278707561).
+    - A failed read or write in the sweep is skipped, and the start goes on.
+    - Agents lists stay, as before (PR #51 review): 22 of them are 5,912 characters.
+  - **Test output is capped in characters too.** A command's tail is its last 200 lines, as now, and then its last 20,000 characters, the cap the red answer already has in a prompt (`RED_ANSWER_MAX_CHARS`). A new pure `outputTail` does this where `runLong` and `runShort` record a tail; `tailLines` is unchanged.
+  - **Old unfinished runs are named.** `/issue-forge status`, for one run or several, adds a line when unfinished runs of the repository started more than **7 days** ago: `unfinished for over 7 days: #8 blocked (started 8 days ago) · #23 ready (8 days ago); /issue-forge stop <N> ends one and keeps its branch and commits`. Nothing deletes an unfinished run by itself: it holds a branch and can be resumed.
+  - **The numbers** (the budget of 3 MiB, the excerpt of 500 characters, the cap of 20,000 characters, the age of 7 days) are constants in the logic module, not profile options: the store is the plugin's, across repositories, not any one repository's.
+  - **Not changed:** the per-repository count (20 finished runs), and the pane's drawing.
+- **Against Anthropic's mod docs** (`docs/research/Mods`, read 2026-10-23, as the owner asked before the build: "read anthropic's documents regarding claude mods to ensure that your plan/code design aligns with their recommendations"):
+  - **The limit:** "`$.store` | 4 MiB of JSON in total" [read: `Test and troubleshoot/Mods-reference.md:361`]. The sweep measures the same thing: the store as one JSON text, in UTF-8 bytes.
+  - **Several sessions:** "Give each item its own key" and "Read again right before you write" [read: `Build/Draw-in-the-interface-with-a-mod.md:837-842`]. Each run keeps its own key, as now. Every trim and delete re-reads its key first and acts only on the same finished run. The docs also note that "another session's write is still lost if it lands between your `get` and your `set`", and so does this design, as `prune` already says.
+  - **Time:** a hook's "own execution time for one event, not counting time inside `next` or a mods API call other than `$.clock.sleep`" is limited to 10 seconds [read: `Mods-reference.md:347`]. The store reads don't count. The sweep's own work, serializing and counting about 1 to 3 MiB of text once per start, does count; [inference] that work is linear and well under that limit. No sleep is added.
+  - **Showing the warning:** a toast "disappears after a few seconds", while `$.ui.status` keeps one line under the prompt [read: `Build/Use-the-mods-API.md:209-214`]. issue-forge's status line already shows the driven run, so the warning is a toast once per session, and `/issue-forge status` lists the runs to stop.
+  - **Lifetime:** `$.store` lasts until the mod deletes a key, or until no session uses the store for `cleanupPeriodDays` [read: `Draw-in-the-interface-with-a-mod.md:727`]. So issue-forge itself has to bound what it keeps, which is this change.
+- **What gets touched:**
+  - `hooks/issue-forge-logic.ts`: `finishedRecord`, `isTrimmed`, `utf8Length`, `storeSize`, `budgetKeys`, `outputTail`, `staleLine` and their constants; `advance`'s `stop` and `published` transitions.
+  - `hooks/register.tsx`: `begin` (the sweep before the claim), a top-level `sweepStore`, the tails in `runLong` and `runShort`, the status line in `statusOf`, and a module `let` for the once-per-session toast.
+  - Tests: `tests/issue-forge-logic.test.ts` and `tests/ui.test.tsx`.
+  - `README.md`: the paragraph on pruning (README.md:213-214), "Limits worth knowing", the "What it reaches" row for the store if validate's output changes, and "Built on". `docs/specs/issue-forge.md`: where the stored run and pruning are described. `plugin.json` and the marketplace entry at 0.9.0. This SPEC.
+  - Cost: each start reads every key once (today 44) and writes each untrimmed finished record once; the first start after the update rewrites today's 22. No new process, file or network reach.
+- **Tests (fail before the change):**
+  - Logic:
+    - `finishedRecord` drops the four fields and cuts `body` to 500 characters and `…`; `isTrimmed` holds for its result and not for a record with any of them.
+    - `advance` trims on `stop` and on `published`, and on no other step.
+    - `utf8Length` counts ASCII as 1, `é` as 2, `€` as 3 and an emoji (a surrogate pair) as 4; `storeSize` measures keys and values as one JSON object.
+    - `budgetKeys` picks the oldest finished runs first, across repositories, until the total is at or under the budget, and never an unfinished run.
+    - `outputTail` keeps 200 lines, then 20,000 characters.
+    - `staleLine` names unfinished runs started more than 7 days ago, oldest first, and is null when there are none; done and stopped runs never appear.
+  - UI:
+    - A start with an untrimmed done run of another repository in the store rewrites it trimmed, and doesn't delete it when that brings the store under the budget.
+    - A start with the store over the budget deletes another repository's oldest finished run, before the new run is written.
+    - A start over the budget with only unfinished runs shows the toast once, and the run starts.
+    - A run that reaches `done`, and one stopped, are stored trimmed.
+    - `/issue-forge status` lists an unfinished run started 8 days ago with its stop command.
+  - Existing tests that pin a finished run's fields after `stop` get fixed in their own commit, saying why.
+- **Done means:** issue-forge's store stays under 3 MiB as runs accumulate across repositories, finished runs take a few kilobytes each, and `/issue-forge status` points at old unfinished runs to stop.
+- **Version:** 0.9.0 (minor: new behaviour; no command, option or state contract changes).
