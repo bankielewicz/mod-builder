@@ -2457,10 +2457,11 @@ export function outputTail(text: string): string {
 
 /**
  * Status's line for unfinished runs started over `STALE_DAYS` ago, oldest first: nothing clears their branches by itself.
- * A run the session `me` drives is left out: that session knows (PR #145 review round 1, finding 6).
+ * The run this module drives (`drivenId`) is left out: the session knows (PR #145 review round 1, finding 6). Not by the stored
+ * driver, which still names the session after a reload ends its drive (round 2, Codex 4360654727).
  */
-export function staleLine(runs: readonly Run[], now: number, me = ''): string | null {
-  const old = runs.filter(r => isActive(r) && r.driver?.session !== me && now - r.startedAt > STALE_DAYS * DAY_MS).sort((a, b) => a.startedAt - b.startedAt)
+export function staleLine(runs: readonly Run[], now: number, drivenId: string | null = null): string | null {
+  const old = runs.filter(r => isActive(r) && r.id !== drivenId && now - r.startedAt > STALE_DAYS * DAY_MS).sort((a, b) => a.startedAt - b.startedAt)
   if (old.length === 0) return null
   const items = old.map(r => `#${r.issue} ${r.step} (started ${Math.floor((now - r.startedAt) / DAY_MS)} days ago)`)
   return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
