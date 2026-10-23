@@ -56,7 +56,7 @@ runs the archetype check, on Claude Code 2.1.296, for every push to `main` and e
 .claude-plugin/marketplace.json     the "claudemod" folder marketplace
 .issue-forge.json                   issue-forge's profile for this repo
 CLAUDE.md                           workflow and commands for Claude Code sessions
-.claude/rules/engine-rules.md       the engine's rules for hooks and tests; Claude Code loads it on those files
+.claude/rules/engine-rules.md       the engine's rules; Claude Code loads it on hooks/, tests/, types/ and archetypes
 plugins/mod-builder/                the plugin
   skills/build/                     SKILL.md, templates/, references/, scripts/ (coverage/ kit), ci/
   skills/edit/                      SKILL.md (reuses build's references and templates)

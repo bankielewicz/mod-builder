@@ -14,8 +14,8 @@ build each finding was probed on.
 
 ## Read first: Anthropic's documents
 
-Required reading before changing anything here (the owner, 2026-10-23). Both folders together run to
-about 67,000 words, so read each folder's `README.md` (its page index) and then every page that bears on
+Required reading before changing anything here (the owner, 2026-10-23). The three folders together run to
+about 80,000 words, so read each folder's `README.md` (its page index) and then every page that bears on
 the change, not the whole folder (the owner, 2026-10-23: "Pages that bear on it"). Cite the pages read, with
 their lines, in the SPEC change.
 
@@ -28,7 +28,8 @@ their lines, in the SPEC change.
   follows `docs/research/Mods` and `gotchas.md` (the owner, approving #138: "i approve as long as you follow
   guidance from anthropic's best practices for claude mod").
 - **This file and `.claude/rules/`**: `docs/research/claude-code`, Anthropic's two pages on what belongs
-  in `CLAUDE.md` and on the files that load only when needed (the owner, 2026-10-23, revising #150).
+  in `CLAUDE.md` and on the files that load only when needed (the owner, 2026-10-23, on this file's
+  redesign in PR #150: "Revise to Anthropic's guidance").
 
 ## Commands
 
@@ -136,19 +137,26 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
 ## Architecture
 
 `docs/contributing/architecture.md` describes `plugins/mod-builder/` (the build and edit skills, and
-Mod Lab: its stages, store keys and write chain), the mods under `mods/`, and why template files are
-`*.tpl`. Read it before changing `plugins/mod-builder` or a mod, to find which file holds what and which
-`SPEC.md` records why.
+Mod Lab: what it judges its stages from, what a model's `lab_report` call can and can't change, when
+evidence goes stale, its store keys, and which writes its store chain orders), the mods under `mods/`,
+and why template files are `*.tpl`. Read it before changing `plugins/mod-builder` or a mod, to find which
+file holds what and which `SPEC.md` records why.
 
 ## Rules the engine enforces (read `gotchas.md` before writing hooks)
 
-They are in `.claude/rules/engine-rules.md`: where `$` may be passed, literal atoms and matchers, one
-hook per event, what a test must stub, `$.store` sharing, the hook budget, and where runtime data goes.
-Claude Code loads that file by itself once Claude reads, writes or edits a file under a `hooks/`,
-`tests/` or `types/` folder or the build skill's `templates/archetypes/`. Read it yourself when planning
-hooks or tests, before any such file is touched. A session in the main folder that works on a
-worktree's files loads two copies, the main folder's and the worktree's; when they differ, follow the
-worktree's, the copy its branch is reviewed against.
+They are in `.claude/rules/engine-rules.md`: where `$` may be passed, which values must be literals, how
+many hooks an event and matcher may have, what a test must stub, how `$.store` is shared between
+sessions, what counts against a hook's 10 s budget, and where runtime data goes. Claude Code loads that
+file by itself once Claude reads, writes or edits a file under a `hooks/`, `tests/` or `types/` folder or
+the build skill's `templates/archetypes/`. After `/compact` it is gone until such a file is read again.
+Read it yourself when planning hooks or tests, before any such file is touched, and again after
+`/compact`.
+
+A session started in the main folder that works on files in a worktree under `scratch/` loads two
+copies of it, the main folder's and the worktree's; a session started in the worktree loads only the
+worktree's. When the two differ, follow the worktree's copy where the branch itself changes the file
+(`git diff origin/main...HEAD -- .claude/rules/engine-rules.md` in the worktree shows it), and
+`origin/main`'s (`git show origin/main:.claude/rules/engine-rules.md`) everywhere else.
 
 ## Repo conventions
 
