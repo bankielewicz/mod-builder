@@ -612,8 +612,9 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
   const builds = Lab.liveReports((await read($, building))[dir] ?? {}, await $.clock.now())
   const placeholders = Lab.placeholderNames(builds, [...found.keys()], dir)
   // A mod no longer in the folder drops out of its records (#138), unless a build reported it before writing its folder.
-  // A listing that failed reads as no folders at all, so it drops nothing.
-  const keep = unlisted.length === 0 ? [...names, ...placeholders] : null
+  // A listing that failed reads as no folders at all, so it drops nothing; nor does one with no mods in it, as a folder
+  // can be for a moment, mid-checkout (PR #146 review, finding 2).
+  const keep = unlisted.length === 0 && names.length > 0 ? [...names, ...placeholders] : null
   if (keep) {
     await dropGone($, RESULTS_KEY, dir, results, keep)
     await dropGone($, GENERATIONS_KEY, dir, storedGenerations, keep)
