@@ -2714,6 +2714,29 @@ describe('#140: the store under its limit', () => {
     expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], storeSize(entries.slice(0, 2))])
   })
 
+  // PR #145 review round 1, finding 7: a record whose body isn't a string (hand-edited, or foreign) mustn't break stop or the sweep.
+  test('a record with no string body is kept as it is by the trim, stop and the sweep', () => {
+    const bodiless = { ...full({ step: 'green' }), body: undefined } as unknown as Run
+    const attempt = (f: () => unknown) => {
+      try {
+        return f()
+      } catch (err) {
+        return `threw: ${String(err)}`
+      }
+    }
+    expect(typeof attempt(() => finishedRecord(bodiless))).toBe('object')
+    expect((attempt(() => advance(bodiless, { type: 'stop' }, 1)) as Run).step).toBe('stopped')
+    const swept = attempt(() => sweepPlan([{ key: 'issue-forge:repo-run:/other/.git#1', value: { ...bodiless, step: 'done' } }], 10))
+    expect((swept as ReturnType<typeof sweepPlan>).drop).toEqual(['issue-forge:repo-run:/other/.git#1'])
+  })
+
+  // PR #145 review round 1, finding 9: a cut inside a surrogate pair leaves half an emoji, which then reaches a prompt.
+  test('the excerpt and a tail never cut inside a surrogate pair', () => {
+    const r = finishedRecord(run({ body: `${'a'.repeat(499)}😀${'b'.repeat(100)}` }))
+    expect(r.body).toBe(`${'a'.repeat(499)}…`)
+    expect(outputTail(`😀${'x'.repeat(19_999)}`)).toBe('x'.repeat(19_999))
+  })
+
   // PR #145 review round 1, finding 4: a trim or delete the re-read refused, or whose write failed, frees nothing.
   test('the size left counts the trims and deletes that landed, each by what it saves', () => {
     type Planned = ReturnType<typeof sweepPlan> & { size?: number; saves?: Record<string, number> }
