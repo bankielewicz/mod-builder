@@ -83,6 +83,11 @@ import {
   parseConfigCommand,
   pushLine,
   shouldLog,
+  folderGone,
+  prunableKeys,
+  storeFolderOf,
+  storeFoldersOf,
+  withoutGone,
 } from '../hooks/mod-builder-logic'
 import * as Logic from '../hooks/mod-builder-logic'
 import { testFail } from './fixtures/test-fail'
@@ -1689,17 +1694,10 @@ describe('a rescan after a tool batch (#100)', () => {
 })
 
 describe('the store keeps records only for folders and mods that exist (#138)', () => {
-  /** A helper this change adds, found by name: a module without it fails the test by assertion, not at load. */
-  function helper<A extends unknown[], R>(name: string): (...args: A) => R {
-    const fn = (Logic as Record<string, unknown>)[name]
-    expect(typeof fn).toBe('function')
-    return fn as (...args: A) => R
-  }
   const PREFIXES = ['modlab:results', 'modlab:done', 'modlab:generations'] as const
-  type Prune = { key: string; why: string }
 
   test('storeFolderOf: the folder after one of the three prefixes, read by prefix, so a Windows folder keeps its colon', () => {
-    const folderOf = helper<[string, readonly string[]], string | null>('storeFolderOf')
+    const folderOf = storeFolderOf
     expect(folderOf('modlab:results:/m/mods', PREFIXES)).toBe('/m/mods')
     expect(folderOf('modlab:done:/m/mods', PREFIXES)).toBe('/m/mods')
     expect(folderOf('modlab:generations:/m/mods', PREFIXES)).toBe('/m/mods')
@@ -1712,7 +1710,7 @@ describe('the store keeps records only for folders and mods that exist (#138)', 
   })
 
   test("folderGone: only the engine's ENOENT ending says a folder is gone (the messages probed on 2.1.309)", () => {
-    const gone = helper<[string], boolean>('folderGone')
+    const gone = folderGone
     expect(gone('mod-builder: $.fs.stat(/m/scratch/old/mods) failed: ENOENT')).toBe(true)
     expect(gone('mod-builder: $.fs.stat(/m/locked/mods) failed: EACCES')).toBe(false)
     expect(gone('mod-builder: refused by policy: failed: ENOENT')).toBe(false)
@@ -1722,7 +1720,7 @@ describe('the store keeps records only for folders and mods that exist (#138)', 
   })
 
   test("storeFoldersOf: each keyed folder once, and the legacy folder when an unkeyed key is there", () => {
-    const foldersOf = helper<[readonly string[], readonly string[], string], string[]>('storeFoldersOf')
+    const foldersOf = storeFoldersOf
     const keys = ['modlab:results:/a/mods', 'modlab:done:/a/mods', 'modlab:generations:/b/mods', 'count']
     expect(foldersOf(keys, PREFIXES, '/m/mods')).toEqual(['/a/mods', '/b/mods'])
     expect(foldersOf([...keys, 'modlab:done'], PREFIXES, '/m/mods')).toEqual(['/a/mods', '/b/mods', '/m/mods'])
@@ -1730,7 +1728,7 @@ describe('the store keeps records only for folders and mods that exist (#138)', 
   })
 
   test("prunableKeys: a gone folder's keys go; a folder that is there or couldn't be checked keeps its own; other keys stay", () => {
-    const prunable = helper<[readonly string[], readonly string[], readonly string[], string], Prune[]>('prunableKeys')
+    const prunable = prunableKeys
     const keys = ['modlab:results:/gone/mods', 'modlab:done:/gone/mods', 'modlab:generations:/gone/mods', 'modlab:results:/here/mods', 'modlab:results:/locked/mods', 'count']
     // /locked/mods couldn't be checked, so it isn't among the gone.
     expect(prunable(keys, PREFIXES, ['/gone/mods'], '/m/mods')).toEqual([
@@ -1742,7 +1740,7 @@ describe('the store keeps records only for folders and mods that exist (#138)', 
   })
 
   test('prunableKeys: each unkeyed key goes with its own keyed record, one prefix at a time, or with its gone folder', () => {
-    const prunable = helper<[readonly string[], readonly string[], readonly string[], string], Prune[]>('prunableKeys')
+    const prunable = prunableKeys
     // As in the --plugin-dir copy's store: keyed results and done for the folder, no keyed generations.
     const keys = ['modlab:results', 'modlab:done', 'modlab:generations', 'modlab:results:/m/mods', 'modlab:done:/m/mods']
     expect(prunable(keys, PREFIXES, [], '/m/mods')).toEqual([
@@ -1758,7 +1756,7 @@ describe('the store keeps records only for folders and mods that exist (#138)', 
   })
 
   test("withoutGone: a folder's record without the mods no longer kept, or null when none goes", () => {
-    const without = helper<[Record<string, unknown>, readonly string[]], Record<string, unknown> | null>('withoutGone')
+    const without = withoutGone
     const record = { alpha: { Validate: 1 }, duet: { Test: 2 }, newone: { Validate: 3 } }
     // newone is a build's placeholder: its folder isn't written yet.
     expect(without(record, ['alpha', 'newone'])).toEqual({ alpha: { Validate: 1 }, newone: { Validate: 3 } })

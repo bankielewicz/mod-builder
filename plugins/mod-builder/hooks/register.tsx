@@ -612,15 +612,9 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
   // A mod no longer in the folder drops out of its records (#138), unless a build reported it before writing its folder.
   // A listing that failed reads as no folders at all, so it drops nothing.
   const keep = unlisted.length === 0 ? [...names, ...placeholders] : null
-  if (keep && Lab.withoutGone(results, keep)) {
-    await updateStore($, RESULTS_KEY, dir, (stored: StoredResults) => Lab.withoutGone(stored, keep) ?? stored).catch((error: unknown) =>
-      logCaught($, 'store.set', error, 'normal', { key: keyOf(RESULTS_KEY, dir) }),
-    )
-  }
-  if (keep && Lab.withoutGone(generations, keep)) {
-    await updateStore($, GENERATIONS_KEY, dir, (stored: StoredGenerations) => Lab.withoutGone(stored, keep) ?? stored).catch((error: unknown) =>
-      logCaught($, 'store.set', error, 'normal', { key: keyOf(GENERATIONS_KEY, dir) }),
-    )
+  if (keep) {
+    await dropGone($, RESULTS_KEY, dir, results, keep)
+    await dropGone($, GENERATIONS_KEY, dir, generations, keep)
   }
   const judge = (freshIds: readonly string[]): ModView[] => [
     ...[...factsByMod.values()].map(facts =>
@@ -682,6 +676,17 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
     current && (next.some(view => view.name === current) || current === Lab.DEMO_NAME) ? current : (next[0]?.name ?? null),
   )
   await refreshStatus($)
+}
+
+/**
+ * Drops the mods not in `keep` from one folder's records under `base`, when the scan's read of them (`read`) has any,
+ * through `updateStore`, from the value read in its turn (#138). A refused write is logged; the next scan tries again.
+ */
+async function dropGone($: Engine, base: string, modsDir: string, read: Readonly<Record<string, unknown>>, keep: readonly string[]): Promise<void> {
+  if (!Lab.withoutGone(read, keep)) return
+  await updateStore($, base, modsDir, (stored: Record<string, unknown>) => Lab.withoutGone(stored, keep) ?? stored).catch((error: unknown) =>
+    logCaught($, 'store.set', error, 'normal', { key: keyOf(base, modsDir) }),
+  )
 }
 
 /**
