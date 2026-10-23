@@ -2694,6 +2694,23 @@ describe('#140: the store under its limit', () => {
     expect(tight.left).toBe(storeSize(after))
   })
 
+  // Another session may delete a run between the sweep's keys() and its get(), which then reads undefined (the advisor, before the PR).
+  test('a run key whose value is gone (undefined or null) is left out of the sweep, which still plans the rest', () => {
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const entries = [
+      { key: other(1), value: undefined },
+      { key: other(2), value: null },
+      { key: other(3), value: full({ id: '3-1', issue: 3, step: 'done', startedAt: 3 }) },
+    ]
+    let plan: ReturnType<typeof sweepPlan> | string
+    try {
+      plan = sweepPlan(entries, 10)
+    } catch (err) {
+      plan = `threw: ${String(err)}`
+    }
+    expect(plan).toEqual({ trim: [other(3)], drop: [other(3)], left: storeSize(entries.slice(0, 2)) })
+  })
+
   test('a test tail keeps 200 lines, then its last 20,000 characters', () => {
     const cut = outputTail(`${'y'.repeat(10_000)}${'x'.repeat(20_000)}`)
     expect(cut.length).toBe(20_000)
