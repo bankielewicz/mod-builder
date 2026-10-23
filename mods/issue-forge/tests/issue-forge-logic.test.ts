@@ -2739,6 +2739,15 @@ describe('#140: the store under its limit', () => {
     expect(budgetKeys(entries, 200, 150)).toEqual(['doneLongAgo'])
   })
 
+  // PR #145 review round 2, finding 2: a key the sweep couldn't read weighs nothing in the plan, so the warning says so.
+  test('the warning names the keys the sweep could not read, as the store may be bigger than measured', () => {
+    const warn = storeWarning as (bytes: number, unfinished: number, repos: number, unreadable?: number) => string
+    const head = "store still 1.0 MiB of Claude Code's 4 MiB after the cleanup, with 0 unfinished runs in 0 repositories; /issue-forge stop <N>, in a run's repository, ends one"
+    expect(warn(1024 * 1024, 0, 0, 1)).toBe(`${head}; 1 key couldn't be read, so the store may be bigger`)
+    expect(warn(1024 * 1024, 0, 0, 2)).toBe(`${head}; 2 keys couldn't be read, so the store may be bigger`)
+    expect(warn(1024 * 1024, 0, 0)).toBe(head)
+  })
+
   // PR #145 review round 1, finding 7: a record whose body isn't a string (hand-edited, or foreign) mustn't break stop or the sweep.
   test('a record with no string body is kept as it is by the trim, stop and the sweep', () => {
     const bodiless = { ...full({ step: 'green' }), body: undefined } as unknown as Run

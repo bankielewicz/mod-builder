@@ -4310,6 +4310,15 @@ describe('#140: the store under its limit', () => {
     expect('lastTestTail' in (store[OTHER(4)] as any)).toBe(true)
   })
 
+  // PR #145 review round 2, finding 2: a 3.3 MB run the sweep can't read would otherwise weigh nothing, and nothing would warn.
+  test("a key the sweep can't read makes the warning show, naming it, though the rest measures under the budget", async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(6)]: otherRun(6, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD(), storeGetFails: [OTHER(6)] }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(w.toasts.filter(t => t.endsWith("1 key couldn't be read, so the store may be bigger"))).toHaveLength(1)
+  })
+
   // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves another checkout's pre-0.3 record where it is.
   test("a start trims a finished pre-0.3 record of another checkout, which migration leaves under its old key", async ($, on) => {
     const LEGACY = 'issue-forge:run:/elsewhere'
