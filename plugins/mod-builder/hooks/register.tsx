@@ -592,7 +592,9 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
   if (!isFull && toRead.size === 0) return
   const marketplace = await marketplaceOf($, dir)
   const results = await resultsOf($, dir)
-  const generations = await generationsOf($, dir)
+  // As stored, for the drop below to compare against (#138); judged in the current shape.
+  const storedGenerations = ((await storedOf($, GENERATIONS_KEY, dir)) ?? {}) as StoredGenerations
+  const generations = generationsFrom(storedGenerations)
   const cwd = await cwdOf($)
   const inFlight = await liveRunsOf($)
   const reports = Lab.liveReports(await read($, reported), await $.clock.now())
@@ -614,7 +616,7 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
   const keep = unlisted.length === 0 ? [...names, ...placeholders] : null
   if (keep) {
     await dropGone($, RESULTS_KEY, dir, results, keep)
-    await dropGone($, GENERATIONS_KEY, dir, generations, keep)
+    await dropGone($, GENERATIONS_KEY, dir, storedGenerations, keep)
   }
   const judge = (freshIds: readonly string[]): ModView[] => [
     ...[...factsByMod.values()].map(facts =>
@@ -680,11 +682,12 @@ async function scanOnce($: Engine, isAnnounced: boolean, request: Lab.ScanReques
 
 /**
  * Drops the mods not in `keep` from one folder's records under `base`, when the scan's read of them (`read`) has any,
- * through `updateStore`, from the value read in its turn (#138). A refused write is logged; the next scan tries again.
+ * through `updateStore`, from the value read in its turn (#138): only the entries still as `read`, so one written since
+ * the scan read them stays (PR #146 review, Codex 4362849420). A refused write is logged; the next scan tries again.
  */
 async function dropGone($: Engine, base: string, modsDir: string, read: Readonly<Record<string, unknown>>, keep: readonly string[]): Promise<void> {
   if (!Lab.withoutGone(read, keep)) return
-  await updateStore($, base, modsDir, (stored: Record<string, unknown>) => Lab.withoutGone(stored, keep) ?? stored).catch((error: unknown) =>
+  await updateStore($, base, modsDir, (stored: Record<string, unknown>) => Lab.withoutGone(stored, keep, read) ?? stored).catch((error: unknown) =>
     logCaught($, 'store.set', error, 'normal', { key: keyOf(base, modsDir) }),
   )
 }

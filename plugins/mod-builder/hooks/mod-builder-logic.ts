@@ -1106,9 +1106,14 @@ export function prunableKeys(keys: readonly string[], prefixes: readonly string[
   })
 }
 
-/** A folder's record (results, done marks or generations) without the mods not in `keep`, or null when none goes (#138). */
-export function withoutGone<T>(record: Readonly<Record<string, T>>, keep: readonly string[]): Record<string, T> | null {
-  const kept = Object.entries(record).filter(([name]) => keep.includes(name))
+/**
+ * A folder's record (results, done marks or generations) without the mods not in `keep`, or null when none goes (#138).
+ * Given `read`, the record as a scan read it before `keep` could change, a name goes only while its entry is still the one
+ * read: one written since (an edit's new generation, PR #146 review, Codex 4362849420) stays for the next scan to judge.
+ */
+export function withoutGone<T>(record: Readonly<Record<string, T>>, keep: readonly string[], read?: Readonly<Record<string, unknown>>): Record<string, T> | null {
+  const isAsRead = (name: string, entry: T) => read === undefined || (name in read && JSON.stringify(read[name]) === JSON.stringify(entry))
+  const kept = Object.entries(record).filter(([name, entry]) => keep.includes(name) || !isAsRead(name, entry))
   return kept.length === Object.keys(record).length ? null : Object.fromEntries(kept)
 }
 
