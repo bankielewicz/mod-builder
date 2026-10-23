@@ -1757,7 +1757,10 @@ async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktr
   await writeFocus($, issue)
   // A sweep that fails mustn't stop the start, nor pass unseen (PR #145 review round 3, finding 4).
   await sweepStore($).catch(err => $.ui.log(`store sweep failed: ${err instanceof Error ? err.message : String(err)}`))
-  const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
+  // Unfinished runs alone can fill the store, which the sweep never empties, and Claude Code then refuses the new run
+  // (PR #145 review round 4, Codex 4361674892): say so, and how to free it.
+  const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run)).catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))))
+  if (claimed instanceof Error) return `#${issue} wasn't started: its run couldn't be saved (${claimed.message}). If unfinished runs fill issue-forge's store, /issue-forge stop <N>, in a run's repository, ends one and keeps its branch, and the next start can clear it.`
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
   await prune($, at.repo)
   await update($, demoAtom, () => null)
