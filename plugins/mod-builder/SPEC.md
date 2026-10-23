@@ -1305,6 +1305,32 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - The README's "Built on" line, this SPEC, and version 0.2.32 in `plugin.json` and the marketplace entry.
 - **Approved** by the owner, 2026-10-23, "Approve (Recommended)", after the advisor checked this section against `docs/research/Mods` and `docs/research/claude-plugins` as the owner asked ("run it by /advisor to ensure it meets the needs of the specification document and is not ambiguous and follows anthropic's best practices").
 - **Open:** the `mktemp` sentence moves as it is. Its meaning isn't clear (`claude plugin test` is a shell command), and rewriting it would change a fact nobody has checked.
+- **Built:** SPEC `406c705`, `70e496e`. The move `21894fc`, CLAUDE.md and the gotchas count `1adb4d5`, version and README `1573412`, the skill review's fixes `4d4b639`.
+  - **The moved-text check:** a script compared every line of the two snapshots (five words or more) with the new skills and references. Six lines have no five-word run in the new text, and each is a deliberate rewording:
+    - build `:28`, `ci/`: split into `ci/marketplace.json` and `ci/ci.yml`, with what each is for.
+    - build `:210` and `:212`, the hand-off's `--plugin-dir` bullet: now a pointer to the "A folder runs as `<name>@inline`" bullet in `loading.md`. That bullet holds its facts (a save reloads the hooks module, the transcript's reload line, `reload failed…`, `/reload-plugins` for the rest), each with the tag it had.
+    - edit `:58`, the Installed tab: merged into `loading.md`'s "Check which copy loaded", which keeps every fact (the `inline` row, the marketplace row, the version in the details, the `mods active` line).
+    - edit `:60`, "ask in step 1's batch": now "The edit skill asks this in its step 1 batch when the request doesn't say" in `loading.md`, and in edit's step 0.4 and step 1.
+    - edit `:105`, "green as you go": "green throughout".
+  - **Other rewordings,** each a connective or an actor:
+    - "Two answers decide what makes your edit run. Note both for step 4 and the hand-off" became the opening of `loading.md`, and edit's step 0.4 notes both.
+    - "the folder you built" became "the mod folder under test", since edit also reads `verify.md`.
+    - "to your scratchpad" became "to `<scratchpad>`", now defined.
+    - The patterns line became "When unsure how to do something, `references/patterns.md` names a mod that does it".
+    - "write the code yourself" became "write our own code".
+  - **Tags:** every "(docs, not observed)" and `[d.ts]` of the old build (5) and edit (4) is in its new place, as the skill reviewer checked one by one.
+  - **The skill review** (the skill-reviewer agent, as `/plugin-dev:skill-development` asks): pass, once its two meaning findings were fixed.
+    - Nothing pointed to the `mktemp` sentence any more. Build's file list and step 4 now name it.
+    - A hand-off bullet restated an untagged fact under "(docs, not observed)". It is now only a pointer.
+    - Ten wording findings are fixed too. Two of them: edit's `<mod>` placeholder is kept, and the walk-through is called the one item of step 4 that may be pending.
+    - Its optional trigger "fix <mod>" isn't added, since the owner didn't choose it. The local-folder and remote paths still appear in three sections of `loading.md`, as two of them already did in the old build skill.
+  - **Word counts** (results, no target): build 2,227 → 1,862, edit 1,307 → 869, `verify.md` about 440 and `loading.md` about 860.
+  - **QA** (Claude Code 2.1.309):
+    - `claude plugin validate --strict` passes for the marketplace and `plugins/mod-builder`.
+    - The archetype check passes all five, and the sandbox check passes.
+    - `check_docs.py` passes on the five edited documents, and `git diff --check` is clean.
+    - `test -e` passes on every path the skills and references name.
+    - **Live check:** `claude -p --debug-file <new log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"` answered. The log has `is one plugin`, `mod-builder@inline loaded` and `admitted`, and no failure line.
 - **Tests and QA:** skill text only, so there is no red or green step.
   - `claude plugin validate --strict` for the marketplace and `plugins/mod-builder`.
   - The archetype check, since the build skill changes, and the sandbox check.
