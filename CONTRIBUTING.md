@@ -55,7 +55,8 @@ runs the archetype check, on Claude Code 2.1.296, for every push to `main` and e
 ```text
 .claude-plugin/marketplace.json     the "claudemod" folder marketplace
 .issue-forge.json                   issue-forge's profile for this repo
-CLAUDE.md                           workflow, commands and engine rules for Claude Code sessions
+CLAUDE.md                           workflow and commands for Claude Code sessions
+.claude/rules/engine-rules.md       the engine's rules; Claude Code loads it on hooks/, tests/, types/ and archetypes
 plugins/mod-builder/                the plugin
   skills/build/                     SKILL.md, templates/, references/, scripts/ (coverage/ kit), ci/
   skills/edit/                      SKILL.md (reuses build's references and templates)
@@ -64,5 +65,7 @@ plugins/mod-builder/                the plugin
   tests/  types/  SPEC.md  README.md  NOTICE.md  design/
 mods/                               example mods: git-branch, issue-forge, turn-counter
 docs/                               guides, README images, and specs/ (issue-forge's design)
+  contributing/architecture.md      mod-builder's parts, Mod Lab's stages and store keys, the mods
+  research/                         Anthropic's mod, plugin and CLAUDE.md documentation, kept as fetched
 .github/workflows/ci.yml            validate + test every plugin, regenerate every archetype
 ```

@@ -14,8 +14,8 @@ build each finding was probed on.
 
 ## Read first: Anthropic's documents
 
-Required reading before changing anything here (the owner, 2026-10-23). Both folders together run to
-about 67,000 words, so read each folder's `README.md` (its page index) and then every page that bears on
+Required reading before changing anything here (the owner, 2026-10-23). The three folders together run to
+about 80,000 words, so read each folder's `README.md` (its page index) and then every page that bears on
 the change, not the whole folder (the owner, 2026-10-23: "Pages that bear on it"). Cite the pages read, with
 their lines, in the SPEC change.
 
@@ -27,6 +27,9 @@ their lines, in the SPEC change.
   Mod Lab's hooks module (`hooks/`, `tests/`, `types/`) runs in the mod engine like any mod, so its code also
   follows `docs/research/Mods` and `gotchas.md` (the owner, approving #138: "i approve as long as you follow
   guidance from anthropic's best practices for claude mod").
+- **This file and `.claude/rules/`**: `docs/research/claude-code`, Anthropic's two pages on what belongs
+  in `CLAUDE.md` and on the files that load only when needed (the owner, 2026-10-23, on this file's
+  redesign in PR #150: "Revise to Anthropic's guidance").
 
 ## Commands
 
@@ -133,50 +136,27 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
 
 ## Architecture
 
-**`plugins/mod-builder/`** has three parts:
-- `skills/build/SKILL.md` (`/mod-builder:build`): request → slot-filled `SPEC.md` (the single approval
-  gate) → `scripts/scaffold.mjs` from one of 5 archetypes in `templates/archetypes/*/*.tpl` → logic
-  first → verify → README + marketplace entry. `references/` holds `conventions.md` (house rules),
-  `gotchas.md` (verified engine rules), `patterns.md`, `ui-states.md`, `verify.md` (step 4's log checks and
-  typecheck), `loading.md` (which copy of a mod runs and how edits reach it, shared with the edit skill).
-- `skills/edit/SKILL.md` (`/mod-builder:edit`): changes an existing mod, reusing build's steps by
-  reference; appends a dated change section to the SPEC and bumps semver.
-- **Mod Lab** (`/modlab`), a mod: `hooks/register.tsx` (every `$` call) + `hooks/mod-builder-logic.ts`
-  (every rule, pure, unit-tested) + `types/index.d.ts` (the `PluginState` contract for its atoms).
-  It scans `modsDir`, judges 8 stages from **files on disk and exit codes** (a model's `lab_report`
-  tool call only ever adds "running"), stores run results in `$.store`, re-runs stale checks at the end
-  of each turn (`autoRerun`), and treats an edit as a **build generation** (evidence older than the edit
-  goes stale). Records are kept per mods folder (`modlab:results:<modsDir>`, `modlab:done:<modsDir>`,
-  `modlab:generations:<modsDir>`); every write to results and generations goes through `updateStore` in
-  `register.tsx`, chained on one promise; that orders this session's writes only (#58). `SPEC.md`
-  sections "Design" and "Edits" record why.
-
-**`mods/*`**: `git-branch`, `issue-forge` (a
-GitHub issue to a PR via red/green/refactor subagents behind a diff-coverage gate; this repo's profile
-is `.issue-forge.json`, its coverage kit `plugins/mod-builder/skills/build/scripts/coverage/`, its
-design spec `docs/specs/issue-forge.md`), `turn-counter` (left as raw scaffold output on purpose, and
-not in the marketplace). Each has the same layout and its own `SPEC.md` with dated changes.
-
-**Template files are `*.tpl`** so `claude plugin test`/`validate` never pick them up as real plugins.
+`docs/contributing/architecture.md` describes `plugins/mod-builder/` (the build and edit skills, and
+Mod Lab: what it judges its stages from, what a model's `lab_report` call can and can't change, when
+evidence goes stale, its store keys, and which writes its store chain orders), the mods under `mods/`,
+and why template files are `*.tpl`. Read it before changing `plugins/mod-builder` or a mod, to find which
+file holds what and which `SPEC.md` records why.
 
 ## Rules the engine enforces (read `gotchas.md` before writing hooks)
 
-- `$` may only be passed to functions **declared at the top level of `register.tsx`**, never to
-  imported functions or closures inside `register`. Module state lives in top-level `let`s.
-- `atom({ plugin, key })` and `command.run`/`tool.call` matchers must be **literals** (validate reads them
-  statically): strings, or a RegExp literal for a `tool.call` matcher that covers tools the build's types don't
-  name (`{ tool: /^(?:Grep|Glob)$/ }`, `gotchas.md`).
-- One hook per event + matcher per plugin. Guards (`tool.call`, `command.run`, …) carry `.catch`.
-- Tests: nothing sits beneath the mod, so every `$` call needs an `on(...)` stub (including
-  `session.start`); one stub per event per test; `$.ui.ask` is a `tool.call` of `AskUserQuestion`;
-  `process.spawn` cannot be stubbed (code falls back to `process.run`); test `options` only reach keys
-  declared in `userConfig`. Work a hook starts without awaiting may not have run by the time
-  `await $.tool.call(...)` returns (it differs between builds, #45): take the clock with
-  `mock.clock(on)` and `await clock.settle()` before asserting on it.
-- `$.store` is one JSON file per plugin, shared live between sessions; the last write to a key wins,
-  so give each session's records their own key.
-- `$.clock.sleep` counts against a hook's 10 s budget; other `$` calls don't.
-- Don't write files inside a plugin folder; runtime data goes under `~/.claude/<name>-data/`.
+They are in `.claude/rules/engine-rules.md`: where `$` may be passed, which values must be literals, how
+many hooks an event and matcher may have, what a test must stub, how `$.store` is shared between
+sessions, what counts against a hook's 10 s budget, and where runtime data goes. Claude Code loads that
+file by itself once Claude reads, writes or edits a file under a `hooks/`, `tests/` or `types/` folder or
+the build skill's `templates/archetypes/`. After `/compact` it is gone until such a file is read again.
+Read it yourself when planning hooks or tests, before any such file is touched, and again after
+`/compact`.
+
+A session started in the main folder that works on files in a worktree under `scratch/` loads two
+copies of it, the main folder's and the worktree's; a session started in the worktree loads only the
+worktree's. When the two differ, follow the worktree's copy where the branch itself changes the file
+(`git diff origin/main...HEAD -- .claude/rules/engine-rules.md` in the worktree shows it), and
+`origin/main`'s (`git show origin/main:.claude/rules/engine-rules.md`) everywhere else.
 
 ## Repo conventions
 

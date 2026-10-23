@@ -9,8 +9,10 @@ scratch/
 # Engine-written typings, regenerated per Claude Code build.
 **/.claude-plugin/types/
 
-# Local Claude Code state for this checkout (settings.local.json, write logs).
-.claude/
+# Local Claude Code state for this checkout (settings.local.json, write logs). The project's
+# path-scoped rules in .claude/rules/ are tracked (CLAUDE.md, "Rules the engine enforces").
+**/.claude/*
+!/.claude/rules/
 
 # Dependencies and build output.
 node_modules/

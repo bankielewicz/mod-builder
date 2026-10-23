@@ -14,5 +14,5 @@
     ["bash", "plugins/mod-builder/skills/build/scripts/check-archetypes.sh"]
   ],
   "commitTrailers": ["Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"],
-  "notes": "Read CLAUDE.md first. Pure rules go in hooks/<name>-logic.ts; every $ call in hooks/register.tsx. Bump the plugin's version in its plugin.json and in .claude-plugin/marketplace.json, and add a dated '## Change <version> (<date>)' section to its SPEC.md."
+  "notes": "Read CLAUDE.md first. Before writing hooks or tests, read .claude/rules/engine-rules.md. Pure rules go in hooks/<name>-logic.ts; every $ call in hooks/register.tsx. Bump the plugin's version in its plugin.json and in .claude-plugin/marketplace.json, and add a dated '## Change <version> (<date>)' section to its SPEC.md."
 }
