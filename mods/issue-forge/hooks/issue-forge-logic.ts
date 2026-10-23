@@ -2357,20 +2357,10 @@ export function isTrimmed(run: Run): boolean {
   return !TRIMMED_FIELDS.some(field => field in run) && finishedRecord(run).body === run.body
 }
 
-/** One encoder for every measure (PR #145 review round 2, finding 13). */
-const UTF8 = new TextEncoder()
-
 /**
- * UTF-8 bytes of a string (PR #145 review round 1, finding 13). The sweep measures `JSON.stringify` output, where a lone
- * surrogate is already an ASCII `\ud83d` escape (round 2, finding 10).
- */
-export function utf8Length(text: string): number {
-  return UTF8.encode(text).length
-}
-
-/**
- * The store as `$.store.set` measures it ("4 MiB of JSON text in all") is its entries as one JSON object, in UTF-8 bytes:
- * `{`, each entry with its comma (the last one's is the `}`), and `{}` at least.
+ * The store as `$.store.set` measures it is its entries as one compact JSON object, in characters: the 2.1.309 binary refuses
+ * `_(store).length > 4194304` (PR #145 review round 3, finding 3). That is `{`, each entry with its comma (the last one's is
+ * the `}`), and `{}` at least.
  */
 function sizeOfEntries(sizes: readonly number[]): number {
   return Math.max(2, sizes.reduce((n, size) => n + size, 1))
@@ -2378,7 +2368,7 @@ function sizeOfEntries(sizes: readonly number[]): number {
 
 /** What one key adds to that text: `"key":value` and the comma after it; nothing for `undefined`, which JSON leaves out. */
 export function entrySize(key: string, value: unknown): number {
-  return value === undefined ? 0 : utf8Length(`${JSON.stringify(key)}:${JSON.stringify(value)}`) + 1
+  return value === undefined ? 0 : `${JSON.stringify(key)}:${JSON.stringify(value)}`.length + 1
 }
 
 /**
