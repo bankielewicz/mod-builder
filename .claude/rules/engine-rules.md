@@ -1,7 +1,17 @@
+---
+paths:
+  - "**/hooks/**"
+  - "**/tests/**"
+  - "**/types/**"
+  - "plugins/mod-builder/skills/build/templates/archetypes/**"
+---
+
 # Rules the engine enforces
 
-Read before writing hooks or tests. Before writing hooks, read `gotchas.md` too
-(`plugins/mod-builder/skills/build/references/gotchas.md`).
+Claude Code loads this file once Claude reads, writes or edits a file these paths match: a `hooks/`,
+`tests/` or `types/` folder, or the build skill's archetype templates. `CLAUDE.md` names it, under the
+same heading, for planning hooks or tests before any such file is touched. Before writing hooks, read
+`gotchas.md` too (`plugins/mod-builder/skills/build/references/gotchas.md`).
 
 - `$` may only be passed to functions **declared at the top level of `register.tsx`**, never to
   imported functions or closures inside `register`. Module state lives in top-level `let`s.
