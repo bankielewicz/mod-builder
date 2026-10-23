@@ -1874,7 +1874,7 @@ async function statusOf($: EngineInterface, at: Repo | null, issue: number | nul
   if (!at) return 'not in a git repository.'
   const { pick, runs } = await pickFor($, at, issue, false)
   // Unfinished runs older than a week are named, whichever run status shows (#140).
-  const stale = staleLine(runs, await $.clock.now())
+  const stale = staleLine(runs, await $.clock.now(), sessionId)
   const withStale = (text: string) => (stale ? `${text}\n${stale}` : text)
   if (pick.kind === 'several') {
     const ctx = await lineCtx($)

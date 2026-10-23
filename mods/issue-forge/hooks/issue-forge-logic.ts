@@ -2442,9 +2442,12 @@ export function outputTail(text: string): string {
   return (cut.charCodeAt(0) & 0xfc00) === 0xdc00 ? cut.slice(1) : cut
 }
 
-/** Status's line for unfinished runs started over `STALE_DAYS` ago, oldest first: nothing clears their branches by itself. */
-export function staleLine(runs: readonly Run[], now: number): string | null {
-  const old = runs.filter(r => isActive(r) && now - r.startedAt > STALE_DAYS * DAY_MS).sort((a, b) => a.startedAt - b.startedAt)
+/**
+ * Status's line for unfinished runs started over `STALE_DAYS` ago, oldest first: nothing clears their branches by itself.
+ * A run the session `me` drives is left out: that session knows (PR #145 review round 1, finding 6).
+ */
+export function staleLine(runs: readonly Run[], now: number, me = ''): string | null {
+  const old = runs.filter(r => isActive(r) && r.driver?.session !== me && now - r.startedAt > STALE_DAYS * DAY_MS).sort((a, b) => a.startedAt - b.startedAt)
   if (old.length === 0) return null
   const items = old.map(r => `#${r.issue} ${r.step} (started ${Math.floor((now - r.startedAt) / DAY_MS)} days ago)`)
   return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
