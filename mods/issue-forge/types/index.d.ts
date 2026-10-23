@@ -23,6 +23,8 @@ export type Profile = {
   baseBranch: string
   testCommand: string[]
   coverageCommand: string[]
+  /** Change 0.8.0 (#137): the repository's formatter; each gate runs it between two `git add -A`. Absent, no format step. */
+  formatCommand?: string[]
   lcovPath: string
   sourceGlobs: string[]
   testGlobs: string[]
