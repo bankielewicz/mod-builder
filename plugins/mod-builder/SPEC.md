@@ -1106,7 +1106,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **What changes:**
   1. **Folders that are gone.** At session start, after the scan starts and without holding the hook up, Mod Lab lists the store's keys (`$.store.keys`).
      - A key under `modlab:results:`, `modlab:done:` or `modlab:generations:` names its folder after that prefix. The key is read by the three prefixes, not split on `:`, since a Windows folder's key holds one more.
-     - Each folder is checked once, with `$.fs.stat`. Only a rejection whose message says `ENOENT` counts as gone. A folder that answers, or a rejection for any other reason (`EACCES`, a network location, a message worded otherwise), is kept.
+     - Each folder is checked once, with `$.fs.stat`. Only a rejection whose message ends as the engine's does, `failed: ENOENT`, counts as gone. A folder that answers, or a rejection for any other reason, is kept: `EACCES`, a network location, a message worded otherwise, or another mod's refusal (`<mod>: refused by <policy mod>: <reason>`, `Test and troubleshoot/Test-a-mod.md:394`).
      - A gone folder's keys are deleted (`$.store.delete`). Each delete waits its turn on the chain `updateStore` uses, so a write this session already started for that key lands first.
      - Each delete writes a log line at `normal`: `store: deleted <key> (<folder> is gone)`.
   2. **Mods that are gone.** At a scan whose listing of the mods folder succeeded, the entries for names that are neither a folder in it nor a live build's placeholder are dropped:
@@ -1132,7 +1132,9 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Lifetime:** a `$.store` value lasts until "Your mod deletes it, or no session reads or writes the store for `cleanupPeriodDays`" [read: `Build/Draw-in-the-interface-with-a-mod.md:727`]. Mod Lab's store is read in every session, so removing its stale keys is Mod Lab's own job.
   - **Several sessions:** "Give each item its own key" and "Read again right before you write" [read: `Build/Draw-in-the-interface-with-a-mod.md:837-842`]. Keys stay one set per folder. The drops in 2 are built inside `updateStore`'s turn, or `announceGreen`'s read, from the value read then.
   - **The calls:** `$.store` has `get`, `set`, `delete` and `keys`, and `$.fs` has `exists` and `stat` [read: `Test and troubleshoot/Mods-reference.md:216-217`]. The 2.1.309 types say `stat` "Rejects when missing", with `ENOENT` [d.ts], and `exists` "rejects only a network location" [d.ts].
-  - **Time:** `$` calls don't count against a hook's 10 seconds [read: `Test and troubleshoot/Mods-reference.md:347`], and the prune runs detached from `session.start` anyway.
+  - **Time:** `$` calls don't count against a hook's 10 seconds [read: `Test and troubleshoot/Mods-reference.md:347`]. "Claude Code waits for that hook before the first prompt" [read: `Build/Use-the-mods-API.md:15`], and the docs' background work returns "without waiting … so the session starts right away" (`:198`). So the prune runs detached from `session.start`, as the scan does.
+  - **Calls are events:** "A mod earlier in the chain can observe, rewrite, or refuse your call, which is how an organization restricts what mods reach" [read: `Build/Use-the-mods-API.md:404`]. A refused `stat` or `keys` prunes nothing, and a refused `delete` is logged and skipped.
+  - **Tests:** "`mock.store` … returns nothing, so to check what your mod saved, write the two `store` stubs yourself", and a call that should fail is stubbed with `{ deny: 'the reason' }` [read: `Test and troubleshoot/Test-a-mod.md:112`, `:170-200`]. `world()` already writes its own `store.get` and `store.set` stubs; `store.keys`, `store.delete` and `fs.stat` join them the same way.
 - **What gets touched:**
   - `hooks/register.tsx`, `hooks/mod-builder-logic.ts`, `tests/mod-builder-logic.test.ts` and `tests/ui.test.tsx`.
   - README: the store paragraph, and the Store and Files rows of "What it reaches", from validate's output.
@@ -1160,4 +1162,5 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - The installed copy's store is pruned only once this merges and a session reloads it.
 - **Done means:** Mod Lab's stores hold records only for folders that exist and mods in them. A removed worktree's keys go at the next session start, and a removed mod's entries at the next scan.
 - **Version:** 0.2.30 (patch: upkeep of the plugin's own store, no change to commands, options or the state contract).
+- **Approved** by the owner, 2026-10-23, with the plain rule for an unmounted drive: "i approve as long as you follow guidance from anthropic's best practices for claude mod: C:\Projects\ClaudeMod\docs\research\Mods". The docs were read again before the build, for `session.start`, calls as events, and tests: the three points added under "Against Anthropic's mod docs" above.
 
