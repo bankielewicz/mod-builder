@@ -2609,3 +2609,110 @@ describe('#137: the profile formatCommand', () => {
     expect(phasePrompt('green', run())).not.toContain('Format command')
   })
 })
+
+// #140 (Change 0.9.0): the store stays under Claude Code's 4 MiB limit: finished records trimmed, a budget across
+// repositories, test output capped in characters, and old unfinished runs named.
+describe('#140: the store under its limit', () => {
+  const L = logic as Record<string, unknown>
+  const call = <R>(name: string, ...args: unknown[]): R | string => (typeof L[name] === 'function' ? (L[name] as (...a: unknown[]) => R)(...args) : `${name} is missing`)
+  const DAY = 86_400_000
+  const LONG = 'b'.repeat(600)
+  const full = (over: Partial<Run> = {}) => run({ body: LONG, redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', behaviourAnswer: 'held', ...over })
+  const TRIMMED = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer']
+
+  test('a finished record drops the test output and answers, and cuts the issue text to 500 characters', () => {
+    const f = call<Run>('finishedRecord', full({ step: 'done' }))
+    expect(typeof f).toBe('object')
+    const r = f as Run
+    for (const field of TRIMMED) expect(field in r).toBe(false)
+    expect(r.body).toBe(`${'b'.repeat(500)}…`)
+    expect(r).toMatchObject({ id: '16-1', issue: 16, step: 'done', title: 'Fix it' })
+    expect(call<Run>('finishedRecord', run({ body: 'short' })) as Run).toMatchObject({ body: 'short' })
+    expect(call('isTrimmed', r)).toBe(true)
+    expect(call('isTrimmed', full())).toBe(false)
+    expect(call('isTrimmed', run({ body: 'short' }))).toBe(true)
+    expect(call('isTrimmed', run({ behaviourAnswer: 'x' }))).toBe(false)
+    expect(call('isTrimmed', call<Run>('finishedRecord', r))).toBe(true)
+  })
+
+  test('advance trims on stop and on published, and on no other step', () => {
+    const stopped = advance(full({ step: 'green' }), { type: 'stop' }, 1)
+    expect(stopped.step).toBe('stopped')
+    for (const field of TRIMMED) expect(field in stopped).toBe(false)
+    expect(stopped.body).toBe(`${'b'.repeat(500)}…`)
+    const done = advance(full({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1' }, 2)
+    expect(done).toMatchObject({ step: 'done', prUrl: 'https://x/pull/1', body: `${'b'.repeat(500)}…` })
+    expect('redAnswer' in done).toBe(false)
+    const blocked = advance(full({ step: 'green' }), { type: 'block', reason: 'why', next: 'do this' }, 3)
+    expect(blocked).toMatchObject({ step: 'blocked', redAnswer: 'notes', lastTestTail: 'last', body: LONG })
+  })
+
+  test('the store is measured as UTF-8 JSON, as $.store.set counts it', () => {
+    expect(call('utf8Length', 'a')).toBe(1)
+    expect(call('utf8Length', 'é')).toBe(2)
+    expect(call('utf8Length', '€')).toBe(3)
+    expect(call('utf8Length', '😀')).toBe(4)
+    expect(call('utf8Length', 'aé€😀')).toBe(10)
+    expect(call('storeSize', [{ key: 'a', value: 1 }, { key: 'b', value: 'é' }])).toBe(16)
+    expect(call('entrySize', 'a', 1)).toBe(6)
+  })
+
+  test('the budget deletes the oldest finished runs first, across repositories, and never an unfinished one', () => {
+    const entries = [
+      { key: 'k2', run: run({ step: 'done', startedAt: 2 }), size: 100 },
+      { key: 'k1', run: run({ step: 'stopped', startedAt: 1 }), size: 100 },
+      { key: 'k0', run: run({ step: 'blocked', startedAt: 0 }), size: 100 },
+    ]
+    expect(call('budgetKeys', entries, 300, 300)).toEqual([])
+    expect(call('budgetKeys', entries, 300, 250)).toEqual(['k1'])
+    expect(call('budgetKeys', entries, 300, 150)).toEqual(['k1', 'k2'])
+    expect(call('budgetKeys', entries, 300, 50)).toEqual(['k1', 'k2'])
+  })
+
+  test('the sweep trims finished records first, then drops what the budget needs, and says what is left', () => {
+    type Plan = { trim: string[]; drop: string[]; left: number }
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const entries = [
+      { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) },
+      { key: other(2), value: run({ id: '2-1', issue: 2, step: 'done', startedAt: 2, title: 'x'.repeat(3000) }) },
+      { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) },
+      { key: 'issue-forge:repo-agents:/other/.git#1', value: ['a1'] },
+    ]
+    const roomy = call<Plan>('sweepPlan', entries, 100_000) as Plan
+    expect(roomy.trim).toEqual([other(1)])
+    expect(roomy.drop).toEqual([])
+    const tight = call<Plan>('sweepPlan', entries, 4000) as Plan
+    expect(tight.trim).toEqual([other(1)])
+    expect(tight.drop).toEqual([other(1), other(2)])
+    expect(tight.left).toBeGreaterThan(4000)
+    const after = entries.filter(e => e.key !== other(1) && e.key !== other(2))
+    expect(tight.left).toBe(call('storeSize', after))
+  })
+
+  test('a test tail keeps 200 lines, then its last 20,000 characters', () => {
+    const cut = call<string>('outputTail', `${'y'.repeat(10_000)}${'x'.repeat(20_000)}`) as string
+    expect(cut.length).toBe(20_000)
+    expect(cut.includes('y')).toBe(false)
+    expect(call('outputTail', Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\n'))).toBe(Array.from({ length: 200 }, (_, i) => `line ${i + 100}`).join('\n'))
+    expect(call('outputTail', 'FAIL a\n')).toBe('FAIL a')
+  })
+
+  test('status names unfinished runs started over 7 days ago, oldest first, with how to stop them', () => {
+    const now = 10 * DAY
+    const runs = [
+      run({ issue: 8, step: 'blocked', startedAt: 2 * DAY }),
+      run({ issue: 23, step: 'ready', startedAt: 1 * DAY }),
+      run({ issue: 30, step: 'green', startedAt: 5 * DAY }),
+      run({ issue: 1, step: 'done', startedAt: 0 }),
+      run({ issue: 2, step: 'stopped', startedAt: 0 }),
+    ]
+    expect(call('staleLine', runs, now)).toBe('unfinished for over 7 days: #23 ready (started 9 days ago) · #8 blocked (started 8 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+    expect(call('staleLine', runs.slice(2), now)).toBe(null)
+    expect(call('staleLine', [], now)).toBe(null)
+  })
+
+  // A toast already carries the mod's name (docs/research/Mods, Use-the-mods-API.md:212), so the text doesn't repeat it.
+  test('the warning when only unfinished runs are left over the budget', () => {
+    expect(call('storeWarning', 3.3 * 1024 * 1024)).toBe("saved runs take 3.3 MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop")
+  })
+})

@@ -118,6 +118,8 @@ type World = {
   worktreeListThrows?: boolean
   /** When set, a store stub that can hold one write stands in for mock.store. */
   storeHold?: StoreHold
+  /** With `storeHold`, each write and delete that lands, in order, as `set <key>` or `delete <key>` (#140). */
+  storeOps?: string[]
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -256,13 +258,13 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   if (hold) {
     on('store.get', ($: any, e: any) => ({ value: store[e.key] }))
     on('store.set', ($: any, e: any) => {
-      const land = () => ((store[e.key] = e.value), { value: undefined })
+      const land = () => ((store[e.key] = e.value), world.storeOps?.push(`set ${e.key}`), { value: undefined })
       if (hold.isHeld || !hold.when(e.value)) return land()
       hold.isHeld = true
       return hold.until.then(land)
     })
     on('store.keys', () => ({ value: Object.keys(store) }))
-    on('store.delete', ($: any, e: any) => (delete store[e.key], { value: undefined }))
+    on('store.delete', ($: any, e: any) => (delete store[e.key], world.storeOps?.push(`delete ${e.key}`), { value: undefined }))
   } else mock.store(on, store)
   on('session.id', () => ({ value: SESSION }))
   mock.env(on, { HOME: '/home/u' })
@@ -4188,5 +4190,93 @@ describe('#137: the profile formatCommand', () => {
     await run($, 'resume')
     await until(w, () => isBlocked(w), 'the block')
     expect((await run($, 'status')).text).toContain('next: make the profile commands leave the tree as they found it, or put the formatter in formatCommand')
+  })
+})
+
+// #140 (Change 0.9.0): before a new run is written, the store is swept (finished records trimmed, the oldest finished runs of
+// any repository deleted past the budget); finished runs are stored trimmed; status names old unfinished runs.
+describe('#140: the store under its limit', () => {
+  const OTHER = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+  const otherRun = (issue: number, step: string, startedAt: number, extra: Record<string, unknown> = {}) => ({ ...storedRun(step), id: `${issue}-1`, root: '/other', repo: '/other/.git', issue, startedAt, agents: [], ...extra })
+  const HOLD = () => ({ when: () => false, until: Promise.resolve() })
+  const TRIMMED = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer']
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+
+  test("a start trims another repository's finished record written before 0.9.0, and keeps it when that is enough", async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { lastTestTail: 'T'.repeat(30_000), redAnswer: 'notes', body: 'b'.repeat(2000) }) }
+    const w = engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    const kept = store[OTHER(5)] as any
+    expect(kept).toBeDefined()
+    for (const field of TRIMMED) expect(field in kept).toBe(false)
+    expect(kept.body).toBe(`${'b'.repeat(500)}…`)
+    expect(w.toasts.filter(t => t.includes('MiB'))).toEqual([])
+  })
+
+  test("a start over the budget deletes another repository's oldest finished run before the new run is written", async ($, on) => {
+    const store: Record<string, unknown> = {
+      [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(2_000_000) }),
+      [OTHER(6)]: otherRun(6, 'stopped', 1, { title: 'y'.repeat(1_500_000) }),
+    }
+    const storeOps: string[] = []
+    const w = engine(on, { storeHold: HOLD(), storeOps }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(OTHER(5) in store).toBe(false)
+    expect(OTHER(6) in store).toBe(true)
+    const deleted = storeOps.indexOf(`delete ${OTHER(5)}`)
+    expect(deleted).toBeGreaterThan(-1)
+    expect(deleted).toBeLessThan(storeOps.indexOf(`set ${key(16)}`))
+    expect(w.toasts.filter(t => t.includes('MiB'))).toEqual([])
+  })
+
+  test('a start over the budget with only unfinished runs left warns once, deletes nothing, and the run starts', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(OTHER(7) in store).toBe(true)
+    const warnings = w.toasts.filter(t => t.includes("MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop"))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toStartWith('saved runs take 3.')
+  })
+
+  test('a stopped run is stored trimmed', async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('green', { redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', body: 'b'.repeat(600) }) }
+    engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    const stopped = storedOf(store)
+    expect(stopped.step).toBe('stopped')
+    for (const field of TRIMMED) expect(field in stopped).toBe(false)
+    expect(stopped.body).toBe(`${'b'.repeat(500)}…`)
+  })
+
+  test("a published run is stored trimmed, and its pull request still carries the red agent's answer", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0', redAnswer: 'RED NOTES', body: 'b'.repeat(600) }) }
+    const w = engine(on, { head: BRANCH, storeHold: HOLD() }, store)
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    await w.clock.settle()
+    const done = storedOf(store)
+    expect(done.step).toBe('done')
+    expect('redAnswer' in done).toBe(false)
+    expect(done.body).toBe(`${'b'.repeat(500)}…`)
+    expect(Object.values(w.files).some(text => text.includes('RED NOTES'))).toBe(true)
+  })
+
+  test('status names an unfinished run started 8 days ago, with its stop command', async ($, on) => {
+    const LINE = 'unfinished for over 7 days: #8 blocked (started 8 days ago); /issue-forge stop <N> ends one and keeps its branch and commits'
+    const store: Record<string, unknown> = {
+      [key(16)]: storedRun('green'),
+      [key(8)]: { ...storedRun('blocked'), id: '8-1', issue: 8, startedAt: 1_000_000 - 8 * 86_400_000, blocked: { at: 'gateG', reason: 'why', next: 'do this' } },
+    }
+    engine(on, {}, store)
+    await start($)
+    expect((await run($, 'status')).text).toContain(LINE)
+    expect((await run($, 'status 8')).text).toContain(LINE)
+    expect((await run($, 'status 16')).text).toContain(LINE)
   })
 })
