@@ -1303,6 +1303,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - `CLAUDE.md`'s Architecture line, which lists the build skill's references.
   - `docs/how-it-works.md`'s gotchas count ("65 engine gotchas"), recounted, since #138 and #141 added entries.
   - The README's "Built on" line, this SPEC, and version 0.2.32 in `plugin.json` and the marketplace entry.
+- **Approved** by the owner, 2026-10-23, "Approve (Recommended)", after the advisor checked this section against `docs/research/Mods` and `docs/research/claude-plugins` as the owner asked ("run it by /advisor to ensure it meets the needs of the specification document and is not ambiguous and follows anthropic's best practices").
 - **Open:** the `mktemp` sentence moves as it is. Its meaning isn't clear (`claude plugin test` is a shell command), and rewriting it would change a fact nobody has checked.
 - **Tests and QA:** skill text only, so there is no red or green step.
   - `claude plugin validate --strict` for the marketplace and `plugins/mod-builder`.
