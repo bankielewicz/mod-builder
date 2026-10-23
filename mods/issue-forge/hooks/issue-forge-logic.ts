@@ -1164,7 +1164,7 @@ function gateRecord(run: Run, ev: { gate?: Gate; testTail?: string }): Partial<R
 
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
-  if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
+  if (ev.type === 'stop') return isActive(run) ? finishedRecord({ ...run, step: 'stopped' }) : run
   // Who drives the run (Change 0.3.0): set when a drive starts; only that session's release clears it.
   if (ev.type === 'drive') return { ...run, driver: { session: ev.session, since: now } }
   if (ev.type === 'release') {
@@ -1255,7 +1255,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'publish' ? { ...run, step: 'publishing', times: start(run, 'publish', now) } : run
     case 'publishing':
-      return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) } : run
+      return ev.type === 'published' ? finishedRecord({ ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) }) : run
     default:
       return run
   }
@@ -2325,6 +2325,96 @@ export function isPrunable(listed: Run, stored: Run | null): boolean {
 export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = KEEP_FINISHED): string[] {
   const finished = entries.filter(e => !isActive(e.run)).sort((a, b) => a.run.startedAt - b.run.startedAt)
   return finished.slice(0, Math.max(0, finished.length - keep)).map(e => e.key)
+}
+
+// ── The store's size (Change 0.9.0, #140) ─────────────────────────────────
+
+/** issue-forge's budget for its store: under Claude Code's 4 MiB of JSON for one plugin, every repository's runs together. */
+export const STORE_BUDGET = 3 * 1024 * 1024
+/** How much of the issue's text a finished record keeps. */
+export const BODY_EXCERPT_CHARS = 500
+/** A command's output as a run keeps it: its last 200 lines, then at most this many characters, as a red answer in a prompt. */
+export const TAIL_MAX_CHARS = 20_000
+/** Status names an unfinished run older than this. */
+export const STALE_DAYS = 7
+const DAY_MS = 86_400_000
+const MIB = 1024 * 1024
+/** What only a phase or publish reads, which a finished record drops. */
+const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer'] as const
+
+/** A run done or stopped, without the test tails and red's answers, and with only the start of the issue's text. */
+export function finishedRecord(run: Run): Run {
+  const { lastTestTail: _l, redTestTail: _r, redAnswer: _a, behaviourAnswer: _b, ...rest } = run
+  return { ...rest, body: run.body.length > BODY_EXCERPT_CHARS ? `${run.body.slice(0, BODY_EXCERPT_CHARS)}…` : run.body }
+}
+
+/** Whether a record is already as `finishedRecord` leaves it. */
+export function isTrimmed(run: Run): boolean {
+  return !TRIMMED_FIELDS.some(field => field in run) && finishedRecord(run).body === run.body
+}
+
+/** UTF-8 bytes of a string: 1 per ASCII unit, 2 up to U+07FF and per surrogate (a pair is 4), 3 for the rest. */
+export function utf8Length(text: string): number {
+  let n = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    n += c < 0x80 ? 1 : c < 0x800 || (c >= 0xd800 && c <= 0xdfff) ? 2 : 3
+  }
+  return n
+}
+
+/** The store as `$.store.set` measures it ("4 MiB of JSON text in all"): its entries as one JSON object, in UTF-8 bytes. */
+export function storeSize(entries: readonly { key: string; value: unknown }[]): number {
+  return utf8Length(JSON.stringify(Object.fromEntries(entries.map(e => [e.key, e.value]))))
+}
+
+/** What one key adds to that text: `"key":value` and the comma after it. */
+export function entrySize(key: string, value: unknown): number {
+  return utf8Length(`${JSON.stringify(key)}:${JSON.stringify(value)}`) + 1
+}
+
+/** Finished runs to delete, oldest first across repositories, until `total` is at or under `budget`; never an unfinished run. */
+export function budgetKeys(entries: readonly { key: string; run: Run; size: number }[], total: number, budget = STORE_BUDGET): string[] {
+  const out: string[] = []
+  let left = total
+  for (const e of entries.filter(e => !isActive(e.run)).sort((a, b) => a.run.startedAt - b.run.startedAt)) {
+    if (left <= budget) break
+    out.push(e.key)
+    left -= e.size
+  }
+  return out
+}
+
+export type SweepPlan = { trim: string[]; drop: string[]; left: number }
+
+/** The sweep before a run is written: finished records to trim, then finished runs to delete past the budget, and the size left. */
+export function sweepPlan(entries: readonly { key: string; value: unknown }[], budget = STORE_BUDGET): SweepPlan {
+  const isRun = (key: string) => key.startsWith(RUN_PREFIX)
+  const trim = entries.filter(e => isRun(e.key) && !isActive(e.value as Run) && !isTrimmed(e.value as Run)).map(e => e.key)
+  const after = entries.map(e => (trim.includes(e.key) ? { key: e.key, value: finishedRecord(e.value as Run) } : e))
+  const runs = after.filter(e => isRun(e.key)).map(e => ({ key: e.key, run: e.value as Run, size: entrySize(e.key, e.value) }))
+  const size = storeSize(after)
+  const drop = budgetKeys(runs, size, budget)
+  return { trim, drop, left: runs.filter(r => drop.includes(r.key)).reduce((n, r) => n - r.size, size) }
+}
+
+/** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */
+export function outputTail(text: string): string {
+  const tail = tailLines(text)
+  return tail.length > TAIL_MAX_CHARS ? tail.slice(-TAIL_MAX_CHARS) : tail
+}
+
+/** Status's line for unfinished runs started over `STALE_DAYS` ago, oldest first: nothing clears their branches by itself. */
+export function staleLine(runs: readonly Run[], now: number): string | null {
+  const old = runs.filter(r => isActive(r) && now - r.startedAt > STALE_DAYS * DAY_MS).sort((a, b) => a.startedAt - b.startedAt)
+  if (old.length === 0) return null
+  const items = old.map(r => `#${r.issue} ${r.step} (started ${Math.floor((now - r.startedAt) / DAY_MS)} days ago)`)
+  return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
+}
+
+/** The toast when only unfinished runs are left over the budget; a toast already names the mod. */
+export function storeWarning(bytes: number): string {
+  return `saved runs take ${(bytes / MIB).toFixed(1)} MiB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop`
 }
 
 /** What the driving session finds in the store: its run stopped, taken over or replaced, or nothing changed. */

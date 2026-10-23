@@ -9,6 +9,7 @@ import {
   PHASES,
   PROFILE_FILE,
   STASH_LIST_ARGV,
+  STORE_BUDGET,
   TAKE_OVER,
   USAGE,
   advance,
@@ -39,6 +40,7 @@ import {
   elsewhereLine,
   elsewhereText,
   findStash,
+  finishedRecord,
   foreignChange,
   forkOfOrigin,
   forkRemoteVerdict,
@@ -87,6 +89,7 @@ import {
   normalizePath,
   othersLine,
   othersOf,
+  outputTail,
   outsideChecks,
   ownerOf,
   parseCommand,
@@ -121,12 +124,14 @@ import {
   splitZ,
   sshHostToResolve,
   sshHostname,
+  staleLine,
   stashApplyArgv,
   stashMessage,
   startAnswer,
   startChoices,
   statusText,
-  tailLines,
+  storeWarning,
+  sweepPlan,
   takeOverQuestion,
   totals,
   treeDrift,
@@ -216,6 +221,8 @@ let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; ba
 let knownRefs = new Set<string>()
 /** The last run write queued: updateRun chains each one after it. */
 let runWrites: Promise<void> = Promise.resolve()
+/** Whether the store warning was shown (#140): once a session, or once more after a reload. */
+let isStoreWarned = false
 /** Where git keeps each folder's lock files, asked once per folder and file (PR #88 review). */
 const lockFiles: Record<string, string> = {}
 /** An agent's final answer and how its turn ended, for the phase waiting on it. */
@@ -495,10 +502,10 @@ async function runLong($: EngineInterface, argv: string[], root: string, minutes
         hasStarted = true
         text = (text + piece.text).slice(-200_000)
       }
-      if (isTimedOut || isStopped) result = { exit: null, isTimedOut, tail: tailLines(text) }
-      else result = { exit: (await stream.result).code, isTimedOut: false, tail: tailLines(text) }
+      if (isTimedOut || isStopped) result = { exit: null, isTimedOut, tail: outputTail(text) }
+      else result = { exit: (await stream.result).code, isTimedOut: false, tail: outputTail(text) }
     } catch (err) {
-      result = hasStarted || isTimedOut || isStopped ? { exit: null, isTimedOut, tail: tailLines(text) } : await runShort($, argv, root, minutes, err, env)
+      result = hasStarted || isTimedOut || isStopped ? { exit: null, isTimedOut, tail: outputTail(text) } : await runShort($, argv, root, minutes, err, env)
     }
     if (isStopped) throw new Stopped()
     return result
@@ -563,7 +570,7 @@ async function offBranch($: EngineInterface, run: Run): Promise<Blocked | null> 
 async function runShort($: EngineInterface, argv: string[], root: string, minutes: number, why: unknown, env?: Record<string, string>): Promise<CommandResult> {
   try {
     const r = await $.process.run(argv, { cwd: root, timeoutMs: Math.min(minutes * 60_000, 600_000), ...(env ? { env } : {}) })
-    return { exit: r.exitCode, isTimedOut: false, tail: tailLines(`${r.stdout}\n${r.stderr}`) }
+    return { exit: r.exitCode, isTimedOut: false, tail: outputTail(`${r.stdout}\n${r.stderr}`) }
   } catch (err) {
     return { exit: null, isTimedOut: /time/i.test(String(err)), tail: `could not run ${argv.join(' ')}: ${String(err)} (spawn: ${String(why)})` }
   }
@@ -1685,12 +1692,36 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
   }
 }
 
+/**
+ * Change 0.9.0 (#140), before a new run is written, so a full store can't refuse it: finished records written before 0.9.0
+ * are trimmed, then the oldest finished runs of any repository deleted while the store is over its budget. Each write reads
+ * its key again and acts only on the same finished run, as prune does; a write that fails is skipped.
+ */
+async function sweepStore($: EngineInterface): Promise<void> {
+  const entries: { key: string; value: unknown }[] = []
+  for (const key of await $.store.keys()) entries.push({ key, value: await $.store.get(key) })
+  const plan = sweepPlan(entries)
+  const listed = (key: string) => entries.find(e => e.key === key)?.value as Run
+  for (const key of plan.trim) {
+    const stored = await loadRun($, key)
+    if (stored && isPrunable(listed(key), stored)) await $.store.set(key, finishedRecord(stored)).catch(() => undefined)
+  }
+  for (const key of plan.drop) {
+    if (isPrunable(listed(key), await loadRun($, key))) await $.store.delete(key).catch(() => undefined)
+  }
+  if (plan.left > STORE_BUDGET && !isStoreWarned) {
+    isStoreWarned = true
+    $.ui.toast(storeWarning(plan.left))
+  }
+}
+
 /** Writes the new run, with this session as its driver, only if its key is still free; then drives it. */
 async function begin($: EngineInterface, at: Repo, issue: number, isChosenWorktree: boolean, ghRepo?: string): Promise<string> {
   const now = await $.clock.now()
   const fresh: Run = { ...newRun(`${issue}-${now}`, at.root, issue, now, ghRepo), repo: at.repo, ...(isChosenWorktree ? { chosenWorktree: true } : {}) }
   const run = advance(fresh, { type: 'drive', session: sessionId }, now)
   await writeFocus($, issue)
+  await sweepStore($).catch(() => undefined)
   const claimed = await updateRun($, keyOf(run), stored => (isActive(stored) ? null : run))
   if (!claimed) return `#${issue} was started by another session a moment ago; /issue-forge status ${issue} says where it is.`
   await prune($, at.repo)
@@ -1836,9 +1867,12 @@ async function handOffRun($: EngineInterface, issue: number | null): Promise<str
 async function statusOf($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
   if (!at) return 'not in a git repository.'
   const { pick, runs } = await pickFor($, at, issue, false)
+  // Unfinished runs older than a week are named, whichever run status shows (#140).
+  const stale = staleLine(runs, await $.clock.now())
+  const withStale = (text: string) => (stale ? `${text}\n${stale}` : text)
   if (pick.kind === 'several') {
     const ctx = await lineCtx($)
-    return [`${pick.runs.length} runs in this repository:`, ...pick.runs.map(r => lineOf(r, ctx))].join('\n')
+    return withStale([`${pick.runs.length} runs in this repository:`, ...pick.runs.map(r => lineOf(r, ctx))].join('\n'))
   }
   if (pick.kind === 'none') {
     if (issue !== null) return noneText(issue, '')
@@ -1846,7 +1880,7 @@ async function statusOf($: EngineInterface, at: Repo | null, issue: number | nul
     return profileStatusText(errors, profile)
   }
   await setFocus($, pick.run)
-  return statusFor($, pick.run, runs)
+  return withStale(await statusFor($, pick.run, runs))
 }
 
 async function showStatus($: EngineInterface): Promise<void> {
