@@ -135,6 +135,18 @@ Re-check [field] items against the d.ts after a Claude Code update.
   different keys over the same 0.7 s, and all 400 were there afterwards. Writes to the same key: the
   last one wins. So give each session's records their own key (issue-forge: one per repository and
   issue) rather than a list that two sessions would both rewrite.
+- **[d.ts]** `$.store` is one store per plugin, and `set` rejects a store over 4 MiB of JSON for every
+  key together, so a mod that keeps a record per item (a run, a folder) bounds what it keeps, or its
+  own saves start failing (issue-forge 0.9.0, Mod Lab 0.2.30).
+- **[probe]** What the limits count, probed on 2.1.309 with `claude -p --plugin-dir`:
+  - Characters of compact JSON, not UTF-8 bytes: 1,500,000 `€` (4.5 MB as UTF-8) was stored.
+  - The whole store: 2,500,000 characters, then 2,000,000 more under another key, was refused with
+    `<plugin>@inline: $.store.set: the store would be 4509163 characters, over the 4194304 limit`.
+  - One value on its own: a string of 4,194,305 characters was refused with `the value is 4194307
+    characters, over the 4194304 limit`, its JSON with the two quotes.
+  - A key: 256 characters was stored, while 257 was refused by `set` and `get` alike, `$.store.set: the
+    key is 257 characters, over the 256 limit`. A key that holds a path (issue-forge's git folder) can
+    reach that.
 - **[d.ts]** Every `$.state.get` of one dispatch reads one moment, "whatever is written meanwhile". A
   hook that awaits another hook's write (a scan it waits for) and then reads the atom again gets the
   old value, not the write.
