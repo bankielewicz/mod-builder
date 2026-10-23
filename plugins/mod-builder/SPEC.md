@@ -1243,3 +1243,100 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - **Live check:** `claude -p --debug-file <new log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"`, since the manifest changes: loaded, admitted, and no failure line.
 - **Version:** 0.2.31 (patch: skill text, templates and metadata; no change to commands, options or the state contract).
 
+## Change 0.2.32 (2026-10-23)
+
+> Issue #148, "mod-builder skills: imperative text, lean SKILL.md and references/, per /plugin-dev:skill-development". The owner chose it next: "#148 skill rewrite". And, before the rewrite: "use progressive disclosure where appropriate - do not make text ambiguous as you truncate or make it concise and thus losing contextual meaning".
+
+- **How:** mod-builder is a plugin, so this change follows Anthropic's plugin documents and goes through `/plugin-dev:skill-development` (CLAUDE.md, "Read first"):
+  - imperative instructions and third-person descriptions;
+  - a lean `SKILL.md` that points to `references/` for detail;
+  - the skill-reviewer agent at the end.
+
+  A skill may carry supporting files beside its `SKILL.md`, and a frontmatter `name` sets its command name [read: `docs/research/claude-plugins/Add-components-to-a-plugin.md:222-260`], so `/mod-builder:build` and `/mod-builder:edit` keep theirs.
+- **The method, from the owner's second sentence: a move, not a summary.**
+  - Text that leaves a `SKILL.md` goes whole into a reference, with every `(docs, not observed)` and `[d.ts]` tag on its sentence.
+  - Each `SKILL.md` keeps the steps, commands and pass criteria. It points to each reference, saying when to read it.
+  - Nothing is shortened into something vaguer. The two skills were snapshot before the change, and after it each removed passage is found by a distinctive phrase in its new home.
+- **What moves** (line numbers at `0982f59`):
+
+  | From | To |
+  | --- | --- |
+  | build `:138-151`: the smoke test's log checks, including the managed-settings case | `skills/build/references/verify.md` |
+  | build `:153-159`: a `--plugin-dir` copy replacing an installed one, and options in a `-p` run | `references/verify.md` |
+  | build `:161-166`: the typecheck procedure (copy `tsconfig.check.json`, fill it, run `tsc`) | `references/verify.md` |
+  | build `:169`: the `CLAUDE_CONFIG_DIR=$(mktemp -d)` sentence, moved as it is (see Open) | `references/verify.md` |
+  | build `:170-181`: loading the mod live, both ways, and why `/reload-plugins` alone doesn't load an uninstalled one | `skills/build/references/loading.md` |
+  | build `:204-216`: how later edits reach the copy that runs, and the Installed tab check | `references/loading.md` |
+  | edit `:33-74`: which copy runs, covering the install records, `--plugin-dir`, the managed lock, archives, a folder's reloads and the protected path | `references/loading.md`, merged with build `:170-181` and `:204-216` as their union, since the three are near-copies |
+
+- **What stays in build's step 4:**
+  - The pass criterion (`:135-137`): the smoke test passes when it prints the command's text and its debug log shows this folder's code ran.
+  - The `.catch` rule (`:168`), the rule on reporting failures, and the rule that an edit after Verify makes it stale (`:183-184`).
+  - The command block. It gains the typecheck line, `npx -y -p typescript@5.6 tsc -p <copy>`, which today sits only in the prose that moves, with a pointer to `verify.md` for making the copy.
+  - Each pointer says when to read the reference: "Before calling the smoke test passed, check its log as `references/verify.md` says."
+- **What "their union" allows:** facts and their tags move word for word. A connective sentence that names the step that calls it, such as edit's "Two answers decide what makes your edit run. Note both for step 4 and the hand-off", is reworded for a reference both skills read. Each such sentence is listed in the Built block with its old and new wording.
+- **Pointers that follow the move:** build's hand-off keeps its other bullets, and its "how later edits reach the copy they run" bullet becomes a pointer to `loading.md`. Edit's hand-off (`:125-127`) cites that bullet, so it points to `loading.md` too, and its three edit-only bullets stay.
+
+- **What else changes:**
+  - **Imperative text.** Every "you" in both skills means the model, never the person (checked line by line), so each becomes an instruction, and "the person" stays "the person".
+  - **Build's own text:**
+    - "in five steps with one gate" names step 0 too: step 0 orients, then five steps, 1 to 5, around one gate. That matches `docs/how-it-works.md:7` ("runs five steps around one approval gate"), whose table starts at step 1.
+    - `<scratchpad>` is defined: the session's scratchpad directory, outside the repository and the mod.
+    - "Walk through the demo and every 'Done means' bullet" names its actor: the person does it, in the live session, since a headless run can't press keys. The build reports it as pending until they have.
+    - The file list names `references/verify.md` and `references/loading.md`, and says what `ci/` holds and when each file is used.
+  - **Edit's own text:**
+    - "Read it once before step 1" becomes "before step 0", since step 0 runs build's step 0.
+    - The stage map uses edit's own numbers: Spec → 2, Logic → 3.1, Register → 3.2 to 3.3, Validate and Test → 4, README and Share → 5.
+    - Step 0.4 keeps its two questions and points to `../build/references/loading.md` for the answers.
+    - Step 1 asks step 0.4's `--plugin-dir` question too, when the request doesn't answer it. Today it says it asks "only about gaps in the change".
+    - Step 3 gains build's demo step: `/<name> demo` shows every state the change adds or alters.
+  - **The owner's choices** (2026-10-23):
+    - Build's description drops the generic trigger "with tests" and keeps the spec-first routing, so "make a mod" stays with the built-in `plugin-authoring`: "Drop "with tests" only (Recommended)".
+    - Edit's description drops the trigger "update <mod>", which can collide with `claude plugin update`, and keeps "update" among its verbs: "Drop it (Recommended)".
+    - Build's file list names `scripts/check-archetypes.sh` and `scripts/check-sandbox.mjs` on one line, as this repository's maintainer checks, not part of a build: "List as maintainer checks (Recommended)".
+  - **Not changed:** the skills' names, their steps' order and the gates, the templates, the scripts, Mod Lab's code, and the facts in any moved text.
+  - **Scope:** this change moves text and changes no fact. So the skills' mod-building guidance isn't audited again against `docs/research/Mods` here; #119 did that (PRs #122 to #127). The passages moved were read against `docs/research/Mods/Create-a-mod.md:236-258` and `Test and troubleshoot/Troubleshoot-a-mod.md:17-21, :262-304`, and against `docs/research/claude-plugins/Create-a-Claude-Code-plugin.md:172-215`. Their facts and "(docs, not observed)" tags agree.
+  - **Word counts** are recorded in the Built block as results, with no target: if build is still over 2,000 words after the move, it stays over rather than being cut.
+- **What gets touched:**
+  - `skills/build/SKILL.md` and `skills/edit/SKILL.md`.
+  - New: `skills/build/references/verify.md` and `skills/build/references/loading.md`.
+  - `CLAUDE.md`'s Architecture line, which lists the build skill's references.
+  - `docs/how-it-works.md`'s gotchas count ("65 engine gotchas"), recounted, since #138 and #141 added entries.
+  - The README's "Built on" line, this SPEC, and version 0.2.32 in `plugin.json` and the marketplace entry.
+- **Approved** by the owner, 2026-10-23, "Approve (Recommended)", after the advisor checked this section against `docs/research/Mods` and `docs/research/claude-plugins` as the owner asked ("run it by /advisor to ensure it meets the needs of the specification document and is not ambiguous and follows anthropic's best practices").
+- **Open:** the `mktemp` sentence moves as it is. Its meaning isn't clear (`claude plugin test` is a shell command), and rewriting it would change a fact nobody has checked.
+- **Built:** SPEC `406c705`, `70e496e`. The move `21894fc`, CLAUDE.md and the gotchas count `1adb4d5`, version and README `1573412`, the skill review's fixes `4d4b639`.
+  - **The moved-text check:** a script compared every line of the two snapshots (five words or more) with the new skills and references. Six lines have no five-word run in the new text, and each is a deliberate rewording:
+    - build `:28`, `ci/`: split into `ci/marketplace.json` and `ci/ci.yml`, with what each is for.
+    - build `:210` and `:212`, the hand-off's `--plugin-dir` bullet: now a pointer to the "A folder runs as `<name>@inline`" bullet in `loading.md`. That bullet holds its facts (a save reloads the hooks module, the transcript's reload line, `reload failed…`, `/reload-plugins` for the rest), each with the tag it had.
+    - edit `:58`, the Installed tab: merged into `loading.md`'s "Check which copy loaded", which keeps every fact (the `inline` row, the marketplace row, the version in the details, the `mods active` line).
+    - edit `:60`, "ask in step 1's batch": now "The edit skill asks this in its step 1 batch when the request doesn't say" in `loading.md`, and in edit's step 0.4 and step 1.
+    - edit `:105`, "green as you go": "green throughout".
+  - **Other rewordings,** each a connective or an actor:
+    - "Two answers decide what makes your edit run. Note both for step 4 and the hand-off" became the opening of `loading.md`, and edit's step 0.4 notes both.
+    - "the folder you built" became "the mod folder under test", since edit also reads `verify.md`.
+    - "to your scratchpad" became "to `<scratchpad>`", now defined.
+    - The patterns line became "When unsure how to do something, `references/patterns.md` names a mod that does it".
+    - "write the code yourself" became "write our own code".
+  - **Tags:** every "(docs, not observed)" and `[d.ts]` of the old build (5) and edit (4) is in its new place, as the skill reviewer checked one by one.
+  - **The skill review** (the skill-reviewer agent, as `/plugin-dev:skill-development` asks): pass, once its two meaning findings were fixed.
+    - Nothing pointed to the `mktemp` sentence any more. Build's file list and step 4 now name it.
+    - A hand-off bullet restated an untagged fact under "(docs, not observed)". It is now only a pointer.
+    - Ten wording findings are fixed too. Two of them: edit's `<mod>` placeholder is kept, and the walk-through is called the one item of step 4 that may be pending.
+    - Its optional trigger "fix <mod>" isn't added, since the owner didn't choose it. The local-folder and remote paths still appear in three sections of `loading.md`, as two of them already did in the old build skill.
+  - **Word counts** (results, no target): build 2,227 → 1,862, edit 1,307 → 869, `verify.md` about 440 and `loading.md` about 860.
+  - **QA** (Claude Code 2.1.309):
+    - `claude plugin validate --strict` passes for the marketplace and `plugins/mod-builder`.
+    - The archetype check passes all five, and the sandbox check passes.
+    - `check_docs.py` passes on the five edited documents, and `git diff --check` is clean.
+    - `test -e` passes on every path the skills and references name.
+    - **Live check:** `claude -p --debug-file <new log> --plugin-dir <worktree>/plugins/mod-builder "/modlab demo"` answered. The log has `is one plugin`, `mod-builder@inline loaded` and `admitted`, and no failure line.
+- **Tests and QA:** skill text only, so there is no red or green step.
+  - `claude plugin validate --strict` for the marketplace and `plugins/mod-builder`.
+  - The archetype check, since the build skill changes, and the sandbox check.
+  - `test -e` on every path the two skills and the references name.
+  - The moved-text check above.
+  - The `-p` load check for the version bump.
+  - The skill-reviewer agent, briefed with the move table so it checks the move as well as the prose.
+- **Version:** 0.2.32 (patch: skill text).
+

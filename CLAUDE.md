@@ -14,11 +14,14 @@ build each finding was probed on.
 
 ## Read first: Anthropic's documents
 
-Required reading before changing anything here (the owner, 2026-10-23):
+Required reading before changing anything here (the owner, 2026-10-23). Both folders together run to
+about 67,000 words, so read each folder's `README.md` (its page index) and then every page that bears on
+the change, not the whole folder (the owner, 2026-10-23: "Pages that bear on it"). Cite the pages read, with
+their lines, in the SPEC change.
 
-- **Mods** (`mods/*`, and every mod mod-builder builds): read `docs/research/Mods`. Build and change them
+- **Mods** (`mods/*`, and every mod mod-builder builds): `docs/research/Mods`. Build and change them
   through `/mod-builder:build` and `/mod-builder:edit`.
-- **Plugins**, mod-builder included (`plugins/mod-builder`: Mod Lab and its skills): read
+- **Plugins**, mod-builder included (`plugins/mod-builder`: Mod Lab and its skills):
   `docs/research/claude-plugins`. mod-builder is a plugin that builds mods, not a mod: change it by those
   documents, never through `/mod-builder:edit`, and change its skills through `/plugin-dev:skill-development`.
   Mod Lab's hooks module (`hooks/`, `tests/`, `types/`) runs in the mod engine like any mod, so its code also
@@ -134,7 +137,8 @@ runs in separate sessions go in parallel. `/issue-forge publish` pushes and open
 - `skills/build/SKILL.md` (`/mod-builder:build`): request → slot-filled `SPEC.md` (the single approval
   gate) → `scripts/scaffold.mjs` from one of 5 archetypes in `templates/archetypes/*/*.tpl` → logic
   first → verify → README + marketplace entry. `references/` holds `conventions.md` (house rules),
-  `gotchas.md` (verified engine rules), `patterns.md`, `ui-states.md`.
+  `gotchas.md` (verified engine rules), `patterns.md`, `ui-states.md`, `verify.md` (step 4's log checks and
+  typecheck), `loading.md` (which copy of a mod runs and how edits reach it, shared with the edit skill).
 - `skills/edit/SKILL.md` (`/mod-builder:edit`): changes an existing mod, reusing build's steps by
   reference; appends a dated change section to the SPEC and bumps semver.
 - **Mod Lab** (`/modlab`), a mod: `hooks/register.tsx` (every `$` call) + `hooks/mod-builder-logic.ts`
