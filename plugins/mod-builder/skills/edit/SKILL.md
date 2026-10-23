@@ -63,6 +63,10 @@ Do build's step 0 (load `plugin-authoring`, find the mods folder, record `claude
        stay.
      - The folder is a protected path, so in the `default` and `acceptEdits` modes each of your edits
        to it asks the person for approval.
+     - A plugin that managed settings' `enabledPlugins` names is never replaced by a `--plugin-dir`
+       copy: the debug log says `--plugin-dir copy of "<name>" ignored: plugin is locked by managed
+       settings`, and the edit can't be checked from the folder until that policy changes (docs, not
+       observed).
 
 ## 1. Slots for the change
 
