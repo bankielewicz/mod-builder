@@ -98,6 +98,12 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `other` with `isLink` (size and `mtimeMs` 0); listing the link's own path still follows it and
   returns the target's entries, so a walk that must not follow links skips `isLink` entries itself; to follow one, `$.fs.stat(path)` gives the kind it leads to. A missing
   folder rejects with `ENOENT`, so wrap the call (`.catch(() => [])`) when a missing folder is normal.
+- **[probe]** `$.fs.stat` tells a missing path from one it can't read; `$.fs.exists` doesn't. Probed on 2.1.309 with
+  `claude -p --plugin-dir`: `stat` of a deleted folder rejects with a `HooksError` whose message is
+  `<plugin>: $.fs.stat(<path>) failed: ENOENT`, and under a folder with mode 000 `… failed: EACCES`; the error
+  has no `.code`, so read the message's ending. `exists` answers `false` for both. A WSL drive that isn't there
+  (`/mnt/z/…`) rejects with `ENOENT` like a deleted folder, and on Linux `//host/share/…` is read as
+  `/host/share/…`. Mod Lab 0.2.30 prunes a folder's stored results only on that `ENOENT` ending (#138).
 - **[probe]** Claude Code's own subagent discovery, for a mod that mirrors it. Read from the `agents` list in
   the `init` message of `claude -p --output-format stream-json --verbose`, on 2.1.299 and 2.1.300. Project
   `.claude/agents/` folders are found walking up from the session folder to the nearest folder holding a `.git`

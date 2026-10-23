@@ -1068,6 +1068,55 @@ export function freshIdsOf(stored: readonly string[], legacyDir: string): string
   return stored.map(id => (id.includes('/') ? id : `${legacyDir}/${id}`))
 }
 
+/**
+ * The mods folder a store key names after one of `prefixes` (`modlab:results:<dir>`), or null (#138). Read by the
+ * prefix, not split on `:`: a prefix holds one already, and a Windows folder another.
+ */
+export function storeFolderOf(key: string, prefixes: readonly string[]): string | null {
+  const prefix = prefixes.find(p => key.startsWith(`${p}:`) && key.length > p.length + 1)
+  return prefix === undefined ? null : key.slice(prefix.length + 1)
+}
+
+/**
+ * Whether a `$.fs.stat` rejection says the folder is gone: the engine's own ending, `failed: ENOENT` (probed on
+ * 2.1.309: the error has no code). Anything else, another mod's refusal or EACCES included, can't tell, so the folder stays.
+ */
+export function folderGone(message: string): boolean {
+  return /\) failed: ENOENT$/.test(message) && !message.includes('refused by')
+}
+
+/** The folders the store's keys name, each once, and the one the unkeyed keys from before 0.2.9 describe when one is there. */
+export function storeFoldersOf(keys: readonly string[], prefixes: readonly string[], legacyDir: string): string[] {
+  const keyed = keys.map(key => storeFolderOf(key, prefixes)).filter((dir): dir is string => dir !== null)
+  const hasUnkeyed = keys.some(key => prefixes.includes(key))
+  return [...new Set([...keyed, ...(hasUnkeyed ? [legacyDir] : [])])]
+}
+
+/**
+ * The keys to delete, each with why: those of a folder in `gone`, and each unkeyed key whose folder (`legacyDir`) is gone
+ * or has its own keyed record under that prefix, which `storedOf` reads in its place. Keys of other prefixes stay.
+ */
+export function prunableKeys(keys: readonly string[], prefixes: readonly string[], gone: readonly string[], legacyDir: string): { key: string; why: string }[] {
+  return keys.flatMap(key => {
+    const dir = storeFolderOf(key, prefixes)
+    if (dir !== null) return gone.includes(dir) ? [{ key, why: `${dir} is gone` }] : []
+    if (!prefixes.includes(key)) return []
+    if (gone.includes(legacyDir)) return [{ key, why: `${legacyDir} is gone` }]
+    return keys.includes(`${key}:${legacyDir}`) ? [{ key, why: `${legacyDir} has its own record` }] : []
+  })
+}
+
+/**
+ * A folder's record (results, done marks or generations) without the mods not in `keep`, or null when none goes (#138).
+ * Given `read`, the record as a scan read it before `keep` could change, a name goes only while its entry is still the one
+ * read: one written since (an edit's new generation, PR #146 review, Codex 4362849420) stays for the next scan to judge.
+ */
+export function withoutGone<T>(record: Readonly<Record<string, T>>, keep: readonly string[], read?: Readonly<Record<string, unknown>>): Record<string, T> | null {
+  const isAsRead = (name: string, entry: T) => read === undefined || (name in read && JSON.stringify(read[name]) === JSON.stringify(entry))
+  const kept = Object.entries(record).filter(([name, entry]) => keep.includes(name) || !isAsRead(name, entry))
+  return kept.length === Object.keys(record).length ? null : Object.fromEntries(kept)
+}
+
 /** The last two segments of a path, for the summary line: `…/ClaudeMod/mods`. */
 export function shortPath(path: string): string {
   const parts = normalizePath(path).split('/').filter(Boolean)

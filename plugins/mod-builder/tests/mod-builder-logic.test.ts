@@ -83,6 +83,11 @@ import {
   parseConfigCommand,
   pushLine,
   shouldLog,
+  folderGone,
+  prunableKeys,
+  storeFolderOf,
+  storeFoldersOf,
+  withoutGone,
 } from '../hooks/mod-builder-logic'
 import * as Logic from '../hooks/mod-builder-logic'
 import { testFail } from './fixtures/test-fail'
@@ -1685,5 +1690,87 @@ describe('a rescan after a tool batch (#100)', () => {
     expect(merge(alpha, shell)).toEqual({ isFull: false, isQuick: true, mods: ['alpha'] })
     expect(merge(alpha, full).isFull).toBe(true)
     expect(merge(full, shell).isFull).toBe(true)
+  })
+})
+
+describe('the store keeps records only for folders and mods that exist (#138)', () => {
+  const PREFIXES = ['modlab:results', 'modlab:done', 'modlab:generations'] as const
+
+  test('storeFolderOf: the folder after one of the three prefixes, read by prefix, so a Windows folder keeps its colon', () => {
+    const folderOf = storeFolderOf
+    expect(folderOf('modlab:results:/m/mods', PREFIXES)).toBe('/m/mods')
+    expect(folderOf('modlab:done:/m/mods', PREFIXES)).toBe('/m/mods')
+    expect(folderOf('modlab:generations:/m/mods', PREFIXES)).toBe('/m/mods')
+    expect(folderOf('modlab:results:C:/Users/u/mods', PREFIXES)).toBe('C:/Users/u/mods')
+    // The unkeyed keys from before 0.2.9, and keys of anything else, name no folder.
+    expect(folderOf('modlab:results', PREFIXES)).toBe(null)
+    expect(folderOf('modlab:results:', PREFIXES)).toBe(null)
+    expect(folderOf('modlab:other:/m/mods', PREFIXES)).toBe(null)
+    expect(folderOf('count', PREFIXES)).toBe(null)
+  })
+
+  test("folderGone: only the engine's ENOENT ending says a folder is gone (the messages probed on 2.1.309)", () => {
+    const gone = folderGone
+    expect(gone('mod-builder: $.fs.stat(/m/scratch/old/mods) failed: ENOENT')).toBe(true)
+    expect(gone('mod-builder: $.fs.stat(/m/locked/mods) failed: EACCES')).toBe(false)
+    expect(gone('mod-builder: refused by policy: failed: ENOENT')).toBe(false)
+    expect(gone('mod-builder: $.fs.stat(/m/mods) failed: ENOENT, and more')).toBe(false)
+    expect(gone('network location')).toBe(false)
+    expect(gone('')).toBe(false)
+  })
+
+  test("storeFoldersOf: each keyed folder once, and the legacy folder when an unkeyed key is there", () => {
+    const foldersOf = storeFoldersOf
+    const keys = ['modlab:results:/a/mods', 'modlab:done:/a/mods', 'modlab:generations:/b/mods', 'count']
+    expect(foldersOf(keys, PREFIXES, '/m/mods')).toEqual(['/a/mods', '/b/mods'])
+    expect(foldersOf([...keys, 'modlab:done'], PREFIXES, '/m/mods')).toEqual(['/a/mods', '/b/mods', '/m/mods'])
+    expect(foldersOf([...keys, 'modlab:done'], PREFIXES, '/a/mods')).toEqual(['/a/mods', '/b/mods'])
+  })
+
+  test("prunableKeys: a gone folder's keys go; a folder that is there or couldn't be checked keeps its own; other keys stay", () => {
+    const prunable = prunableKeys
+    const keys = ['modlab:results:/gone/mods', 'modlab:done:/gone/mods', 'modlab:generations:/gone/mods', 'modlab:results:/here/mods', 'modlab:results:/locked/mods', 'count']
+    // /locked/mods couldn't be checked, so it isn't among the gone.
+    expect(prunable(keys, PREFIXES, ['/gone/mods'], '/m/mods')).toEqual([
+      { key: 'modlab:results:/gone/mods', why: '/gone/mods is gone' },
+      { key: 'modlab:done:/gone/mods', why: '/gone/mods is gone' },
+      { key: 'modlab:generations:/gone/mods', why: '/gone/mods is gone' },
+    ])
+    expect(prunable(keys, PREFIXES, [], '/m/mods')).toEqual([])
+  })
+
+  test('prunableKeys: each unkeyed key goes with its own keyed record, one prefix at a time, or with its gone folder', () => {
+    const prunable = prunableKeys
+    // As in the --plugin-dir copy's store: keyed results and done for the folder, no keyed generations.
+    const keys = ['modlab:results', 'modlab:done', 'modlab:generations', 'modlab:results:/m/mods', 'modlab:done:/m/mods']
+    expect(prunable(keys, PREFIXES, [], '/m/mods')).toEqual([
+      { key: 'modlab:results', why: '/m/mods has its own record' },
+      { key: 'modlab:done', why: '/m/mods has its own record' },
+    ])
+    // Another session's modsDir names another folder, which has none of its own.
+    expect(prunable(keys, PREFIXES, [], '/w/mods')).toEqual([])
+    expect(prunable(['modlab:results', 'modlab:generations'], PREFIXES, ['/m/mods'], '/m/mods')).toEqual([
+      { key: 'modlab:results', why: '/m/mods is gone' },
+      { key: 'modlab:generations', why: '/m/mods is gone' },
+    ])
+  })
+
+  test("withoutGone: a folder's record without the mods no longer kept, or null when none goes", () => {
+    const without = withoutGone
+    const record = { alpha: { Validate: 1 }, duet: { Test: 2 }, newone: { Validate: 3 } }
+    // newone is a build's placeholder: its folder isn't written yet.
+    expect(without(record, ['alpha', 'newone'])).toEqual({ alpha: { Validate: 1 }, newone: { Validate: 3 } })
+    expect(without(record, ['alpha', 'duet', 'newone', 'extra'])).toBe(null)
+    expect(without({}, [])).toBe(null)
+    expect(without(record, [])).toEqual({})
+  })
+
+  // PR #146 review round 1, finding 1 (Codex 4362849420): `keep` is taken before the scan's later awaits.
+  test('withoutGone with what the scan read: drops a name only while its entry is still the one read', () => {
+    const read = { duet: { since: 1000 }, gone: { since: 500 } }
+    // Since the read: other-mod got a generation, gone's changed; duet's is as read.
+    const stored = { duet: { since: 1000 }, gone: { since: 2000 }, 'other-mod': { since: 3000 } }
+    expect(withoutGone(stored, ['alpha'], read)).toEqual({ gone: { since: 2000 }, 'other-mod': { since: 3000 } })
+    expect(withoutGone({ 'other-mod': { since: 3000 } }, ['alpha'], read)).toBe(null)
   })
 })
