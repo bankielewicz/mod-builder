@@ -1176,4 +1176,15 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - The store went from 19 keys and 21,998 characters to 5 keys and 3,830 characters. The log has 14 lines `store  deleted <key> (<folder> is gone)`, one for each key of the 10 gone folders, and no `store.delete` failure.
     - The scan of `/mnt/c/Projects/ClaudeMod/mods` dropped `duet`, so its results key now holds `{}`.
     - The unkeyed keys stayed: this session's `legacyDirOf` is the worktree's own `mods/`, which has no keyed record, as point 3 says.
+- **PR #146 review round 1** (2026-10-23): Codex 4362849420 on `168a927`, and the owner's `/code-review high` (nine findings, numbered as it gave them; its 1 is Codex's). Every finding is in code this PR adds, so nothing pre-existing was filed as an issue. The advisor was overloaded and gave no verdict. The owner chose "Codex + cheap guards (Recommended)".
+  - **Finding 1, Codex 4362849420:** `dropGone` filters the stored record by a `keep` list taken before the scan's later awaits. A Spec report that starts an edit generation while the scan reads the mods can land first, and the drop then deletes that new generation. Now a name is dropped only when its stored entry is still the one the scan read. An entry written since stays, and the next scan judges it.
+  - **Finding 2:** a listing that succeeds with no mod folders in it would drop every mod's records, as a folder that is empty for a moment (a checkout, a sync) can be. Now a listing with no mods drops nothing. If every mod in a folder is removed, its records stay until the folder itself goes.
+  - **Finding 5:** between the session-start stat and the delete, the folder can come back. Each delete now stats its folder again in its own turn on the chain, and a folder that answers keeps its keys.
+  - **Finding 6:** a `stat` rejection that isn't the engine's ENOENT ending keeps the folder silently, so a reworded message would stop all pruning unseen. Such a rejection now writes a `debug` line naming the folder and the message.
+  - **Finding 8:** `deleteStore` copies `updateStore`'s chain. One `enqueueStore` holds it for both.
+  - **Finding 9:** tests for findings 1, 2, 5 and 6, and for a refused `$.store.keys`, which prunes nothing.
+  - **Known limits, not fixed:**
+    - **Finding 3:** a store shared between environments, such as a container and its host, or WSL and Windows with one `CLAUDE_CONFIG_DIR`, would prune the other side's folders, which don't stat here. [inference] The store file's name carries an install hash (`mod-builder_claudemod-424a2ff7bc42.json`, `mod-builder_inline-265b4e9b5ab2.json`), so two environments may not share one; not probed.
+    - **Finding 4:** the unkeyed keys are judged by this session's `legacyDirOf`, as listed above. What it costs is a check run again.
+    - **Finding 7:** `done`'s drop stays in `announceGreen`'s own read and write, as `done` was never written through the chain.
 
