@@ -212,4 +212,5 @@ bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # all five a
 - `design/` holds the Claude Design briefs: the repo README, its visuals (hero and feature strip),
   and the pane mockups (superseded, kept for history).
 
-CI tests it on Claude Code 2.1.296. Function hooks are early access, so the API may change between releases.
+CI tests it on Claude Code 2.1.296. 0.2.29's tests, archetype check, typecheck and `-p` live checks
+ran on 2.1.308. Function hooks are early access, so the API may change between releases.
