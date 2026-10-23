@@ -147,6 +147,8 @@ export type Run = {
   refactorStash?: StashRef
   times: { red?: PhaseTime; green?: PhaseTime; refactor?: PhaseTime; publish?: PhaseTime }
   startedAt: number
+  /** When the run became `done` or `stopped` (0.9.0, PR #145 review round 1): the store's budget deletes the longest finished first. */
+  finishedAt?: number
   agents: AgentRef[]
   prUrl?: string
   /** HEAD when the run reached ready (after gate F): publish pushes exactly this commit, and refuses if HEAD moved. */

@@ -1164,7 +1164,7 @@ function gateRecord(run: Run, ev: { gate?: Gate; testTail?: string }): Partial<R
 
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
-  if (ev.type === 'stop') return isActive(run) ? finishedRecord({ ...run, step: 'stopped' }) : run
+  if (ev.type === 'stop') return isActive(run) ? finishedRecord({ ...run, step: 'stopped', finishedAt: now }) : run
   // Who drives the run (Change 0.3.0): set when a drive starts; only that session's release clears it.
   if (ev.type === 'drive') return { ...run, driver: { session: ev.session, since: now } }
   if (ev.type === 'release') {
@@ -1255,7 +1255,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'publish' ? { ...run, step: 'publishing', times: start(run, 'publish', now) } : run
     case 'publishing':
-      return ev.type === 'published' ? finishedRecord({ ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) }) : run
+      return ev.type === 'published' ? finishedRecord({ ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now), finishedAt: now }) : run
     default:
       return run
   }
@@ -2377,11 +2377,15 @@ export function entrySize(key: string, value: unknown): number {
   return value === undefined ? 0 : utf8Length(`${JSON.stringify(key)}:${JSON.stringify(value)}`) + 1
 }
 
-/** Finished runs to delete, oldest first across repositories, until `total` is at or under `budget`; never an unfinished run. */
+/**
+ * Finished runs to delete, the longest finished first across repositories, until `total` is at or under `budget`; never an
+ * unfinished run. A record from before `finishedAt` (PR #145 review round 1, finding 14) counts from its start.
+ */
 export function budgetKeys(entries: readonly { key: string; run: Run; size: number }[], total: number, budget = STORE_BUDGET): string[] {
   const out: string[] = []
   let left = total
-  for (const e of entries.filter(e => !isActive(e.run)).sort((a, b) => a.run.startedAt - b.run.startedAt)) {
+  const finished = (r: Run) => r.finishedAt ?? r.startedAt
+  for (const e of entries.filter(e => !isActive(e.run)).sort((a, b) => finished(a.run) - finished(b.run))) {
     if (left <= budget) break
     out.push(e.key)
     left -= e.size
