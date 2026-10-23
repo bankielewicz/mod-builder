@@ -213,6 +213,21 @@ a `git stash` or `git commit` waits a second and retries, five attempts in all (
 relative (and gitignored), as this repository's `coverage/issue-forge.lcov` is. When a run starts, finished runs beyond the
 repository's 20 newest are deleted from the store; their agents stay on the guard's list.
 
+Claude Code keeps one store per plugin, shared by every repository's runs, and refuses a write once its JSON would pass
+4,194,304 characters (4 Mi). issue-forge keeps it under 3 Mi (0.9.0):
+- A run that is done or stopped is kept without its test output or the red agent's answer, and with the first 500
+  characters of the issue's text. Status and the pane show it as before.
+- Before a new run is saved, the store is measured. Finished runs saved by older versions, under 0.2's checkout keys
+  too, are trimmed the same way. While the store is over 3 Mi characters, the finished runs of any repository are
+  deleted, those that finished longest ago first. An unfinished run is never deleted. If the store is still over, a toast
+  says so once a session, as a share of the limit, with each cause: trims or deletes that didn't go through, keys that
+  couldn't be read, and the unfinished runs left in how many repositories. A sweep that fails writes a transcript line.
+  When unfinished runs alone leave no room and Claude Code refuses the new run, the start answers that it wasn't
+  started, with Claude Code's reason, and that `/issue-forge stop <N>` in a run's repository ends one.
+- A command's output is kept to its last 200 lines and 20,000 characters.
+- `/issue-forge status` names unfinished runs that started more than 7 days ago, other than the one this session
+  drives, with the `/issue-forge stop <N>` that ends each one and keeps its branch.
+
 Runs stored by 0.2 or earlier, keyed by the checkout, move to the repository's keys when a session
 first starts in that checkout or in another worktree git lists.
 
@@ -323,7 +338,7 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | --- | --- |
 | Hooks | `session.start`, `classic.SessionStart{source=clear\|resume\|fork}` (the pane's run, its focus, the also line and a running gate's activity come back after `/clear`, 0.7.2; Anthropic's docs say the same of `/resume` and `/branch`, which weren't run here; not where an organization manages Claude Code, since `classic.*` hooks don't run there), `session.end`, `agent.offer{agent=issue-forge:red}`, `agent.offer{agent=issue-forge:green}`, `agent.offer{agent=issue-forge:refactor}`, `turn.complete`, `tool.call`, `prompt.submit`, `session.receive`, `command.run{command=issue-forge}`, `ui.render{component=Pane, requestId=issue-forge}` |
 | Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git`, with `GIT_OPTIONAL_LOCKS=0` (rev-parse, including `--show-toplevel` and `--git-common-dir` for each command and after `/clear`, `/resume` and `/branch` (0.7.2) and, once per folder before its first index or ref write, `--git-path index.lock`, and `--git-path refs/stash.lock` before a stash push, status, check-ignore, fetch, show `<remote>/<base>:.issue-forge.json`, for-each-ref, ls-remote (origin, and the project's remote in a fork clone), switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A (at each gate, and again after the profile's `formatCommand` when it has one; 0.8.0), write-tree (the tree each gate tests, and again before its commit; 0.7.5), rev-parse --verify HEAD and `--no-replace-objects cat-file commit <sha>` (HEAD, its tree and its parent, before and after each gate's commit; 0.7.5), diff, ls-tree (the plugin manifests at the merge base and the base branch's tip, before each phase agent starts and at each gate), commit, stash push/list/apply, merge-tree, remote (the list of remotes), remote get-url, push), `gh` (auth status, repo view, api `--hostname <host> users/<owner>` for `.type` in a fork clone, issue view: once at start, before anything is stored, and again in preflight, pr create), `ssh -G <host>` in a fork clone for an ssh remote on another host than the project's (reads `~/.ssh/config`, never connects), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand`, `formatCommand` (at gates R, G and F; 0.8.0) and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
-| Files | reads `.issue-forge.json` and the LCOV file; stats a `.claude-plugin/plugin.json` the live agent edits (to tell an edit from a new plugin); and looks for git's `index.lock` (and `refs/stash.lock` on a stash push) when a git call that writes the index or a ref fails; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
+| Files | reads `.issue-forge.json` and the LCOV file; stats a `.claude-plugin/plugin.json` the live agent edits (to tell an edit from a new plugin); and looks for git's `index.lock` (and `refs/stash.lock` on a stash push) when a git call that writes the index or a ref fails; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository; before a new run is saved, reads every key once, trims finished records, and deletes the longest-finished runs of any repository past 3 Mi characters, 0.9.0); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
 | Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
@@ -346,5 +361,7 @@ claude plugin test .
 Built on Claude Code 2.1.296; 0.3.0 (parallel runs) and 0.4.0 (issue URLs, one repository per run)
 checked on 2.1.300; 0.7.2 (the pane after `/clear`) checked on 2.1.306;
 0.7.5 (a gate commits only the tree it tested) loaded on 2.1.308, where its tests ran (no gate ran live);
-0.8.0 (`formatCommand`) loaded on 2.1.309, where its tests ran (no gate ran live). Written spec-first with
+0.8.0 (`formatCommand`) loaded on 2.1.309, where its tests ran (no gate ran live);
+0.9.0 (the store under 4 MiB) loaded on 2.1.309, where its tests ran and `/issue-forge status` named two old runs
+(no run started live). Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.

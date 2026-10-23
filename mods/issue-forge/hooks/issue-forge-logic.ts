@@ -1164,7 +1164,7 @@ function gateRecord(run: Run, ev: { gate?: Gate; testTail?: string }): Partial<R
 
 /** The single transition function: every step change goes through here. */
 export function advance(run: Run, ev: RunEvent, now: number): Run {
-  if (ev.type === 'stop') return isActive(run) ? { ...run, step: 'stopped' } : run
+  if (ev.type === 'stop') return isActive(run) ? finishedRecord({ ...run, step: 'stopped', finishedAt: now }) : run
   // Who drives the run (Change 0.3.0): set when a drive starts; only that session's release clears it.
   if (ev.type === 'drive') return { ...run, driver: { session: ev.session, since: now } }
   if (ev.type === 'release') {
@@ -1255,7 +1255,7 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
       if (ev.type === 'merged') return { ...run, merge: ev.merge }
       return ev.type === 'publish' ? { ...run, step: 'publishing', times: start(run, 'publish', now) } : run
     case 'publishing':
-      return ev.type === 'published' ? { ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now) } : run
+      return ev.type === 'published' ? finishedRecord({ ...run, step: 'done', prUrl: ev.url, merge: ev.merge ?? run.merge, times: end(run, 'publish', now), finishedAt: now }) : run
     default:
       return run
   }
@@ -2325,6 +2325,181 @@ export function isPrunable(listed: Run, stored: Run | null): boolean {
 export function pruneKeys(entries: readonly { key: string; run: Run }[], keep = KEEP_FINISHED): string[] {
   const finished = entries.filter(e => !isActive(e.run)).sort((a, b) => a.run.startedAt - b.run.startedAt)
   return finished.slice(0, Math.max(0, finished.length - keep)).map(e => e.key)
+}
+
+// ── The store's size (Change 0.9.0, #140) ─────────────────────────────────
+
+/** Claude Code's limit for one plugin's store: characters of its compact JSON, every repository's runs together (2.1.309's `Kye`). */
+export const STORE_LIMIT = 4 * 1024 * 1024
+/** issue-forge's budget for its store: three quarters of the limit. */
+export const STORE_BUDGET = 3 * 1024 * 1024
+/** How much of the issue's text a finished record keeps. */
+export const BODY_EXCERPT_CHARS = 500
+/** A command's output as a run keeps it: its last 200 lines, then at most this many characters, the red answer's cap in a prompt. */
+export const TAIL_MAX_CHARS = RED_ANSWER_MAX_CHARS
+/** Status names an unfinished run older than this. */
+export const STALE_DAYS = 7
+const DAY_MS = 86_400_000
+/** What only a phase or publish reads, which a finished record drops. */
+const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer'] as const
+
+/** A run done or stopped, without the test tails and red's answers, and with only the start of the issue's text. */
+export function finishedRecord(run: Run): Run {
+  const { lastTestTail: _l, redTestTail: _r, redAnswer: _a, behaviourAnswer: _b, ...rest } = run
+  // A body that isn't a string (a hand-edited or foreign record) stays as it is (PR #145 review round 1, finding 7).
+  if (typeof run.body !== 'string' || run.body.length <= BODY_EXCERPT_CHARS) return { ...rest, body: run.body }
+  // Never half an emoji: a cut that would end on a high surrogate ends one unit sooner (PR #145 review round 1, finding 9).
+  const end = (run.body.charCodeAt(BODY_EXCERPT_CHARS - 1) & 0xfc00) === 0xd800 ? BODY_EXCERPT_CHARS - 1 : BODY_EXCERPT_CHARS
+  return { ...rest, body: `${run.body.slice(0, end)}…` }
+}
+
+/** Whether a record is already as `finishedRecord` leaves it. */
+export function isTrimmed(run: Run): boolean {
+  return !TRIMMED_FIELDS.some(field => field in run) && finishedRecord(run).body === run.body
+}
+
+/**
+ * The store as `$.store.set` measures it is its entries as one compact JSON object, in characters: the 2.1.309 binary refuses
+ * `_(store).length > 4194304` (PR #145 review round 3, finding 3). That is `{`, each entry with its comma (the last one's is
+ * the `}`), and `{}` at least.
+ */
+function sizeOfEntries(sizes: readonly number[]): number {
+  return Math.max(2, sizes.reduce((n, size) => n + size, 1))
+}
+
+/** What one key adds to that text: `"key":value` and the comma after it; nothing for `undefined`, which JSON leaves out. */
+export function entrySize(key: string, value: unknown): number {
+  return value === undefined ? 0 : `${JSON.stringify(key)}:${JSON.stringify(value)}`.length + 1
+}
+
+/**
+ * Finished runs to delete, the longest finished first across repositories, until `total` is at or under `budget`; never an
+ * unfinished run. A record from before `finishedAt` (PR #145 review round 1, finding 14) counts from its start.
+ */
+export function budgetKeys(entries: readonly { key: string; run: Run; size: number }[], total: number, budget = STORE_BUDGET): string[] {
+  const out: string[] = []
+  let left = total
+  // A record with neither date (hand-edited, or foreign) counts as 0, the oldest, not NaN (PR #145 review round 2, finding 7).
+  const finished = (r: Run) => Number(r.finishedAt ?? r.startedAt) || 0
+  for (const e of entries.filter(e => !isActive(e.run)).sort((a, b) => finished(a.run) - finished(b.run))) {
+    if (left <= budget) break
+    out.push(e.key)
+    left -= e.size
+  }
+  return out
+}
+
+export type SweepPlan = {
+  trim: string[]
+  drop: string[]
+  /** The store's size now, before any trim or delete. */
+  size: number
+  /** What each trim and each delete saves, by key (PR #145 review round 1, finding 4). */
+  saves: Record<string, number>
+  /** Each trimmed or deleted key's whole size, freed if another session deleted it first (round 3, Codex 4361161666). */
+  sizes: Record<string, number>
+  /** The unfinished runs' keys, which the sweep never deletes; `openCounts` counts them, and `leftAfter` the size left. */
+  open: string[]
+}
+
+/** The warning's counts for unfinished run keys: the runs, and the repositories (or pre-0.3 checkouts) they're in. */
+export function openCounts(keys: readonly string[]): { unfinished: number; repos: number } {
+  // Each key as parseRunKey reads it: a pre-0.3 key names its checkout, whatever its name ends in (PR #145 review round 2,
+  // finding 5). A repository's git folder `<root>/.git` is its checkout, so one repository under both key forms counts once.
+  const repos = new Set(keys.map(key => {
+    const parsed = parseRunKey(key) as { repo?: string; root?: string }
+    return (parsed.repo ?? (parsed.root as string)).replace(/\/\.git$/, '')
+  }))
+  return { unfinished: keys.length, repos: repos.size }
+}
+
+/** The store's size once the trims and deletes in `landed` went through; one the re-read refused, or whose write failed, frees nothing. */
+export function leftAfter(plan: Pick<SweepPlan, 'size' | 'saves' | 'sizes'>, landed: readonly string[], gone: readonly string[] = []): number {
+  const afterLanded = landed.reduce((n, key) => n - (plan.saves[key] as number), plan.size)
+  return gone.reduce((n, key) => n - (plan.sizes[key] as number), afterLanded)
+}
+
+/**
+ * What a re-read before a trim or delete found (PR #145 review round 3, Codex 4361161666): the key gone (another session
+ * deleted it), the run restarted, another finished run in its place, or the same finished run, which the sweep may change.
+ */
+export function recheckOf(listed: Run, stored: unknown): 'gone' | 'restarted' | 'other' | 'same' {
+  if (stored === undefined || stored === null) return 'gone'
+  if (isActive(stored as Run)) return 'restarted'
+  return isPrunable(listed, stored as Run) ? 'same' : 'other'
+}
+
+/** The sweep before a run is written: finished records to trim, then finished runs to delete past the budget, and the size left. */
+export function sweepPlan(entries: readonly { key: string; value: unknown }[], budget = STORE_BUDGET): SweepPlan {
+  // A run is a key parseRunKey reads as a run, 0.3's or one migrate() left in place (PR #145 review, Codex 4359421020), that
+  // holds a record with a string step. A key another session deleted after keys() reads as undefined, and a hand-edited or
+  // foreign key or record (round 3, findings 1 and 6) stays out of the runs and counts toward the size only.
+  const isRun = (e: { key: string; value: unknown }) => {
+    const kind = parseRunKey(e.key)?.kind
+    return (kind === 'run' || kind === 'legacyRun') && typeof (e.value as { step?: unknown } | null)?.step === 'string'
+  }
+  // Each entry is measured once, as it is and, for a finished record still to trim, as trimmed (PR #145 review round 1, finding 11).
+  const measured = entries.map(e => {
+    const before = entrySize(e.key, e.value)
+    const trimmed = isRun(e) && !isActive(e.value as Run) && !isTrimmed(e.value as Run) ? finishedRecord(e.value as Run) : null
+    return { key: e.key, value: e.value, before, trimmed, after: trimmed ? entrySize(e.key, trimmed) : before }
+  })
+  const runs = measured.filter(isRun).map(m => ({ key: m.key, run: (m.trimmed ?? m.value) as Run, size: m.after }))
+  const drop = budgetKeys(runs, sizeOfEntries(measured.map(m => m.after)), budget)
+  const dropped = new Set(drop)
+  // A record to delete isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
+  const trim = measured.filter(m => m.trimmed && !dropped.has(m.key)).map(m => m.key)
+  const saves: Record<string, number> = {}
+  const sizes: Record<string, number> = {}
+  for (const m of measured) {
+    if (dropped.has(m.key)) saves[m.key] = m.before
+    else if (m.trimmed) saves[m.key] = m.before - m.after
+    if (dropped.has(m.key) || m.trimmed) sizes[m.key] = m.before
+  }
+  return { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves, sizes, open: runs.filter(r => isActive(r.run)).map(r => r.key) }
+}
+
+/** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */
+export function outputTail(text: string): string {
+  const tail = tailLines(text)
+  if (tail.length <= TAIL_MAX_CHARS) return tail
+  const cut = tail.slice(-TAIL_MAX_CHARS)
+  // A cut that starts on a low surrogate drops it: never half an emoji in a prompt (PR #145 review round 1, finding 9).
+  return (cut.charCodeAt(0) & 0xfc00) === 0xdc00 ? cut.slice(1) : cut
+}
+
+/**
+ * Status's line for unfinished runs started over `STALE_DAYS` ago, oldest first: nothing clears their branches by itself.
+ * The run this module drives (`drivenId`) is left out: the session knows (PR #145 review round 1, finding 6). Not by the stored
+ * driver, which still names the session after a reload ends its drive (round 2, Codex 4360654727).
+ */
+export function staleLine(runs: readonly Run[], now: number, drivenId: string | null = null): string | null {
+  // A record without a numeric startedAt (hand-edited, or foreign) is the oldest, named first (PR #145 review round 3, finding 7).
+  const at = (r: Run) => (Number.isFinite(r.startedAt) ? r.startedAt : -Infinity)
+  const old = runs.filter(r => isActive(r) && r.id !== drivenId && now - at(r) > STALE_DAYS * DAY_MS).sort((a, b) => at(a) - at(b))
+  if (old.length === 0) return null
+  const items = old.map(r => `#${r.issue} ${r.step} (${Number.isFinite(r.startedAt) ? `started ${Math.floor((now - r.startedAt) / DAY_MS)} days ago` : 'start unknown'})`)
+  return `unfinished for over ${STALE_DAYS} days: ${items.join(' · ')}; /issue-forge stop <N> ends one and keeps its branch and commits`
+}
+
+/** What the warning reports: the size measured, and the causes the sweep left (PR #145 review round 3, finding 5). */
+export type StoreWarning = { size: number; unfinished: number; repos: number; unreadable: number; failed: number }
+
+/**
+ * The toast when the store is still over the budget after the sweep, or keys couldn't be read (PR #145 review round 2,
+ * finding 2: those weigh nothing in `size`), naming each cause that applies (round 3, finding 5). The store is a share of
+ * the engine's limit, which counts characters (round 3, finding 3); a toast already names the mod.
+ */
+export function storeWarning(w: StoreWarning): string {
+  const causes: string[] = []
+  if (w.failed > 0) causes.push(w.failed === 1 ? "1 trim or delete didn't go through, and the next start tries again" : `${w.failed} trims or deletes didn't go through, and the next start tries again`)
+  if (w.unreadable > 0) causes.push(w.unreadable === 1 ? "1 key couldn't be read and isn't counted" : `${w.unreadable} keys couldn't be read and aren't counted`)
+  if (w.unfinished > 0) {
+    const runs = `${w.unfinished} unfinished run${w.unfinished === 1 ? '' : 's'} in ${w.repos} ${w.repos === 1 ? 'repository' : 'repositories'}`
+    causes.push(`${runs} left: /issue-forge stop <N>, in a run's repository, ends one`)
+  }
+  const head = `store still at ${Math.round((w.size / STORE_LIMIT) * 100)}% of Claude Code's limit after the cleanup`
+  return `${head}: ${causes.length > 0 ? causes.join('; ') : "what's left isn't a run the cleanup can remove"}`
 }
 
 /** What the driving session finds in the store: its run stopped, taken over or replaced, or nothing changed. */

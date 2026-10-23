@@ -16,6 +16,7 @@ import {
   branchLine,
   branchMoved,
   branchName,
+  budgetKeys,
   canRetry,
   checkoutBaseOf,
   checkoutState,
@@ -31,11 +32,13 @@ import {
   diffCoverage,
   elapsed,
   elsewhereText,
+  entrySize,
   expandHome,
   fenced,
   failuresOf,
   firstFailure,
   findStash,
+  finishedRecord,
   foreignChange,
   formatGate,
   gateG,
@@ -48,6 +51,7 @@ import {
   isActive,
   isLockError,
   isSafeBranch,
+  isTrimmed,
   isOwnHandback,
   isOwnMailboxHandback,
   spawnRefs,
@@ -58,6 +62,7 @@ import {
   kindOf,
   layoutOf,
   lcovFileOf,
+  leftAfter,
   legacyAgentsKey,
   lineOf,
   matchesAny,
@@ -66,8 +71,10 @@ import {
   newRun,
   nextDemoState,
   normalizePath,
+  openCounts,
   othersLine,
   othersOf,
+  outputTail,
   outsideChecks,
   outsideWorkRoot,
   parseCommand,
@@ -94,6 +101,7 @@ import {
   publishQuestion,
   ranges,
   readdWorktreeCommand,
+  recheckOf,
   relativeTo,
   repoRunKeys,
   routedRedBlock,
@@ -104,10 +112,13 @@ import {
   splitZ,
   startAnswer,
   startChoices,
+  staleLine,
   stashApplyArgv,
   stashMessage,
   statusText,
   steerBash,
+  storeWarning,
+  sweepPlan,
   tailLines,
   takeOverQuestion,
   totals,
@@ -2607,5 +2618,291 @@ describe('#137: the profile formatCommand', () => {
     expect(text).not.toContain('The last lines of the failing test run')
     expect(text).toContain('Format command: npx lint-staged')
     expect(phasePrompt('green', run())).not.toContain('Format command')
+  })
+})
+
+// #140 (Change 0.9.0): the store stays under Claude Code's 4 MiB limit: finished records trimmed, a budget across
+// repositories, test output capped in characters, and old unfinished runs named.
+describe('#140: the store under its limit', () => {
+  const DAY = 86_400_000
+  /**
+   * The oracle: the store's entries as one compact JSON object, in characters, measured apart from the module (PR #145 review
+   * round 2, finding 10), as the engine's check counts them (round 3, finding 3).
+   */
+  const jsonChars = (entries: readonly { key: string; value: unknown }[]) => JSON.stringify(Object.fromEntries(entries.map(e => [e.key, e.value]))).length
+  /** The size once a plan's trims and deletes all land, as the sweep counts it (round 3, finding 8). */
+  const leftOf = (plan: ReturnType<typeof sweepPlan>) => leftAfter(plan, [...plan.trim, ...plan.drop])
+  /** The size with every finished record trimmed and nothing deleted. */
+  const trimmedSize = (entries: readonly { key: string; value: unknown }[]) => leftOf(sweepPlan(entries, Infinity))
+  const LONG = 'b'.repeat(600)
+  const full = (over: Partial<Run> = {}) => run({ body: LONG, redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', behaviourAnswer: 'held', ...over })
+  const TRIMMED = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer']
+
+  test('a finished record drops the test output and answers, and cuts the issue text to 500 characters', () => {
+    const r = finishedRecord(full({ step: 'done' }))
+    for (const field of TRIMMED) expect(field in r).toBe(false)
+    expect(r.body).toBe(`${'b'.repeat(500)}…`)
+    expect(r).toMatchObject({ id: '16-1', issue: 16, step: 'done', title: 'Fix it' })
+    expect(finishedRecord(run({ body: 'short' }))).toMatchObject({ body: 'short' })
+    expect(isTrimmed(r)).toBe(true)
+    expect(isTrimmed(full())).toBe(false)
+    expect(isTrimmed(run({ body: 'short' }))).toBe(true)
+    expect(isTrimmed(run({ behaviourAnswer: 'x' }))).toBe(false)
+    expect(isTrimmed(finishedRecord(r))).toBe(true)
+  })
+
+  test('advance trims on stop and on published, and on no other step', () => {
+    const stopped = advance(full({ step: 'green' }), { type: 'stop' }, 1)
+    expect(stopped.step).toBe('stopped')
+    for (const field of TRIMMED) expect(field in stopped).toBe(false)
+    expect(stopped.body).toBe(`${'b'.repeat(500)}…`)
+    const done = advance(full({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1' }, 2)
+    expect(done).toMatchObject({ step: 'done', prUrl: 'https://x/pull/1', body: `${'b'.repeat(500)}…` })
+    expect('redAnswer' in done).toBe(false)
+    const blocked = advance(full({ step: 'green' }), { type: 'block', reason: 'why', next: 'do this' }, 3)
+    expect(blocked).toMatchObject({ step: 'blocked', redAnswer: 'notes', lastTestTail: 'last', body: LONG })
+  })
+
+  // PR #145 review round 3, finding 2 (Codex 4361161666): a planned key another session already deleted frees its whole size.
+  test("a re-read tells a gone key from a restarted, a replaced and the same finished run, and a gone key's whole size counts as freed", () => {
+    const listed = run({ id: '5-1', step: 'done' })
+    expect([undefined, null, run({ id: '5-2', step: 'green' }), run({ id: '5-2', step: 'done' }), run({ id: '5-1', step: 'done' })].map(s => recheckOf(listed, s))).toEqual(['gone', 'gone', 'restarted', 'other', 'same'])
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const a = { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) }
+    const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
+    const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
+    const plan = sweepPlan([a, b, c], trimmedSize([a, b, c]) - 1)
+    expect(plan.sizes).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) })
+    expect(leftAfter(plan, [], [other(2)])).toBe(plan.size - entrySize(b.key, b.value))
+  })
+
+  // PR #145 review round 3, findings 1 and 6: a hand-edited or foreign key or record must neither break the sweep nor count as a run.
+  test('a run key without #<issue>, or a record without a string step, is no run to the sweep, and the sweep still plans', () => {
+    const entries = [
+      { key: 'issue-forge:repo-run:/x/.git', value: run({ step: 'green' }) },
+      { key: 'issue-forge:repo-run:/y/.git#1', value: {} },
+      { key: 'issue-forge:repo-run:/y/.git#2', value: [] },
+      { key: 'issue-forge:repo-run:/y/.git#3', value: run({ id: '3-1', step: 'blocked' }) },
+    ]
+    let plan: ReturnType<typeof sweepPlan> | string
+    try {
+      plan = sweepPlan(entries, 10)
+    } catch (err) {
+      plan = `threw: ${String(err)}`
+    }
+    expect(typeof plan).toBe('object')
+    const p = plan as ReturnType<typeof sweepPlan>
+    expect(p.open).toEqual(['issue-forge:repo-run:/y/.git#3'])
+    expect([p.trim, p.drop, p.size]).toEqual([[], [], jsonChars(entries)])
+  })
+
+  // PR #145 review round 3, finding 3: the 2.1.309 binary's $.store.set refuses `_(store).length > 4194304`, in characters.
+  test("the store is measured in characters of its compact JSON, as Claude Code's $.store.set check counts", () => {
+    expect(entrySize('a', 'é')).toBe(8)
+    expect(entrySize('a', '😀')).toBe(9)
+    expect(sweepPlan([{ key: 'a', value: 1 }, { key: 'b', value: 'é' }]).size).toBe(15)
+    expect(sweepPlan([{ key: 'b', value: '日本語' }]).size).toBe(jsonChars([{ key: 'b', value: '日本語' }]))
+    expect(sweepPlan([{ key: 'u', value: undefined }]).size).toBe(jsonChars([]))
+    expect(entrySize('a', 1)).toBe(6)
+  })
+
+  test('the budget deletes the oldest finished runs first, across repositories, and never an unfinished one', () => {
+    const entries = [
+      { key: 'k2', run: run({ step: 'done', startedAt: 2 }), size: 100 },
+      { key: 'k1', run: run({ step: 'stopped', startedAt: 1 }), size: 100 },
+      { key: 'k0', run: run({ step: 'blocked', startedAt: 0 }), size: 100 },
+    ]
+    expect(budgetKeys(entries, 300, 300)).toEqual([])
+    expect(budgetKeys(entries, 300, 250)).toEqual(['k1'])
+    expect(budgetKeys(entries, 300, 150)).toEqual(['k1', 'k2'])
+    expect(budgetKeys(entries, 300, 50)).toEqual(['k1', 'k2'])
+  })
+
+  test('the sweep trims finished records first, then drops what the budget needs, and says what is left', () => {
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const entries = [
+      { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) },
+      { key: other(2), value: run({ id: '2-1', issue: 2, step: 'done', startedAt: 2, title: 'x'.repeat(3000) }) },
+      { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) },
+      { key: 'issue-forge:repo-agents:/other/.git#1', value: ['a1'] },
+    ]
+    const roomy = sweepPlan(entries, 100_000)
+    expect(roomy.trim).toEqual([other(1)])
+    expect(roomy.drop).toEqual([])
+    const tight = sweepPlan(entries, 4000)
+    // A record the plan deletes isn't trimmed first: each set writes the whole store (PR #145 review round 1, finding 10).
+    expect(tight.trim).toEqual([])
+    expect(tight.drop).toEqual([other(1), other(2)])
+    expect(leftOf(tight)).toBeGreaterThan(4000)
+    const after = entries.filter(e => e.key !== other(1) && e.key !== other(2))
+    expect(leftOf(tight)).toBe(jsonChars(after))
+  })
+
+  // Another session may delete a run between the sweep's keys() and its get(), which then reads undefined (the advisor, before the PR).
+  test('a run key whose value is gone (undefined or null) is left out of the sweep, which still plans the rest', () => {
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const entries = [
+      { key: other(1), value: undefined },
+      { key: other(2), value: null },
+      { key: other(3), value: full({ id: '3-1', issue: 3, step: 'done', startedAt: 3 }) },
+    ]
+    let plan: ReturnType<typeof sweepPlan> | string
+    try {
+      plan = sweepPlan(entries, 10)
+    } catch (err) {
+      plan = `threw: ${String(err)}`
+    }
+    expect(typeof plan).toBe('object')
+    const p = plan as ReturnType<typeof sweepPlan>
+    expect([p.trim, p.drop, leftOf(p)]).toEqual([[], [other(3)], jsonChars(entries.slice(0, 2))])
+  })
+
+  // PR #145 review round 3, finding 7: now - startedAt is NaN for a record without a numeric startedAt, so it was never named.
+  test('an unfinished run with no numeric startedAt is named first, as (start unknown)', () => {
+    const now = 10 * DAY
+    const unknown = { ...run({ id: '7-1', issue: 7, step: 'blocked' }), startedAt: undefined } as unknown as Run
+    const old = run({ id: '8-1', issue: 8, step: 'ready', startedAt: 1 * DAY })
+    expect(staleLine([old, unknown], now)).toBe('unfinished for over 7 days: #7 blocked (start unknown) · #8 ready (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+  })
+
+  // PR #145 review round 1, finding 6: the session driving a run knows it is unfinished. Round 2 (Codex 4360654727): by the run
+  // this module drives, as a reload of the module ends the drive while the stored driver still names this session.
+  test('the stale line leaves out the run this module drives, and keeps one whose stored driver is this session after a reload', () => {
+    const now = 10 * DAY
+    const driven = run({ id: '8-1', issue: 8, step: 'green', startedAt: 1 * DAY, driver: { session: 'me', since: now } })
+    const reloaded = run({ id: '9-1', issue: 9, step: 'green', startedAt: 1 * DAY, driver: { session: 'me', since: now } })
+    expect(staleLine([driven, reloaded], now, '8-1')).toBe('unfinished for over 7 days: #9 green (started 9 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+    expect(staleLine([driven], now, '8-1')).toBe(null)
+    expect(staleLine([driven], now, null)).toContain('#8 green')
+  })
+
+  // PR #145 review round 1, finding 14: a run blocked for days and stopped today isn't the oldest finished run.
+  test('a run that finishes records finishedAt, and the budget deletes by it (by startedAt for a record without one)', () => {
+    const finishedAt = (r: Run) => r.finishedAt
+    expect(finishedAt(advance(full({ step: 'green', startedAt: 1 }), { type: 'stop' }, 900))).toBe(900)
+    expect(finishedAt(advance(full({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1' }, 950))).toBe(950)
+    expect(finishedAt(advance(full({ step: 'green' }), { type: 'block', reason: 'why', next: 'do this' }, 990))).toBeUndefined()
+    const entries = [
+      { key: 'stoppedToday', run: run({ step: 'stopped', startedAt: 1, finishedAt: 100 }), size: 100 },
+      { key: 'doneLongAgo', run: run({ step: 'done', startedAt: 2 }), size: 100 },
+    ]
+    expect(budgetKeys(entries, 200, 150)).toEqual(['doneLongAgo'])
+  })
+
+  // PR #145 review round 2, finding 7: finished(a) - finished(b) is NaN for a record with neither date, which sorts in no defined order.
+  test('a finished record with no finishedAt and no startedAt counts as the oldest', () => {
+    const dateless = { ...run({ step: 'done' }), startedAt: undefined } as unknown as Run
+    const entries = [
+      { key: 'a', run: run({ step: 'done', startedAt: 5 }), size: 100 },
+      { key: 'b', run: dateless, size: 100 },
+      { key: 'c', run: run({ step: 'done', startedAt: 3 }), size: 100 },
+    ]
+    expect(budgetKeys(entries, 300, 0)).toEqual(['b', 'c', 'a'])
+    expect(budgetKeys([entries[0]!, entries[2]!, entries[1]!], 300, 0)).toEqual(['b', 'c', 'a'])
+  })
+
+  // PR #145 review round 2, finding 5: keys are read as parseRunKey reads them; a folder may be called project#2 (Codex 4278707570).
+  test("the warning's repositories: two checkouts named like issue keys are two, and one repository under both key forms is one", () => {
+    expect(openCounts(['issue-forge:run:/w/project#2', 'issue-forge:run:/w/project#3'])).toEqual({ unfinished: 2, repos: 2 })
+    expect(openCounts(['issue-forge:repo-run:/a/.git#1', 'issue-forge:run:/a'])).toEqual({ unfinished: 2, repos: 1 })
+    expect(openCounts([])).toEqual({ unfinished: 0, repos: 0 })
+  })
+
+  // PR #145 review round 3, finding 5: the warning names each cause that applies, not always unfinished runs, and gives the
+  // store as a share of the engine's limit, which counts characters (finding 3), not MiB of bytes. It replaces round 2's
+  // unreadable-key test and round 1's text test, which pinned the old wording.
+  test('the warning names each cause that applies, with the store as a share of the limit', () => {
+    const warn = storeWarning
+    const at = 0.8 * 4 * 1024 * 1024
+    const head = "store still at 80% of Claude Code's limit after the cleanup"
+    expect(warn({ size: at, unfinished: 1, repos: 1, unreadable: 0, failed: 0 })).toBe(`${head}: 1 unfinished run in 1 repository left: /issue-forge stop <N>, in a run's repository, ends one`)
+    expect(warn({ size: at, unfinished: 3, repos: 2, unreadable: 2, failed: 1 })).toBe(`${head}: 1 trim or delete didn't go through, and the next start tries again; 2 keys couldn't be read and aren't counted; 3 unfinished runs in 2 repositories left: /issue-forge stop <N>, in a run's repository, ends one`)
+    expect(warn({ size: at, unfinished: 0, repos: 0, unreadable: 1, failed: 2 })).toBe(`${head}: 2 trims or deletes didn't go through, and the next start tries again; 1 key couldn't be read and isn't counted`)
+    expect(warn({ size: at, unfinished: 0, repos: 0, unreadable: 0, failed: 0 })).toBe(`${head}: what's left isn't a run the cleanup can remove`)
+  })
+
+  // PR #145 review round 1, finding 7: a record whose body isn't a string (hand-edited, or foreign) mustn't break stop or the sweep.
+  test('a record with no string body is kept as it is by the trim, stop and the sweep', () => {
+    const bodiless = { ...full({ step: 'green' }), body: undefined } as unknown as Run
+    const attempt = (f: () => unknown) => {
+      try {
+        return f()
+      } catch (err) {
+        return `threw: ${String(err)}`
+      }
+    }
+    expect(typeof attempt(() => finishedRecord(bodiless))).toBe('object')
+    expect((attempt(() => advance(bodiless, { type: 'stop' }, 1)) as Run).step).toBe('stopped')
+    const swept = attempt(() => sweepPlan([{ key: 'issue-forge:repo-run:/other/.git#1', value: { ...bodiless, step: 'done' } }], 10))
+    expect((swept as ReturnType<typeof sweepPlan>).drop).toEqual(['issue-forge:repo-run:/other/.git#1'])
+  })
+
+  // PR #145 review round 1, finding 9: a cut inside a surrogate pair leaves half an emoji, which then reaches a prompt.
+  test('the excerpt and a tail never cut inside a surrogate pair', () => {
+    const r = finishedRecord(run({ body: `${'a'.repeat(499)}😀${'b'.repeat(100)}` }))
+    expect(r.body).toBe(`${'a'.repeat(499)}…`)
+    expect(outputTail(`😀${'x'.repeat(19_999)}`)).toBe('x'.repeat(19_999))
+  })
+
+  // PR #145 review round 1, finding 4: a trim or delete the re-read refused, or whose write failed, frees nothing.
+  test('the size left counts the trims and deletes that landed, each by what it saves', () => {
+    const other = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+    const a = { key: other(1), value: full({ id: '1-1', issue: 1, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) }
+    const b = { key: other(2), value: full({ id: '2-1', issue: 2, step: 'done', startedAt: 5 }) }
+    const c = { key: other(3), value: full({ id: '3-1', issue: 3, step: 'blocked', startedAt: 0, title: 'y'.repeat(3000) }) }
+    const entries = [a, b, c]
+    const plan = sweepPlan(entries, trimmedSize(entries) - 1)
+    expect([plan.trim, plan.drop]).toEqual([[other(2)], [other(1)]])
+    expect(plan.size).toBe(jsonChars(entries))
+    expect(plan.saves).toEqual({ [other(1)]: entrySize(a.key, a.value), [other(2)]: entrySize(b.key, b.value) - entrySize(b.key, finishedRecord(b.value)) })
+    // Measured apart: the store with a deleted and b trimmed.
+    expect(leftAfter(plan, [other(1), other(2)])).toBe(jsonChars([{ key: b.key, value: finishedRecord(b.value) }, c]))
+    expect(leftAfter(plan, [])).toBe(plan.size)
+    expect(leftAfter(plan, [other(2)])).toBe(plan.size - (plan.saves[other(2)] as number))
+  })
+
+  // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves a pre-0.3 record of another checkout in place.
+  test('a record under a pre-0.3 issue-forge:run:<checkout> key is a run to the sweep: trimmed when finished, deleted past the budget', () => {
+    const legacy = 'issue-forge:run:/elsewhere'
+    const entries = [
+      { key: legacy, value: full({ id: '9-1', issue: 9, step: 'done', startedAt: 1, lastTestTail: 'T'.repeat(5000) }) },
+      { key: 'issue-forge:repo-run:/other/.git#2', value: run({ id: '2-1', issue: 2, step: 'blocked', startedAt: 0 }) },
+    ]
+    expect(sweepPlan(entries, 100_000).trim).toEqual([legacy])
+    expect(sweepPlan(entries, 10).drop).toEqual([legacy])
+  })
+
+  test('a test tail keeps 200 lines, then its last 20,000 characters', () => {
+    const cut = outputTail(`${'y'.repeat(10_000)}${'x'.repeat(20_000)}`)
+    expect(cut.length).toBe(20_000)
+    expect(cut.includes('y')).toBe(false)
+    expect(outputTail(Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\n'))).toBe(Array.from({ length: 200 }, (_, i) => `line ${i + 100}`).join('\n'))
+    expect(outputTail('FAIL a\n')).toBe('FAIL a')
+  })
+
+  test('status names unfinished runs started over 7 days ago, oldest first, with how to stop them', () => {
+    const now = 10 * DAY
+    const runs = [
+      run({ issue: 8, step: 'blocked', startedAt: 2 * DAY }),
+      run({ issue: 23, step: 'ready', startedAt: 1 * DAY }),
+      run({ issue: 30, step: 'green', startedAt: 5 * DAY }),
+      run({ issue: 1, step: 'done', startedAt: 0 }),
+      run({ issue: 2, step: 'stopped', startedAt: 0 }),
+    ]
+    expect(staleLine(runs, now)).toBe('unfinished for over 7 days: #23 ready (started 9 days ago) · #8 blocked (started 8 days ago); /issue-forge stop <N> ends one and keeps its branch and commits')
+    expect(staleLine(runs.slice(2), now)).toBe(null)
+    expect(staleLine([], now)).toBe(null)
+  })
+
+  // A toast already carries the mod's name (docs/research/Mods, Use-the-mods-API.md:212), so the text doesn't repeat it. It names
+  // what is left across repositories, as status names only its own repository's old runs (PR #145 review round 1, finding 2).
+  test('the plan counts the unfinished runs left and where they are, for the warning', () => {
+    const plan = sweepPlan([
+      { key: 'issue-forge:repo-run:/other/.git#1', value: run({ id: '1-1', step: 'blocked' }) },
+      { key: 'issue-forge:repo-run:/other/.git#2', value: run({ id: '2-1', step: 'ready' }) },
+      { key: 'issue-forge:run:/elsewhere', value: run({ id: '3-1', step: 'green' }) },
+      { key: 'issue-forge:repo-run:/other/.git#4', value: run({ id: '4-1', step: 'done' }) },
+    ])
+    expect(openCounts(plan.open)).toEqual({ unfinished: 3, repos: 2 })
   })
 })

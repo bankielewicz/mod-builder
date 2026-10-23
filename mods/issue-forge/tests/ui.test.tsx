@@ -118,6 +118,18 @@ type World = {
   worktreeListThrows?: boolean
   /** When set, a store stub that can hold one write stands in for mock.store. */
   storeHold?: StoreHold
+  /** With `storeHold`, each write and delete that lands, in order, as `set <key>` or `delete <key>` (#140). */
+  storeOps?: string[]
+  /** With `storeHold`, keys whose `$.store.get` rejects (PR #145 review round 1, finding 4). */
+  storeGetFails?: string[]
+  /** With `storeHold`, runs before each `$.store.get` answers, with the key and how many times it has been read (finding 3). */
+  onStoreGet?: (key: string, reads: number) => void
+  /** With `storeHold`, the next `$.store.keys` rejects, once (PR #145 review round 3, finding 4). */
+  storeKeysFailNext?: boolean
+  /** With `storeHold`, a write that would take the store's compact JSON past this many characters rejects, as Claude Code's does (round 4). */
+  storeLimit?: number
+  /** Every `$.ui.log` line (PR #145 review round 3, finding 4). */
+  logs: string[]
   /** When set, the next `git merge-tree` waits for it (once). */
   mergeHold?: Promise<void>
   /** `git merge-tree` throws, as a timed-out process.run does. */
@@ -243,6 +255,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     asked: [],
     choices: [],
     toasts: [],
+    logs: [],
     opened: [],
     opens: [],
     closed: [],
@@ -254,15 +267,28 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   world.clock = mock.clock(on, { now: 1_000_000 })
   const hold = world.storeHold
   if (hold) {
-    on('store.get', ($: any, e: any) => ({ value: store[e.key] }))
+    const reads: Record<string, number> = {}
+    on('store.get', ($: any, e: any) => {
+      const n = (reads[e.key] ?? 0) + 1
+      reads[e.key] = n
+      world.onStoreGet?.(e.key, n)
+      return world.storeGetFails?.includes(e.key) ? { deny: 'the store could not be read' } : { value: store[e.key] }
+    })
     on('store.set', ($: any, e: any) => {
-      const land = () => ((store[e.key] = e.value), { value: undefined })
+      // Claude Code's check, read in the 2.1.309 binary: the new store as compact JSON, in characters.
+      const size = world.storeLimit === undefined ? 0 : JSON.stringify({ ...store, [e.key]: e.value }).length
+      if (world.storeLimit !== undefined && size > world.storeLimit) return { deny: `the store would be ${size} characters, over the ${world.storeLimit} limit` }
+      const land = () => ((store[e.key] = e.value), world.storeOps?.push(`set ${e.key}`), { value: undefined })
       if (hold.isHeld || !hold.when(e.value)) return land()
       hold.isHeld = true
       return hold.until.then(land)
     })
-    on('store.keys', () => ({ value: Object.keys(store) }))
-    on('store.delete', ($: any, e: any) => (delete store[e.key], { value: undefined }))
+    on('store.keys', () => {
+      if (!world.storeKeysFailNext) return { value: Object.keys(store) }
+      world.storeKeysFailNext = false
+      return { deny: 'the store could not be listed' }
+    })
+    on('store.delete', ($: any, e: any) => (delete store[e.key], world.storeOps?.push(`delete ${e.key}`), { value: undefined }))
   } else mock.store(on, store)
   on('session.id', () => ({ value: SESSION }))
   mock.env(on, { HOME: '/home/u' })
@@ -277,6 +303,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   on('ui.close', ($: any, e: any) => (world.closed.push(e.id), { value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', ($: any, e: any) => (world.toasts.push(e.text ?? String(e)), { value: undefined }))
+  on('ui.log', ($: any, e: any) => (world.logs.push(e.text), { value: undefined }))
   on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
   on('session.receive', ($: any, e: any) => ({ text: e.text }))
@@ -4188,5 +4215,213 @@ describe('#137: the profile formatCommand', () => {
     await run($, 'resume')
     await until(w, () => isBlocked(w), 'the block')
     expect((await run($, 'status')).text).toContain('next: make the profile commands leave the tree as they found it, or put the formatter in formatCommand')
+  })
+})
+
+// #140 (Change 0.9.0): before a new run is written, the store is swept (finished records trimmed, the oldest finished runs of
+// any repository deleted past the budget); finished runs are stored trimmed; status names old unfinished runs.
+describe('#140: the store under its limit', () => {
+  const OTHER = (issue: number) => `issue-forge:repo-run:/other/.git#${issue}`
+  const otherRun = (issue: number, step: string, startedAt: number, extra: Record<string, unknown> = {}) => ({ ...storedRun(step), id: `${issue}-1`, root: '/other', repo: '/other/.git', issue, startedAt, agents: [], ...extra })
+  const HOLD = () => ({ when: () => false, until: Promise.resolve() })
+  const TRIMMED = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer']
+  const storedOf = (store: Record<string, unknown>) => (store[key(16)] ?? store[`issue-forge:run:${ROOT}`]) as any
+
+  test("a start trims another repository's finished record written before 0.9.0, and keeps it when that is enough", async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { lastTestTail: 'T'.repeat(30_000), redAnswer: 'notes', body: 'b'.repeat(2000) }) }
+    const w = engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    const kept = store[OTHER(5)] as any
+    expect(kept).toBeDefined()
+    for (const field of TRIMMED) expect(field in kept).toBe(false)
+    expect(kept.body).toBe(`${'b'.repeat(500)}…`)
+    expect(w.toasts.filter(t => t.includes('MiB'))).toEqual([])
+  })
+
+  test("a start over the budget deletes another repository's oldest finished run before the new run is written", async ($, on) => {
+    const store: Record<string, unknown> = {
+      [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(2_000_000) }),
+      [OTHER(6)]: otherRun(6, 'stopped', 1, { title: 'y'.repeat(1_500_000) }),
+    }
+    const storeOps: string[] = []
+    const w = engine(on, { storeHold: HOLD(), storeOps }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(OTHER(5) in store).toBe(false)
+    expect(OTHER(6) in store).toBe(true)
+    const deleted = storeOps.indexOf(`delete ${OTHER(5)}`)
+    expect(deleted).toBeGreaterThan(-1)
+    expect(deleted).toBeLessThan(storeOps.indexOf(`set ${key(16)}`))
+    expect(w.toasts.filter(t => t.includes('MiB'))).toEqual([])
+  })
+
+  test('a start over the budget with only unfinished runs left warns once, deletes nothing, and the run starts', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(OTHER(7) in store).toBe(true)
+    const warnings = w.toasts.filter(t => t.includes("of Claude Code's limit after the cleanup: 1 unfinished run in 1 repository left"))
+    expect(warnings.length).toBe(1)
+    expect(warnings[0]).toStartWith('store still at 79%')
+  })
+
+  // PR #145 review round 1, finding 3: the sweep's guards. Its second read of a key is the re-read before the write.
+  test('a finished record another session restarted between the sweep\'s read and its re-read is left alone, not trimmed', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { lastTestTail: 'T'.repeat(30_000) }) }
+    const restarted = otherRun(5, 'green', 5, { id: '5-2', lastTestTail: 'live tail' })
+    engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(store[OTHER(5)]).toEqual(restarted)
+  })
+
+  test('a finished run another session restarted before the delete is kept, and the size it would have freed still counts', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }
+    const restarted = otherRun(5, 'green', 5, { id: '5-2', title: 'x'.repeat(3_300_000) })
+    const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    // The id, not the record: a failure that printed 3.3 MB of title would end the test run without a report.
+    expect((store[OTHER(5)] as any)?.id).toBe('5-2')
+    expect(w.toasts.filter(t => t.startsWith('store still at '))).toHaveLength(1)
+  })
+
+  // PR #145 review round 3, finding 4: a sweep that fails leaves a line in the transcript, and the run still starts.
+  test('a sweep that fails writes "store sweep failed" to the transcript, and the run starts', async ($, on) => {
+    // The issue is read just before the run is begun, so the next listing of the store is the sweep's.
+    let w: World | null = null
+    w = engine(on, { storeHold: HOLD(), beforeIssueView: () => void (w && (w.storeKeysFailNext = true)) }, {})
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(w.logs.filter(line => line.startsWith('store sweep failed: '))).toHaveLength(1)
+  })
+
+  // PR #145 review round 4 (Codex 4361674892): unfinished runs alone fill the store, which the sweep never empties, so
+  // Claude Code refuses the new run; the answer says so and how to free it.
+  test("a start the store refuses answers that it wasn't started and how to free the store, and starts nothing", async ($, on) => {
+    const LIMIT = 4_194_304
+    // One unfinished run 100 characters under Claude Code's limit: any new run takes it over.
+    const pad = LIMIT - JSON.stringify({ [OTHER(7)]: otherRun(7, 'blocked', 0, { title: '' }) }).length - 100
+    const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(pad) }) }
+    const w = engine(on, { storeHold: HOLD(), storeLimit: LIMIT }, store)
+    await start($)
+    const text = (await run($, '16')).text
+    expect(text).toContain("#16 wasn't started")
+    expect(text).toContain(`over the ${LIMIT} limit`)
+    expect(text).toContain('/issue-forge stop <N>')
+    expect(key(16) in store).toBe(false)
+    expect(w.spawned).toHaveLength(0)
+  })
+
+  // PR #145 review round 3, finding 2 (Codex 4361161666): two starts at once both plan the same delete; the second finds it gone.
+  test('a run another session deleted before the re-read counts as freed, so a clean store shows no warning', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && delete store[OTHER(5)]) }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(OTHER(5) in store).toBe(false)
+    expect(w.toasts.filter(t => t.startsWith('store still at '))).toEqual([])
+  })
+
+  // PR #145 review round 2, finding 1 (Codex 4360654720): the counts come from what the re-reads found, not the first read.
+  test('the warning counts a run another session restarted before the delete as unfinished', async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(5)]: otherRun(5, 'done', 0, { title: 'x'.repeat(3_300_000) }) }
+    const restarted = otherRun(5, 'green', 5, { id: '5-2', title: 'x'.repeat(3_300_000) })
+    const w = engine(on, { storeHold: HOLD(), onStoreGet: (key, reads) => void (key === OTHER(5) && reads === 2 && (store[OTHER(5)] = restarted)) }, store)
+    await start($)
+    await run($, '16')
+    const warning = w.toasts.find(t => t.startsWith('store still at ')) ?? ''
+    expect(warning).toContain('1 unfinished run in 1 repository left')
+  })
+
+  test('the warning shows once a session: a second start over the budget shows no second toast', async ($, on) => {
+    const HERE = { ...PROFILE, workspace: 'here' }
+    const store: Record<string, unknown> = { [OTHER(7)]: otherRun(7, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD(), isDirty: true, localProfile: HERE, baseProfile: HERE }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 blocked')), "#16's block")
+    w.answer = 'Start #17 here (Recommended)'
+    await run($, '17')
+    await until(w, () => w.toasts.some(t => t.startsWith('#17 blocked')), "#17's block")
+    expect(w.toasts.filter(t => t.startsWith('store still at '))).toHaveLength(1)
+  })
+
+  // PR #145 review round 1, finding 4: one failed read is skipped, not the end of the sweep.
+  test('a key whose read fails is skipped, and the sweep still trims the rest', async ($, on) => {
+    const store: Record<string, unknown> = {
+      [OTHER(4)]: otherRun(4, 'done', 0, { lastTestTail: 'T'.repeat(30_000) }),
+      [OTHER(5)]: otherRun(5, 'done', 1, { lastTestTail: 'T'.repeat(30_000) }),
+    }
+    engine(on, { storeHold: HOLD(), storeGetFails: [OTHER(4)] }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect('lastTestTail' in (store[OTHER(5)] as any)).toBe(false)
+    expect('lastTestTail' in (store[OTHER(4)] as any)).toBe(true)
+  })
+
+  // PR #145 review round 2, finding 2: a 3.3 MB run the sweep can't read would otherwise weigh nothing, and nothing would warn.
+  test("a key the sweep can't read makes the warning show, naming it, though the rest measures under the budget", async ($, on) => {
+    const store: Record<string, unknown> = { [OTHER(6)]: otherRun(6, 'blocked', 0, { title: 'z'.repeat(3_300_000) }) }
+    const w = engine(on, { storeHold: HOLD(), storeGetFails: [OTHER(6)] }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    expect(w.toasts.filter(t => t.endsWith("1 key couldn't be read and isn't counted; 1 unfinished run in 1 repository left: /issue-forge stop <N>, in a run's repository, ends one"))).toHaveLength(0)
+    expect(w.toasts.filter(t => t.endsWith(": 1 key couldn't be read and isn't counted"))).toHaveLength(1)
+  })
+
+  // PR #145 review round 1, finding 1 (Codex 4359421020): migrate() leaves another checkout's pre-0.3 record where it is.
+  test("a start trims a finished pre-0.3 record of another checkout, which migration leaves under its old key", async ($, on) => {
+    const LEGACY = 'issue-forge:run:/elsewhere'
+    const store: Record<string, unknown> = { [LEGACY]: { ...otherRun(9, 'done', 0, { lastTestTail: 'T'.repeat(30_000), body: 'b'.repeat(2000) }), root: '/elsewhere' } }
+    engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, '16')).text).toContain('starting #16')
+    const kept = store[LEGACY] as any
+    expect(kept).toBeDefined()
+    expect('lastTestTail' in kept).toBe(false)
+    expect(kept.body).toBe(`${'b'.repeat(500)}…`)
+  })
+
+  test('a stopped run is stored trimmed', async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('green', { redAnswer: 'notes', lastTestTail: 'last', redTestTail: 'red', body: 'b'.repeat(600) }) }
+    engine(on, { storeHold: HOLD() }, store)
+    await start($)
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    const stopped = storedOf(store)
+    expect(stopped.step).toBe('stopped')
+    for (const field of TRIMMED) expect(field in stopped).toBe(false)
+    expect(stopped.body).toBe(`${'b'.repeat(500)}…`)
+  })
+
+  test("a published run is stored trimmed, and its pull request still carries the red agent's answer", async ($, on) => {
+    const store: Record<string, unknown> = { [`issue-forge:run:${ROOT}`]: storedRun('ready', { greenCommit: 'c2', gatedHead: 'c0', redAnswer: 'RED NOTES', body: 'b'.repeat(600) }) }
+    const w = engine(on, { head: BRANCH, storeHold: HOLD() }, store)
+    await start($)
+    await run($, 'publish')
+    await until(w, () => w.toasts.some(t => t.startsWith('PR opened')), 'the PR')
+    await w.clock.settle()
+    const done = storedOf(store)
+    expect(done.step).toBe('done')
+    expect('redAnswer' in done).toBe(false)
+    expect(done.body).toBe(`${'b'.repeat(500)}…`)
+    expect(Object.values(w.files).some(text => text.includes('RED NOTES'))).toBe(true)
+  })
+
+  test('status names an unfinished run started 8 days ago, with its stop command', async ($, on) => {
+    const LINE = 'unfinished for over 7 days: #8 blocked (started 8 days ago); /issue-forge stop <N> ends one and keeps its branch and commits'
+    const store: Record<string, unknown> = {
+      [key(16)]: storedRun('green'),
+      [key(8)]: { ...storedRun('blocked'), id: '8-1', issue: 8, startedAt: 1_000_000 - 8 * 86_400_000, blocked: { at: 'gateG', reason: 'why', next: 'do this' } },
+    }
+    engine(on, {}, store)
+    await start($)
+    expect((await run($, 'status')).text).toContain(LINE)
+    expect((await run($, 'status 8')).text).toContain(LINE)
+    expect((await run($, 'status 16')).text).toContain(LINE)
+    // PR #145 review round 2, finding 8: an issue with no run here answers with the stale line too.
+    expect((await run($, 'status 99')).text).toContain(LINE)
   })
 })
