@@ -400,9 +400,10 @@ Claude Code refuses a store over 4 MiB of JSON, one store per plugin, every repo
 0.9.0, #140). A run that becomes `done` or `stopped` is stored without its test tails and the red agent's answers, and
 with the issue's first 500 characters: only the phases and publish read them. It records `finishedAt`. Before a new run
 is written, a sweep trims finished records saved before 0.9.0 (0.2's checkout keys included), then deletes finished runs
-of any repository, those that finished longest ago first, while the store, measured as UTF-8 JSON, is over 3 MiB. It
-never deletes an unfinished run. It warns once a session when the store is still over the budget, naming the unfinished
-runs and repositories left, or when a key couldn't be read, which it then can't measure. A command's tail is capped at
+of any repository, those that finished longest ago first, while the store is over 3 Mi of the engine's 4 Mi
+characters: Claude Code's check counts the characters of the compact JSON. It never deletes an unfinished run. It warns
+once a session when the store is still over the budget, naming each cause (trims or deletes that didn't go through,
+keys it couldn't read, unfinished runs left), and a sweep that fails leaves a transcript line. A command's tail is capped at
 20,000 characters as well as 200 lines, and status names unfinished runs started more than 7 days ago, except the one
 this session drives.
 

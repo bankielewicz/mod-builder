@@ -2062,7 +2062,7 @@ count set in the pane.
 - **What changes:**
   - **A finished record is trimmed** when a run becomes `done` or `stopped`, in `advance` (the `stop` and `published` transitions): `lastTestTail`, `redTestTail`, `redAnswer` and `behaviourAnswer` go, and `body` is cut to its first 500 characters, then `…`. Gates, commits, times, the pull request's URL and the branch stay, so status and the pane show a finished run as before.
   - **A sweep before each new run is written.** When a run starts, before the new run's record is stored:
-    1. Read every key in the store and measure it as UTF-8 JSON, the way the limit counts it (a pure count, no `TextEncoder`).
+    1. Read every key in the store and measure it in characters of its compact JSON, the way the engine's check counts it (corrected in place by review round 3, finding 3; this read "as UTF-8 JSON … no `TextEncoder`").
     2. Trim each finished record, of any repository, that still holds those fields (records written before 0.9.0), after reading it again: written only if it is still the same finished run, as `prune` checks with `isPrunable`.
     3. While the store is over the budget, **3 MiB**, delete the oldest finished run of any repository, read again first in the same way. An unfinished run is never deleted.
     4. If it is still over the budget with only unfinished runs left, one toast per session: `issue-forge: saved runs take <n> MB of Claude Code's 4 MiB store, all unfinished; /issue-forge status names the old ones to stop`. The start goes on.
@@ -2074,13 +2074,13 @@ count set in the pane.
   - **The numbers** (the budget of 3 MiB, the excerpt of 500 characters, the cap of 20,000 characters, the age of 7 days) are constants in the logic module, not profile options: the store is the plugin's, across repositories, not any one repository's.
   - **Not changed:** the per-repository count (20 finished runs), and the pane's drawing.
 - **Against Anthropic's mod docs** (`docs/research/Mods`, read 2026-10-23, as the owner asked before the build: "read anthropic's documents regarding claude mods to ensure that your plan/code design aligns with their recommendations"):
-  - **The limit:** "`$.store` | 4 MiB of JSON in total" [read: `Test and troubleshoot/Mods-reference.md:361`]. The sweep measures the same thing: the store as one JSON text, in UTF-8 bytes.
+  - **The limit:** "`$.store` | 4 MiB of JSON in total" [read: `Test and troubleshoot/Mods-reference.md:361`]. The sweep measures the same thing: the store as one compact JSON text, in characters, which is what the 2.1.309 binary compares (review round 3, finding 3).
   - **Several sessions:** "Give each item its own key" and "Read again right before you write" [read: `Build/Draw-in-the-interface-with-a-mod.md:837-842`]. Each run keeps its own key, as now. Every trim and delete re-reads its key first and acts only on the same finished run. The docs also note that "another session's write is still lost if it lands between your `get` and your `set`", and so does this design, as `prune` already says.
   - **Time:** a hook's "own execution time for one event, not counting time inside `next` or a mods API call other than `$.clock.sleep`" is limited to 10 seconds [read: `Mods-reference.md:347`]. The store reads don't count. The sweep's own work, serializing and counting about 1 to 3 MiB of text once per start, does count; [inference] that work is linear and well under that limit. No sleep is added.
   - **Showing the warning:** a toast "disappears after a few seconds", while `$.ui.status` keeps one line under the prompt [read: `Build/Use-the-mods-API.md:209-214`]. issue-forge's status line already shows the driven run, so the warning is a toast once per session, and `/issue-forge status` lists the runs to stop.
   - **Lifetime:** `$.store` lasts until the mod deletes a key, or until no session uses the store for `cleanupPeriodDays` [read: `Draw-in-the-interface-with-a-mod.md:727`]. So issue-forge itself has to bound what it keeps, which is this change.
 - **What gets touched:**
-  - `hooks/issue-forge-logic.ts`: `finishedRecord`, `isTrimmed`, `utf8Length`, `storeSize`, `budgetKeys`, `outputTail`, `staleLine` and their constants; `advance`'s `stop` and `published` transitions.
+  - `hooks/issue-forge-logic.ts`: `finishedRecord`, `isTrimmed`, `entrySize`, `budgetKeys`, `sweepPlan`, `leftAfter`, `recheckOf`, `openCounts`, `outputTail`, `staleLine`, `storeWarning` and their constants; `advance`'s `stop` and `published` transitions (as built through review round 3).
   - `hooks/register.tsx`: `begin` (the sweep before the claim), a top-level `sweepStore`, the tails in `runLong` and `runShort`, the status line in `statusOf`, and a module `let` for the once-per-session toast.
   - Tests: `tests/issue-forge-logic.test.ts` and `tests/ui.test.tsx`.
   - `README.md`: the paragraph on pruning (README.md:213-214), "Limits worth knowing", the "What it reaches" row for the store if validate's output changes, and "Built on". `docs/specs/issue-forge.md`: where the stored run and pruning are described. `plugin.json` and the marketplace entry at 0.9.0. This SPEC.
@@ -2089,7 +2089,7 @@ count set in the pane.
   - Logic:
     - `finishedRecord` drops the four fields and cuts `body` to 500 characters and `…`; `isTrimmed` holds for its result and not for a record with any of them.
     - `advance` trims on `stop` and on `published`, and on no other step.
-    - `utf8Length` counts ASCII as 1, `é` as 2, `€` as 3 and an emoji (a surrogate pair) as 4; `storeSize` measures keys and values as one JSON object.
+    - The plan measures keys and values as one compact JSON object, in characters, checked against `JSON.stringify(…).length` (as built through review round 3; this named `utf8Length` and `storeSize`, which went).
     - `budgetKeys` picks the oldest finished runs first, across repositories, until the total is at or under the budget, and never an unfinished run.
     - `outputTail` keeps 200 lines, then 20,000 characters.
     - `staleLine` names unfinished runs started more than 7 days ago, oldest first, and is null when there are none; done and stopped runs never appear.
@@ -2105,7 +2105,7 @@ count set in the pane.
 - **Built** with `/mod-builder:edit`, in the worktree `scratch/issue-140-store-budget` from `main` at `ac5e63f`. The owner approved this section on 2026-10-23 ("option 1", after a plain-words summary), asking first for the check against `docs/research/Mods` recorded above.
   - **TDD:** SPEC `19431d1`. Red `c0143b4`: 14 of 521 failed, by assertion. Green `441f94e`: 521 of 521; no existing test pinned a finished run's trimmed fields, so none needed fixing. Refactor `1b1cabf`: the store tests call the new functions directly.
   - **A key deleted during the sweep** (the advisor's review before the PR): another session may delete a run between the sweep's `keys()` and its `get()`, which then reads `undefined`. `sweepPlan` read `.step` from it and threw, and `begin`'s catch skipped the whole sweep. Red `693a738` (1 failed, by assertion), green `7e9dead`: a run key counts as a run only while it holds an object. 522 of 522. [ran: a read-only check of both live stores, 2026-10-23] Every one of their 37 runs has a string `body` and a numeric `startedAt`, which `finishedRecord` and the budget read.
-  - **What the sweep measures:** the store as compact JSON, in UTF-8 bytes: 1,341,445 for the installed copy's store, whose file on disk is 1,402,963 bytes, about 4.6% more. The d.ts says "4 MiB of JSON text in all" and doesn't say which of the two it counts. [inference] The 3 MiB budget leaves 1 MiB, a third of it, which covers that difference.
+  - **What the sweep measures** (corrected in place by review round 3, finding 3): this note said UTF-8 bytes of the compact JSON, 1,341,445 for the installed copy's store, against a file on disk of 1,402,963 bytes, and left open which of the two the limit counts. The 2.1.309 binary settles it: `$.store.set` compares the serialized store's `.length`, in characters, with 4,194,304, and writes the file indented, which is why the file is larger. The sweep now counts those characters.
   - **As built, against the text above:**
     - The warning drops the `issue-forge:` prefix, as a toast already names the mod (`Use-the-mods-API.md:212`), and gives the size in MiB, as the limit is. Its text is review round 1's (finding 2, below): `store still <n> MiB of Claude Code's 4 MiB after the cleanup, with <runs> in <repositories>; …`.
     - The stale line reads `(started <n> days ago)` for every run listed.
