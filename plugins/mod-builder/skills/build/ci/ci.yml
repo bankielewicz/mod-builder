@@ -32,14 +32,14 @@ jobs:
       - name: Install Claude Code
         run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && claude --version
       - name: Validate the marketplace
-        run: claude plugin validate .
+        run: claude plugin validate --strict .
       - name: Validate and test every plugin
         run: |
           status=0
           for manifest in $(git ls-files ':(glob)plugins/*/.claude-plugin/plugin.json' ':(glob)mods/*/.claude-plugin/plugin.json'); do
             dir="${manifest%/.claude-plugin/plugin.json}"
             echo "::group::$dir"
-            claude plugin validate "$dir" || { echo "::error::$dir: validate failed"; status=1; }
+            claude plugin validate --strict "$dir" || { echo "::error::$dir: validate failed"; status=1; }
             if [ -d "$dir/tests" ]; then
               claude plugin test "$dir" || { echo "::error::$dir: tests failed"; status=1; }
             fi
