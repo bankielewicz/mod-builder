@@ -2714,6 +2714,19 @@ describe('#140: the store under its limit', () => {
     expect([p.trim, p.drop, p.left]).toEqual([[], [other(3)], storeSize(entries.slice(0, 2))])
   })
 
+  // PR #145 review round 1, finding 14: a run blocked for days and stopped today isn't the oldest finished run.
+  test('a run that finishes records finishedAt, and the budget deletes by it (by startedAt for a record without one)', () => {
+    const finishedAt = (r: Run) => (r as { finishedAt?: number }).finishedAt
+    expect(finishedAt(advance(full({ step: 'green', startedAt: 1 }), { type: 'stop' }, 900))).toBe(900)
+    expect(finishedAt(advance(full({ step: 'publishing' }), { type: 'published', url: 'https://x/pull/1' }, 950))).toBe(950)
+    expect(finishedAt(advance(full({ step: 'green' }), { type: 'block', reason: 'why', next: 'do this' }, 990))).toBeUndefined()
+    const entries = [
+      { key: 'stoppedToday', run: run({ step: 'stopped', startedAt: 1, finishedAt: 100 } as Partial<Run>), size: 100 },
+      { key: 'doneLongAgo', run: run({ step: 'done', startedAt: 2 }), size: 100 },
+    ]
+    expect(budgetKeys(entries, 200, 150)).toEqual(['doneLongAgo'])
+  })
+
   // PR #145 review round 1, finding 7: a record whose body isn't a string (hand-edited, or foreign) mustn't break stop or the sweep.
   test('a record with no string body is kept as it is by the trim, stop and the sweep', () => {
     const bodiless = { ...full({ step: 'green' }), body: undefined } as unknown as Run
