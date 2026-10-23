@@ -21,6 +21,9 @@ Required reading before changing anything here (the owner, 2026-10-23):
 - **Plugins**, mod-builder included (`plugins/mod-builder`: Mod Lab and its skills): read
   `docs/research/claude-plugins`. mod-builder is a plugin that builds mods, not a mod: change it by those
   documents, never through `/mod-builder:edit`, and change its skills through `/plugin-dev:skill-development`.
+  Mod Lab's hooks module (`hooks/`, `tests/`, `types/`) runs in the mod engine like any mod, so its code also
+  follows `docs/research/Mods` and `gotchas.md` (the owner, approving #138: "i approve as long as you follow
+  guidance from anthropic's best practices for claude mod").
 
 ## Commands
 
