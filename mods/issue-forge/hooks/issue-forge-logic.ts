@@ -2345,7 +2345,9 @@ const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAn
 /** A run done or stopped, without the test tails and red's answers, and with only the start of the issue's text. */
 export function finishedRecord(run: Run): Run {
   const { lastTestTail: _l, redTestTail: _r, redAnswer: _a, behaviourAnswer: _b, ...rest } = run
-  return { ...rest, body: run.body.length > BODY_EXCERPT_CHARS ? `${run.body.slice(0, BODY_EXCERPT_CHARS)}…` : run.body }
+  // A body that isn't a string (a hand-edited or foreign record) stays as it is (PR #145 review round 1, finding 7).
+  const isLong = typeof run.body === 'string' && run.body.length > BODY_EXCERPT_CHARS
+  return { ...rest, body: isLong ? `${run.body.slice(0, BODY_EXCERPT_CHARS)}…` : run.body }
 }
 
 /** Whether a record is already as `finishedRecord` leaves it. */
