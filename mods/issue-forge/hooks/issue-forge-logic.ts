@@ -2398,13 +2398,8 @@ export type SweepPlan = {
   saves: Record<string, number>
   /** Each trimmed or deleted key's whole size, freed if another session deleted it first (round 3, Codex 4361161666). */
   sizes: Record<string, number>
-  /** The size once every trim and delete has landed. */
-  left: number
-  /** The unfinished runs' keys, which the sweep never deletes. */
+  /** The unfinished runs' keys, which the sweep never deletes; `openCounts` counts them, and `leftAfter` the size left. */
   open: string[]
-  /** How many there are, and the repositories (or pre-0.3 checkouts) they're in. */
-  unfinished: number
-  repos: number
 }
 
 /** The warning's counts for unfinished run keys: the runs, and the repositories (or pre-0.3 checkouts) they're in. */
@@ -2461,9 +2456,7 @@ export function sweepPlan(entries: readonly { key: string; value: unknown }[], b
     else if (m.trimmed) saves[m.key] = m.before - m.after
     if (dropped.has(m.key) || m.trimmed) sizes[m.key] = m.before
   }
-  const plan = { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves, sizes }
-  const open = runs.filter(r => isActive(r.run)).map(r => r.key)
-  return { ...plan, left: leftAfter(plan, [...trim, ...drop]), open, ...openCounts(open) }
+  return { trim, drop, size: sizeOfEntries(measured.map(m => m.before)), saves, sizes, open: runs.filter(r => isActive(r.run)).map(r => r.key) }
 }
 
 /** A command's output as a run keeps it: the last 200 lines, then the last `TAIL_MAX_CHARS` characters. */

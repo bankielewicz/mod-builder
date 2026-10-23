@@ -60,7 +60,6 @@ import {
   isOwnHandback,
   isOwnMailboxHandback,
   isPluginManifest,
-  isPrunable,
   isPullUrl,
   isSameRepo,
   isWorking,
@@ -1691,8 +1690,19 @@ async function prune($: EngineInterface, repo: string): Promise<void> {
   const entries = await listRuns($, repo)
   for (const key of pruneKeys(entries)) {
     const listed = entries.find(e => e.key === key)?.run
-    if (listed && isPrunable(listed, await loadRun($, key))) await $.store.delete(key)
+    if (listed && (await recheck($, key, listed)).found === 'same') await $.store.delete(key)
   }
+}
+
+/**
+ * The re-read before a write to a finished run's key, for prune and the store sweep (PR #145 review round 3, finding 9): the
+ * same finished run, which may now change, or what is there instead (recheckOf), or a read that failed.
+ */
+async function recheck($: EngineInterface, key: string, listed: Run): Promise<{ found: 'gone' | 'restarted' | 'other' | 'failed' } | { found: 'same'; run: Run }> {
+  const read = await $.store.get(key).then(value => ({ value }), () => null)
+  if (!read) return { found: 'failed' }
+  const found = recheckOf(listed, read.value)
+  return found === 'same' ? { found, run: read.value as Run } : { found }
 }
 
 /**
@@ -1715,21 +1725,18 @@ async function sweepStore($: EngineInterface): Promise<void> {
   // 4360654720); one that finds the key gone (another session deleted it) frees its whole size (round 3, Codex 4361161666).
   const restarted: string[] = []
   const gone: string[] = []
-  /** The same finished run, which the sweep may now change, or null: gone, restarted, replaced, or a read that failed. */
-  const reread = async (key: string): Promise<Run | null> => {
-    const read = await $.store.get(key).then(value => ({ value }), () => null)
-    if (!read) return null
-    const found = recheckOf(listed(key), read.value)
-    if (found === 'gone') gone.push(key)
-    if (found === 'restarted') restarted.push(key)
-    return found === 'same' ? (read.value as Run) : null
+  const reread = async (key: string) => {
+    const r = await recheck($, key, listed(key))
+    if (r.found === 'gone') gone.push(key)
+    if (r.found === 'restarted') restarted.push(key)
+    return r
   }
   for (const key of plan.trim) {
-    const same = await reread(key)
-    if (same) await $.store.set(key, finishedRecord(same)).then(() => landed.push(key), () => undefined)
+    const r = await reread(key)
+    if (r.found === 'same') await $.store.set(key, finishedRecord(r.run)).then(() => landed.push(key), () => undefined)
   }
   for (const key of plan.drop) {
-    if (await reread(key)) await $.store.delete(key).then(() => landed.push(key), () => undefined)
+    if ((await reread(key)).found === 'same') await $.store.delete(key).then(() => landed.push(key), () => undefined)
   }
   // The size left counts only what landed or was gone: a refused re-read or a failed write frees nothing.
   const left = leftAfter(plan, landed, gone)
