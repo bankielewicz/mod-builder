@@ -4594,8 +4594,34 @@ describe('#40: a drive that ends, ends its agents', () => {
     await waitFor(w, () => w.toasts.some(t => t.includes('moved on')))
     await ui.unmount()
     expect(w.taskStops).toEqual(['a77'])
-    // A press shows its answer as a toast cut to 80 characters (every button's, since before #40): the outcome clause begins there.
-    expect(w.toasts.some(t => t.startsWith('#16 moved on before it could be stopped; /issue-forge status 16 says where; its'))).toBe(true)
+    // A press shows its answer cut to 80 characters, so the outcome comes first (the owner: "Lead with the outcome").
+    expect(w.toasts.some(t => t.startsWith('#16 moved on; its green agent (issue-forge-16-green-2) has stopped'))).toBe(true)
+  })
+
+  test("a pressed Stop's toast leads with which agents stopped, so the 80-character cut keeps it", async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: held(), answer: 'Stop the run', listed: [[newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('stopped #16')))
+    await ui.unmount()
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.toasts.some(t => t.startsWith('stopped #16; its green agent (issue-forge-16-green-2) has stopped.'))).toBe(true)
+  })
+
+  test("a pressed Hand off's toast leads with which agents stopped", async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: held(), listed: [[newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    const ui = await pane($)
+    await ui.press({ key: 'handoff' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('handed off #16')))
+    await ui.unmount()
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.toasts.some(t => t.startsWith('handed off #16 at green; its green agent (issue-forge-16-green-2) has stopped'))).toBe(true)
   })
 
   test('round 1, finding 3: hand off, then start, says what happened to the handed-off run\'s agent', async ($, on) => {
