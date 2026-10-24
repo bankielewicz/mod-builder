@@ -2241,4 +2241,19 @@ count set in the pane.
   - Unchanged (G): the guard's tests (`issue-forge-logic.test.ts:1085` and the UI guard tests), and stops during a gate's command, during a pending spawn and during the push.
 - **Done means:** `/issue-forge stop`, the Stop button, Hand off and a takeover end the run's agents that are still going in this session, and the answer says which were ended and which weren't. **Live check:** on this build, start a real run, stop it during red, and read the red agent's transcript. No tool call after the stop returns a normal result, and the worktree's `git status` is unchanged from the moment of the stop.
 - **Version:** 0.9.1, a patch: a fix, with no change to commands, options or the stored run.
+- **Step 1's result: `TaskStop` ends a mod's agent** [probe, 2026-10-24 UTC]. The throwaway mod `stopprobe-q4z` was in the session's scratchpad. It `$.agent.register`ed a type, `$.agent.spawn`ed it with `model: 'haiku'`, and stopped it about 16 s in with `$.tool.call({ tool: 'TaskStop', task_id: <agentId> })`, all under `--permission-mode auto`:
+
+  | Case | Build | `TaskStop`'s answer | Status after | Tool calls after the stop |
+  | --- | --- | --- | --- | --- |
+  | Unnamed subagent, `claude -p --input-format stream-json` | 2.1.310 | `Successfully stopped task: a7c524fc96f62fcf8 (stopprobe ticks)`, `task_type: "local_agent"` | `killed`, still `killed` 30 s later | 0 of 5 (hook log); 0 in the transcript |
+  | Named, the same headless way | 2.1.310 | the same, `local_agent` | `killed` | 0 of 5; 0 in the transcript |
+  | Named, interactive, private tmux, `teammateMode: "in-process"` (P4's setup) | 2.1.310 | `Successfully stopped task: tnp9e29pr (stopprobe ticks)`, `task_type: "in_process_teammate"` | `killed`, then gone from `$.agent.list()` 30 s later | 0 of 5; 0 in the transcript |
+
+  - **The `task_id` form:** the `agentId` the spawn returned works for both kinds, so the name and `teammateId` fallbacks were never tried.
+  - **A named spawn under `-p` is not a teammate,** even with agent teams on: no `teammateId`, and an id of the plain `a<hex>` form. Only the interactive session made a teammate (`agentId: "astopprobe-q4z-worker-b18d543dad07b2b5"`, `teammateId: "stopprobe-q4z-worker@session-91403563"`).
+  - **`spawnedBy`** is the plugin's plain name (`"stopprobe-q4z"`), not `<name>@inline`.
+  - **No permission dialog** was asked in either mode. Other permission modes weren't probed: a dialog there would hold the stop's answer until it is answered, and the answer reports the outcome either way.
+  - **The guard is reached:** the probe's `tool.call` hook logged every one of the agent's calls, each carrying the `agentId` its spawn returned, which refutes #40's candidate A on 2.1.310 too. But no call came after the stop, so no refusal was observed. The stop's answer still doesn't promise one.
+  - **The types:** the 2.1.310 binary carries `TaskStop`'s `task_id` text as 2.1.309's d.ts has it (`grep -a -c` on `~/.local/share/claude/versions/2.1.310`: 2).
+  - **For step 2:** an agent counts as ended when `TaskStop` answers without a `deny` or `isError` and the second listing shows it `killed`, `completed` or `failed`, or no longer lists it, as the teammate went. The filter is `spawnedBy === 'issue-forge'`.
 - **Approved** by the owner, 2026-10-23, "Approve (Recommended)", the probe's and the live check's model calls included. The advisor checked this section against `docs/research/Mods` and `docs/research/claude-plugins` first, as the owner asked for every SPEC. Its one gap, the agent a stop-during-spawn leaves, is the fifth place above.
