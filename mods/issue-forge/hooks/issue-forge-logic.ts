@@ -1669,6 +1669,46 @@ export function spawnRefs(agentId: string, name: string | undefined, teammateId:
   return [...new Set([agentId, name, given].filter((ref): ref is string => !!ref))]
 }
 
+/** An agent as `$.agent.list()` gives it, the fields issue-forge reads (#40). */
+export type ListedAgent = { id: string; name?: string; teammateId?: string; description?: string; status: string; spawnedBy?: string }
+
+/** What ending one agent came to (#40): it has stopped, or it is still going, and why. */
+export type EndOutcome = { agent: ListedAgent; isEnded: true } | { agent: ListedAgent; isEnded: false; reason: string }
+
+/** What ending a drive's agents came to: each agent's outcome, or the listing's refusal when none could be listed. */
+export type EndedAgents = readonly EndOutcome[] | { unlisted: string }
+
+/** Statuses of an agent that may still call tools: a teammate waiting for a message is `idle`, not done. */
+const GOING = new Set(['pending', 'running', 'waiting', 'idle'])
+
+/** The agents a drive's end stops (#40): issue-forge's own, still going, whose id, name or teammate name is known. */
+export function agentsToEnd(known: Iterable<string>, listed: readonly ListedAgent[]): ListedAgent[] {
+  const refs = new Set(known)
+  return listed.filter(a => a.spawnedBy === NAME && GOING.has(a.status) && [a.id, a.name, a.teammateId?.split('@')[0]].some(ref => !!ref && refs.has(ref)))
+}
+
+/** Whether an agent has stopped, by the listing taken after TaskStop (null when it couldn't be taken); `refused` is TaskStop's refusal. */
+export function endOutcome(agent: ListedAgent, refused: string | null, after: readonly ListedAgent[] | null): EndOutcome {
+  const now = after?.find(a => a.id === agent.id)
+  if (after && !(now && GOING.has(now.status))) return { agent, isEnded: true }
+  return { agent, isEnded: false, reason: refused ?? (now ? `it is still ${now.status}` : "its status couldn't be read afterwards") }
+}
+
+/** A phase agent's spawn description, `issue-forge #<N> <phase>`. */
+const AGENT_PHASE = /^issue-forge #\d+ (red|green|refactor)$/
+
+function agentWords(agent: ListedAgent): string {
+  const phase = AGENT_PHASE.exec(agent.description ?? '')?.[1]
+  return `${phase ? `its ${phase} agent` : 'an agent of the run'} (${agent.name ?? agent.id})`
+}
+
+/** What a stop says about the run's agents (#40): only what the listings and TaskStop showed, never a promise. */
+export function endedLine(ended: EndedAgents): string {
+  if ('unlisted' in ended) return `its agents couldn't be listed (${ended.unlisted}), so any still working may keep going until their turn ends`
+  if (ended.length === 0) return 'no agent was running'
+  return ended.map(o => (o.isEnded ? `${agentWords(o.agent)} has stopped` : `${agentWords(o.agent)} wasn't stopped (${o.reason}), so it may keep working until its turn ends`)).join('; ')
+}
+
 /** Whether a prompt is the hand-back of one of these agents (`<agent-message from="…">`). */
 export function isOwnHandback(text: string, refs: readonly string[]): boolean {
   const m = text.match(/^<agent-message from="([^"]+)">/)
