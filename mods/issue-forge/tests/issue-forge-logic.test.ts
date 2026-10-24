@@ -2906,3 +2906,72 @@ describe('#140: the store under its limit', () => {
     expect(openCounts(plan.open)).toEqual({ unfinished: 3, repos: 2 })
   })
 })
+
+// A drive that ends, ends its agents (SPEC Change 0.9.1). The rows are `$.agent.list()`'s, as the probe on 2.1.310 logged them.
+describe('#40: a drive that ends, ends its agents', () => {
+  // Reached through the module object until they exist, so a missing one fails by assertion, not by a TypeError.
+  const L = new Proxy(logic as any, {
+    get: (module, name: string) => {
+      expect(typeof module[name]).toBe('function')
+      return module[name]
+    },
+  })
+  const row = (id: string, extra: Record<string, unknown> = {}) => ({ id, description: 'issue-forge #16 red', type: 'issue-forge:red', status: 'running', spawnedBy: 'issue-forge', ...extra })
+
+  test("agentsToEnd keeps a known issue-forge agent that is still going, matched by its id, its name or its teammate address's name", () => {
+    const known = new Set(['old-red', 'issue-forge-16-green-1', 'issue-forge-16-refactor-1'])
+    const listed = [
+      row('old-red'),
+      row('a9', { name: 'issue-forge-16-green-1', status: 'pending', description: 'issue-forge #16 green' }),
+      row('a10', { teammateId: 'issue-forge-16-refactor-1@session-1', status: 'idle', description: 'issue-forge #16 refactor' }),
+      row('a11', { name: 'issue-forge-16-green-1', status: 'waiting' }),
+    ]
+    expect(L.agentsToEnd(known, listed).map((a: { id: string }) => a.id)).toEqual(['old-red', 'a9', 'a10', 'a11'])
+    expect(L.agentsToEnd(['old-red'], listed).map((a: { id: string }) => a.id)).toEqual(['old-red'])
+  })
+
+  test("agentsToEnd leaves an agent that finished, one issue-forge doesn't know, and one it didn't start", () => {
+    const known = new Set(['old-red', 'old-green', 'mine', 'issue-forge-16-red-1'])
+    const listed = [
+      row('old-red', { status: 'completed' }),
+      row('old-green', { status: 'failed' }),
+      row('mine', { status: 'killed' }),
+      row('stranger'),
+      row('lookalike', { spawnedBy: 'other-mod', name: 'issue-forge-16-red-1' }),
+      row('by-the-model', { spawnedBy: undefined, name: 'issue-forge-16-red-1' }),
+    ]
+    expect(L.agentsToEnd(known, listed)).toEqual([])
+    expect(L.agentsToEnd(new Set(), [row('old-red')])).toEqual([])
+  })
+
+  test('endOutcome: the agent has stopped once the second listing shows it killed, completed or failed, or no longer lists it', () => {
+    const agent = row('a1', { name: 'issue-forge-16-red-1' })
+    for (const status of ['killed', 'completed', 'failed']) expect(L.endOutcome(agent, null, [row('a1', { status })])).toEqual({ agent, isEnded: true })
+    // A killed teammate leaves the list within 30 s (the probe).
+    expect(L.endOutcome(agent, null, [row('other')])).toEqual({ agent, isEnded: true })
+    // A TaskStop that was refused while the agent finished by itself still leaves it stopped.
+    expect(L.endOutcome(agent, 'no', [row('a1', { status: 'completed' })])).toEqual({ agent, isEnded: true })
+  })
+
+  test("endOutcome: the agent is still going when the listing says so, with TaskStop's refusal if there was one, or when its status can't be read", () => {
+    const agent = row('a1', { name: 'issue-forge-16-red-1' })
+    expect(L.endOutcome(agent, 'no', [row('a1')])).toEqual({ agent, isEnded: false, reason: 'no' })
+    expect(L.endOutcome(agent, null, [row('a1', { status: 'idle' })])).toEqual({ agent, isEnded: false, reason: 'it is still idle' })
+    expect(L.endOutcome(agent, null, null)).toEqual({ agent, isEnded: false, reason: "its status couldn't be read afterwards" })
+    expect(L.endOutcome(agent, 'no', null)).toEqual({ agent, isEnded: false, reason: 'no' })
+  })
+
+  test('endedLine words each outcome by phase and name, and says when no agent was running or none could be listed', () => {
+    const red = row('a1', { name: 'issue-forge-16-red-1' })
+    const green = row('a2', { description: 'issue-forge #16 green' })
+    const other = row('a3', { description: 'stopprobe ticks' })
+    expect(L.endedLine([])).toBe('no agent was running')
+    expect(L.endedLine([{ agent: red, isEnded: true }])).toBe('its red agent (issue-forge-16-red-1) has stopped')
+    expect(L.endedLine([{ agent: red, isEnded: false, reason: 'no' }])).toBe("its red agent (issue-forge-16-red-1) wasn't stopped (no), so it may keep working until its turn ends")
+    expect(L.endedLine([{ agent: red, isEnded: true }, { agent: green, isEnded: false, reason: 'it is still running' }])).toBe(
+      "its red agent (issue-forge-16-red-1) has stopped; its green agent (a2) wasn't stopped (it is still running), so it may keep working until its turn ends",
+    )
+    expect(L.endedLine([{ agent: other, isEnded: true }])).toBe('an agent of the run (a3) has stopped')
+    expect(L.endedLine({ unlisted: 'the agents could not be listed' })).toBe("its agents couldn't be listed (the agents could not be listed), so any still working may keep going until their turn ends")
+  })
+})
