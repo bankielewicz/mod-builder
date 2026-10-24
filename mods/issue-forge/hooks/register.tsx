@@ -1731,8 +1731,8 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number, name
       return stopped.startsWith('stopped') ? `stopped #${action.issue}; ${await begin($, at, issue, isChosen, ghRepo)}` : stopped
     }
     case 'handOffThenStart': {
-      const step = (await handOff($))?.step
-      return step ? `handed off #${action.issue} at ${step}; ${await begin($, at, issue, isChosen, ghRepo)}` : 'this session is driving no run.'
+      const off = await handOff($)
+      return off?.step ? `handed off #${action.issue} at ${off.step}${endedClause(off.ended)}; ${await begin($, at, issue, isChosen, ghRepo)}` : 'this session is driving no run.'
     }
     case 'keep':
       return keepText(issue)
