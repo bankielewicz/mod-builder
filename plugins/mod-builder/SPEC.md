@@ -1352,7 +1352,11 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - the qualifier, on the teammate entry: under `claude -p` a named spawn isn't a teammate.
 
   Each says which build it was probed on (2.1.310), and what wasn't checked (other permission modes, 2.1.296's `spawnedBy`). `docs/how-it-works.md`'s count goes from 111 to 115.
-- **Where the facts come from:** issue-forge's SPEC Change 0.9.1, "Step 1's result", and its Built block's live checks, both the pre-merge one and the one after PR #151 merged. That last check ran on the installed copy: "its red agent (issue-forge-84-red-1) has stopped", with no tool call after the stop (2026-10-24, 2.1.310).
+- **Where the facts come from:** issue-forge's SPEC Change 0.9.1, "Step 1's result", and its Built block's live checks, both the pre-merge one and the one after PR #151 merged.
+  - **The check after the merge** [probe, 2026-10-24 21:33 UTC, 2.1.310]: an interactive session in a private tmux, started in the main folder with no `--plugin-dir`, so the installed `issue-forge@claudemod` 0.9.1 ran (the log: `hooks module issue-forge@claudemod loaded`). It ran under `--permission-mode auto` with `teammateMode: "in-process"`. A real `/issue-forge 84` was stopped during red with a typed `/issue-forge stop`.
+    - The answer: "stopped #84. … its red agent (issue-forge-84-red-1) has stopped." No tool call came after the stop in the red agent's transcript, and the run's worktree `git status` was empty then and 60 s later. The screen showed no dialog.
+    - The debug log: `Hooks: PreToolUse:TaskStop [python3 …/hookify/hooks/pretooluse.py]`, then `Hook PreToolUse:TaskStop (PreToolUse) success`. And three `hooks module issue-forge@claudemod tool.call skipped: re-entry (the plugin's own code raised it; origin issue-forge)`, each right after a `$.tool.call (issue-forge): Agent` (the spawns) or the `TaskStop`.
+  - **The check before the merge** (its debug log, 2.1.310, `@inline`): the same re-entry line followed each `Agent` call and the `TaskStop`. None followed the two `$.tool.call (issue-forge): AskUserQuestion` calls of the start menu.
 - **Against Anthropic's documents:**
   - Plugins: a skill's files live in its folder, and the page sends "frontmatter fields and supporting files" to the Skills docs [read: `docs/research/claude-plugins/Add-components-to-a-plugin.md:222-259`]. Nothing there constrains what a reference file says.
   - Mods: "`$.agent` | `register`, `spawn`, `list`" [read: `docs/research/Mods/Test and troubleshoot/Mods-reference.md:208`], which the `TaskStop` entry restates. `e.agentId` is set on a subagent's or an in-process teammate's call [read: `:66`].
@@ -1363,5 +1367,16 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - `check_docs.py` on the changed documents;
   - the `-p` load check for the version bump;
   - the skill-reviewer agent on the new entries, against issue-forge's SPEC record.
+- **The skill review** (the skill-reviewer agent, as `/plugin-dev:skill-development` asks): two critical findings and five major ones, all fixed.
+  - **Critical:**
+    - The PreToolUse sentence had no source in any record. It now names the hook (hookify's, a classic hook), and its log lines are above.
+    - The re-entry claim was broader than seen, and could read against "Modules"' 2.1.300 nested-call entry. It is now scoped to `TaskStop` from a `command.run` hook and the `Agent` calls of a detached drive, with the docs' `re-entry` line (`Mods-reference.md:42`), the d.ts version (2.1.309) and the build. It says what wasn't seen (`AskUserQuestion`) and why a mod's own registered tool differs.
+  - **Major:**
+    - "Under `claude -p` (stream-json included)" became the stream-json run that was made, and `-p` on 2.1.296 wasn't checked.
+    - The teammate's drop-out now reads "`killed` at once, gone 30 s later (interactive)" against the subagent's "still `killed` 30 s later (`-p` stream-json)", with the 2.1.309 d.ts's own words.
+    - The `spawnedBy` entry names issue-forge's whole filter, the absent field included. So the installed copy's match doesn't show the field.
+    - The `TaskStop` entry's "each time" covers the four runs that read the status back. The installed copy's answer is a clause of its own.
+    - Two entries now say "in an interactive session" where they spoke of teammates: the hand-back entry, and the tmux one.
+  - **Minor:** the teammate's `TaskStop` message names a different task id, now said outright. The `$.agent` sentence carries its `[d.ts]` source inline, and long lines are wrapped.
 - **Version:** 0.2.33 (patch: skill reference text).
 
