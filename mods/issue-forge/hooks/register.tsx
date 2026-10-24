@@ -573,10 +573,7 @@ async function endAgents($: EngineInterface, refs: Iterable<string>): Promise<En
   if (targets.length === 0) return []
   const refusals = new Map<string, string | null>()
   for (const agent of targets) refusals.set(agent.id, await stopAgent($, agent.id))
-  const after = await $.agent.list().then(
-    rows => rows as ListedAgent[],
-    () => null,
-  )
+  const after = await $.agent.list().catch(() => null)
   return targets.map(agent => endOutcome(agent, refusals.get(agent.id) ?? null, after))
 }
 
