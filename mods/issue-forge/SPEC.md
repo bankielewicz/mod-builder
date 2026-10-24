@@ -2334,3 +2334,11 @@ count set in the pane.
   8. **The SPEC's recorded answers predate round 1** ("within 5 s", and the watch toast's wording). Corrected to the shipped text, with #4's order.
   9. **No test asserts `stillOwned`'s `TaskStop`.** Add one: a takeover caught before a commit ends the agent.
   10. **`watch` awaits `endAgents` before its toast.** A slow `TaskStop` delays both the toast and the next refresh. Proposed as an addition to #152, which already covers a `TaskStop` that waits.
+
+  The owner, 2026-10-24: "Fix 1-4, 6-9; file 5; 10 to #152 (Recommended)".
+  - **Across terminals, put to the owner during this round** (a side agent noted it): an explicit `/issue-forge stop <N>`, answered "take it over? yes" for a run another terminal still drives, now also ends that terminal's agent within 5 s. The owner: "End it, as built (Recommended)". So answering yes stops the run everywhere, and No is the answer when unsure that terminal has closed.
+  - **Built** (round 2): the block above `feda520`, red `8be6430` (6 of 582 failed, each by assertion; #9's test guards code already there, so it passed from the start, and it asserts that `stillOwned`, not `watch`, caught the takeover).
+    - Green, a commit per finding: `df9b027` (7), `667c5bc` (1, `releaseDriver` in a `try`, the agents in its `finally`), `d2aa74c` (4, the same shape in `stopRun`), `5a02af9` (2, the late agent ended first, its outcome toasted by `lateAnswer`), `15db569` (3, `withLateAgent`), `f0acc05` (6, with no test: the kit's clock stub can't refuse a timer).
+    - Refactor `5675664`; the SPEC's wording `ff1ecf7` (8).
+    - #5 is filed as #153, and #10 is added to #152 (comment 6379471353).
+    - **#3 in the kit:** a kit spawn never gets an agent id, so the write onto the run is tested as logic (`withLateAgent`) only. Its wiring in `phase()` runs only when a real spawn returns an id.
