@@ -1696,7 +1696,9 @@ const GOING = new Set(['pending', 'running', 'waiting', 'idle'])
 export function agentsToEnd(known: Iterable<string>, listed: readonly ListedAgent[]): ListedAgent[] {
   const refs = new Set(known)
   // A `--plugin-dir` copy reports the plain name (#40's probe); an installed one may add its source, as /config owners do.
-  const isOwn = (by: string | undefined) => by === NAME || !!by?.startsWith(`${NAME}@`)
+  // A listing without the field (unknown before 2.1.305) leaves the known refs alone to decide: only issue-forge's own
+  // agents carry them (PR #151 review round 2, finding 7).
+  const isOwn = (by: string | undefined) => by === undefined || by === NAME || by.startsWith(`${NAME}@`)
   return listed.filter(a => isOwn(a.spawnedBy) && GOING.has(a.status) && [a.id, a.name, a.teammateId?.split('@')[0]].some(ref => !!ref && refs.has(ref)))
 }
 
