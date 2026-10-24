@@ -2212,8 +2212,9 @@ count set in the pane.
 
     For example: `stopped #40. Its branch issue-40-… and commits are kept; its red agent (issue-forge-40-red-1) was ended.`, or `…; its red agent (issue-forge-40-red-1) wasn't ended (<reason>), so it may keep working until its turn ends.`, or `…; no agent was running.`
     - If the probe shows the guard refusing calls, the second form adds that issue-forge refuses its tool calls. Otherwise it doesn't promise that.
-    - A stop from another session can't reach the driving session's agents. Its answer says `the session driving it stops it, and ends its agents, within 5 s`.
-    - `watch`'s toast becomes `#<N> was stopped in another session; this session stopped driving it and <ended its red agent | the outcome>.`
+    - A stop from another session can't reach the driving session's agents. Its answer says `its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open` (corrected in round 2: this read `within 5 s`, a deadline nothing here verifies; round 1, finding 2).
+    - `watch`'s toast becomes `#<N> was stopped in another session; this session stopped driving it; its red agent (issue-forge-<N>-red-1) has stopped.` when an agent was going, and stays as it was otherwise (corrected in round 2).
+    - A pressed Stop or Hand off leads with the outcome, since its toast is cut to 80 characters (the owner's choice after round 1; `stopAnswer`, `handOffAnswer`).
   - **If the probe shows `TaskStop` can't end a mod's agent** in either case, the step stays and records the refusal. The answer then names the agents still running and says they may keep working until their turn ends. Nothing claims they were ended.
   - **The guard stays as it is** (`guardAction`), as the second layer for an agent that `TaskStop` didn't end.
   - **Pure rules in the logic module:** `agentsToEnd(known, listed)` picks the agents to end, and `endedLine(outcomes)` words the answer's part about the agents. `register.tsx` gets one top-level `endAgents($)` that lists, calls `TaskStop` and lists again, and the five places call it.
@@ -2274,7 +2275,7 @@ count set in the pane.
   - **Where it differs from the approved text:** which agents each place ends is spelled out under "Which agents". The approved text said the list "isn't narrowed to one run", which would have ended a second drive's agent.
   - **Answers:**
     - The stop: `stopped #<N>. Its branch <b> and commits are kept; <each agent's outcome | no agent was running | its agents couldn't be listed (…)>.`
-    - A run driven elsewhere: `…; if the session driving it is still open, it stops driving it and ends its agents within 5 s.`
+    - A run driven elsewhere: `…; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.` (round 1 changed this from `…; if the session driving it is still open, it stops driving it and ends its agents within 5 s.`)
     - Hand off and the watch toast add the outcome only when an agent was going, so their old text stands otherwise.
   - **Not built:** a demo state, since the change draws nothing new.
   - **QA** (2.1.310 CLI; types 2.1.309):
@@ -2305,7 +2306,7 @@ count set in the pane.
   5. **The stop-during-spawn branch ends by name, so it could hit a newer agent of the same name** (that agent is never recorded, so the name can be reused). Match by `agentId` when the spawn returned one. When it returned none and was denied, nothing started, so nothing is ended. The kit's case, with no id and no deny, still matches by name.
   6. **An immediate re-list may still read `running`** while `TaskStop`'s kill lands. All four live observations read `killed` at once, so this is theoretical. One more listing after a short wait (`$.clock.after`), and `TaskStop`'s own text in the reason when the agent still reads as going.
   7. **`TaskStop` may raise a permission dialog outside `auto`**, so the stop's answer and the watch toast wait on it. The README already names the limit. Proposed as a follow-up issue.
-  8. **The agents end only after the store write,** so a rejected write leaves them running. When this session's drive ends, end them right after `endLocalDrive`, before the write. For a run not driven here, keep the order: end them once the write confirms the stop.
+  8. **The agents end only after the store write,** so a rejected write leaves them running. When this session's drive ends, end them right after `endLocalDrive`, before the write. For a run not driven here, keep the order: end them once the write confirms the stop. (Superseded by round 2, finding 4: the write comes first and the agents are ended in a `finally`, which keeps this point, a refused write still ends them, and doesn't let a waiting `TaskStop` hold the record.)
   9. **`endAgents` lists even when there are no refs, and calls `TaskStop` one agent at a time.** Return early on no refs, and call `TaskStop` for all of them at once.
   10. **The agent stop is added at five call sites instead of one drive-end helper.** A design suggestion. Proposed as part of the same follow-up issue as 7.
 
