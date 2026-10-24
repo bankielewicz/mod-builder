@@ -1959,8 +1959,15 @@ async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: 
   if (!d) return null
   endLocalDrive()
   $.ui.status(undefined)
-  const step = ((await releaseDriver($, d)) ?? drivenLast)?.step ?? null
-  return { step, ended: await endAgents($, knownRefs) }
+  let step: Step | null = null
+  let ended: EndedAgents = []
+  try {
+    step = ((await releaseDriver($, d)) ?? drivenLast)?.step ?? null
+  } finally {
+    // Whatever the store write did, the drive is over, so its agents go (PR #151 review round 2, finding 1).
+    ended = await endAgents($, knownRefs)
+  }
+  return { step, ended }
 }
 
 async function handOffRun($: EngineInterface, issue: number | null, byPress = false): Promise<string> {
