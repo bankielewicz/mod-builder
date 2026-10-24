@@ -1670,7 +1670,7 @@ export function spawnRefs(agentId: string, name: string | undefined, teammateId:
 }
 
 /** An agent as `$.agent.list()` gives it, the fields issue-forge reads (#40). */
-export type ListedAgent = { id: string; name?: string; teammateId?: string; description?: string; status: string; spawnedBy?: string }
+export type ListedAgent = { id: string; name?: string; teammateId?: string; description: string; status: string; spawnedBy?: string }
 
 /** What ending one agent came to (#40): it has stopped, or it is still going, and why. */
 export type EndOutcome = { agent: ListedAgent; isEnded: true } | { agent: ListedAgent; isEnded: false; reason: string }
@@ -1698,7 +1698,7 @@ export function endOutcome(agent: ListedAgent, refused: string | null, after: re
 const AGENT_PHASE = /^issue-forge #\d+ (red|green|refactor)$/
 
 function agentWords(agent: ListedAgent): string {
-  const phase = AGENT_PHASE.exec(agent.description ?? '')?.[1]
+  const phase = AGENT_PHASE.exec(agent.description)?.[1]
   return `${phase ? `its ${phase} agent` : 'an agent of the run'} (${agent.name ?? agent.id})`
 }
 
