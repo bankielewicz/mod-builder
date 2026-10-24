@@ -65,6 +65,7 @@ import {
   keptWorktreePlan,
   kindOf,
   layoutOf,
+  lateAnswer,
   lateSpawnRefs,
   lcovFileOf,
   leftAfter,
@@ -133,6 +134,7 @@ import {
   truncate,
   unstagedOf,
   viewOf,
+  withLateAgent,
   workOf,
   workspacePlan,
   worktreeAddFailure,
@@ -2992,33 +2994,21 @@ describe('#40: a drive that ends, ends its agents', () => {
 
   // Round 2, finding 3: the late agent is written onto its own run, so a later stop of that run finds it and its name isn't reused.
   test('withLateAgent adds the late agent to its own run, stopped or not, once; another run is left alone', () => {
-    const L = new Proxy(logic as any, {
-      get: (module, name: string) => {
-        expect(typeof module[name]).toBe('function')
-        return module[name]
-      },
-    })
-    const late = { id: 'a7', name: 'issue-forge-16-green-2', phase: 'green' }
-    const stopped = { id: '16-1', step: 'stopped', agents: [{ id: 'old-green', name: 'issue-forge-16-green-1', phase: 'green' }] }
-    expect(L.withLateAgent(stopped, '16-1', late)).toEqual({ ...stopped, agents: [...stopped.agents, late] })
-    expect(L.withLateAgent({ ...stopped, agents: [late] }, '16-1', late)).toBe(null)
-    expect(L.withLateAgent({ ...stopped, id: '16-2' }, '16-1', late)).toBe(null)
-    expect(L.withLateAgent(null, '16-1', late)).toBe(null)
+    const late = { id: 'a7', name: 'issue-forge-16-green-2', phase: 'green' as const }
+    const stopped = run({ id: '16-1', step: 'stopped', agents: [{ id: 'old-green', name: 'issue-forge-16-green-1', phase: 'green' }] })
+    expect(withLateAgent(stopped, '16-1', late)).toEqual({ ...stopped, agents: [...stopped.agents, late] })
+    expect(withLateAgent({ ...stopped, agents: [late] }, '16-1', late)).toBe(null)
+    expect(withLateAgent({ ...stopped, id: '16-2' }, '16-1', late)).toBe(null)
+    expect(withLateAgent(null, '16-1', late)).toBe(null)
   })
 
   // Round 2, finding 2: the stop already answered, so a late agent's outcome is a toast of its own, short enough to show whole.
   test('lateAnswer names the late agent\'s outcome under 80 characters, and nothing when there was none', () => {
-    const L = new Proxy(logic as any, {
-      get: (module, name: string) => {
-        expect(typeof module[name]).toBe('function')
-        return module[name]
-      },
-    })
     const agent = row('a7', { name: 'issue-forge-16-green-2', description: 'issue-forge #16 green' })
-    const text = L.lateAnswer(16, [{ agent, isEnded: true }])
+    const text = lateAnswer(16, [{ agent, isEnded: true }]) ?? ''
     expect(text).toBe('#16: its green agent (issue-forge-16-green-2) has stopped')
     expect(text.length).toBeLessThanOrEqual(80)
-    expect(L.lateAnswer(16, [])).toBe(null)
+    expect(lateAnswer(16, [])).toBe(null)
   })
 
   // Round 1, finding 6: an agent still read as going after TaskStop answered keeps TaskStop's own words in the reason.
