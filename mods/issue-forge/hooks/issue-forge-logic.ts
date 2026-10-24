@@ -1684,7 +1684,9 @@ const GOING = new Set(['pending', 'running', 'waiting', 'idle'])
 /** The agents a drive's end stops (#40): issue-forge's own, still going, whose id, name or teammate name is known. */
 export function agentsToEnd(known: Iterable<string>, listed: readonly ListedAgent[]): ListedAgent[] {
   const refs = new Set(known)
-  return listed.filter(a => a.spawnedBy === NAME && GOING.has(a.status) && [a.id, a.name, a.teammateId?.split('@')[0]].some(ref => !!ref && refs.has(ref)))
+  // A `--plugin-dir` copy reports the plain name (#40's probe); an installed one may add its source, as /config owners do.
+  const isOwn = (by: string | undefined) => by === NAME || !!by?.startsWith(`${NAME}@`)
+  return listed.filter(a => isOwn(a.spawnedBy) && GOING.has(a.status) && [a.id, a.name, a.teammateId?.split('@')[0]].some(ref => !!ref && refs.has(ref)))
 }
 
 /** Whether an agent has stopped, by the listing taken after TaskStop (null when it couldn't be taken); `refused` is TaskStop's refusal. */
