@@ -214,6 +214,18 @@ type World = {
   files: Record<string, string>
   beneath: string[]
   clock: any
+  /** What each `$.agent.list()` answers, call by call; the last repeats; absent, no agents (#40). */
+  listed?: any[][]
+  /** `$.agent.list()` rejects (#40). */
+  listFails?: boolean
+  /** The `task_id` of every `TaskStop` call, in order (#40). */
+  taskStops: string[]
+  /** What a `TaskStop` call answers; absent, the success Claude Code 2.1.310 gave (#40's probe). */
+  taskStopAnswer?: any
+  /** `$.agent.spawn` is refused with this reason (PR #151 review round 1, finding 5). */
+  spawnDeny?: string
+  /** When set, every `TaskStop` waits for it, as one held by a permission dialog would (round 2, finding 4). */
+  taskStopHold?: Promise<void>
 }
 
 /** Where git keeps /w's index lock (#28). */
@@ -262,6 +274,7 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     files: {},
     beneath: [],
     clock: null,
+    taskStops: [],
     ...w,
   }
   world.clock = mock.clock(on, { now: 1_000_000 })
@@ -316,9 +329,20 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (world.answer === null) return { deny: 'nobody to ask' }
     return { result: { questions: e.questions, answers: { [q]: world.answer } } }
   })
+  let lists = 0
+  on('agent.list', () => {
+    if (world.listFails) return { deny: 'the agents could not be listed' }
+    const all = world.listed ?? [[]]
+    return { value: all[Math.min(lists++, all.length - 1)] }
+  })
+  on('tool.call', { tool: 'TaskStop' }, ($: any, e: any) => {
+    world.taskStops.push(e.task_id)
+    const answer = world.taskStopAnswer ?? { result: { message: `Successfully stopped task: ${e.task_id} (issue-forge #16)`, task_id: e.task_id, task_type: 'local_agent', command: 'issue-forge #16' } }
+    return world.taskStopHold ? world.taskStopHold.then(() => answer) : answer
+  })
   on('agent.spawn', ($: any, e: any) => {
     world.spawned.push({ subagentType: e.subagentType ?? e.subagent_type, name: e.name, model: e.model, prompt: e.prompt, cwd: e.cwd })
-    const answer = { model: e.model ?? 'claude', agentId: `a${world.spawned.length}` }
+    const answer = world.spawnDeny !== undefined ? { deny: world.spawnDeny } : { model: e.model ?? 'claude', agentId: `a${world.spawned.length}` }
     return world.spawnHold ? world.spawnHold.then(() => answer) : answer
   })
   const profilePath = `${ROOT}/.issue-forge.json`
@@ -1062,7 +1086,10 @@ describe('reloads, resume and stop', () => {
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', name: 'issue-forge-16-green-2' })
     // A run stored by 0.1.0 has no pinned repository: the issue is looked up as before (#25).
     expect(w.argv.find(a => a[0] === 'gh' && a[1] === 'issue')).not.toContain('--repo')
-    expect((await run($, 'stop')).text).toContain('its agents are refused further tool calls')
+    // The answer says what the stop did, never a refusal no run has shown (#40).
+    const stopped = (await run($, 'stop')).text
+    expect(stopped).toContain('stopped #16')
+    expect(stopped).not.toContain('refused')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-green' } as never)) as any).deny).toContain('issue-forge:')
   })
@@ -4423,5 +4450,280 @@ describe('#140: the store under its limit', () => {
     expect((await run($, 'status 16')).text).toContain(LINE)
     // PR #145 review round 2, finding 8: an issue with no run here answers with the stale line too.
     expect((await run($, 'status 99')).text).toContain(LINE)
+  })
+})
+
+// A drive that ends, ends its agents (SPEC Change 0.9.1). The rows are `$.agent.list()`'s as Claude Code 2.1.310 gave them
+// (#40's probe); a kit spawn never gets an agent id, so an agent the run started is matched by its name.
+describe('#40: a drive that ends, ends its agents', () => {
+  const row = (id: string, name: string | undefined, phase: string, status = 'running', extra: Record<string, unknown> = {}) => ({
+    id,
+    ...(name ? { name } : {}),
+    description: `issue-forge #16 ${phase}`,
+    type: `issue-forge:${phase}`,
+    status,
+    spawnedBy: 'issue-forge',
+    ...extra,
+  })
+  const oldGreen = (status = 'running') => row('old-green', 'issue-forge-16-green-1', 'green', status)
+  const newGreen = (status = 'running') => row('a77', 'issue-forge-16-green-2', 'green', status)
+  const held = () => new Promise<void>(() => undefined)
+  const WORKTREE = { ...PROFILE, workspace: 'worktree' }
+
+  test("a stop ends the run's agent that is still going, and says it has stopped; one it doesn't know or didn't start is left alone", async ($, on) => {
+    const listed = [[oldGreen(), row('stranger', undefined, 'red'), row('lookalike', 'issue-forge-16-red-1', 'red', 'running', { spawnedBy: 'other-mod' })], [oldGreen('killed')]]
+    const w = engine(on, { listed }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const text = (await run($, 'stop')).text
+    expect(w.taskStops).toEqual(['old-green'])
+    expect(text).toBe(`stopped #16. Its branch ${BRANCH} and commits are kept; its green agent (issue-forge-16-green-1) has stopped.`)
+  })
+
+  test('a TaskStop that is refused leaves the agent going, and the answer says so, with the reason', async ($, on) => {
+    const w = engine(on, { listed: [[oldGreen()]], taskStopAnswer: { deny: 'no' } }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const text = (await run($, 'stop')).text
+    expect(w.taskStops).toEqual(['old-green'])
+    expect(text).toContain("kept; its green agent (issue-forge-16-green-1) wasn't stopped (no), so it may keep working until its turn ends.")
+    expect(text).not.toContain('refused')
+  })
+
+  test('an agent that already finished: no TaskStop, and the answer says no agent was running', async ($, on) => {
+    const w = engine(on, { listed: [[oldGreen('completed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    expect((await run($, 'stop')).text).toContain('kept; no agent was running.')
+    expect(w.taskStops).toEqual([])
+  })
+
+  test("a run with no agents: no TaskStop, even for a listed agent of another run's name", async ($, on) => {
+    const w = engine(on, { listed: [[oldGreen()]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green', { agents: [] }) })
+    await start($)
+    expect((await run($, 'stop')).text).toContain('kept; no agent was running.')
+    expect(w.taskStops).toEqual([])
+  })
+
+  test("agents that can't be listed: the answer says so, and promises nothing", async ($, on) => {
+    const w = engine(on, { listFails: true }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const text = (await run($, 'stop')).text
+    expect(text).toContain("kept; its agents couldn't be listed (")
+    expect(text).toContain('so any still working may keep going until their turn ends.')
+    expect(w.taskStops).toEqual([])
+  })
+
+  test('a stop of the run this session drives ends its agent', async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: held(), listed: [[newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    expect((await run($, 'stop')).text).toContain('kept; its green agent (issue-forge-16-green-2) has stopped.')
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test('a stop of another run leaves the agent of the run this session drives alone', async ($, on) => {
+    const blocked44 = storedRun('blocked', { id: '44-1', issue: 44, title: 'duet follow-ups', branch: 'issue-44-duet', repo: `${ROOT}/.git`, blocked: { at: 'gateG', reason: 'r', next: 'n' }, agents: [{ id: 'old-44', name: 'issue-forge-44-green-1', phase: 'green' }] })
+    const old44 = (status: string) => row('old-44', 'issue-forge-44-green-1', 'green', status, { description: 'issue-forge #44 green' })
+    const listed = [[newGreen(), old44('running')], [newGreen(), old44('killed')]]
+    const w = engine(on, { head: BRANCH, spawnHold: held(), listed }, { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }), [key(44)]: blocked44 })
+    await start($)
+    expect((await run($, 'resume 16')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    expect((await run($, 'stop 44')).text).toContain('kept; its green agent (issue-forge-44-green-1) has stopped.')
+    expect(w.taskStops).toEqual(['old-44'])
+  })
+
+  test('a stop while the spawn is still pending ends the agent once the spawn resolves', async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, spawnHold: new Promise<void>(resolve => (release = resolve)), listed: [[], [newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'the spawn')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    expect(w.taskStops).toEqual([])
+    release()
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test("hand off ends this session's agent, and says so", async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: held(), listed: [[newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    expect((await run($, 'handoff')).text).toBe('handed off #16 at green; /issue-forge resume 16 continues it in any session; its green agent (issue-forge-16-green-2) has stopped.')
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test('the driving session ends its agent when another session stops its run, and the toast says so', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const red = (status: string) => row('a77', 'issue-forge-16-red-1', 'red', status)
+    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), answer: 'Cancel', storeHold: { when: () => false, until: Promise.resolve() }, listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    store[key(16)] = { ...(store[key(16)] as any), step: 'stopped' }
+    await w.clock.advance(5_000)
+    await until(w, () => w.toasts.some(t => t.startsWith('#16 was stopped in another session')), 'the toast')
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['a77'])
+    await waitFor(w, () => w.toasts.some(t => t.includes('has stopped')))
+    expect(w.toasts).toContain('#16 was stopped in another session; this session stopped driving it; its red agent (issue-forge-16-red-1) has stopped.')
+  })
+
+  // PR #151 review round 1, finding 2: the answer says what that session does, not a deadline nothing here verifies.
+  test('a stop of a run another session drives says its agents run there, and when that session ends them', async ($, on) => {
+    const elsewhere = storedRun('green', { id: '40-1', issue: 40, branch: 'issue-40-x', repo: `${ROOT}/.git`, driver: { session: OTHER, since: 1_000_000 - 125_000 } })
+    const w = engine(on, { head: 'issue-40-x', answer: 'Take over' }, { [key(40)]: elsewhere })
+    await start($)
+    const text = (await run($, 'stop 40')).text
+    expect(text).toBe('stopped #40. Its branch issue-40-x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
+    expect(w.taskStops).toEqual([])
+  })
+
+  test('round 1, finding 2: a Stop of the driven run that another session replaced meanwhile still ends the agent, and says so', async ($, on) => {
+    let release: (label: string) => void = () => undefined
+    const hold = new Promise<string>(resolve => (release = resolve))
+    const store: Record<string, unknown> = { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, listed: [[newGreen()], [newGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    w.hold = hold
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await until(w, () => w.asked.length === 1, 'the question')
+    store[key(16)] = { ...(store[key(16)] as any), id: '16-2' }
+    release('Stop the run')
+    await waitFor(w, () => w.toasts.some(t => t.includes('moved on')))
+    await ui.unmount()
+    expect(w.taskStops).toEqual(['a77'])
+    // A press shows its answer cut to 80 characters, so the outcome comes first (the owner: "Lead with the outcome").
+    expect(w.toasts.some(t => t.startsWith('#16 moved on; its green agent (issue-forge-16-green-2) has stopped'))).toBe(true)
+  })
+
+  test("a pressed Stop's toast leads with which agents stopped, so the 80-character cut keeps it", async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: held(), answer: 'Stop the run', listed: [[newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('stopped #16')))
+    await ui.unmount()
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.toasts.some(t => t.startsWith('stopped #16; its green agent (issue-forge-16-green-2) has stopped.'))).toBe(true)
+  })
+
+  test("a pressed Hand off's toast leads with which agents stopped", async ($, on) => {
+    const w = engine(on, { head: BRANCH, spawnHold: held(), listed: [[newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    const ui = await pane($)
+    await ui.press({ key: 'handoff' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('handed off #16')))
+    await ui.unmount()
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.toasts.some(t => t.startsWith('handed off #16 at green; its green agent (issue-forge-16-green-2) has stopped'))).toBe(true)
+  })
+
+  test('round 1, finding 3: hand off, then start, says what happened to the handed-off run\'s agent', async ($, on) => {
+    const red = (status: string) => row('a77', 'issue-forge-16-red-1', 'red', status)
+    const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), listed: [[red('running')], [red('killed')], []] })
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.answer = 'Hand #16 off and start #17 here (any session can resume #16)'
+    expect((await run($, '17')).text).toBe('handed off #16 at red; its red agent (issue-forge-16-red-1) has stopped; starting #17; the pane shows progress. Nothing is pushed until you say yes.')
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test('round 1, finding 5: a stop while the spawn is pending ends nothing when the spawn is refused, even an agent of the same name', async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, spawnDeny: 'no', spawnHold: new Promise<void>(resolve => (release = resolve)), listed: [[], [newGreen()]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'the spawn')
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    release()
+    await w.clock.settle()
+    await w.clock.advance(50)
+    expect(w.taskStops).toEqual([])
+  })
+
+  test('round 1, finding 6: an agent still read as running right after TaskStop is listed again a moment later', async ($, on) => {
+    const w = engine(on, { listed: [[oldGreen()], [oldGreen()], [oldGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    const stopping = run($, 'stop')
+    await waitFor(w, () => w.taskStops.length > 0)
+    for (let i = 0; i < 400; i++) await w.clock.advance(5)
+    const text = (await stopping).text
+    expect(w.taskStops).toEqual(['old-green'])
+    expect(text).toContain('kept; its green agent (issue-forge-16-green-1) has stopped.')
+  })
+
+  test('round 1, finding 8: the drive\'s agent is ended even when the stop\'s store write is refused', async ($, on) => {
+    const store: Record<string, unknown> = { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, listed: [[newGreen()], [newGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    w.storeLimit = 10
+    await run($, 'stop').catch(() => undefined)
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test("round 2, finding 1: hand off ends the drive's agent even when releasing the run's driver is refused (Codex 4365778044)", async ($, on) => {
+    const store: Record<string, unknown> = { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, listed: [[newGreen()], [newGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    w.storeLimit = 10
+    await run($, 'handoff').catch(() => undefined)
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test("round 2, finding 2: an agent whose spawn resolved after the stop is ended, and a toast says so, since the stop's answer came first", async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, spawnHold: new Promise<void>(resolve => (release = resolve)), listed: [[], [newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'the spawn')
+    expect((await run($, 'stop')).text).toContain('kept; no agent was running.')
+    release()
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('#16: ')))
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.toasts).toContain('#16: its green agent (issue-forge-16-green-2) has stopped')
+  })
+
+  test("round 2, finding 4: the stop is written before TaskStop answers, so a TaskStop held by a dialog doesn't hold the run's record", async ($, on) => {
+    let release: () => void = () => undefined
+    const store: Record<string, unknown> = { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, taskStopHold: new Promise<void>(resolve => (release = resolve)), listed: [[newGreen()], [newGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    const stopping = run($, 'stop')
+    await waitFor(w, () => (store[key(16)] as any).step === 'stopped')
+    expect((store[key(16)] as any).step).toBe('stopped')
+    release()
+    expect((await stopping).text).toContain('kept; its green agent (issue-forge-16-green-2) has stopped.')
+  })
+
+  test("round 2, finding 9: a takeover caught just before a commit ends the drive's agent (stillOwned)", async ($, on) => {
+    let release: () => void = () => undefined
+    const store: Record<string, unknown> = { [key(16)]: storedRun('gateG', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, statusHold: new Promise<void>(r => (release = r)), listed: [[oldGreen('idle')], [oldGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.argv.some(a => a[1] === 'status' && a.includes('-z')), "the gate's last look")
+    store[key(16)] = { ...(store[key(16)] as any), driver: { session: OTHER, since: 1 } }
+    release()
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['old-green'])
+    expect(w.commits).toEqual([])
+    // stillOwned caught it, not watch's 5-second check, whose toast would say so.
+    expect(w.toasts.some(t => t.includes('was taken over'))).toBe(false)
   })
 })

@@ -16,7 +16,10 @@ import {
   afterBlock,
   agentName,
   isInlineAnswer,
+  lateSpawnRefs,
+  withLateAgent,
   agentsKey,
+  agentsToEnd,
   agentPrompt,
   badgeOf,
   baseOf,
@@ -39,6 +42,12 @@ import {
   demoRun,
   elsewhereLine,
   elsewhereText,
+  endOutcome,
+  endedClause,
+  handOffAnswer,
+  lateAnswer,
+  movedOnAnswer,
+  stopAnswer,
   findStash,
   finishedRecord,
   foreignChange,
@@ -147,7 +156,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
+import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, EndedAgents, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, ListedAgent, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -216,9 +225,9 @@ let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
 let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; baseManifests: readonly string[] } | null = null
 /**
- * Every agent id and name a run of this repository has started, in memory for the tool.call guard
- * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
- * can't be ended, only refused).
+ * Every agent id and name a run of this repository has started, in memory for the tool.call guard,
+ * the hand-back drop and the end of a drive (which ends them with TaskStop, #40), and in the store so a
+ * new run or a reload never forgets one: one TaskStop didn't end is still refused by the guard.
  */
 let knownRefs = new Set<string>()
 /** The last run write queued: updateRun chains each one after it. */
@@ -538,11 +547,15 @@ async function stillOwned($: EngineInterface, run: Run): Promise<void> {
   stillDriving(run)
   if (foreignChange(await loadRun($, keyOf(run)), run.id, sessionId)) {
     endLocalDrive()
+    await endAgents($, knownRefs)
     throw new Stopped()
   }
 }
 
-/** Ends this session's drive at once, as a Stop does, writing nothing: the command is ended and the agent refused. */
+/**
+ * Ends this session's drive at once, as a Stop does, writing nothing: the command is ended and the guard refuses the
+ * agent from now on. Ending the agent itself is `endAgents`, which every caller runs next (#40).
+ */
 function endLocalDrive(): void {
   if (driving) driving.isStopped = true
   stopCommand?.()
@@ -551,6 +564,64 @@ function endLocalDrive(): void {
   for (const [id, w] of Object.entries(waiting)) {
     delete waiting[id]
     w.reject(new Error('stopped'))
+  }
+}
+
+/**
+ * Ends this session's issue-forge agents still going whose id, name or teammate name is in `refs`, with the built-in
+ * TaskStop, then lists them again: each outcome is what that listing shows, never a promise (#40).
+ */
+async function endAgents($: EngineInterface, refs: Iterable<string>): Promise<EndedAgents> {
+  const wanted = [...refs]
+  if (wanted.length === 0) return []
+  let listed: ListedAgent[]
+  try {
+    listed = await $.agent.list()
+  } catch (err) {
+    return { unlisted: err instanceof Error ? err.message : String(err) }
+  }
+  const targets = agentsToEnd(wanted, listed)
+  if (targets.length === 0) return []
+  const answers = new Map(await Promise.all(targets.map(async agent => [agent.id, await stopAgent($, agent.id)] as const)))
+  const outcomesBy = (rows: readonly ListedAgent[] | null) =>
+    targets.map(agent => endOutcome(agent, answers.get(agent.id)?.refused ?? null, rows, answers.get(agent.id)?.said ?? undefined))
+  let after: readonly ListedAgent[] | null = await $.agent.list().catch(() => null)
+  let outcomes = outcomesBy(after)
+  // TaskStop's kill may land a moment after its answer: an agent it didn't refuse that still reads as going is listed once more.
+  if (after && outcomes.some(o => !o.isEnded && answers.get(o.agent.id)?.refused === null)) {
+    // A timer, not `$.clock.sleep`, which counts against a hook's budget (as lockWait). A refused timer skips the re-check,
+    // and the first listing stands (PR #151 review round 2, finding 6); a reload ends this wait with the module.
+    const isWaited = await new Promise<boolean>(resolve => {
+      try {
+        $.clock.after(RECHECK_MS, () => resolve(true))
+      } catch {
+        resolve(false)
+      }
+    })
+    if (isWaited) {
+      after = await $.agent.list().catch(() => after)
+      outcomes = outcomesBy(after)
+    }
+  }
+  return outcomes
+}
+
+/** What one TaskStop came to: its refusal, or null and what it said. */
+type StopAnswer = { refused: string | null; said: string | null }
+
+/** How long to wait before listing again an agent TaskStop answered for that still reads as going (PR #151 review round 1). */
+const RECHECK_MS = 1000
+
+/** One TaskStop by the agent's id, the form #40's probe showed ends a subagent and a teammate. */
+async function stopAgent($: EngineInterface, id: string): Promise<StopAnswer> {
+  try {
+    const answer = await $.tool.call({ tool: 'TaskStop', task_id: id })
+    if (answer.deny !== undefined) return { refused: answer.deny, said: null }
+    if (answer.isError) return { refused: truncate(answer.text ?? 'TaskStop failed', 120), said: null }
+    const message = (answer.result as { message?: unknown } | undefined)?.message
+    return { refused: null, said: truncate(typeof message === 'string' ? message : (answer.text ?? ''), 120) || null }
+  } catch (err) {
+    return { refused: err instanceof Error ? err.message : String(err), said: null }
   }
 }
 
@@ -1130,7 +1201,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
     liveAgent = agentId
     liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [], baseManifests }
   }
-  // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
+  // A stop (or another run) while the spawn was pending wins: the agent is refused tools and ended below (#40).
   const latest = await loadRun($, keyOf(run))
   if (!latest || latest.id !== run.id || latest.step !== run.step || !isDriving(run)) {
     if (agentId) {
@@ -1139,7 +1210,18 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
         liveAgent = null
         liveWork = null
       }
-      await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
+    }
+    // The stop listed the agents before this one started, so it is ended here (#40); only this one: a new run may be driven.
+    // First, so a store write below that fails can't leave it working; and said, since the stop already answered (PR #151
+    // review round 2, finding 2).
+    const late = await endAgents($, lateSpawnRefs(agentId, name, spawned.teammateId, spawned.deny))
+    const lateText = lateAnswer(run.issue, late)
+    if (lateText) $.ui.toast(lateText)
+    if (agentId) {
+      await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId)).catch(() => undefined)
+      // On its own run, even a stopped one, so a later stop of that run still finds it (round 2, finding 3; Codex 4365778047).
+      const agent = { id: agentId, ...(name ? { name } : {}), phase: which }
+      await updateRun($, keyOf(run), stored => withLateAgent(stored, run.id, agent)).catch(() => undefined)
     }
     return null
   }
@@ -1495,7 +1577,8 @@ async function watch($: EngineInterface, d: Drive): Promise<void> {
   if (change && drivingNow() === d) {
     endLocalDrive()
     $.ui.status(undefined)
-    $.ui.toast(`#${d.issue} ${change === 'takenOver' ? 'was taken over by another session' : change === 'stopped' ? 'was stopped in another session' : 'was replaced'}; this session stopped driving it.`)
+    const ended = await endAgents($, knownRefs)
+    $.ui.toast(`#${d.issue} ${change === 'takenOver' ? 'was taken over by another session' : change === 'stopped' ? 'was stopped in another session' : 'was replaced'}; this session stopped driving it${endedClause(ended)}.`)
   }
   if (stored?.repo) await refreshOthers($, stored.repo)
 }
@@ -1671,8 +1754,8 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number, name
       return stopped.startsWith('stopped') ? `stopped #${action.issue}; ${await begin($, at, issue, isChosen, ghRepo)}` : stopped
     }
     case 'handOffThenStart': {
-      const step = await handOff($)
-      return step ? `handed off #${action.issue} at ${step}; ${await begin($, at, issue, isChosen, ghRepo)}` : 'this session is driving no run.'
+      const off = await handOff($)
+      return off?.step ? `handed off #${action.issue} at ${off.step}${endedClause(off.ended)}; ${await begin($, at, issue, isChosen, ghRepo)}` : 'this session is driving no run.'
     }
     case 'keep':
       return keepText(issue)
@@ -1878,28 +1961,48 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   const isHere = drivingNow()?.runId === run.id
   if (isHere) endLocalDrive()
   const now = await $.clock.now()
-  const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
+  let endedHere: EndedAgents | null = null
+  let stopped: Run | null
+  try {
+    stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
+  } finally {
+    // This session's drive ended, so none of its issue-forge agents should work. They go after the write, so a TaskStop
+    // that waits can't hold the stop's record, and whatever the write did, so a refused one can't leave them working
+    // (#40; PR #151 review round 1, finding 8; round 2, finding 4).
+    if (isHere) endedHere = await endAgents($, knownRefs)
+  }
   if (isHere) $.ui.status(undefined)
   // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
-  if (!stopped) return `#${run.issue} moved on before it could be stopped; /issue-forge status ${run.issue} says where.`
-  return `stopped #${run.issue}. Its branch ${stopped.branch || '(none yet)'} and commits are kept; its agents are refused further tool calls.`
+  if (!stopped) return movedOnAnswer(run.issue, endedHere, byPress)
+  // A run not driven here: only its own agents, once the write confirms the stop; a run this session drives keeps its agent
+  // (the owner, 2026-10-24: "option 1 is per design").
+  const ended = endedHere ?? (await endAgents($, refsOf(run)))
+  return stopAnswer(run.issue, stopped.branch, ended, { isElsewhere, byPress })
 }
 
-/** Ends this session's drive and clears it as the driver, keeping the step: any session can resume the run. */
-async function handOff($: EngineInterface): Promise<Step | null> {
+/** Ends this session's drive and its agents and clears it as the driver, keeping the step: any session can resume the run. */
+async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: EndedAgents } | null> {
   const d = drivingNow()
   if (!d) return null
   endLocalDrive()
   $.ui.status(undefined)
-  return ((await releaseDriver($, d)) ?? drivenLast)?.step ?? null
+  let step: Step | null = null
+  let ended: EndedAgents = []
+  try {
+    step = ((await releaseDriver($, d)) ?? drivenLast)?.step ?? null
+  } finally {
+    // Whatever the store write did, the drive is over, so its agents go (PR #151 review round 2, finding 1).
+    ended = await endAgents($, knownRefs)
+  }
+  return { step, ended }
 }
 
-async function handOffRun($: EngineInterface, issue: number | null): Promise<string> {
+async function handOffRun($: EngineInterface, issue: number | null, byPress = false): Promise<string> {
   const d = drivingNow()
   if (!d) return 'this session is driving no run.'
   if (issue !== null && issue !== d.issue) return `this session drives #${d.issue}, not #${issue}.`
-  const step = await handOff($)
-  return `handed off #${d.issue} at ${step ?? 'its step'}; /issue-forge resume ${d.issue} continues it in any session.`
+  const off = await handOff($)
+  return handOffAnswer(d.issue, off?.step ?? null, off?.ended ?? [], byPress)
 }
 
 async function statusOf($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
@@ -1960,7 +2063,7 @@ async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand, 
     case 'stop':
       return stopRun($, at, issue, byPress)
     default:
-      return handOffRun($, issue)
+      return handOffRun($, issue, byPress)
   }
 }
 

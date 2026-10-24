@@ -10,6 +10,7 @@ import {
   advance,
   agentsKey,
   agentName,
+  agentsToEnd,
   agentPrompt,
   badgeOf,
   baseOf,
@@ -31,6 +32,8 @@ import {
   demoRun,
   diffCoverage,
   elapsed,
+  endOutcome,
+  endedLine,
   elsewhereText,
   entrySize,
   expandHome,
@@ -46,6 +49,7 @@ import {
   gitFailure,
   globToRegExp,
   guardAction,
+  handOffAnswer,
   hasSourceRecord,
   hasStash,
   isActive,
@@ -61,6 +65,8 @@ import {
   keptWorktreePlan,
   kindOf,
   layoutOf,
+  lateAnswer,
+  lateSpawnRefs,
   lcovFileOf,
   leftAfter,
   legacyAgentsKey,
@@ -68,6 +74,7 @@ import {
   matchesAny,
   mergeLine,
   migrationPlan,
+  movedOnAnswer,
   newRun,
   nextDemoState,
   normalizePath,
@@ -111,6 +118,7 @@ import {
   slugOf,
   splitZ,
   startAnswer,
+  stopAnswer,
   startChoices,
   staleLine,
   stashApplyArgv,
@@ -126,6 +134,7 @@ import {
   truncate,
   unstagedOf,
   viewOf,
+  withLateAgent,
   workOf,
   workspacePlan,
   worktreeAddFailure,
@@ -2904,5 +2913,160 @@ describe('#140: the store under its limit', () => {
       { key: 'issue-forge:repo-run:/other/.git#4', value: run({ id: '4-1', step: 'done' }) },
     ])
     expect(openCounts(plan.open)).toEqual({ unfinished: 3, repos: 2 })
+  })
+})
+
+// A drive that ends, ends its agents (SPEC Change 0.9.1). The rows are `$.agent.list()`'s, as the probe on 2.1.310 logged them.
+describe('#40: a drive that ends, ends its agents', () => {
+  const row =(id: string, extra: Record<string, unknown> = {}) => ({ id, description: 'issue-forge #16 red', type: 'issue-forge:red', status: 'running', spawnedBy: 'issue-forge', ...extra })
+
+  test("agentsToEnd keeps a known issue-forge agent that is still going, matched by its id, its name or its teammate address's name", () => {
+    const known = new Set(['old-red', 'issue-forge-16-green-1', 'issue-forge-16-refactor-1'])
+    const listed = [
+      row('old-red'),
+      row('a9', { name: 'issue-forge-16-green-1', status: 'pending', description: 'issue-forge #16 green' }),
+      row('a10', { teammateId: 'issue-forge-16-refactor-1@session-1', status: 'idle', description: 'issue-forge #16 refactor' }),
+      row('a11', { name: 'issue-forge-16-green-1', status: 'waiting' }),
+    ]
+    expect(agentsToEnd(known, listed).map((a: { id: string }) => a.id)).toEqual(['old-red', 'a9', 'a10', 'a11'])
+    expect(agentsToEnd(['old-red'], listed).map((a: { id: string }) => a.id)).toEqual(['old-red'])
+  })
+
+  test("agentsToEnd leaves an agent that finished, one issue-forge doesn't know, and one it didn't start", () => {
+    const known = new Set(['old-red', 'old-green', 'mine', 'issue-forge-16-red-1'])
+    const listed = [
+      row('old-red', { status: 'completed' }),
+      row('old-green', { status: 'failed' }),
+      row('mine', { status: 'killed' }),
+      row('stranger'),
+      row('lookalike', { spawnedBy: 'other-mod', name: 'issue-forge-16-red-1' }),
+    ]
+    expect(agentsToEnd(known, listed)).toEqual([])
+    expect(agentsToEnd(new Set(), [row('old-red')])).toEqual([])
+  })
+
+  test('endOutcome: the agent has stopped once the second listing shows it killed, completed or failed, or no longer lists it', () => {
+    const agent = row('a1', { name: 'issue-forge-16-red-1' })
+    for (const status of ['killed', 'completed', 'failed']) expect(endOutcome(agent, null, [row('a1', { status })])).toEqual({ agent, isEnded: true })
+    // A killed teammate leaves the list within 30 s (the probe).
+    expect(endOutcome(agent, null, [row('other')])).toEqual({ agent, isEnded: true })
+    // A TaskStop that was refused while the agent finished by itself still leaves it stopped.
+    expect(endOutcome(agent, 'no', [row('a1', { status: 'completed' })])).toEqual({ agent, isEnded: true })
+  })
+
+  test("endOutcome: the agent is still going when the listing says so, with TaskStop's refusal if there was one, or when its status can't be read", () => {
+    const agent = row('a1', { name: 'issue-forge-16-red-1' })
+    expect(endOutcome(agent, 'no', [row('a1')])).toEqual({ agent, isEnded: false, reason: 'no' })
+    expect(endOutcome(agent, null, [row('a1', { status: 'idle' })])).toEqual({ agent, isEnded: false, reason: 'it is still idle' })
+    expect(endOutcome(agent, null, null)).toEqual({ agent, isEnded: false, reason: "its status couldn't be read afterwards" })
+    expect(endOutcome(agent, 'no', null)).toEqual({ agent, isEnded: false, reason: 'no' })
+  })
+
+  test('endedLine words each outcome by phase and name, and says when no agent was running or none could be listed', () => {
+    const red = row('a1', { name: 'issue-forge-16-red-1' })
+    const green = row('a2', { description: 'issue-forge #16 green' })
+    const other = row('a3', { description: 'stopprobe ticks' })
+    expect(endedLine([])).toBe('no agent was running')
+    expect(endedLine([{ agent: red, isEnded: true }])).toBe('its red agent (issue-forge-16-red-1) has stopped')
+    expect(endedLine([{ agent: red, isEnded: false, reason: 'no' }])).toBe("its red agent (issue-forge-16-red-1) wasn't stopped (no), so it may keep working until its turn ends")
+    expect(endedLine([{ agent: red, isEnded: true }, { agent: green, isEnded: false, reason: 'it is still running' }])).toBe(
+      "its red agent (issue-forge-16-red-1) has stopped; its green agent (a2) wasn't stopped (it is still running), so it may keep working until its turn ends",
+    )
+    expect(endedLine([{ agent: other, isEnded: true }])).toBe('an agent of the run (a3) has stopped')
+    expect(endedLine({ unlisted: 'the agents could not be listed' })).toBe("its agents couldn't be listed (the agents could not be listed), so any still working may keep going until their turn ends")
+  })
+
+  // PR #151 review round 1, finding 1: an installed copy may report its source, as /config rows' owners do.
+  test('agentsToEnd also keeps an agent whose spawnedBy names issue-forge with a source (issue-forge@claudemod), and no other plugin', () => {
+    const known = ['a1', 'a2', 'a3']
+    const listed = [row('a1', { spawnedBy: 'issue-forge@claudemod' }), row('a2', { spawnedBy: 'issue-forge-other' }), row('a3', { spawnedBy: 'other@issue-forge' })]
+    expect(agentsToEnd(known, listed).map(a => a.id)).toEqual(['a1'])
+  })
+
+  // PR #151 review round 2, finding 7: a build whose listing has no spawnedBy (unknown on 2.1.296) still finds issue-forge's
+  // agents by the refs it holds, which only issue-forge's own agents carry. This replaces round 1's `by-the-model` row,
+  // which required such an agent dropped (the owner chose round 2's fixes, finding 7 included).
+  test('agentsToEnd falls back to the known refs alone when a listing has no spawnedBy', () => {
+    const known = ['issue-forge-16-red-1', 'a2']
+    const listed = [row('a1', { spawnedBy: undefined, name: 'issue-forge-16-red-1' }), row('a2', { spawnedBy: undefined }), row('a3', { spawnedBy: undefined, name: 'helper' })]
+    expect(agentsToEnd(known, listed).map(a => a.id)).toEqual(['a1', 'a2'])
+  })
+
+  // Round 2, finding 3: the late agent is written onto its own run, so a later stop of that run finds it and its name isn't reused.
+  test('withLateAgent adds the late agent to its own run, stopped or not, once; another run is left alone', () => {
+    const late = { id: 'a7', name: 'issue-forge-16-green-2', phase: 'green' as const }
+    const stopped = run({ id: '16-1', step: 'stopped', agents: [{ id: 'old-green', name: 'issue-forge-16-green-1', phase: 'green' }] })
+    expect(withLateAgent(stopped, '16-1', late)).toEqual({ ...stopped, agents: [...stopped.agents, late] })
+    expect(withLateAgent({ ...stopped, agents: [late] }, '16-1', late)).toBe(null)
+    expect(withLateAgent({ ...stopped, id: '16-2' }, '16-1', late)).toBe(null)
+    expect(withLateAgent(null, '16-1', late)).toBe(null)
+  })
+
+  // Round 2, finding 2: the stop already answered, so a late agent's outcome is a toast of its own, short enough to show whole.
+  test('lateAnswer names the late agent\'s outcome under 80 characters, and nothing when there was none', () => {
+    const agent = row('a7', { name: 'issue-forge-16-green-2', description: 'issue-forge #16 green' })
+    const text = lateAnswer(16, [{ agent, isEnded: true }]) ?? ''
+    expect(text).toBe('#16: its green agent (issue-forge-16-green-2) has stopped')
+    expect(text.length).toBeLessThanOrEqual(80)
+    expect(lateAnswer(16, [])).toBe(null)
+  })
+
+  // Round 1, finding 6: an agent still read as going after TaskStop answered keeps TaskStop's own words in the reason.
+  test("endOutcome gives TaskStop's own answer when the agent still reads as going though TaskStop didn't refuse", () => {
+    const agent = row('a1', { name: 'issue-forge-16-red-1' })
+    expect(endOutcome(agent, null, [row('a1')], 'Successfully stopped task: a1')).toEqual({ agent, isEnded: false, reason: 'it is still running (TaskStop said: Successfully stopped task: a1)' })
+    expect(endOutcome(agent, 'no', [row('a1')], 'ignored')).toEqual({ agent, isEnded: false, reason: 'no' })
+    expect(endOutcome(agent, null, [row('a1', { status: 'killed' })], 'Successfully stopped task: a1')).toEqual({ agent, isEnded: true })
+  })
+
+  // Round 1, finding 5: the agent a late spawn started is matched by its id; a spawn that was refused started nothing.
+  test("lateSpawnRefs: the agent's id alone when the spawn returned one; nothing when it was refused; else its name (the kit's spawns)", () => {
+    expect(lateSpawnRefs('a7', 'issue-forge-16-green-2', 'issue-forge-16-green-2@session-1', undefined)).toEqual(['a7'])
+    expect(lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, 'no')).toEqual([])
+    expect(lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, undefined)).toEqual(['issue-forge-16-green-2'])
+    expect(lateSpawnRefs(undefined, undefined, undefined, undefined)).toEqual([])
+  })
+
+  // A press shows its answer cut to 80 characters, so there the agents' outcome comes right after the first clause
+  // (the owner, 2026-10-24: "Lead with the outcome (Recommended)"); a typed command keeps the whole answer in its order.
+  describe('the answers a press cuts to 80 characters lead with the outcome', () => {
+    const red = row('a1', { name: 'issue-forge-16-red-1' })
+    const ended = [{ agent: red, isEnded: true as const }]
+    const typed = { isElsewhere: false, byPress: false }
+    const pressed = { isElsewhere: false, byPress: true }
+
+    test('stopAnswer: typed, the branch first; pressed, the outcome first', () => {
+      expect(stopAnswer(16, 'b', ended, typed)).toBe('stopped #16. Its branch b and commits are kept; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(stopAnswer(16, 'b', ended, pressed)).toBe('stopped #16; its red agent (issue-forge-16-red-1) has stopped. Its branch and commits are kept.')
+      expect(stopAnswer(16, '', [], typed)).toBe('stopped #16. Its branch (none yet) and commits are kept; no agent was running.')
+      expect(stopAnswer(16, 'b', [], pressed)).toBe('stopped #16; no agent was running. Its branch and commits are kept.')
+    })
+
+    test('stopAnswer for a run another session drives: typed, the whole sentence; pressed, short enough for a toast', () => {
+      const elsewhere = { isElsewhere: true, byPress: false }
+      expect(stopAnswer(40, 'x', [], elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
+      expect(stopAnswer(40, 'x', ended, elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(stopAnswer(40, 'x', { unlisted: 'no' }, elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
+      const short = stopAnswer(40, 'x', [], { isElsewhere: true, byPress: true })
+      expect(short).toBe('stopped #40; the session driving it ends its agents at its next check, if open.')
+      expect(short.length).toBeLessThanOrEqual(80)
+    })
+
+    test('movedOnAnswer: the outcome only when an agent was going; pressed, right after the first clause', () => {
+      const where = '#16 moved on before it could be stopped; /issue-forge status 16 says where.'
+      expect(movedOnAnswer(16, null, false)).toBe(where)
+      expect(movedOnAnswer(16, [], true)).toBe(where)
+      expect(movedOnAnswer(16, ended, false)).toBe('#16 moved on before it could be stopped; /issue-forge status 16 says where; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(movedOnAnswer(16, ended, true)).toBe('#16 moved on; its red agent (issue-forge-16-red-1) has stopped; /issue-forge status 16 says where.')
+    })
+
+    test('handOffAnswer: the outcome only when an agent was going; pressed, right after the step', () => {
+      const plain = 'handed off #16 at red; /issue-forge resume 16 continues it in any session.'
+      expect(handOffAnswer(16, 'red', [], false)).toBe(plain)
+      expect(handOffAnswer(16, 'red', [], true)).toBe(plain)
+      expect(handOffAnswer(16, null, [], false)).toBe('handed off #16 at its step; /issue-forge resume 16 continues it in any session.')
+      expect(handOffAnswer(16, 'red', ended, false)).toBe('handed off #16 at red; /issue-forge resume 16 continues it in any session; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(handOffAnswer(16, 'red', ended, true)).toBe('handed off #16 at red; its red agent (issue-forge-16-red-1) has stopped; /issue-forge resume 16 continues it in any session.')
+    })
   })
 })
