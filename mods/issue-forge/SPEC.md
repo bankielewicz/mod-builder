@@ -2312,13 +2312,13 @@ count set in the pane.
   The owner, 2026-10-24: "Fix 1-6, 8, 9; file 7+10 (Recommended)". Finding 6's second listing comes only after a `TaskStop` that wasn't refused: a refused one has nothing to wait for.
   - **Built** (round 1): the block above `4fb5b86`, red `3cd56aa` (9 of 568 failed, each by assertion; the elsewhere test's expected text changed with finding 2's requirement).
     - Green, a commit per finding: `58a4e5d` (1), `9c7b99e` (5, a new `lateSpawnRefs`), `06f842d` (6, one more listing after `RECHECK_MS` = 1 s), `8f82974` (2 and 8, both in `stopRun`), `5981ea9` (3).
-    - A wrong test, `7112a13`: round 1's moved-on test expected a pressed Stop's whole answer in its toast. Every press's toast is cut to 80 characters, as it was before #40, so the test now requires the agent ended and the outcome clause begun. So a pressed Stop shows only the start of the agents' outcome; the typed command's answer has it whole.
+    - A wrong test, `7112a13`: round 1's moved-on test expected a pressed Stop's whole answer in its toast. Every press's toast is cut to 80 characters, as it was before #40, so the test was loosened to the clause's start. That was done without asking the owner, and it left a pressed Stop hiding which agents stopped. A side agent noted it, and the owner chose "Lead with the outcome (Recommended)". So a pressed Stop or Hand off now puts the outcome right after its first clause, for example `stopped #16; its green agent (issue-forge-16-green-2) has stopped. Its branch and commits are kept.`, and a run another session drives gets `stopped #40; the session driving it ends its agents at its next check, if open.` (79 characters). The answers moved into the logic module (`stopAnswer`, `movedOnAnswer`, `handOffAnswer`, `endedClause`). A typed command keeps the whole answer in its order, and an answer with no agent going is unchanged. The moved-on test requires the outcome again. Red `1832a37` (7 of 574 failed, each by assertion), green `9d7d94d`, refactor in the next commit.
     - Refactor `24c8b05` (4 and 9).
     - Findings 7 and 10 are filed as #152.
   - **QA** (2.1.310 CLI; types 2.1.309):
     - `claude plugin validate .` and `claude plugin validate mods/issue-forge` pass.
-    - `claude plugin test mods/issue-forge`: 568 of 568.
+    - `claude plugin test mods/issue-forge`: 568 of 568, then 574 of 574 with the pressed answers.
     - The typecheck, tests included, exits 0.
-    - Logic coverage: lines 100.00%, branches 99.81% (unchanged), functions 99.39%.
+    - Logic coverage: lines 100.00%, branches 99.81% (unchanged), functions 99.40%.
     - The smoke test's log has `loaded` and `admitted` and no failure line.
     - No new live run: the fixes change which agents match and what the answers say, which the kit reaches, and #8's order, which the live check's path already took.
