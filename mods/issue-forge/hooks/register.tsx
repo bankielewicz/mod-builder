@@ -16,6 +16,7 @@ import {
   afterBlock,
   agentName,
   isInlineAnswer,
+  lateSpawnRefs,
   agentsKey,
   agentsToEnd,
   agentPrompt,
@@ -1181,7 +1182,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
       await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
     }
     // The stop listed the agents before this one started, so it is ended here (#40); only this one: a new run may be driven.
-    await endAgents($, spawnRefs(agentId ?? '', name, spawned.teammateId))
+    await endAgents($, lateSpawnRefs(agentId, name, spawned.teammateId, spawned.deny))
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')

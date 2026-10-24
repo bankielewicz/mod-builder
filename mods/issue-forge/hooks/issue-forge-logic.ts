@@ -1669,6 +1669,17 @@ export function spawnRefs(agentId: string, name: string | undefined, teammateId:
   return [...new Set([agentId, name, given].filter((ref): ref is string => !!ref))]
 }
 
+/**
+ * What to end for an agent whose spawn resolved after a stop (#40, PR #151 review round 1, finding 5): its id alone, since
+ * such an agent is never recorded, so a later spawn can reuse its name; nothing when the spawn was refused. Only the test
+ * kit's spawns come back with neither, and their name is all there is to match.
+ */
+export function lateSpawnRefs(agentId: string | undefined, name: string | undefined, teammateId: string | undefined, deny: string | undefined): string[] {
+  if (agentId) return [agentId]
+  if (deny !== undefined) return []
+  return spawnRefs('', name, teammateId)
+}
+
 /** An agent as `$.agent.list()` gives it, the fields issue-forge reads (#40). */
 export type ListedAgent = { id: string; name?: string; teammateId?: string; description: string; status: string; spawnedBy?: string }
 
