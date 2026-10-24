@@ -1736,15 +1736,14 @@ export function endedClause(ended: EndedAgents): string {
  * another session drives gets a form that fits (the owner, 2026-10-24: "Lead with the outcome").
  */
 export function stopAnswer(issue: number, branch: string, ended: EndedAgents, how: { isElsewhere: boolean; byPress: boolean }): string {
+  const kept = `stopped #${issue}. Its branch ${branch || '(none yet)'} and commits are kept`
   if (how.isElsewhere) {
     const here = 'unlisted' in ended ? '' : endedClause(ended)
     return how.byPress
       ? `stopped #${issue}; the session driving it ends its agents at its next check, if open${here}.`
-      : `stopped #${issue}. Its branch ${branch || '(none yet)'} and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open${here}.`
+      : `${kept}; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open${here}.`
   }
-  return how.byPress
-    ? `stopped #${issue}; ${endedLine(ended)}. Its branch and commits are kept.`
-    : `stopped #${issue}. Its branch ${branch || '(none yet)'} and commits are kept; ${endedLine(ended)}.`
+  return how.byPress ? `stopped #${issue}; ${endedLine(ended)}. Its branch and commits are kept.` : `${kept}; ${endedLine(ended)}.`
 }
 
 /** A stop whose run moved on before the write: what this session's agents came to, when one was going (#40). */

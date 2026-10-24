@@ -49,6 +49,7 @@ import {
   gitFailure,
   globToRegExp,
   guardAction,
+  handOffAnswer,
   hasSourceRecord,
   hasStash,
   isActive,
@@ -64,6 +65,7 @@ import {
   keptWorktreePlan,
   kindOf,
   layoutOf,
+  lateSpawnRefs,
   lcovFileOf,
   leftAfter,
   legacyAgentsKey,
@@ -71,6 +73,7 @@ import {
   matchesAny,
   mergeLine,
   migrationPlan,
+  movedOnAnswer,
   newRun,
   nextDemoState,
   normalizePath,
@@ -114,6 +117,7 @@ import {
   slugOf,
   splitZ,
   startAnswer,
+  stopAnswer,
   startChoices,
   staleLine,
   stashApplyArgv,
@@ -2988,64 +2992,52 @@ describe('#40: a drive that ends, ends its agents', () => {
 
   // Round 1, finding 5: the agent a late spawn started is matched by its id; a spawn that was refused started nothing.
   test("lateSpawnRefs: the agent's id alone when the spawn returned one; nothing when it was refused; else its name (the kit's spawns)", () => {
-    const L = new Proxy(logic as any, {
-      get: (module, name: string) => {
-        expect(typeof module[name]).toBe('function')
-        return module[name]
-      },
-    })
-    expect(L.lateSpawnRefs('a7', 'issue-forge-16-green-2', 'issue-forge-16-green-2@session-1', undefined)).toEqual(['a7'])
-    expect(L.lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, 'no')).toEqual([])
-    expect(L.lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, undefined)).toEqual(['issue-forge-16-green-2'])
-    expect(L.lateSpawnRefs(undefined, undefined, undefined, undefined)).toEqual([])
+    expect(lateSpawnRefs('a7', 'issue-forge-16-green-2', 'issue-forge-16-green-2@session-1', undefined)).toEqual(['a7'])
+    expect(lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, 'no')).toEqual([])
+    expect(lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, undefined)).toEqual(['issue-forge-16-green-2'])
+    expect(lateSpawnRefs(undefined, undefined, undefined, undefined)).toEqual([])
   })
 
   // A press shows its answer cut to 80 characters, so there the agents' outcome comes right after the first clause
   // (the owner, 2026-10-24: "Lead with the outcome (Recommended)"); a typed command keeps the whole answer in its order.
   describe('the answers a press cuts to 80 characters lead with the outcome', () => {
-    const L = new Proxy(logic as any, {
-      get: (module, name: string) => {
-        expect(typeof module[name]).toBe('function')
-        return module[name]
-      },
-    })
     const red = row('a1', { name: 'issue-forge-16-red-1' })
-    const ended = [{ agent: red, isEnded: true }]
+    const ended = [{ agent: red, isEnded: true as const }]
     const typed = { isElsewhere: false, byPress: false }
     const pressed = { isElsewhere: false, byPress: true }
 
     test('stopAnswer: typed, the branch first; pressed, the outcome first', () => {
-      expect(L.stopAnswer(16, 'b', ended, typed)).toBe('stopped #16. Its branch b and commits are kept; its red agent (issue-forge-16-red-1) has stopped.')
-      expect(L.stopAnswer(16, 'b', ended, pressed)).toBe('stopped #16; its red agent (issue-forge-16-red-1) has stopped. Its branch and commits are kept.')
-      expect(L.stopAnswer(16, '', [], typed)).toBe('stopped #16. Its branch (none yet) and commits are kept; no agent was running.')
-      expect(L.stopAnswer(16, 'b', [], pressed)).toBe('stopped #16; no agent was running. Its branch and commits are kept.')
+      expect(stopAnswer(16, 'b', ended, typed)).toBe('stopped #16. Its branch b and commits are kept; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(stopAnswer(16, 'b', ended, pressed)).toBe('stopped #16; its red agent (issue-forge-16-red-1) has stopped. Its branch and commits are kept.')
+      expect(stopAnswer(16, '', [], typed)).toBe('stopped #16. Its branch (none yet) and commits are kept; no agent was running.')
+      expect(stopAnswer(16, 'b', [], pressed)).toBe('stopped #16; no agent was running. Its branch and commits are kept.')
     })
 
     test('stopAnswer for a run another session drives: typed, the whole sentence; pressed, short enough for a toast', () => {
       const elsewhere = { isElsewhere: true, byPress: false }
-      expect(L.stopAnswer(40, 'x', [], elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
-      expect(L.stopAnswer(40, 'x', ended, elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open; its red agent (issue-forge-16-red-1) has stopped.')
-      expect(L.stopAnswer(40, 'x', { unlisted: 'no' }, elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
-      const short = L.stopAnswer(40, 'x', [], { isElsewhere: true, byPress: true })
+      expect(stopAnswer(40, 'x', [], elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
+      expect(stopAnswer(40, 'x', ended, elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(stopAnswer(40, 'x', { unlisted: 'no' }, elsewhere)).toBe('stopped #40. Its branch x and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.')
+      const short = stopAnswer(40, 'x', [], { isElsewhere: true, byPress: true })
       expect(short).toBe('stopped #40; the session driving it ends its agents at its next check, if open.')
       expect(short.length).toBeLessThanOrEqual(80)
     })
 
     test('movedOnAnswer: the outcome only when an agent was going; pressed, right after the first clause', () => {
       const where = '#16 moved on before it could be stopped; /issue-forge status 16 says where.'
-      expect(L.movedOnAnswer(16, null, false)).toBe(where)
-      expect(L.movedOnAnswer(16, [], true)).toBe(where)
-      expect(L.movedOnAnswer(16, ended, false)).toBe('#16 moved on before it could be stopped; /issue-forge status 16 says where; its red agent (issue-forge-16-red-1) has stopped.')
-      expect(L.movedOnAnswer(16, ended, true)).toBe('#16 moved on; its red agent (issue-forge-16-red-1) has stopped; /issue-forge status 16 says where.')
+      expect(movedOnAnswer(16, null, false)).toBe(where)
+      expect(movedOnAnswer(16, [], true)).toBe(where)
+      expect(movedOnAnswer(16, ended, false)).toBe('#16 moved on before it could be stopped; /issue-forge status 16 says where; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(movedOnAnswer(16, ended, true)).toBe('#16 moved on; its red agent (issue-forge-16-red-1) has stopped; /issue-forge status 16 says where.')
     })
 
     test('handOffAnswer: the outcome only when an agent was going; pressed, right after the step', () => {
       const plain = 'handed off #16 at red; /issue-forge resume 16 continues it in any session.'
-      expect(L.handOffAnswer(16, 'red', [], false)).toBe(plain)
-      expect(L.handOffAnswer(16, 'red', [], true)).toBe(plain)
-      expect(L.handOffAnswer(16, null, [], false)).toBe('handed off #16 at its step; /issue-forge resume 16 continues it in any session.')
-      expect(L.handOffAnswer(16, 'red', ended, false)).toBe('handed off #16 at red; /issue-forge resume 16 continues it in any session; its red agent (issue-forge-16-red-1) has stopped.')
-      expect(L.handOffAnswer(16, 'red', ended, true)).toBe('handed off #16 at red; its red agent (issue-forge-16-red-1) has stopped; /issue-forge resume 16 continues it in any session.')
+      expect(handOffAnswer(16, 'red', [], false)).toBe(plain)
+      expect(handOffAnswer(16, 'red', [], true)).toBe(plain)
+      expect(handOffAnswer(16, null, [], false)).toBe('handed off #16 at its step; /issue-forge resume 16 continues it in any session.')
+      expect(handOffAnswer(16, 'red', ended, false)).toBe('handed off #16 at red; /issue-forge resume 16 continues it in any session; its red agent (issue-forge-16-red-1) has stopped.')
+      expect(handOffAnswer(16, 'red', ended, true)).toBe('handed off #16 at red; its red agent (issue-forge-16-red-1) has stopped; /issue-forge resume 16 continues it in any session.')
     })
   })
 })
