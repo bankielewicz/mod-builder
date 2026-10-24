@@ -225,7 +225,10 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N or issue URL>` or
 9. **Stop (`/issue-forge stop`, `[ Stop ]` (asks first, Change 0.6.0); `tool.call` guard):** `$.agent` has no way to end a
    subagent, so the run is marked `stopped` (archived, no longer active), the running command's
    stream is ended, and the `tool.call` hook denies every later tool call whose `agentId` is one of
-   the run's agents but not the live one: `issue-forge: this run was stopped; end your turn now.`
+   the run's agents but not the live one: `issue-forge: this run was stopped or restarted; end your turn now without further tool calls.`
+   (the code's text; this read `this run was stopped; end your turn now.` until Change 0.9.1). Since Change 0.9.1, the
+   run's agents still going in this session are then ended with Claude Code's `TaskStop` tool, and the stop's answer
+   says which stopped; the guard is the second layer.
    The same rule covers agents orphaned by a reload. The guard runs on every tool call, so it stays
    cheap: a call without an `agentId` (the main loop) passes straight through, and the run's agent
    ids are read from module memory, never from `$.store` per call. That memory is filled from the
@@ -2262,3 +2265,32 @@ count set in the pane.
   - **The types:** the 2.1.310 binary carries `TaskStop`'s `task_id` text as 2.1.309's d.ts has it (`grep -a -c` on `~/.local/share/claude/versions/2.1.310`: 2).
   - **For step 2:** an agent counts as ended when `TaskStop` answers without a `deny` or `isError` and the second listing shows it `killed`, `completed` or `failed`, or no longer lists it, as the teammate went. The filter is `spawnedBy === 'issue-forge'`.
 - **Approved** by the owner, 2026-10-23, "Approve (Recommended)", the probe's and the live check's model calls included. The advisor checked this section against `docs/research/Mods` and `docs/research/claude-plugins` first, as the owner asked for every SPEC. Its one gap, the agent a stop-during-spawn leaves, is the fifth place above.
+- **Built** (2026-10-24): SPEC `36f9b26`, `56dcf60`, approval `a1c137c`, probe `fe975e0`.
+  - **The wrong test:** `fc35a9d`, in its own commit. The test `resume … stop ends it` required the old answer's refusal promise, and now requires the stop and no refusal claim.
+  - **Red** `9b259ba`: 17 of 560 failed, each by assertion. The logic tests reached the new functions through a proxy that asserts each one exists, so a missing one failed by assertion, not by a `TypeError`.
+  - **Green** `20f43b2`. The security-guidance hook held the logic edit once, matching a regular expression's `exec` call. It was retried with the owner's OK ("Retry the edit (Recommended)").
+  - **Refactor** `e1ca026` and `50319cc`. The tests call the functions directly. `ListedAgent.description` is required, as the 2.1.309 d.ts has `AgentInfo`'s, which removed a branch no listing reaches.
+  - **Docs:** `README.md` (stop, hand off, the sessions paragraph, a new limit, the Agents and Gating hooks rows, Built on), §9 above, 0.9.1 in `plugin.json` and the marketplace entry.
+  - **Where it differs from the approved text:** which agents each place ends is spelled out under "Which agents". The approved text said the list "isn't narrowed to one run", which would have ended a second drive's agent.
+  - **Answers:**
+    - The stop: `stopped #<N>. Its branch <b> and commits are kept; <each agent's outcome | no agent was running | its agents couldn't be listed (…)>.`
+    - A run driven elsewhere: `…; if the session driving it is still open, it stops driving it and ends its agents within 5 s.`
+    - Hand off and the watch toast add the outcome only when an agent was going, so their old text stands otherwise.
+  - **Not built:** a demo state, since the change draws nothing new.
+  - **QA** (2.1.310 CLI; types 2.1.309):
+    - `claude plugin validate .` and `claude plugin validate mods/issue-forge` pass. Validate's calls now include `$.agent.list (via endAgents)` and `$.tool.call (via stopAgent)`.
+    - `claude plugin test mods/issue-forge`: 560 of 560.
+    - The typecheck, tests included, exits 0.
+    - Logic coverage: lines 100.00%, branches 99.81% (as before), functions 99.38% (99.37% before).
+    - Smoke test: `claude -p --debug-file <new log> --plugin-dir <worktree>/mods/issue-forge "/issue-forge status"`. The log has `is one plugin` naming the worktree's folder, `issue-forge@inline loaded` and `admitted`, and no failure line.
+  - **Live check** [probe, 2026-10-24 01:04 UTC, 2.1.310, an interactive session in a private tmux, `--plugin-dir` on the worktree's copy, `auto` mode, `teammateMode: "in-process"`]:
+    - `/issue-forge 94` started a real run, through the start menu's "Start #94 in a new worktree", with the worktree under the session's `scratch/issue-forge/`.
+    - Once the red agent `issue-forge-94-red-1` had made 3 Bash calls (the last at 01:05:00.540), `/issue-forge stop` at 01:05:03.170 answered: `stopped #94. Its branch issue-94-pane-command-archetype-and-duet-issue-fo and commits are kept; its red agent (issue-forge-94-red-1) has stopped.`
+    - The debug log has `$.tool.call (issue-forge): TaskStop answered in 92ms`.
+    - The red agent's transcript has no record after the stop, and still 3 tool calls 60 s later.
+    - The run's worktree `git status --porcelain` was empty at the stop and the same 60 s later.
+  - **Left in place, for the owner to remove:**
+    - the live run's worktree `scratch/issue-40-stop-ends-agents/scratch/issue-forge/issue-94-pane-command-archetype-and-duet-issue-fo`, its local branch, and its `stopped` record in the store;
+    - the probe's and the live check's session transcripts under `~/.claude/projects/`.
+
+    No `~/.claude/<mod>-data` folder was written.
