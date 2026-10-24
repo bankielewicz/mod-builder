@@ -589,9 +589,19 @@ async function endAgents($: EngineInterface, refs: Iterable<string>): Promise<En
   let outcomes = outcomesBy(after)
   // TaskStop's kill may land a moment after its answer: an agent it didn't refuse that still reads as going is listed once more.
   if (after && outcomes.some(o => !o.isEnded && answers.get(o.agent.id)?.refused === null)) {
-    await new Promise<void>(resolve => $.clock.after(RECHECK_MS, () => resolve()))
-    after = await $.agent.list().catch(() => after)
-    outcomes = outcomesBy(after)
+    // A timer, not `$.clock.sleep`, which counts against a hook's budget (as lockWait). A refused timer skips the re-check,
+    // and the first listing stands (PR #151 review round 2, finding 6); a reload ends this wait with the module.
+    const isWaited = await new Promise<boolean>(resolve => {
+      try {
+        $.clock.after(RECHECK_MS, () => resolve(true))
+      } catch {
+        resolve(false)
+      }
+    })
+    if (isWaited) {
+      after = await $.agent.list().catch(() => after)
+      outcomes = outcomesBy(after)
+    }
   }
   return outcomes
 }
