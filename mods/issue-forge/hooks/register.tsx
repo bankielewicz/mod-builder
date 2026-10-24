@@ -42,7 +42,10 @@ import {
   elsewhereLine,
   elsewhereText,
   endOutcome,
-  endedLine,
+  endedClause,
+  handOffAnswer,
+  movedOnAnswer,
+  stopAnswer,
   findStash,
   finishedRecord,
   foreignChange,
@@ -608,11 +611,6 @@ async function stopAgent($: EngineInterface, id: string): Promise<StopAnswer> {
   } catch (err) {
     return { refused: err instanceof Error ? err.message : String(err), said: null }
   }
-}
-
-/** The agents' outcome as a clause to add to an answer, or nothing when no agent was going (#40). */
-function endedClause(ended: EndedAgents): string {
-  return 'unlisted' in ended || ended.length > 0 ? `; ${endedLine(ended)}` : ''
 }
 
 /** The drive under way in this session, if any (a stopped or handed-off one isn't). */
@@ -1948,13 +1946,11 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
   if (isHere) $.ui.status(undefined)
   // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
-  if (!stopped) return `#${run.issue} moved on before it could be stopped; /issue-forge status ${run.issue} says where${endedHere ? endedClause(endedHere) : ''}.`
+  if (!stopped) return movedOnAnswer(run.issue, endedHere, byPress)
   // A run not driven here: only its own agents, once the write confirms the stop; a run this session drives keeps its agent
   // (the owner, 2026-10-24: "option 1 is per design").
   const ended = endedHere ?? (await endAgents($, refsOf(run)))
-  const kept = `stopped #${run.issue}. Its branch ${stopped.branch || '(none yet)'} and commits are kept`
-  if (isElsewhere) return `${kept}; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open${'unlisted' in ended ? '' : endedClause(ended)}.`
-  return `${kept}; ${endedLine(ended)}.`
+  return stopAnswer(run.issue, stopped.branch, ended, { isElsewhere, byPress })
 }
 
 /** Ends this session's drive and its agents and clears it as the driver, keeping the step: any session can resume the run. */
@@ -1967,12 +1963,12 @@ async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: 
   return { step, ended: await endAgents($, knownRefs) }
 }
 
-async function handOffRun($: EngineInterface, issue: number | null): Promise<string> {
+async function handOffRun($: EngineInterface, issue: number | null, byPress = false): Promise<string> {
   const d = drivingNow()
   if (!d) return 'this session is driving no run.'
   if (issue !== null && issue !== d.issue) return `this session drives #${d.issue}, not #${issue}.`
   const off = await handOff($)
-  return `handed off #${d.issue} at ${off?.step ?? 'its step'}; /issue-forge resume ${d.issue} continues it in any session${endedClause(off?.ended ?? [])}.`
+  return handOffAnswer(d.issue, off?.step ?? null, off?.ended ?? [], byPress)
 }
 
 async function statusOf($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
@@ -2033,7 +2029,7 @@ async function runCommand($: EngineInterface, at: Repo | null, cmd: RunCommand, 
     case 'stop':
       return stopRun($, at, issue, byPress)
     default:
-      return handOffRun($, issue)
+      return handOffRun($, issue, byPress)
   }
 }
 

@@ -1726,6 +1726,41 @@ export function endedLine(ended: EndedAgents): string {
   return ended.map(o => (o.isEnded ? `${agentWords(o.agent)} has stopped` : `${agentWords(o.agent)} wasn't stopped (${o.reason}), so it may keep working until its turn ends`)).join('; ')
 }
 
+/** The agents' outcome as a clause to add to an answer, or nothing when no agent was going (#40). */
+export function endedClause(ended: EndedAgents): string {
+  return 'unlisted' in ended || ended.length > 0 ? `; ${endedLine(ended)}` : ''
+}
+
+/**
+ * The stop's answer (#40). A press shows it cut to 80 characters, so there the agents' outcome comes first, and a run
+ * another session drives gets a form that fits (the owner, 2026-10-24: "Lead with the outcome").
+ */
+export function stopAnswer(issue: number, branch: string, ended: EndedAgents, how: { isElsewhere: boolean; byPress: boolean }): string {
+  if (how.isElsewhere) {
+    const here = 'unlisted' in ended ? '' : endedClause(ended)
+    return how.byPress
+      ? `stopped #${issue}; the session driving it ends its agents at its next check, if open${here}.`
+      : `stopped #${issue}. Its branch ${branch || '(none yet)'} and commits are kept; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open${here}.`
+  }
+  return how.byPress
+    ? `stopped #${issue}; ${endedLine(ended)}. Its branch and commits are kept.`
+    : `stopped #${issue}. Its branch ${branch || '(none yet)'} and commits are kept; ${endedLine(ended)}.`
+}
+
+/** A stop whose run moved on before the write: what this session's agents came to, when one was going (#40). */
+export function movedOnAnswer(issue: number, ended: EndedAgents | null, byPress: boolean): string {
+  const clause = ended ? endedClause(ended) : ''
+  const where = `/issue-forge status ${issue} says where`
+  return byPress && clause ? `#${issue} moved on${clause}; ${where}.` : `#${issue} moved on before it could be stopped; ${where}${clause}.`
+}
+
+/** Hand off's answer (#40): the agents' outcome when one was going, right after the step for a press. */
+export function handOffAnswer(issue: number, step: string | null, ended: EndedAgents, byPress: boolean): string {
+  const at = `handed off #${issue} at ${step ?? 'its step'}`
+  const resume = `/issue-forge resume ${issue} continues it in any session`
+  return byPress ? `${at}${endedClause(ended)}; ${resume}.` : `${at}; ${resume}${endedClause(ended)}.`
+}
+
 /** Whether a prompt is the hand-back of one of these agents (`<agent-message from="…">`). */
 export function isOwnHandback(text: string, refs: readonly string[]): boolean {
   const m = text.match(/^<agent-message from="([^"]+)">/)
