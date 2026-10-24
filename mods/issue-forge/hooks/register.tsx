@@ -17,6 +17,7 @@ import {
   agentName,
   isInlineAnswer,
   lateSpawnRefs,
+  withLateAgent,
   agentsKey,
   agentsToEnd,
   agentPrompt,
@@ -1206,7 +1207,12 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
     const late = await endAgents($, lateSpawnRefs(agentId, name, spawned.teammateId, spawned.deny))
     const lateText = lateAnswer(run.issue, late)
     if (lateText) $.ui.toast(lateText)
-    if (agentId) await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId)).catch(() => undefined)
+    if (agentId) {
+      await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId)).catch(() => undefined)
+      // On its own run, even a stopped one, so a later stop of that run still finds it (round 2, finding 3; Codex 4365778047).
+      const agent = { id: agentId, ...(name ? { name } : {}), phase: which }
+      await updateRun($, keyOf(run), stored => withLateAgent(stored, run.id, agent)).catch(() => undefined)
+    }
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')

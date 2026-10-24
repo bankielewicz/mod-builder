@@ -1680,6 +1680,16 @@ export function lateSpawnRefs(agentId: string | undefined, name: string | undefi
   return spawnRefs('', name, teammateId)
 }
 
+/**
+ * The stored run with an agent whose spawn resolved after a stop added to its agents, stopped or not, so a later stop of
+ * that run finds it and `agentName` doesn't reuse its name (PR #151 review round 2, finding 3); null when the record is
+ * another run's, or already has it.
+ */
+export function withLateAgent(stored: Run | null, runId: string, agent: AgentRef): Run | null {
+  if (!stored || stored.id !== runId || stored.agents.some(a => a.id === agent.id)) return null
+  return { ...stored, agents: [...stored.agents, agent] }
+}
+
 /** An agent as `$.agent.list()` gives it, the fields issue-forge reads (#40). */
 export type ListedAgent = { id: string; name?: string; teammateId?: string; description: string; status: string; spawnedBy?: string }
 
