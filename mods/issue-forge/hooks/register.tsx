@@ -1937,18 +1937,19 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   } else if (isElsewhere && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
   const isHere = drivingNow()?.runId === run.id
   if (isHere) endLocalDrive()
+  // This session's drive ended, so none of its issue-forge agents should work: they go now, before the store write, so a
+  // refused write can't leave them working (#40; PR #151 review round 1, finding 8).
+  const endedHere = isHere ? await endAgents($, knownRefs) : null
   const now = await $.clock.now()
   const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
   if (isHere) $.ui.status(undefined)
   // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
-  if (!stopped) {
-    if (isHere) await endAgents($, knownRefs)
-    return `#${run.issue} moved on before it could be stopped; /issue-forge status ${run.issue} says where.`
-  }
-  // With this session's drive ended, none of its issue-forge agents should work; else only the stopped run's (#40).
-  const ended = await endAgents($, isHere ? knownRefs : refsOf(run))
+  if (!stopped) return `#${run.issue} moved on before it could be stopped; /issue-forge status ${run.issue} says where${endedHere ? endedClause(endedHere) : ''}.`
+  // A run not driven here: only its own agents, once the write confirms the stop; a run this session drives keeps its agent
+  // (the owner, 2026-10-24: "option 1 is per design").
+  const ended = endedHere ?? (await endAgents($, refsOf(run)))
   const kept = `stopped #${run.issue}. Its branch ${stopped.branch || '(none yet)'} and commits are kept`
-  if (isElsewhere) return `${kept}; if the session driving it is still open, it stops driving it and ends its agents within 5 s${'unlisted' in ended ? '' : endedClause(ended)}.`
+  if (isElsewhere) return `${kept}; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open${'unlisted' in ended ? '' : endedClause(ended)}.`
   return `${kept}; ${endedLine(ended)}.`
 }
 
