@@ -223,7 +223,7 @@ Pane `issue-forge`, opened by `/issue-forge`, `/issue-forge <N or issue URL>` or
    SHA is no longer listed: `blocked: stash <sha> is gone; restore by hand`. If the apply conflicts:
    `blocked: could not restore green's work; it is in stash "<message>"`.
 9. **Stop (`/issue-forge stop`, `[ Stop ]` (asks first, Change 0.6.0); `tool.call` guard):** `$.agent` has no way to end a
-   subagent, so the run is marked `stopped` (archived, no longer active), the running command's
+   subagent (Claude Code's `TaskStop` tool does, used since Change 0.9.1, below), so the run is marked `stopped` (archived, no longer active), the running command's
    stream is ended, and the `tool.call` hook denies every later tool call whose `agentId` is one of
    the run's agents but not the live one: `issue-forge: this run was stopped or restarted; end your turn now without further tool calls.`
    (the code's text; this read `this run was stopped; end your turn now.` until Change 0.9.1). Since Change 0.9.1, the

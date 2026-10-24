@@ -220,9 +220,9 @@ let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
 let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; baseManifests: readonly string[] } | null = null
 /**
- * Every agent id and name a run of this repository has started, in memory for the tool.call guard
- * and the hand-back drop, and in the store so a new run or a reload never forgets one (an agent
- * can't be ended, only refused).
+ * Every agent id and name a run of this repository has started, in memory for the tool.call guard,
+ * the hand-back drop and the end of a drive (which ends them with TaskStop, #40), and in the store so a
+ * new run or a reload never forgets one: one TaskStop didn't end is still refused by the guard.
  */
 let knownRefs = new Set<string>()
 /** The last run write queued: updateRun chains each one after it. */
@@ -547,7 +547,10 @@ async function stillOwned($: EngineInterface, run: Run): Promise<void> {
   }
 }
 
-/** Ends this session's drive at once, as a Stop does, writing nothing: the command is ended and the agent refused. */
+/**
+ * Ends this session's drive at once, as a Stop does, writing nothing: the command is ended and the guard refuses the
+ * agent from now on. Ending the agent itself is `endAgents`, which every caller runs next (#40).
+ */
 function endLocalDrive(): void {
   if (driving) driving.isStopped = true
   stopCommand?.()
@@ -564,16 +567,17 @@ function endLocalDrive(): void {
  * TaskStop, then lists them again: each outcome is what that listing shows, never a promise (#40).
  */
 async function endAgents($: EngineInterface, refs: Iterable<string>): Promise<EndedAgents> {
+  const wanted = [...refs]
+  if (wanted.length === 0) return []
   let listed: ListedAgent[]
   try {
     listed = await $.agent.list()
   } catch (err) {
     return { unlisted: err instanceof Error ? err.message : String(err) }
   }
-  const targets = agentsToEnd(refs, listed)
+  const targets = agentsToEnd(wanted, listed)
   if (targets.length === 0) return []
-  const answers = new Map<string, StopAnswer>()
-  for (const agent of targets) answers.set(agent.id, await stopAgent($, agent.id))
+  const answers = new Map(await Promise.all(targets.map(async agent => [agent.id, await stopAgent($, agent.id)] as const)))
   const outcomesBy = (rows: readonly ListedAgent[] | null) =>
     targets.map(agent => endOutcome(agent, answers.get(agent.id)?.refused ?? null, rows, answers.get(agent.id)?.said ?? undefined))
   let after: readonly ListedAgent[] | null = await $.agent.list().catch(() => null)
@@ -1187,7 +1191,7 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
     liveAgent = agentId
     liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [], baseManifests }
   }
-  // A stop (or another run) while the spawn was pending wins: the agent is only refused tools.
+  // A stop (or another run) while the spawn was pending wins: the agent is refused tools and ended below (#40).
   const latest = await loadRun($, keyOf(run))
   if (!latest || latest.id !== run.id || latest.step !== run.step || !isDriving(run)) {
     if (agentId) {
