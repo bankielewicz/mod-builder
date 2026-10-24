@@ -2308,3 +2308,5 @@ count set in the pane.
   8. **The agents end only after the store write,** so a rejected write leaves them running. When this session's drive ends, end them right after `endLocalDrive`, before the write. For a run not driven here, keep the order: end them once the write confirms the stop.
   9. **`endAgents` lists even when there are no refs, and calls `TaskStop` one agent at a time.** Return early on no refs, and call `TaskStop` for all of them at once.
   10. **The agent stop is added at five call sites instead of one drive-end helper.** A design suggestion. Proposed as part of the same follow-up issue as 7.
+
+  The owner, 2026-10-24: "Fix 1-6, 8, 9; file 7+10 (Recommended)". Finding 6's second listing comes only after a `TaskStop` that wasn't refused: a refused one has nothing to wait for.

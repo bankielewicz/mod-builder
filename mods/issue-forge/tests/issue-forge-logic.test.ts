@@ -2970,4 +2970,33 @@ describe('#40: a drive that ends, ends its agents', () => {
     expect(endedLine([{ agent: other, isEnded: true }])).toBe('an agent of the run (a3) has stopped')
     expect(endedLine({ unlisted: 'the agents could not be listed' })).toBe("its agents couldn't be listed (the agents could not be listed), so any still working may keep going until their turn ends")
   })
+
+  // PR #151 review round 1, finding 1: an installed copy may report its source, as /config rows' owners do.
+  test('agentsToEnd also keeps an agent whose spawnedBy names issue-forge with a source (issue-forge@claudemod), and no other plugin', () => {
+    const known = ['a1', 'a2', 'a3']
+    const listed = [row('a1', { spawnedBy: 'issue-forge@claudemod' }), row('a2', { spawnedBy: 'issue-forge-other' }), row('a3', { spawnedBy: 'other@issue-forge' })]
+    expect(agentsToEnd(known, listed).map(a => a.id)).toEqual(['a1'])
+  })
+
+  // Round 1, finding 6: an agent still read as going after TaskStop answered keeps TaskStop's own words in the reason.
+  test("endOutcome gives TaskStop's own answer when the agent still reads as going though TaskStop didn't refuse", () => {
+    const agent = row('a1', { name: 'issue-forge-16-red-1' })
+    expect(endOutcome(agent, null, [row('a1')], 'Successfully stopped task: a1')).toEqual({ agent, isEnded: false, reason: 'it is still running (TaskStop said: Successfully stopped task: a1)' })
+    expect(endOutcome(agent, 'no', [row('a1')], 'ignored')).toEqual({ agent, isEnded: false, reason: 'no' })
+    expect(endOutcome(agent, null, [row('a1', { status: 'killed' })], 'Successfully stopped task: a1')).toEqual({ agent, isEnded: true })
+  })
+
+  // Round 1, finding 5: the agent a late spawn started is matched by its id; a spawn that was refused started nothing.
+  test("lateSpawnRefs: the agent's id alone when the spawn returned one; nothing when it was refused; else its name (the kit's spawns)", () => {
+    const L = new Proxy(logic as any, {
+      get: (module, name: string) => {
+        expect(typeof module[name]).toBe('function')
+        return module[name]
+      },
+    })
+    expect(L.lateSpawnRefs('a7', 'issue-forge-16-green-2', 'issue-forge-16-green-2@session-1', undefined)).toEqual(['a7'])
+    expect(L.lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, 'no')).toEqual([])
+    expect(L.lateSpawnRefs(undefined, 'issue-forge-16-green-2', undefined, undefined)).toEqual(['issue-forge-16-green-2'])
+    expect(L.lateSpawnRefs(undefined, undefined, undefined, undefined)).toEqual([])
+  })
 })
