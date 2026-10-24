@@ -2177,7 +2177,7 @@ count set in the pane.
   - `e.agentId` is "set when a subagent or an in-process teammate makes the call, and absent when the main conversation does" [read: `Mods-reference.md:66`]. `agent.spawn` fires for a subagent or a teammate, with `e.isTeammate` for a teammate [read: `:153`].
   - A `tool.call` hook refuses a call by returning `{ deny }` without calling `next`, and Claude reads the deny text as the tool's result [read: `Build/React-to-events-with-a-mod.md:98-139`]. That is the guard. It stays, as the second layer.
   - After the person interrupts the session, some `$.tool.call`s are refused until their next input: Bash with `run_in_background`, Monitor and CronCreate [read: `Build/Use-the-mods-API.md:314-327`]. `TaskStop` isn't on that list. A refusal from any cause is reported the same way (below).
-  - Anthropic's plugin docs (`docs/research/claude-plugins`) bear only if `gotchas.md` changes in this PR (see "What gets touched"). The mod's change itself is a hooks module, under the mod docs.
+  - Anthropic's plugin docs (`docs/research/claude-plugins`) don't bear on it: the change is a mod's hooks module, under the mod docs, and `gotchas.md` waits for the next mod-builder PR (see "What gets touched").
 - **Step 1, the probe**, before any code: it decides the wording below. The issue asks for it, and it makes model calls.
   - **The probe mod:** a throwaway mod with a unique name, in the session's scratchpad, never in the repository. It mirrors issue-forge's spawn: `$.agent.register` a type, then `$.agent.spawn` with `subagentType`, `model: 'haiku'` and `cwd`, named or unnamed. The agent's task is about 30 short Bash calls (`sleep 2; echo tick <n>`), one at a time.
     - Its `tool.call` hook logs every call's `tool` and `agentId` under `~/.claude/<probe>-data/`. Once the stop has run, it also denies the stopped agent's calls and logs each deny.
@@ -2219,9 +2219,7 @@ count set in the pane.
     - "Built on".
   - This SPEC's §9 (:225-234), which says the guard refuses with `this run was stopped; end your turn now`, while the code's text is `this run was stopped or restarted; end your turn now without further tool calls` (`issue-forge-logic.ts:1364`). Corrected in passing. `docs/specs/issue-forge.md` names `/issue-forge stop` but not what it does to agents (`:350`), so it doesn't change.
   - `plugin.json` and the marketplace entry at 0.9.1.
-  - **`gotchas.md`, the owner's choice:** the probe's findings belong in `plugins/mod-builder/skills/build/references/gotchas.md`, which is part of the mod-builder plugin. Either:
-    - they go in this PR, with mod-builder at 0.2.33 and a line in its SPEC, citing `docs/research/claude-plugins/Add-components-to-a-plugin.md:222-260` (a skill's supporting files); or
-    - they stay in this SPEC's Built block, and the next mod-builder PR carries the entries, as #140's store limits were carried by #141 (PR #147).
+  - **`gotchas.md`:** the probe's findings belong in `plugins/mod-builder/skills/build/references/gotchas.md`, which is part of the mod-builder plugin. They stay in this SPEC's Built block, and the next mod-builder PR carries the entries, as #140's store limits were carried by #141 (PR #147). The owner, 2026-10-23: "Next mod-builder PR (Recommended)". So this PR doesn't touch `plugins/mod-builder`, and the plugin docs don't bear on it.
   - **Cost:**
     - The probe: two or three headless sessions, each with one haiku agent making about 30 short Bash calls.
     - The live check: one real `/issue-forge <N>` run, stopped during red, about one minute of the red agent's model (`redModel`, `opus` by default). Its worktree and branch are kept until the owner says to remove them.
@@ -2243,3 +2241,4 @@ count set in the pane.
   - Unchanged (G): the guard's tests (`issue-forge-logic.test.ts:1085` and the UI guard tests), and stops during a gate's command, during a pending spawn and during the push.
 - **Done means:** `/issue-forge stop`, the Stop button, Hand off and a takeover end the run's agents that are still going in this session, and the answer says which were ended and which weren't. **Live check:** on this build, start a real run, stop it during red, and read the red agent's transcript. No tool call after the stop returns a normal result, and the worktree's `git status` is unchanged from the moment of the stop.
 - **Version:** 0.9.1, a patch: a fix, with no change to commands, options or the stored run.
+- **Approved** by the owner, 2026-10-23, "Approve (Recommended)", the probe's and the live check's model calls included. The advisor checked this section against `docs/research/Mods` and `docs/research/claude-plugins` first, as the owner asked for every SPEC. Its one gap, the agent a stop-during-spawn leaves, is the fifth place above.
