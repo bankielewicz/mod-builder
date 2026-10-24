@@ -44,6 +44,7 @@ import {
   endOutcome,
   endedClause,
   handOffAnswer,
+  lateAnswer,
   movedOnAnswer,
   stopAnswer,
   findStash,
@@ -1198,10 +1199,14 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
         liveAgent = null
         liveWork = null
       }
-      await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
     }
     // The stop listed the agents before this one started, so it is ended here (#40); only this one: a new run may be driven.
-    await endAgents($, lateSpawnRefs(agentId, name, spawned.teammateId, spawned.deny))
+    // First, so a store write below that fails can't leave it working; and said, since the stop already answered (PR #151
+    // review round 2, finding 2).
+    const late = await endAgents($, lateSpawnRefs(agentId, name, spawned.teammateId, spawned.deny))
+    const lateText = lateAnswer(run.issue, late)
+    if (lateText) $.ui.toast(lateText)
+    if (agentId) await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId)).catch(() => undefined)
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')

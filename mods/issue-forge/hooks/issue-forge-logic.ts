@@ -1755,6 +1755,11 @@ export function movedOnAnswer(issue: number, ended: EndedAgents | null, byPress:
   return byPress && clause ? `#${issue} moved on${clause}; ${where}.` : `#${issue} moved on before it could be stopped; ${where}${clause}.`
 }
 
+/** The outcome of ending an agent whose spawn resolved after the stop answered, as a toast of its own; null when none was going. */
+export function lateAnswer(issue: number, ended: EndedAgents): string | null {
+  return 'unlisted' in ended || ended.length > 0 ? `#${issue}: ${endedLine(ended)}` : null
+}
+
 /** Hand off's answer (#40): the agents' outcome when one was going, right after the step for a press. */
 export function handOffAnswer(issue: number, step: string | null, ended: EndedAgents, byPress: boolean): string {
   const at = `handed off #${issue} at ${step ?? 'its step'}`
