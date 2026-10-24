@@ -1939,11 +1939,17 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
   } else if (isElsewhere && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
   const isHere = drivingNow()?.runId === run.id
   if (isHere) endLocalDrive()
-  // This session's drive ended, so none of its issue-forge agents should work: they go now, before the store write, so a
-  // refused write can't leave them working (#40; PR #151 review round 1, finding 8).
-  const endedHere = isHere ? await endAgents($, knownRefs) : null
   const now = await $.clock.now()
-  const stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
+  let endedHere: EndedAgents | null = null
+  let stopped: Run | null
+  try {
+    stopped = await updateRun($, keyOf(run), stored => (stored?.id === run.id && isActive(stored) ? advance(stored, { type: 'stop' }, now) : null))
+  } finally {
+    // This session's drive ended, so none of its issue-forge agents should work. They go after the write, so a TaskStop
+    // that waits can't hold the stop's record, and whatever the write did, so a refused one can't leave them working
+    // (#40; PR #151 review round 1, finding 8; round 2, finding 4).
+    if (isHere) endedHere = await endAgents($, knownRefs)
+  }
   if (isHere) $.ui.status(undefined)
   // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
   if (!stopped) return movedOnAnswer(run.issue, endedHere, byPress)
