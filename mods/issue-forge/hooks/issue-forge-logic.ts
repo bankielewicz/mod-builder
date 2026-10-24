@@ -1700,11 +1700,15 @@ export function agentsToEnd(known: Iterable<string>, listed: readonly ListedAgen
   return listed.filter(a => isOwn(a.spawnedBy) && GOING.has(a.status) && [a.id, a.name, a.teammateId?.split('@')[0]].some(ref => !!ref && refs.has(ref)))
 }
 
-/** Whether an agent has stopped, by the listing taken after TaskStop (null when it couldn't be taken); `refused` is TaskStop's refusal. */
-export function endOutcome(agent: ListedAgent, refused: string | null, after: readonly ListedAgent[] | null): EndOutcome {
+/**
+ * Whether an agent has stopped, by the listing taken after TaskStop (null when it couldn't be taken). `refused` is
+ * TaskStop's refusal; `said` is what it answered otherwise, given when the agent still reads as going.
+ */
+export function endOutcome(agent: ListedAgent, refused: string | null, after: readonly ListedAgent[] | null, said?: string): EndOutcome {
   const now = after?.find(a => a.id === agent.id)
   if (after && !(now && GOING.has(now.status))) return { agent, isEnded: true }
-  return { agent, isEnded: false, reason: refused ?? (now ? `it is still ${now.status}` : "its status couldn't be read afterwards") }
+  const going = now ? `it is still ${now.status}${said ? ` (TaskStop said: ${said})` : ''}` : "its status couldn't be read afterwards"
+  return { agent, isEnded: false, reason: refused ?? going }
 }
 
 /** A phase agent's spawn description, `issue-forge #<N> <phase>`. */

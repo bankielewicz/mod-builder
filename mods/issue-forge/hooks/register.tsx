@@ -572,20 +572,37 @@ async function endAgents($: EngineInterface, refs: Iterable<string>): Promise<En
   }
   const targets = agentsToEnd(refs, listed)
   if (targets.length === 0) return []
-  const refusals = new Map<string, string | null>()
-  for (const agent of targets) refusals.set(agent.id, await stopAgent($, agent.id))
-  const after = await $.agent.list().catch(() => null)
-  return targets.map(agent => endOutcome(agent, refusals.get(agent.id) ?? null, after))
+  const answers = new Map<string, StopAnswer>()
+  for (const agent of targets) answers.set(agent.id, await stopAgent($, agent.id))
+  const outcomesBy = (rows: readonly ListedAgent[] | null) =>
+    targets.map(agent => endOutcome(agent, answers.get(agent.id)?.refused ?? null, rows, answers.get(agent.id)?.said ?? undefined))
+  let after: readonly ListedAgent[] | null = await $.agent.list().catch(() => null)
+  let outcomes = outcomesBy(after)
+  // TaskStop's kill may land a moment after its answer: an agent it didn't refuse that still reads as going is listed once more.
+  if (after && outcomes.some(o => !o.isEnded && answers.get(o.agent.id)?.refused === null)) {
+    await new Promise<void>(resolve => $.clock.after(RECHECK_MS, () => resolve()))
+    after = await $.agent.list().catch(() => after)
+    outcomes = outcomesBy(after)
+  }
+  return outcomes
 }
 
-/** One TaskStop by the agent's id, the form #40's probe showed ends a subagent and a teammate: its refusal, or null. */
-async function stopAgent($: EngineInterface, id: string): Promise<string | null> {
+/** What one TaskStop came to: its refusal, or null and what it said. */
+type StopAnswer = { refused: string | null; said: string | null }
+
+/** How long to wait before listing again an agent TaskStop answered for that still reads as going (PR #151 review round 1). */
+const RECHECK_MS = 1000
+
+/** One TaskStop by the agent's id, the form #40's probe showed ends a subagent and a teammate. */
+async function stopAgent($: EngineInterface, id: string): Promise<StopAnswer> {
   try {
     const answer = await $.tool.call({ tool: 'TaskStop', task_id: id })
-    if (answer.deny !== undefined) return answer.deny
-    return answer.isError ? truncate(answer.text ?? 'TaskStop failed', 120) : null
+    if (answer.deny !== undefined) return { refused: answer.deny, said: null }
+    if (answer.isError) return { refused: truncate(answer.text ?? 'TaskStop failed', 120), said: null }
+    const message = (answer.result as { message?: unknown } | undefined)?.message
+    return { refused: null, said: truncate(typeof message === 'string' ? message : (answer.text ?? ''), 120) || null }
   } catch (err) {
-    return err instanceof Error ? err.message : String(err)
+    return { refused: err instanceof Error ? err.message : String(err), said: null }
   }
 }
 
