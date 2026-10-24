@@ -42,9 +42,10 @@ before the phase's work is committed. Such a stop is final: `/issue-forge stop <
   with no run, whether `.issue-forge.json` validates
 - `/issue-forge resume [N]`: restarts a blocked or interrupted step
 - `/issue-forge publish [N]`: pushes the run's branch and opens the pull request
-- `/issue-forge handoff [N]`: ends this session's drive but keeps the step, so any session can resume
-  it (with `N`, only when this session drives #N)
-- `/issue-forge stop [N]`: ends the run; its branch and commits are kept
+- `/issue-forge handoff [N]`: ends this session's drive and stops its agents, but keeps the step, so any
+  session can resume it (with `N`, only when this session drives #N)
+- `/issue-forge stop [N]`: ends the run and stops its agents that are still going, then says which
+  stopped; its branch and commits are kept
 - `/issue-forge demo [state]`: every state of the pane, with nothing real running
 - `/issue-forge`: opens the pane, or closes it when it is shown. When it is open as a tab behind another pane, it comes to the front with the keyboard instead of closing; `Esc` returns the keyboard to the prompt
 
@@ -199,11 +200,11 @@ A run records which session drives it. In any other session, Resume, Publish and
 `If that session has ended, take it over?` before they act (a press of the pane's Stop or Publish asks its own
 question instead, which names the other session). The mod can't tell a crashed session from a
 live one, so it asks rather than assumes. The driving session checks every 5 seconds and stops its
-drive when another session stopped or took over its run; before a commit, a stash, the push and the pull
+drive, and its agents, when another session stopped or took over its run; before a commit, a stash, the push and the pull
 request it checks at once. Resume writes only if the run is still as it read it. A session that ends lets go of its run, but
 `/clear` and `/resume` don't, because the process and the drive go on.
 
-Hand off (`/issue-forge handoff` or `h`) ends this session's drive at once, as Stop does, but keeps the
+Hand off (`/issue-forge handoff` or `h`) ends this session's drive and its agents at once, as Stop does, but keeps the
 step: the run reads *interrupted* everywhere, and `/issue-forge resume <N>` continues it in any session.
 A stopped run can't be resumed.
 
@@ -266,6 +267,9 @@ is ignored. Globs use `*`, `**` and `?` only; braces, brackets and `!` are refus
 - Runs were checked with Claude Code's `auto` permission mode. In other modes a phase agent's Edit or
   Bash may wait on a permission prompt nobody sees; the pane then shows `agent working` until you
   `/issue-forge stop`. There's no agent timeout yet.
+- A stop ends the run's agents with Claude Code's `TaskStop` tool. That was checked under `auto` mode on
+  2.1.310, for a subagent and an in-process teammate, and not in other permission modes. The stop's answer
+  says which agents stopped, and names any that didn't, with the reason.
 - G6 checks that a behaviour test file (`behaviourTestGlobs`) is in the red commit, not what it tests.
 - Command lookup uses `sh -c 'command -v …'`, so `sh` must be on PATH (Git Bash on Windows).
 - The profile that runs is the one on `origin/<base>`, read after the switch; the checkout you start
@@ -340,10 +344,10 @@ table lists everything this one can touch. It is generated from `claude plugin v
 | Processes | `$.process.run` and `$.process.spawn`, in the run's folder (the repository root, or its worktree): `git`, with `GIT_OPTIONAL_LOCKS=0` (rev-parse, including `--show-toplevel` and `--git-common-dir` for each command and after `/clear`, `/resume` and `/branch` (0.7.2) and, once per folder before its first index or ref write, `--git-path index.lock`, and `--git-path refs/stash.lock` before a stash push, status, check-ignore, fetch, show `<remote>/<base>:.issue-forge.json`, for-each-ref, ls-remote (origin, and the project's remote in a fork clone), switch -c or worktree add, worktree list, worktree remove (only to clear git's entry for a kept worktree with nothing at its path), merge-base, merge --ff-only, add -A (at each gate, and again after the profile's `formatCommand` when it has one; 0.8.0), write-tree (the tree each gate tests, and again before its commit; 0.7.5), rev-parse --verify HEAD and `--no-replace-objects cat-file commit <sha>` (HEAD, its tree and its parent, before and after each gate's commit; 0.7.5), diff, ls-tree (the plugin manifests at the merge base and the base branch's tip, before each phase agent starts and at each gate), commit, stash push/list/apply, merge-tree, remote (the list of remotes), remote get-url, push), `gh` (auth status, repo view, api `--hostname <host> users/<owner>` for `.type` in a fork clone, issue view: once at start, before anything is stored, and again in preflight, pr create), `ssh -G <host>` in a fork clone for an ssh remote on another host than the project's (reads `~/.ssh/config`, never connects), `sh -c 'command -v …'`, and the profile's `testCommand`, `coverageCommand`, `formatCommand` (at gates R, G and F; 0.8.0) and `checks`. Publish pushes exactly the commit gate F checked (`<sha>:refs/heads/<branch>`) |
 | Files | reads `.issue-forge.json` and the LCOV file; stats a `.claude-plugin/plugin.json` the live agent edits (to tell an edit from a new plugin); and looks for git's `index.lock` (and `refs/stash.lock` on a stash push) when a git call that writes the index or a ref fails; a worktree run creates `<worktreeDir>/<branch>/` and leaves it; writes `~/.claude/issue-forge-data/<run>/pr.md`; `$.store` keys `issue-forge:repo-run:<git common folder>#<issue>` and `issue-forge:repo-agents:…` (gets, sets, deletes and lists keys; moves 0.2 keys at session start; deletes finished runs beyond 20 per repository; before a new run is saved, reads every key once, trims finished records, and deletes the longest-finished runs of any repository past 3 Mi characters, 0.9.0); reads `$.session.id()`; env reads `HOME`, `USERPROFILE` |
 | Network | through `git` and `gh` only: fetch and, after your yes, push and pull request creation |
-| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants |
+| Agents | `issue-forge:red`, `:green`, `:refactor`, each with `Read, Grep, Glob, Edit, Write, Bash` in the run's folder (the repository root, or its worktree), under your permission mode and not sandboxed (the agent API has no sandbox). Not listed by `claude plugin validate`, which doesn't print agent tool grants. When a drive ends (stop, hand off, or another session stopping or taking over the run), it lists this session's agents (`$.agent.list`) and stops the run's agents that are still going with the `TaskStop` tool (`$.tool.call`), 0.9.1 |
 | Model calls | three subagents per run (`$.agent.spawn`), plus one per retry. `attempts` in the profile caps each phase's spawns, the first included (red 2, green 3, refactor 1 by default: at most 3 retries); a resume, or red's return for a behaviour test, starts that phase's count again |
 | Asks | `$.ui.ask`: the start menu when another run is in the way, Take over, a base branch the issue names, a new worktree for a busy checkout under `"ask"`, publish when a run reaches ready (unless `confirmPublish` is off), and a press of the pane's Stop or Publish, whatever `confirmPublish` says (one question, which also names a run another session drives) |
-| Gating hooks | all with `.catch`: `classic.SessionStart` (0.7.2: brings the pane's run back after `/clear`, detached, and never refuses anything), `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, or one that would create a new `.claude-plugin/plugin.json`, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the idle notice the run's own named agent sends the main conversation when it stops, which repeats the answer the pane shows; passes everything else) |
+| Gating hooks | all with `.catch`: `classic.SessionStart` (0.7.2: brings the pane's run back after `/clear`, detached, and never refuses anything), `agent.offer` ×3 (hides the mod's agents from the main model), `tool.call` (refuses tool calls from a stopped or orphaned agent of the run that reach it, a second layer behind the stop's `TaskStop`; refuses the live agent's Edit, Write and NotebookEdit outside the run's folder or to a path it can't place, or one that would create a new `.claude-plugin/plugin.json`, and in a worktree run rewrites its Bash, Grep, Glob and relative Edit, Write and Read paths to work there), `prompt.submit` (drops the hand-back messages of the run's own subagents), `session.receive` (consumes the idle notice the run's own named agent sends the main conversation when it stops, which repeats the answer the pane shows; passes everything else) |
 
 The agents read the issue body, which anyone who can file an issue writes, and green also reads
 the red agent's answer, which red wrote from that issue. Run it only on repositories and issues
@@ -363,5 +367,6 @@ checked on 2.1.300; 0.7.2 (the pane after `/clear`) checked on 2.1.306;
 0.7.5 (a gate commits only the tree it tested) loaded on 2.1.308, where its tests ran (no gate ran live);
 0.8.0 (`formatCommand`) loaded on 2.1.309, where its tests ran (no gate ran live);
 0.9.0 (the store under 4 MiB) loaded on 2.1.309, where its tests ran and `/issue-forge status` named two old runs
-(no run started live). Written spec-first with
+(no run started live); 0.9.1 (a stop ends its agents) loaded on 2.1.310, where its tests ran and a live run on
+#94, stopped during red, ended the red agent with no tool call after the stop. Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.

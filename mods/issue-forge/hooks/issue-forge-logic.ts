@@ -1669,6 +1669,114 @@ export function spawnRefs(agentId: string, name: string | undefined, teammateId:
   return [...new Set([agentId, name, given].filter((ref): ref is string => !!ref))]
 }
 
+/**
+ * What to end for an agent whose spawn resolved after a stop (#40, PR #151 review round 1, finding 5): its id alone, since
+ * such an agent is never recorded, so a later spawn can reuse its name; nothing when the spawn was refused. Only the test
+ * kit's spawns come back with neither, and their name is all there is to match.
+ */
+export function lateSpawnRefs(agentId: string | undefined, name: string | undefined, teammateId: string | undefined, deny: string | undefined): string[] {
+  if (agentId) return [agentId]
+  if (deny !== undefined) return []
+  return spawnRefs('', name, teammateId)
+}
+
+/**
+ * The stored run with an agent whose spawn resolved after a stop added to its agents, stopped or not, so a later stop of
+ * that run finds it and `agentName` doesn't reuse its name (PR #151 review round 2, finding 3); null when the record is
+ * another run's, or already has it.
+ */
+export function withLateAgent(stored: Run | null, runId: string, agent: AgentRef): Run | null {
+  if (!stored || stored.id !== runId || stored.agents.some(a => a.id === agent.id)) return null
+  return { ...stored, agents: [...stored.agents, agent] }
+}
+
+/** An agent as `$.agent.list()` gives it, the fields issue-forge reads (#40). */
+export type ListedAgent = { id: string; name?: string; teammateId?: string; description: string; status: string; spawnedBy?: string }
+
+/** What ending one agent came to (#40): it has stopped, or it is still going, and why. */
+export type EndOutcome = { agent: ListedAgent; isEnded: true } | { agent: ListedAgent; isEnded: false; reason: string }
+
+/** What ending a drive's agents came to: each agent's outcome, or the listing's refusal when none could be listed. */
+export type EndedAgents = readonly EndOutcome[] | { unlisted: string }
+
+/** Statuses of an agent that may still call tools: a teammate waiting for a message is `idle`, not done. */
+const GOING = new Set(['pending', 'running', 'waiting', 'idle'])
+
+/** The agents a drive's end stops (#40): issue-forge's own, still going, whose id, name or teammate name is known. */
+export function agentsToEnd(known: Iterable<string>, listed: readonly ListedAgent[]): ListedAgent[] {
+  const refs = new Set(known)
+  // A `--plugin-dir` copy reports the plain name (#40's probe); an installed one may add its source, as /config owners do.
+  // A listing without the field (unknown before 2.1.305) leaves the known refs alone to decide: only issue-forge's own
+  // agents carry them (PR #151 review round 2, finding 7).
+  const isOwn = (by: string | undefined) => by === undefined || by === NAME || by.startsWith(`${NAME}@`)
+  return listed.filter(a => isOwn(a.spawnedBy) && GOING.has(a.status) && [a.id, a.name, a.teammateId?.split('@')[0]].some(ref => !!ref && refs.has(ref)))
+}
+
+/**
+ * Whether an agent has stopped, by the listing taken after TaskStop (null when it couldn't be taken). `refused` is
+ * TaskStop's refusal; `said` is what it answered otherwise, given when the agent still reads as going.
+ */
+export function endOutcome(agent: ListedAgent, refused: string | null, after: readonly ListedAgent[] | null, said?: string): EndOutcome {
+  const now = after?.find(a => a.id === agent.id)
+  if (after && !(now && GOING.has(now.status))) return { agent, isEnded: true }
+  const going = now ? `it is still ${now.status}${said ? ` (TaskStop said: ${said})` : ''}` : "its status couldn't be read afterwards"
+  return { agent, isEnded: false, reason: refused ?? going }
+}
+
+/** A phase agent's spawn description, `issue-forge #<N> <phase>`. */
+const AGENT_PHASE = /^issue-forge #\d+ (red|green|refactor)$/
+
+function agentWords(agent: ListedAgent): string {
+  const phase = AGENT_PHASE.exec(agent.description)?.[1]
+  return `${phase ? `its ${phase} agent` : 'an agent of the run'} (${agent.name ?? agent.id})`
+}
+
+/** What a stop says about the run's agents (#40): only what the listings and TaskStop showed, never a promise. */
+export function endedLine(ended: EndedAgents): string {
+  if ('unlisted' in ended) return `its agents couldn't be listed (${ended.unlisted}), so any still working may keep going until their turn ends`
+  if (ended.length === 0) return 'no agent was running'
+  return ended.map(o => (o.isEnded ? `${agentWords(o.agent)} has stopped` : `${agentWords(o.agent)} wasn't stopped (${o.reason}), so it may keep working until its turn ends`)).join('; ')
+}
+
+/** The agents' outcome as a clause to add to an answer, or nothing when no agent was going (#40). */
+export function endedClause(ended: EndedAgents): string {
+  return 'unlisted' in ended || ended.length > 0 ? `; ${endedLine(ended)}` : ''
+}
+
+/**
+ * The stop's answer (#40). A press shows it cut to 80 characters, so there the agents' outcome comes first, and a run
+ * another session drives gets a form that fits (the owner, 2026-10-24: "Lead with the outcome").
+ */
+export function stopAnswer(issue: number, branch: string, ended: EndedAgents, how: { isElsewhere: boolean; byPress: boolean }): string {
+  const kept = `stopped #${issue}. Its branch ${branch || '(none yet)'} and commits are kept`
+  if (how.isElsewhere) {
+    const here = 'unlisted' in ended ? '' : endedClause(ended)
+    return how.byPress
+      ? `stopped #${issue}; the session driving it ends its agents at its next check, if open${here}.`
+      : `${kept}; its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open${here}.`
+  }
+  return how.byPress ? `stopped #${issue}; ${endedLine(ended)}. Its branch and commits are kept.` : `${kept}; ${endedLine(ended)}.`
+}
+
+/** A stop whose run moved on before the write: what this session's agents came to, when one was going (#40). */
+export function movedOnAnswer(issue: number, ended: EndedAgents | null, byPress: boolean): string {
+  const clause = ended ? endedClause(ended) : ''
+  const where = `/issue-forge status ${issue} says where`
+  return byPress && clause ? `#${issue} moved on${clause}; ${where}.` : `#${issue} moved on before it could be stopped; ${where}${clause}.`
+}
+
+/** The outcome of ending an agent whose spawn resolved after the stop answered, as a toast of its own; null when none was going. */
+export function lateAnswer(issue: number, ended: EndedAgents): string | null {
+  return 'unlisted' in ended || ended.length > 0 ? `#${issue}: ${endedLine(ended)}` : null
+}
+
+/** Hand off's answer (#40): the agents' outcome when one was going, right after the step for a press. */
+export function handOffAnswer(issue: number, step: string | null, ended: EndedAgents, byPress: boolean): string {
+  const at = `handed off #${issue} at ${step ?? 'its step'}`
+  const resume = `/issue-forge resume ${issue} continues it in any session`
+  return byPress ? `${at}${endedClause(ended)}; ${resume}.` : `${at}; ${resume}${endedClause(ended)}.`
+}
+
 /** Whether a prompt is the hand-back of one of these agents (`<agent-message from="…">`). */
 export function isOwnHandback(text: string, refs: readonly string[]): boolean {
   const m = text.match(/^<agent-message from="([^"]+)">/)
