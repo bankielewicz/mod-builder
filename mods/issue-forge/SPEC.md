@@ -2162,3 +2162,78 @@ count set in the pane.
   - **Codex 4361674901, a known limit, not fixed:** the sweep measures the store once, from its first reads. When another session replaces a planned key between that read and the re-read (restarts the run, or another finished run takes its key), `leftAfter` still counts the size first read, so the warning can show when the store is under the budget, or stay quiet when it is over. Writes by other sessions to any other key during the sweep, such as a running run saving its output, aren't counted either. Only whether and how the toast reads changes: each trim and delete still acts only on the same finished run its re-read found, and the budget leaves 1 Mi characters below Claude Code's limit.
   - **Built** (round 4): SPEC `86adb2e`. Codex 4361674892: red `d27c193` (the test store refuses a write past a limit, as the 2.1.309 engine does; 1 failed, by assertion, answering `something went wrong (issue-forge: $.store.set: the store would be 4194559 characters, over the 4194304 limit); see claude --debug.`), green `44d0896`. README: the store paragraph names the answer. 544 of 544 pass.
   - **QA** at `44d0896` (Claude Code 2.1.309): `claude plugin validate .` and `claude plugin validate mods/issue-forge` passed; the typecheck, tests included, exited 0; logic coverage lines 100.00%, branches 99.81%, functions 99.37%, unchanged, as the logic module didn't change. `claude -p --debug-file … --plugin-dir <worktree>/mods/issue-forge "/issue-forge status"`, with a fresh log (loaded, then admitted), answered as before. A live start into a full store wasn't run: a start needs a GitHub issue and model calls, and round 1 chose tests only for starts.
+
+## Change 0.9.1 (2026-10-23)
+
+> Issue #40, "issue-forge: an agent kept editing and running commands after `/issue-forge stop` (the `tool.call` guard never denied it)". The owner chose it next, 2026-10-23: "#40 issue-forge stop".
+
+- **Why:** a stop doesn't end the run's agents. `stopRun` marks the run stopped and ends this session's drive (`endLocalDrive`, `register.tsx:546-555`), then answers `its agents are refused further tool calls` (`:1885`). The only thing behind that promise is the `tool.call` guard (`guardAction`, `issue-forge-logic.ts:1371-1374`). In #40's run, the refactor agent made 13 tool calls after the stop, 3 of them `Edit`s, and each one ran. No refusal from the guard has been seen in any transcript (#40, script 2). An agent that keeps writing after a stop can leave changes in a checkout that other sessions use.
+- **What has changed since #40** (filed at 0.1.0):
+  - #40's candidate A (the call's `agentId` missing, or a different form) is refuted for this build's spawns. P4 recorded that a named teammate's `tool.call`s carry the `agentId` its spawn returned [probe: `plugins/mod-builder/skills/build/references/gotchas.md:234-237`].
+  - Runs in this repository now go in their own worktree (`"workspace": "worktree"`, Change 0.2.0). A stopped agent's edits land there, not in the main folder.
+  - The rest of #40 still holds: nothing ends the agents, the answer promises a refusal nobody has seen, and candidate B (the guard not reached, or a hook above it answering first) can't be ruled out in a session with other plugins.
+- **Against Anthropic's mod docs** (`docs/research/Mods`, README index, then the pages that bear on it, read 2026-10-23):
+  - "`$.agent` | `register`, `spawn`, `list`", with each agent's `status` one of `pending`, `running`, `waiting`, `idle`, `completed`, `failed` or `killed` [read: `Test and troubleshoot/Mods-reference.md:208`]. So the mods API has no way to end an agent. The built-in `TaskStop` tool takes a `task_id`, and "Agent-team teammates and named background agents are also accepted by agent ID or name" [d.ts 2.1.309: `TaskStop`, line 17719]. A mod calls a tool with `$.tool.call`, which "runs through every hook but the calling one …, the permission check and its dialog, then the tool" [d.ts 2.1.309: `$.tool.call`, lines 3099-3105].
+  - `e.agentId` is "set when a subagent or an in-process teammate makes the call, and absent when the main conversation does" [read: `Mods-reference.md:66`]. `agent.spawn` fires for a subagent or a teammate, with `e.isTeammate` for a teammate [read: `:153`].
+  - A `tool.call` hook refuses a call by returning `{ deny }` without calling `next`, and Claude reads the deny text as the tool's result [read: `Build/React-to-events-with-a-mod.md:98-139`]. That is the guard. It stays, as the second layer.
+  - After the person interrupts the session, some `$.tool.call`s are refused until their next input [read: `Build/Use-the-mods-API.md:314-327`]. A `TaskStop` refused in that window is reported like any other refusal (below).
+  - Anthropic's plugin docs (`docs/research/claude-plugins`) don't bear on this change, which touches a mod's hooks module and one line of mod-builder's gotchas reference.
+- **Step 1, the probe**, before any code: it decides the wording below. The issue asks for it, and it makes model calls.
+  - **The probe mod:** a throwaway mod with a unique name, in the session's scratchpad, never in the repository. It mirrors issue-forge's spawn: `$.agent.register` a type, then `$.agent.spawn` with `subagentType`, `model: 'haiku'` and `cwd`, named or unnamed. The agent's task is about 30 short Bash calls (`sleep 2; echo tick <n>`), one at a time.
+    - Its `tool.call` hook logs every call's `tool` and `agentId` under `~/.claude/<probe>-data/`. Once the stop has run, it also denies the stopped agent's calls and logs each deny.
+    - `/<probe> stop` lists the agents with `$.agent.list()`, then calls `$.tool.call({ tool: 'TaskStop', task_id })` with the `agentId`. If that is refused or rejects, it tries the name, then the `teammateId`. It logs each result, then lists the agents again.
+  - **The runs:** two prompts in one `claude -p --input-format stream-json` session, `--permission-mode auto` like the owner's sessions. First `/<probe> start`, then the stop about 20 s later, with the session kept open 30 s past the stop. Two cases, for two or three sessions in all:
+    - an unnamed subagent;
+    - a named agent with agent teams on and `teammateMode: "in-process"`, since a pane-based teammate refuses a plugin-registered type (this SPEC, Change 0.2.0, probe P4).
+  - **What gets recorded:** which `task_id` form ends each kind of agent; whether a permission dialog is asked; the agent's `status` after the stop; how many of its tool calls came after the stop, counted in the log and in its transcript under `~/.claude/projects/…/subagents/`, as #40's script 1 does; and whether the guard was reached and refused. Each result goes in `gotchas.md` as a `[probe]` entry naming the build. The headless runs use the installed CLI (2.1.310), and this session runs 2.1.309.
+- **Step 2, the fix: a drive that ends, ends its agents.**
+  - **Where:** this session's drive ends in four places, and each one now ends the run's agents in this session:
+    - `stopRun`, a stop typed or pressed here;
+    - `watch`, when the run was stopped, taken over or replaced in another session;
+    - `stillOwned`, the same check before a commit or a stash;
+    - `handOff`, Hand off.
+
+    Hand off and a takeover end the agents too. Resume restarts the step from its beginning, so the old agent's work isn't kept, and an agent still editing the worktree after its drive ends is #40's hazard again.
+  - **Which agents:** the stored run's agents (`run.agents`) that `$.agent.list()` lists in this session as started by issue-forge (`spawnedBy`), with a status of `pending`, `running`, `waiting` or `idle`. `liveAgent` alone isn't enough: the kit can't set it [probe: `gotchas.md:113-118`], and the stored list survives a reload. An agent that is `completed`, `failed` or `killed`, or isn't listed, is left alone.
+  - **How:** the drive ends first, as now, so the guard refuses at once. Then `TaskStop` is called for each such agent, with the `task_id` form the probe showed works, and the agents are listed again.
+  - **The answer says only what happened:**
+    - an agent the second listing shows `killed` (or `completed`) was ended;
+    - a `TaskStop` that is denied, rejects, or leaves the agent running wasn't, and the answer gives the reason.
+
+    For example: `stopped #40. Its branch issue-40-… and commits are kept; its red agent (issue-forge-40-red-1) was ended.`, or `…; its red agent (issue-forge-40-red-1) wasn't ended (<reason>), so it may keep working until its turn ends.`, or `…; no agent was running.`
+    - If the probe shows the guard refusing calls, the second form adds that issue-forge refuses its tool calls. Otherwise it doesn't promise that.
+    - A stop from another session can't reach the driving session's agents. Its answer says `the session driving it stops it, and ends its agents, within 5 s`.
+    - `watch`'s toast becomes `#<N> was stopped in another session; this session stopped driving it and <ended its red agent | the outcome>.`
+  - **If the probe shows `TaskStop` can't end a mod's agent** in either case, the step stays and records the refusal. The answer then names the agents still running and says they may keep working until their turn ends. Nothing claims they were ended.
+  - **The guard stays as it is** (`guardAction`), as the second layer for an agent that `TaskStop` didn't end.
+  - **Pure rules in the logic module:** `agentsToEnd(agents, listed)` picks the agents to end, and `endedLine(outcomes)` words the answer's part about the agents. `register.tsx` gets one top-level `endAgents($, run)` that lists, calls `TaskStop` and lists again, and the four places call it.
+  - **Not changed:** the guard's rule, the steering of the live agent in a worktree run, the stored run's shape, and the pane.
+- **What gets touched:**
+  - `hooks/issue-forge-logic.ts`: `agentsToEnd`, `endedLine`, and their types.
+  - `hooks/register.tsx`: `endAgents`, `stopRun`'s answer, `watch`, `stillOwned` and `handOff`.
+  - Tests: `tests/issue-forge-logic.test.ts` and `tests/ui.test.tsx`. The test at `ui.test.tsx:1065` asserts the old answer, `its agents are refused further tool calls`, a promise nothing verified. It changes in its own commit that says why (CLAUDE.md, "TDD").
+  - `README.md`:
+    - `/issue-forge stop` (:47), Hand off (:206), "Limits worth knowing" (:268), and the "What it reaches" table, regenerated from `claude plugin validate`, since `$.tool.call` of `TaskStop` and `$.agent.list` are new reach;
+    - "Built on".
+  - This SPEC's §9 (:225-234), which says the guard refuses with `this run was stopped; end your turn now`, while the code's text is `this run was stopped or restarted; end your turn now without further tool calls` (`issue-forge-logic.ts:1364`). Corrected in passing. `docs/specs/issue-forge.md` names `/issue-forge stop` but not what it does to agents (`:350`), so it doesn't change.
+  - `plugin.json` and the marketplace entry at 0.9.1.
+  - `plugins/mod-builder/skills/build/references/gotchas.md`: the probe's `[probe]` entries. This is a change to the mod-builder plugin, so mod-builder goes to 0.2.33, with a line in its SPEC.
+  - **Cost:**
+    - The probe: two or three headless sessions, each with one haiku agent making about 30 short Bash calls.
+    - The live check: one real `/issue-forge <N>` run, stopped during red, about one minute of the red agent's model (`redModel`, `opus` by default). Its worktree and branch are kept until the owner says to remove them.
+    - At run time, each end of a drive makes two `$.agent.list()` calls and one `TaskStop` call for each agent still going. No new process, file or network reach.
+- **Tests (fail before the change):**
+  - Logic:
+    - `agentsToEnd` keeps a stored agent listed `running`, `pending`, `waiting` or `idle` with `spawnedBy` issue-forge. It drops one listed `completed`, `failed` or `killed`, one not listed, and one another plugin started.
+    - `endedLine` words each outcome: ended, not ended (with the reason), and none running.
+  - UI:
+    - A stop of a run at red whose agent is listed `running`: the `TaskStop` stub sees that agent's `task_id`, and the answer says it was ended once the second listing shows it `killed`.
+    - The same, with the `TaskStop` stub answering `{ deny: 'no' }`: the answer says the agent wasn't ended, with `no`.
+    - A stop whose agent is listed `completed`, and a stop of a run with `agents: []`: no `TaskStop` call, and the answer says no agent was running.
+    - A stop of a run driven in another session: no `TaskStop` here, and the answer says the driving session ends its agents.
+    - `watch`, finding the run stopped in another session: this session calls `TaskStop` for its running agent, and the toast gives the outcome.
+    - Hand off: `TaskStop` for the running agent.
+    - The answer never says `its agents are refused further tool calls`.
+  - Unchanged (G): the guard's tests (`issue-forge-logic.test.ts:1085` and the UI guard tests), and stops during a gate's command, during a pending spawn and during the push.
+- **Done means:** `/issue-forge stop`, the Stop button, Hand off and a takeover end the run's agents that are still going in this session, and the answer says which were ended and which weren't. **Live check:** on this build, start a real run, stop it during red, and read the red agent's transcript. No tool call after the stop returns a normal result, and the worktree's `git status` is unchanged from the moment of the stop.
+- **Version:** 0.9.1, a patch: a fix, with no change to commands, options or the stored run.
