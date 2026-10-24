@@ -224,6 +224,8 @@ type World = {
   taskStopAnswer?: any
   /** `$.agent.spawn` is refused with this reason (PR #151 review round 1, finding 5). */
   spawnDeny?: string
+  /** When set, every `TaskStop` waits for it, as one held by a permission dialog would (round 2, finding 4). */
+  taskStopHold?: Promise<void>
 }
 
 /** Where git keeps /w's index lock (#28). */
@@ -335,7 +337,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
   })
   on('tool.call', { tool: 'TaskStop' }, ($: any, e: any) => {
     world.taskStops.push(e.task_id)
-    return world.taskStopAnswer ?? { result: { message: `Successfully stopped task: ${e.task_id} (issue-forge #16)`, task_id: e.task_id, task_type: 'local_agent', command: 'issue-forge #16' } }
+    const answer = world.taskStopAnswer ?? { result: { message: `Successfully stopped task: ${e.task_id} (issue-forge #16)`, task_id: e.task_id, task_type: 'local_agent', command: 'issue-forge #16' } }
+    return world.taskStopHold ? world.taskStopHold.then(() => answer) : answer
   })
   on('agent.spawn', ($: any, e: any) => {
     world.spawned.push({ subagentType: e.subagentType ?? e.subagent_type, name: e.name, model: e.model, prompt: e.prompt, cwd: e.cwd })
@@ -4668,5 +4671,59 @@ describe('#40: a drive that ends, ends its agents', () => {
     w.storeLimit = 10
     await run($, 'stop').catch(() => undefined)
     expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test("round 2, finding 1: hand off ends the drive's agent even when releasing the run's driver is refused (Codex 4365778044)", async ($, on) => {
+    const store: Record<string, unknown> = { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, listed: [[newGreen()], [newGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    w.storeLimit = 10
+    await run($, 'handoff').catch(() => undefined)
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test("round 2, finding 2: an agent whose spawn resolved after the stop is ended, and a toast says so, since the stop's answer came first", async ($, on) => {
+    let release: () => void = () => undefined
+    const w = engine(on, { head: BRANCH, spawnHold: new Promise<void>(resolve => (release = resolve)), listed: [[], [newGreen()], [newGreen('killed')]] }, { [`issue-forge:run:${ROOT}`]: storedRun('green') })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, 'the spawn')
+    expect((await run($, 'stop')).text).toContain('kept; no agent was running.')
+    release()
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('#16: ')))
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.toasts).toContain('#16: its green agent (issue-forge-16-green-2) has stopped')
+  })
+
+  test("round 2, finding 4: the stop is written before TaskStop answers, so a TaskStop held by a dialog doesn't hold the run's record", async ($, on) => {
+    let release: () => void = () => undefined
+    const store: Record<string, unknown> = { [key(16)]: storedRun('green', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, taskStopHold: new Promise<void>(resolve => (release = resolve)), listed: [[newGreen()], [newGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at green.')
+    await until(w, () => w.spawned.length === 1, "#16's green agent")
+    const stopping = run($, 'stop')
+    await waitFor(w, () => (store[key(16)] as any).step === 'stopped')
+    expect((store[key(16)] as any).step).toBe('stopped')
+    release()
+    expect((await stopping).text).toContain('kept; its green agent (issue-forge-16-green-2) has stopped.')
+  })
+
+  test("round 2, finding 9: a takeover caught just before a commit ends the drive's agent (stillOwned)", async ($, on) => {
+    let release: () => void = () => undefined
+    const store: Record<string, unknown> = { [key(16)]: storedRun('gateG', { repo: `${ROOT}/.git` }) }
+    const w = engine(on, { head: BRANCH, staged: ['tests/a.test.ts', 'src/a.ts'], sinceRed: ['src/a.ts'], redPaths: ['tests/a.test.ts'], spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() }, statusHold: new Promise<void>(r => (release = r)), listed: [[oldGreen('idle')], [oldGreen('killed')]] }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe('resuming #16 at gateG.')
+    await until(w, () => w.argv.some(a => a[1] === 'status' && a.includes('-z')), "the gate's last look")
+    store[key(16)] = { ...(store[key(16)] as any), driver: { session: OTHER, since: 1 } }
+    release()
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['old-green'])
+    expect(w.commits).toEqual([])
+    // stillOwned caught it, not watch's 5-second check, whose toast would say so.
+    expect(w.toasts.some(t => t.includes('was taken over'))).toBe(false)
   })
 })

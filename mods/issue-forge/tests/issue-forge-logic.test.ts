@@ -2938,7 +2938,6 @@ describe('#40: a drive that ends, ends its agents', () => {
       row('mine', { status: 'killed' }),
       row('stranger'),
       row('lookalike', { spawnedBy: 'other-mod', name: 'issue-forge-16-red-1' }),
-      row('by-the-model', { spawnedBy: undefined, name: 'issue-forge-16-red-1' }),
     ]
     expect(agentsToEnd(known, listed)).toEqual([])
     expect(agentsToEnd(new Set(), [row('old-red')])).toEqual([])
@@ -2980,6 +2979,46 @@ describe('#40: a drive that ends, ends its agents', () => {
     const known = ['a1', 'a2', 'a3']
     const listed = [row('a1', { spawnedBy: 'issue-forge@claudemod' }), row('a2', { spawnedBy: 'issue-forge-other' }), row('a3', { spawnedBy: 'other@issue-forge' })]
     expect(agentsToEnd(known, listed).map(a => a.id)).toEqual(['a1'])
+  })
+
+  // PR #151 review round 2, finding 7: a build whose listing has no spawnedBy (unknown on 2.1.296) still finds issue-forge's
+  // agents by the refs it holds, which only issue-forge's own agents carry. This replaces round 1's `by-the-model` row,
+  // which required such an agent dropped (the owner chose round 2's fixes, finding 7 included).
+  test('agentsToEnd falls back to the known refs alone when a listing has no spawnedBy', () => {
+    const known = ['issue-forge-16-red-1', 'a2']
+    const listed = [row('a1', { spawnedBy: undefined, name: 'issue-forge-16-red-1' }), row('a2', { spawnedBy: undefined }), row('a3', { spawnedBy: undefined, name: 'helper' })]
+    expect(agentsToEnd(known, listed).map(a => a.id)).toEqual(['a1', 'a2'])
+  })
+
+  // Round 2, finding 3: the late agent is written onto its own run, so a later stop of that run finds it and its name isn't reused.
+  test('withLateAgent adds the late agent to its own run, stopped or not, once; another run is left alone', () => {
+    const L = new Proxy(logic as any, {
+      get: (module, name: string) => {
+        expect(typeof module[name]).toBe('function')
+        return module[name]
+      },
+    })
+    const late = { id: 'a7', name: 'issue-forge-16-green-2', phase: 'green' }
+    const stopped = { id: '16-1', step: 'stopped', agents: [{ id: 'old-green', name: 'issue-forge-16-green-1', phase: 'green' }] }
+    expect(L.withLateAgent(stopped, '16-1', late)).toEqual({ ...stopped, agents: [...stopped.agents, late] })
+    expect(L.withLateAgent({ ...stopped, agents: [late] }, '16-1', late)).toBe(null)
+    expect(L.withLateAgent({ ...stopped, id: '16-2' }, '16-1', late)).toBe(null)
+    expect(L.withLateAgent(null, '16-1', late)).toBe(null)
+  })
+
+  // Round 2, finding 2: the stop already answered, so a late agent's outcome is a toast of its own, short enough to show whole.
+  test('lateAnswer names the late agent\'s outcome under 80 characters, and nothing when there was none', () => {
+    const L = new Proxy(logic as any, {
+      get: (module, name: string) => {
+        expect(typeof module[name]).toBe('function')
+        return module[name]
+      },
+    })
+    const agent = row('a7', { name: 'issue-forge-16-green-2', description: 'issue-forge #16 green' })
+    const text = L.lateAnswer(16, [{ agent, isEnded: true }])
+    expect(text).toBe('#16: its green agent (issue-forge-16-green-2) has stopped')
+    expect(text.length).toBeLessThanOrEqual(80)
+    expect(L.lateAnswer(16, [])).toBe(null)
   })
 
   // Round 1, finding 6: an agent still read as going after TaskStop answered keeps TaskStop's own words in the reason.
