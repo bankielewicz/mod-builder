@@ -1062,7 +1062,10 @@ describe('reloads, resume and stop', () => {
     expect(w.spawned[0]).toMatchObject({ subagentType: 'issue-forge:green', name: 'issue-forge-16-green-2' })
     // A run stored by 0.1.0 has no pinned repository: the issue is looked up as before (#25).
     expect(w.argv.find(a => a[0] === 'gh' && a[1] === 'issue')).not.toContain('--repo')
-    expect((await run($, 'stop')).text).toContain('its agents are refused further tool calls')
+    // The answer says what the stop did, never a refusal no run has shown (#40).
+    const stopped = (await run($, 'stop')).text
+    expect(stopped).toContain('stopped #16')
+    expect(stopped).not.toContain('refused')
     expect((await run($, 'status')).text).toContain('stopped; the branch and its commits are kept')
     expect(((await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'old-green' } as never)) as any).deny).toContain('issue-forge:')
   })
