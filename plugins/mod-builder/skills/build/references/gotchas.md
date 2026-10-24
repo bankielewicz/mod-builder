@@ -241,6 +241,8 @@ Re-check [field] items against the d.ts after a Claude Code update.
   with `{ consumed: reason }` keeps the main model idle, and the delivery didn't come again within
   78 s. Probed on 2.1.296 (issue-forge P4, issue #27). A mod whose named agents must stay quiet
   handles both shapes: `{ drop }` in `prompt.submit` and `{ consumed }` in `session.receive`.
+  Under `claude -p` (stream-json included) a named spawn is not a teammate, even with agent teams on:
+  no `teammateId`, and an `a<hex>` id. Only an interactive session made one (2.1.310, issue #40's probe).
 - **[probe]** With agent teams on, inside tmux, with the default teammate mode, a named
   `$.agent.spawn` of a type a plugin registered is refused: `{ deny: "Agent type '<plugin>:<agent>' was registered at run time by a
   plugin and exists only in this process; a pane-based teammate cannot run it. Spawn it with the
@@ -278,6 +280,27 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `tool.call {tool:'Agent'}` stub isn't reached either. To test the steps either side of a spawn,
   seed `$.store` (`mock.store`) at the step after it and resume from there. A test-side
   `$.prompt.submit` does carry the `origin` it is given, so a `peer` hand-back drop can be tested.
+- **[probe]** A mod ends an agent it spawned with the built-in `TaskStop` tool, by the `agentId`
+  `$.agent.spawn` returned: `$.tool.call({ tool: 'TaskStop', task_id: <agentId> })`. `$.agent` itself
+  has only `register`, `spawn` and `list`.
+  - Under `auto` on 2.1.310 it ended an unnamed subagent (`Successfully stopped task: <id> (…)`,
+    `task_type: "local_agent"`) and an in-process teammate (`task_type: "in_process_teammate"`, with
+    a task id of its own in the message).
+  - Each time the agent's `$.agent.list()` status went to `killed`, and no tool call came after the
+    stop, in the hook's log or in the transcript. No permission dialog came up.
+  - Other permission modes weren't checked.
+  - Probed with a throwaway mod and on issue-forge 0.9.1 (issue #40), its installed copy included.
+- **[probe]** `$.agent.list()`'s `spawnedBy` for a mod's spawn is the plugin's plain name, not
+  `<name>@inline`, for a `--plugin-dir` copy (2.1.310). An installed copy's agents were matched by a
+  filter that takes the plain name or `<name>@…`, so its exact string wasn't logged. The field is in
+  2.1.305's binary and in 2.1.306's and 2.1.308's types; 2.1.296 wasn't checked.
+- **[probe]** A killed in-process teammate drops out of `$.agent.list()` within 30 s, while a killed
+  subagent stays listed as `killed` (2.1.310). Count an agent the list no longer has as ended.
+- **[probe]** A mod's own `$.tool.call` skips that plugin's other `tool.call` hooks. The debug log
+  has `hooks module <plugin>@<source> tool.call skipped: re-entry (the plugin's own code raised it;
+  origin <plugin>)`, for a `--plugin-dir` copy (`@inline`) and an installed one (`@claudemod`) alike, although the d.ts says the call "runs through every hook but the calling one
+  (the plugin's others see it)". Other plugins' hooks do see it: a PreToolUse hook ran for
+  issue-forge's `TaskStop` (2.1.310). So a mod's guard doesn't police its own tool calls.
 
 - **[probe]** codex-cli 0.163.0's binary carries the string `"chat"` is no longer supported` beside `wire_api`:
   Codex speaks only OpenAI's Responses API, so a `model_providers` entry can't point it at a Chat

@@ -1340,3 +1340,28 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   - The skill-reviewer agent, briefed with the move table so it checks the move as well as the prose.
 - **Version:** 0.2.32 (patch: skill text).
 
+## Change 0.2.33 (2026-10-24)
+
+> Issue #40's probe findings, held for "the next mod-builder PR" by the owner's choice on #40 (2026-10-23: "Next mod-builder PR (Recommended)"), then chosen next after PR #151 merged (2026-10-24: "gotchas.md from #40's probe").
+
+- **What changes:** `skills/build/references/gotchas.md` gains four `[probe]` entries in "Subagents a mod spawns", and one qualifier:
+  - a mod ends an agent it spawned with the built-in `TaskStop` tool, by the spawn's `agentId`, for a subagent and an in-process teammate alike;
+  - `$.agent.list()`'s `spawnedBy` is the plugin's plain name;
+  - a killed teammate drops out of `$.agent.list()`, while a killed subagent stays listed as `killed`;
+  - a mod's own `$.tool.call` skips that plugin's other `tool.call` hooks (re-entry), against the d.ts's wording;
+  - the qualifier, on the teammate entry: under `claude -p` a named spawn isn't a teammate.
+
+  Each says which build it was probed on (2.1.310), and what wasn't checked (other permission modes, 2.1.296's `spawnedBy`). `docs/how-it-works.md`'s count goes from 111 to 115.
+- **Where the facts come from:** issue-forge's SPEC Change 0.9.1, "Step 1's result", and its Built block's live checks, both the pre-merge one and the one after PR #151 merged. That last check ran on the installed copy: "its red agent (issue-forge-84-red-1) has stopped", with no tool call after the stop (2026-10-24, 2.1.310).
+- **Against Anthropic's documents:**
+  - Plugins: a skill's files live in its folder, and the page sends "frontmatter fields and supporting files" to the Skills docs [read: `docs/research/claude-plugins/Add-components-to-a-plugin.md:222-259`]. Nothing there constrains what a reference file says.
+  - Mods: "`$.agent` | `register`, `spawn`, `list`" [read: `docs/research/Mods/Test and troubleshoot/Mods-reference.md:208`], which the `TaskStop` entry restates. `e.agentId` is set on a subagent's or an in-process teammate's call [read: `:66`].
+- **What gets touched:** `gotchas.md`, `docs/how-it-works.md`'s count, the README's checks line, 0.2.33 in `plugin.json` and the marketplace entry, and this SPEC. No skill steps, templates, scripts or Mod Lab code change.
+- **Tests and QA:** text only, so there is no red or green step:
+  - `claude plugin validate --strict` for the marketplace and `plugins/mod-builder`, and `claude plugin test plugins/mod-builder`;
+  - the sandbox check, since its canary list must match `gotchas.md`'s;
+  - `check_docs.py` on the changed documents;
+  - the `-p` load check for the version bump;
+  - the skill-reviewer agent on the new entries, against issue-forge's SPEC record.
+- **Version:** 0.2.33 (patch: skill reference text).
+
