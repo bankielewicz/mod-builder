@@ -2289,6 +2289,8 @@ count set in the pane.
     - The debug log has `$.tool.call (issue-forge): TaskStop answered in 92ms`.
     - The red agent's transcript has no record after the stop, and still 3 tool calls 60 s later.
     - The run's worktree `git status --porcelain` was empty at the stop and the same 60 s later.
+  - **Seen in the live check's log, against the d.ts:** `$.tool.call` "runs through every hook but the calling one (the plugin's others see it)" [d.ts 2.1.309, `$.tool.call`]. But the debug log has `hooks module issue-forge@inline tool.call skipped: re-entry (the plugin's own code raised it; origin issue-forge)` around issue-forge's own `TaskStop` and questions [probe, 2.1.310]. So issue-forge's guard doesn't see its own `TaskStop`, and nothing depends on it doing so.
+  - **Not verified: `spawnedBy` for an installed copy** [inference]. Every observation was of a `--plugin-dir` copy, whose `spawnedBy` was the plain name (`stopprobe-q4z`, `issue-forge`), not `<name>@inline`. That suggests the plain name for `issue-forge@claudemod` too, but no installed copy was checked. If it differs, `agentsToEnd` matches nothing, and a stop says `no agent was running` while the agent goes on. **The check after the merge:** after the fast-forward and `/reload-plugins`, the first real stop of a run whose agent is working must say `has stopped`. If it says `no agent was running`, the filter is the cause.
   - **Left in place, for the owner to remove:**
     - the live run's worktree `scratch/issue-40-stop-ends-agents/scratch/issue-forge/issue-94-pane-command-archetype-and-duet-issue-fo`, its local branch, and its `stopped` record in the store;
     - the probe's and the live check's session transcripts under `~/.claude/projects/`.
