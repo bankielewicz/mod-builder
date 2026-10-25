@@ -1344,19 +1344,19 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 
 > Issue #40's probe findings, held for "the next mod-builder PR" by the owner's choice on #40 (2026-10-23: "Next mod-builder PR (Recommended)"), then chosen next after PR #151 merged (2026-10-24: "gotchas.md from #40's probe").
 
-- **What changes:** `skills/build/references/gotchas.md` gains four `[probe]` entries in "Subagents a mod spawns", and one qualifier:
+- **What changes:** `skills/build/references/gotchas.md` gains four `[probe]` entries in "Subagents a mod spawns", and three qualifiers (this read "one qualifier"; the skill review added the two "in an interactive session" ones; corrected in 0.2.34):
   - a mod ends an agent it spawned with the built-in `TaskStop` tool, by the spawn's `agentId`, for a subagent and an in-process teammate alike;
-  - `$.agent.list()`'s `spawnedBy` is the plugin's plain name;
+  - `$.agent.list()`'s `spawnedBy` is the plugin's plain name, for a `--plugin-dir` copy (scope added in 0.2.34);
   - a killed teammate drops out of `$.agent.list()`, while a killed subagent stays listed as `killed`;
-  - a mod's own `$.tool.call` skips that plugin's other `tool.call` hooks (re-entry), against the d.ts's wording;
+  - a mod's own `$.tool.call` skips that plugin's other `tool.call` hooks (re-entry), against the d.ts's wording. **Wrong, corrected in 0.2.34:** a call from inside one of the mod's hooks reaches its own `tool.call` hook (`nested`), as the d.ts says. A call from its code outside its hooks skips it (`re-entry`), and so do the calls of an agent such code spawned;
   - the qualifier, on the teammate entry: under `claude -p` a named spawn isn't a teammate.
 
   Each says which build it was probed on (2.1.310), and what wasn't checked (other permission modes, 2.1.296's `spawnedBy`). `docs/how-it-works.md`'s count goes from 111 to 115.
 - **Where the facts come from:** issue-forge's SPEC Change 0.9.1, "Step 1's result", and its Built block's live checks, both the pre-merge one and the one after PR #151 merged.
   - **The check after the merge** [probe, 2026-10-24 21:33 UTC, 2.1.310]: an interactive session in a private tmux, started in the main folder with no `--plugin-dir`, so the installed `issue-forge@claudemod` 0.9.1 ran (the log: `hooks module issue-forge@claudemod loaded`). It ran under `--permission-mode auto` with `teammateMode: "in-process"`. A real `/issue-forge 84` was stopped during red with a typed `/issue-forge stop`.
-    - The answer: "stopped #84. … its red agent (issue-forge-84-red-1) has stopped." No tool call came after the stop in the red agent's transcript, and the run's worktree `git status` was empty then and 60 s later. The screen showed no dialog.
-    - The debug log: `Hooks: PreToolUse:TaskStop [python3 …/hookify/hooks/pretooluse.py]`, then `Hook PreToolUse:TaskStop (PreToolUse) success`. And three `hooks module issue-forge@claudemod tool.call skipped: re-entry (the plugin's own code raised it; origin issue-forge)`, each right after a `$.tool.call (issue-forge): Agent` (the spawns) or the `TaskStop`.
-  - **The check before the merge** (its debug log, 2.1.310, `@inline`): the same re-entry line followed each `Agent` call and the `TaskStop`. None followed the two `$.tool.call (issue-forge): AskUserQuestion` calls of the start menu.
+    - The answer: "stopped #84. … its red agent (issue-forge-84-red-1) has stopped." No tool call came after the stop in the red agent's transcript, and the run's worktree `git status` was empty then and 60 s later. The screen showed no dialog. (Corrected in 0.2.34: the debug log shows the agent's last `Read`, made before the stop, dispatched 0.6 s after `TaskStop` answered. A transcript can't show that.)
+    - The debug log: `Hooks: PreToolUse:TaskStop [python3 …/hookify/hooks/pretooluse.py]`, then `Hook PreToolUse:TaskStop (PreToolUse) success`. And three `hooks module issue-forge@claudemod tool.call skipped: re-entry (the plugin's own code raised it; origin issue-forge)`, each right after a `$.tool.call (issue-forge): Agent` (the spawns) or the `TaskStop`. (Wrong, corrected in 0.2.34: one follows the `Agent` call, and the other two precede the red agent's own `Bash` and `Read`. Right after the `TaskStop` the log has `hooks module issue-forge@claudemod, devforgeai@skills-dir: tool.call nested in issue-forge#10`.)
+  - **The check before the merge** (its debug log, 2.1.310, `@inline`): the same re-entry line followed each `Agent` call and the `TaskStop`. None followed the two `$.tool.call (issue-forge): AskUserQuestion` calls of the start menu. (Wrong, corrected in 0.2.34: the five re-entry lines are two at the `Agent` call and three before the red agent's `Bash` calls. The `TaskStop` and the start menu's one `AskUserQuestion` call each logged `hooks module issue-forge@inline: tool.call nested in issue-forge#10`.)
 - **Against Anthropic's documents:**
   - Plugins: a skill's files live in its folder, and the page sends "frontmatter fields and supporting files" to the Skills docs [read: `docs/research/claude-plugins/Add-components-to-a-plugin.md:222-259`]. Nothing there constrains what a reference file says.
   - Mods: "`$.agent` | `register`, `spawn`, `list`" [read: `docs/research/Mods/Test and troubleshoot/Mods-reference.md:208`], which the `TaskStop` entry restates. `e.agentId` is set on a subagent's or an in-process teammate's call [read: `:66`].
@@ -1370,7 +1370,7 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
 - **The skill review** (the skill-reviewer agent, as `/plugin-dev:skill-development` asks): two critical findings and five major ones, all fixed.
   - **Critical:**
     - The PreToolUse sentence had no source in any record. It now names the hook (hookify's, a classic hook), and its log lines are above.
-    - The re-entry claim was broader than seen, and could read against "Modules"' 2.1.300 nested-call entry. It is now scoped to `TaskStop` from a `command.run` hook and the `Agent` calls of a detached drive, with the docs' `re-entry` line (`Mods-reference.md:42`), the d.ts version (2.1.309) and the build. It says what wasn't seen (`AskUserQuestion`) and why a mod's own registered tool differs.
+    - The re-entry claim was broader than seen, and could read against "Modules"' 2.1.300 nested-call entry. It is now scoped to `TaskStop` from a `command.run` hook and the `Agent` calls of a detached drive, with the docs' `re-entry` line (`Mods-reference.md:42`), the d.ts version (2.1.309) and the build. It says what wasn't seen (`AskUserQuestion`) and why a mod's own registered tool differs. (Superseded in 0.2.34: the scoping kept a misreading of the logs, in which `TaskStop` wasn't skipped at all.)
   - **Major:**
     - "Under `claude -p` (stream-json included)" became the stream-json run that was made, and `-p` on 2.1.296 wasn't checked.
     - The teammate's drop-out now reads "`killed` at once, gone 30 s later (interactive)" against the subagent's "still `killed` 30 s later (`-p` stream-json)", with the 2.1.309 d.ts's own words.
@@ -1379,4 +1379,29 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
     - Two entries now say "in an interactive session" where they spoke of teammates: the hand-back entry, and the tmux one.
   - **Minor:** the teammate's `TaskStop` message names a different task id, now said outright. The `$.agent` sentence carries its `[d.ts]` source inline, and long lines are wrapped.
 - **Version:** 0.2.33 (patch: skill reference text).
+
+## Change 0.2.34 (2026-10-25)
+
+> The owner's `/code-review pr 154` after PR #154 merged (`3560c67`): "include but not limited to codex reviews from the PR. consult with /advisor for guidance/approach (i.e. if issue detected was introduced now or already existed then post github issue, etc.)". The owner then chose: "Follow-up PR (Recommended)" for what #154 introduced, and "Fix it in #155 (Recommended)" for issue-forge's README line.
+
+- **Codex:** no findings. Its code review of `a45e01d` was still "running" when #154 merged, and its security review was clean.
+- **The review's six findings**, each checked against the two saved debug logs of #40's live checks (pre-merge `@inline`, and post-merge `@claudemod`; both 2.1.310, an interactive private tmux, `--permission-mode auto`, `teammateMode: "in-process"`), the probe mod's three logs, and the 2.1.310 d.ts:
+  1. **The re-entry entry's "every `tool.call` hook of that plugin":** worse than an overclaim, it was inverted. Right after `$.tool.call (issue-forge): TaskStop`, both logs have `hooks module issue-forge@…: tool.call nested in issue-forge#10`: the plugin's own hook got the call. The re-entry lines belong to the drive's `Agent` call (2 pre-merge, 1 post-merge) and to each of the red agent's own calls (3 `Bash` pre-merge; a `Bash` and a `Read` post-merge). They are followed by `blast-radius…, git-branch…: tool.call nested in issue-forge`. The probe mod spawned inside its `command.run` hook, awaited, and its agent's calls logged `tool.call nested in stopprobe-q4z#2` for its own hook in all three runs. The entry is rewritten around where a call comes from, with the docs' `re-entry` line [read: `docs/research/Mods/Test and troubleshoot/Mods-reference.md:42`].
+  2. **Change 0.2.33's text kept the pre-review wording:** confirmed. It's corrected in place above, each correction marked.
+  3. **`AskUserQuestion` "isn't known":** settled by the pre-merge log, which has `hooks module issue-forge@inline: tool.call nested in issue-forge#10` right after the start menu's one `AskUserQuestion` call. The entry now says it. issue-forge's SPEC 0.9.1 (`:2293`), which put the re-entry line "around … `TaskStop` and questions", predates #154, so it goes to #156.
+  4. **The hand-back shape of a named spawn under `-p` with teams on:** not checked, and now said so. No probe: it would need an agent, so model calls.
+  5. **"No tool call came after the stop, in the hook's log or in the transcript":** false for both issue-forge runs. The pre-merge red agent's `Bash` `toolu_01UHcAXu8Ma693ww3wdtxERF` (in its transcript at 01:05:00.540Z) was dispatched at 01:05:03.583Z, 0.1 s after `TaskStop answered` (03.476Z) and after `lifecycle aborted` (03.487Z), and ran 2.7 s. The post-merge `Read` `toolu_01BSm1fgimw5JVYFaLDnyJ6o` was dispatched at 21:33:28.711Z, after `TaskStop answered` (28.086Z). Both were read-only. The entry now says a call the agent already made can still run, and how to see it in the log.
+  6. **The 2.1.309 d.ts cited for 2.1.310 probes:** the 2.1.310 d.ts has the same lines (`$.tool.call` :3102, the agent list :3272, `spawnedBy` :175), and the entries now cite it.
+- **Two pre-existing defects found while checking**, filed as #156 by the owner's rule ("already existed then post github issue"): issue-forge's `tool.call` guard is skipped for every call of its own agents, since its drive spawns them from detached code; and a call the agent made before a stop runs after it, with nothing refusing it. #156 also lists the #151 records to correct. PR #155 carries the README clause the owner chose to fix there (`0436b5e`).
+- **What changes in `gotchas.md`** ("Subagents a mod spawns"; the count stays 115):
+  - The re-entry entry is rewritten (1, 3).
+  - The `TaskStop` entry gets the late call (5) and cites the 2.1.310 d.ts (6), as do the `spawnedBy` and drop-out entries.
+  - Three older entries point at the rewritten one, since they describe an agent's calls reaching a hook: the detached spawn from a `command.run` handler, P4's teammate (now marked 2.1.296), and the `cwd` rewrite (also "not rechecked on 2.1.310").
+  - The hand-back entry says the `-p` shape wasn't checked (4).
+- **Against Anthropic's documents:**
+  - Mods: `next.error.kind` is "`re-entry` when the hook was skipped because the event came from inside a mods API call by that hook or by your mod's code outside its hooks" [read: `Mods-reference.md:42`]. That's the rule the logs show. Whether `.catch` then gets the skipped call is docs only, not observed.
+  - Plugins: increment `version` on every release [read: `docs/research/claude-plugins/Publish-and-distribute-a-plugin.md:44`, `:166`].
+- **What gets touched:** `gotchas.md`, the README's checks line, 0.2.34 in `plugin.json` and the marketplace entry, and this SPEC. No skill steps, templates, scripts or Mod Lab code change, and no issue-forge file.
+- **Tests and QA:** text only, so there is no red or green step. `claude plugin validate --strict` for the marketplace and `plugins/mod-builder`, `claude plugin test plugins/mod-builder`, the sandbox check, the `-p` load check, and the skill-reviewer agent on the changed entries, against the log lines quoted here.
+- **Version:** 0.2.34 (patch: skill reference text).
 

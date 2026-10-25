@@ -219,6 +219,6 @@ bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh   # all five a
 CI tests it on Claude Code 2.1.296. 0.2.29's tests, archetype check, typecheck and `-p` live checks
 ran on 2.1.308; 0.2.30's tests, typecheck and `-p` live check ran on 2.1.309; 0.2.31's tests,
 archetype check and `-p` live check ran on 2.1.309, and `validate --strict` on 2.1.309 and 2.1.296;
-0.2.32's archetype check and `-p` live check ran on 2.1.309; 0.2.33's checks and `-p` live check ran on
-2.1.310. Function hooks are early access, so the
+0.2.32's archetype check and `-p` live check ran on 2.1.309; 0.2.33's and 0.2.34's checks and `-p` live
+checks ran on 2.1.310. Function hooks are early access, so the
 API may change between releases.
