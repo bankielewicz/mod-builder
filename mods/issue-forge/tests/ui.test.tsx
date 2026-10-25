@@ -4830,12 +4830,15 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     let release: () => void = () => undefined
     return { hold: new Promise<void>(resolve => (release = resolve)), release: () => release() }
   }
-  const stored = (store: Record<string, unknown>) => store[RUN] as any
+  // A record seeded under the old key moves to the repository's key at start (Change 0.3.0's migration).
+  const stored = (store: Record<string, unknown>) => (store[key(16)] ?? store[RUN]) as any
+  // A store the test's own object backs, so `stored` reads what the mod wrote (mock.store keeps a copy).
+  const LIVE = { storeHold: { when: () => false, until: Promise.resolve() } }
   const strayReason = `the session's folder ${ROOT} changed while the red agent worked: stray.txt; issue-forge can't tell whether the agent or someone else made the change`
 
   test("a preflight that doesn't get the script's own refusal blocks the phase, and no agent starts", async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], fenceCheck: { exitCode: 0, stderr: '' } }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],fenceCheck: { exitCode: 0, stderr: '' } }, store)
     await start($)
     await run($, 'resume')
     await waitFor(w, () => stored(store).step === 'blocked')
@@ -4845,7 +4848,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test("a preflight whose bash can't start blocks the same way", async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], fenceCheck: 'throws' }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],fenceCheck: 'throws' }, store)
     await start($)
     await run($, 'resume')
     await waitFor(w, () => stored(store).step === 'blocked')
@@ -4856,7 +4859,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test("the agent's fence file is live, by its name, before the spawn, and retired when its phase ends", async ($, on) => {
     const spawn = releasable()
-    const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold }, { [RUN]: atRed() })
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: spawn.hold }, { [RUN]: atRed() })
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4868,7 +4871,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("a stop retires the agent's fence file", async ($, on) => {
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4878,7 +4881,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test("the 5 s check writes the fence line again, later, while the agent works", async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: held() }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held() }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4891,7 +4894,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test('the folder changing while the agent works: the 5 s check ends the agent and blocks the run, naming the file', async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4911,7 +4914,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   test("a spawn that gets no agent id: the phase ends at didn't start, its fence retired, with no folder block", async ($, on) => {
     const spawn = releasable()
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: spawn.hold }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4924,7 +4927,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test('an edit already there when the phase began, and unchanged since, blocks nothing at the 5 s check', async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), rootStatus: ' M before.ts\0' }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), rootStatus: ' M before.ts\0' }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4936,7 +4939,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("a change found at a stop is named in the stop's answer", async ($, on) => {
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4945,7 +4948,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("a pressed Stop's toast names the first changed file within its 80 characters", async ($, on) => {
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), answer: 'Stop the run', listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), answer: 'Stop the run', listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4959,7 +4962,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test('a hand-off keeps the snapshot, and the next phase start compares against it before anything else', async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')], [], []] }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), listed: [[red('running')], [red('killed')], [], []] }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -4990,7 +4993,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   test('a resume after a folder block stashes the worktree first, and its answer names the stash', async ($, on) => {
     const message = 'issue-forge #16 red after the folder check (run 16-1)'
     const store: Record<string, unknown> = { [RUN]: storedRun('blocked', { workRoot: WT, redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], blocked: { at: 'red', reason: strayReason, next: 'n' }, isFolderBlock: true }) }
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), stashList: `abc1234def0\tOn ${BRANCH}: ${message}\n` }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), stashList: `abc1234def0\tOn ${BRANCH}: ${message}\n` }, store)
     await start($)
     expect((await run($, 'resume')).text).toBe(`resuming #16 at red; its worktree's uncommitted files go to the stash "${message}" first.`)
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -5002,7 +5005,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test('a fence file changed or removed while the agent works: the agent is ended and the run blocks', async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -5016,7 +5019,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test('the preflight failing on the 5 s check ends the agent and blocks the run', async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
@@ -5030,7 +5033,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test("a here run's agent is fenced too, but its folder isn't watched", async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: storedRun('red', { redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] }) }
-    const w = engine(on, { head: BRANCH, spawnHold: held() }, store)
+    const w = engine(on, { ...LIVE, head: BRANCH, spawnHold: held() }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
