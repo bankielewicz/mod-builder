@@ -2684,11 +2684,26 @@ export function folderEntries(porcelainZ: string): FolderEntry[] {
     .map(record => ({ xy: record.slice(0, 2), path: record.slice(3) }))
 }
 
-/** Whether `git hash-object --stdin-paths` can read the entry: not deleted, not a folder (a nested repository), one line. */
-const isHashable = (e: FolderEntry): boolean => !e.xy.includes('D') && !e.path.endsWith('/') && !e.path.includes('\n')
+/**
+ * Whether `git hash-object --stdin-paths` can read the entry: not deleted, not a folder (a nested repository, or a
+ * submodule stat found), one line.
+ */
+const isHashable = (e: FolderEntry): boolean => !e.xy.includes('D') && !e.path.endsWith('/') && !e.path.includes('\n') && e.kind === undefined
 
 export function hashablePaths(entries: readonly FolderEntry[]): string[] {
   return entries.filter(isHashable).map(e => e.path)
+}
+
+/**
+ * What `$.fs.stat` found at each of `paths` put on its entry when it isn't a file: porcelain v1 lists a dirty submodule
+ * with no trailing slash, and hash-object fails the whole batch on its folder (PR #162 review round 1, finding 3).
+ */
+export function withKinds(entries: readonly FolderEntry[], paths: readonly string[], kinds: readonly string[]): FolderEntry[] {
+  const kindOf = new Map(paths.map((path, i) => [path, kinds[i]]))
+  return entries.map(e => {
+    const kind = kindOf.get(e.path)
+    return kind === undefined || kind === 'file' ? e : { ...e, kind: kind === 'dir' ? 'dir' : 'other' }
+  })
 }
 
 /** `hash-object`'s lines put on their paths; no output, or one that doesn't line up, leaves the entries unhashed. */

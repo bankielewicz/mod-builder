@@ -66,6 +66,7 @@ import {
   withFolderSnapshot,
   withFolderStash,
   withHashes,
+  withKinds,
   handOffAnswer,
   lateAnswer,
   movedOnAnswer,
@@ -637,7 +638,11 @@ async function retireFence($: EngineInterface, refs: readonly string[]): Promise
 async function readFolder($: EngineInterface, root: string, phase: Phase): Promise<FolderSnapshot | null> {
   const status = await git($, root, FOLDER_STATUS_ARGS).catch(() => null)
   if (!status || status.exitCode !== 0) return null
-  const entries = folderEntries(status.stdout)
+  // Only what stat finds to be a file goes to hash-object, which fails the whole batch on a folder (a submodule).
+  const listed = folderEntries(status.stdout)
+  const candidates = hashablePaths(listed)
+  const kinds = await Promise.all(candidates.map(path => $.fs.stat(`${root}/${path}`).then(s => s.kind, () => 'other')))
+  const entries = withKinds(listed, candidates, kinds)
   const paths = hashablePaths(entries)
   const hashed = paths.length === 0 ? null : await git($, root, ['hash-object', '--stdin-paths'], `${paths.join('\n')}\n`).catch(() => null)
   return folderSnapshot(phase, await $.clock.now(), withHashes(entries, paths, hashed && hashed.exitCode === 0 ? hashed.stdout : null))

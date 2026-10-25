@@ -86,8 +86,12 @@ export type AgentRef = { id: string; name?: string; phase: Phase }
 /** A stash entry the mod made, found by its unique message and kept by its commit. */
 export type StashRef = { sha: string; message: string }
 
-/** One entry of `git status --porcelain=v1 -z -uall --no-renames` in the session's folder, with git's hash of the file when it could be read (Change 0.10.0). */
-export type FolderEntry = { path: string; xy: string; hash?: string }
+/**
+ * One entry of `git status --porcelain=v1 -z -uall --no-renames` in the session's folder, with git's hash of the file when
+ * it could be read (Change 0.10.0), or what `$.fs.stat` found there when that isn't a file, such as a submodule's folder
+ * (PR #162 review round 1, finding 3).
+ */
+export type FolderEntry = { path: string; xy: string; hash?: string; kind?: 'dir' | 'other' }
 
 /** The session's folder as a phase's agent began (Change 0.10.0): its entries, or past 200 of them a count and a digest. */
 export type FolderSnapshot = { phase: Phase; at: number; entries: FolderEntry[] } | { phase: Phase; at: number; count: number; digest: string }
