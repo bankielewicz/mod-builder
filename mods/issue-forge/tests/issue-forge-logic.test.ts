@@ -4,10 +4,33 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   DEMO_STATES,
+  FENCE_RETIRED,
+  FENCE_TTL_S,
+  FOLDER_CAP,
+  FOLDER_STATUS_ARGS,
   KEEP_FINISHED,
   RULES,
   USAGE,
   advance,
+  fenceBlock,
+  fenceLine,
+  fencePaths,
+  fencePreflightInput,
+  fencePreflightOk,
+  fenceTamperBlock,
+  fnv1a,
+  folderBlock,
+  folderChanges,
+  folderClause,
+  folderEntries,
+  folderResumeNote,
+  folderSnapshot,
+  folderStashMessage,
+  hashablePaths,
+  withFolderClause,
+  withFolderSnapshot,
+  withFolderStash,
+  withHashes,
   agentsKey,
   agentName,
   agentsToEnd,
@@ -143,7 +166,7 @@ import {
   worktreeStateOf,
 } from '../hooks/issue-forge-logic'
 import * as logic from '../hooks/issue-forge-logic'
-import type { CommandResult, Gate, GateGFacts, Profile, Run, RunEvent } from '../hooks/issue-forge-logic'
+import type { CommandResult, FolderEntry, FolderSnapshot, Gate, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
 import { DIFF_REAL, LCOV_REAL, STASH_LIST_REAL } from './fixtures/real'
 
 const HOME = '/home/u'
@@ -3089,18 +3112,12 @@ describe('#40: a drive that ends, ends its agents', () => {
 })
 
 describe('#156: the fence and the folder check (Change 0.10.0)', () => {
-  // Reached through the module, so a function not written yet fails by assertion, not by a TypeError.
-  const own = <F,>(name: string): F => {
-    expect(typeof (logic as Record<string, unknown>)[name]).toBe('function')
-    return (logic as Record<string, unknown>)[name] as F
-  }
-  type Entry = { path: string; xy: string; hash?: string }
-  type Snap = { phase: string; at: number; entries: Entry[] } | { phase: string; at: number; count: number; digest: string }
-  type Changes = { paths: string[]; count: number; isHashless: boolean } | null
+  type Entry = FolderEntry
+  type Snap = FolderSnapshot
   const STATUS = 'A  src/new.ts\0 M a.ts\0?? n/x.ts\0 D gone.ts\0D  staged-gone.ts\0?? nested/\0'
-  const entries = () => own<(z: string) => Entry[]>('folderEntries')(STATUS)
-  const snap = (list: Entry[]) => own<(phase: string, at: number, e: Entry[]) => Snap>('folderSnapshot')('red', 5, list)
-  const changes = (a: Snap, b: Snap) => own<(a: Snap, b: Snap) => Changes>('folderChanges')(a, b)
+  const entries = () => folderEntries(STATUS)
+  const snap = (list: Entry[]) => folderSnapshot('red', 5, list)
+  const changes = (a: Snap, b: Snap) => folderChanges(a, b)
 
   test('git status -z with -uall and --no-renames: one entry a record, the two status letters kept', () => {
     expect(entries()).toEqual([
@@ -3111,17 +3128,15 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
       { xy: 'D ', path: 'staged-gone.ts' },
       { xy: '??', path: 'nested/' },
     ])
-    expect((logic as Record<string, unknown>).FOLDER_STATUS_ARGS).toEqual(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'])
+    expect(FOLDER_STATUS_ARGS).toEqual(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'])
   })
 
   test('hash-object gets no deleted path, no folder (nested/) and no path holding a newline', () => {
-    const hashable = own<(e: readonly Entry[]) => string[]>('hashablePaths')
-    expect(hashable(entries())).toEqual(['src/new.ts', 'a.ts', 'n/x.ts'])
-    expect(hashable([{ xy: '??', path: 'odd\nname' }])).toEqual([])
+    expect(hashablePaths(entries())).toEqual(['src/new.ts', 'a.ts', 'n/x.ts'])
+    expect(hashablePaths([{ xy: '??', path: 'odd\nname' }])).toEqual([])
   })
 
   test("hash-object's lines go onto their paths; no output leaves the entries without hashes", () => {
-    const withHashes = own<(e: readonly Entry[], paths: readonly string[], out: string | null) => Entry[]>('withHashes')
     const list = entries()
     const hashed = withHashes(list, ['src/new.ts', 'a.ts', 'n/x.ts'], 'h1\nh2\nh3\n')
     expect(hashed.find(e => e.path === 'a.ts')).toEqual({ xy: ' M', path: 'a.ts', hash: 'h2' })
@@ -3135,11 +3150,11 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     const big = snap(many)
     expect(big).toEqual({ phase: 'red', at: 5, count: 201, digest: expect.any(String) })
     expect(snap([...many].reverse())).toEqual(big)
-    expect((logic as Record<string, unknown>).FOLDER_CAP).toBe(200)
+    expect(FOLDER_CAP).toBe(200)
   })
 
   test('fnv1a, 32 bits, as hex', () => {
-    const fnv = own<(t: string) => string>('fnv1a')
+    const fnv = fnv1a
     expect(fnv('')).toBe('811c9dc5')
     expect(fnv('a')).toBe('e40c292c')
   })
@@ -3174,8 +3189,8 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("the block, the clause a stop or hand-off adds, and the pressed toast's, within 80 characters", () => {
-    const block = own<(root: string, phase: string, c: NonNullable<Changes>) => { reason: string; next: string }>('folderBlock')
-    const clause = own<(c: Changes, byPress: boolean) => string>('folderClause')
+    const block = folderBlock
+    const clause = folderClause
     const one = { paths: ['a.ts'], count: 1, isHashless: false }
     expect(block('/repo', 'red', one)).toEqual({
       reason: "the session's folder /repo changed while the red agent worked: a.ts; issue-forge can't tell whether the agent or someone else made the change",
@@ -3191,19 +3206,19 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test('the fence: a live line with its expiry, the two files an agent has, and only names safe as files', () => {
-    expect(own<(root: string, until: number) => string>('fenceLine')('/repo/wt', 100)).toBe('live 100 /repo/wt')
-    expect((logic as Record<string, unknown>).FENCE_RETIRED).toBe('retired')
-    expect((logic as Record<string, unknown>).FENCE_TTL_S).toBe(30)
-    const paths = own<(home: string, name?: string, id?: string) => string[]>('fencePaths')
+    expect(fenceLine('/repo/wt', 100)).toBe('live 100 /repo/wt')
+    expect(FENCE_RETIRED).toBe('retired')
+    expect(FENCE_TTL_S).toBe(30)
+    const paths = fencePaths
     expect(paths('/home/u', 'issue-forge-16-red-1', 'aid-1')).toEqual(['/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1', '/home/u/.claude/issue-forge-data/fence/id/aid-1'])
     expect(paths('/home/u', 'issue-forge-16-red-1', '../x')).toEqual(['/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'])
     expect(paths('/home/u', undefined, 'aid-1')).toEqual(['/home/u/.claude/issue-forge-data/fence/id/aid-1'])
   })
 
   test("the preflight: a synthetic issue-forge call with no fence file, which only the script's own refusal answers", () => {
-    const input = JSON.parse(own<() => string>('fencePreflightInput')())
+    const input = JSON.parse(fencePreflightInput())
     expect(input).toMatchObject({ agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' } })
-    const ok = own<(r: { exitCode: number; stderr: string } | null) => boolean>('fencePreflightOk')
+    const ok = fencePreflightOk
     expect(ok({ exitCode: 2, stderr: 'issue-forge: this agent has no fence file, so it may not call tools; end your turn now.\n' })).toBe(true)
     expect(ok({ exitCode: 0, stderr: '' })).toBe(false)
     expect(ok({ exitCode: 2, stderr: 'issue-forge: the fence needs bash 4.2 or later (this is 3.2.57); end your turn now.\n' })).toBe(false)
@@ -3212,11 +3227,11 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("the fence's blocks: it can't run, or a fence file was changed", () => {
-    expect(own<(what: string) => { reason: string; next: string }>('fenceBlock')('bash: not found')).toEqual({
+    expect(fenceBlock('bash: not found')).toEqual({
       reason: "the fence can't run (bash: not found), so no agent was started",
       next: 'issue-forge needs bash on PATH to run hooks/fence.sh; then /issue-forge resume',
     })
-    expect(own<(agent: string) => { reason: string; next: string }>('fenceTamperBlock')('issue-forge-16-red-1')).toEqual({
+    expect(fenceTamperBlock('issue-forge-16-red-1')).toEqual({
       reason: 'the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended',
       next: 'check ~/.claude/issue-forge-data/fence/, then /issue-forge resume',
     })
@@ -3225,7 +3240,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   test('a folder block records the flag and drops the snapshot; a resume keeps the flag; a stop drops the snapshot', () => {
     const before = snap([{ xy: ' M', path: 'a.ts', hash: 'h1' }])
     const atRed = { ...run({ step: 'red' }), folderSnapshot: before } as Run
-    const blocked = advance(atRed, { type: 'block', reason: 'r', next: 'n', isFolderBlock: true } as RunEvent, 2) as Run & Record<string, unknown>
+    const blocked = advance(atRed, { type: 'block', reason: 'r', next: 'n', isFolderBlock: true }, 2) as Run & Record<string, unknown>
     expect(blocked.step).toBe('blocked')
     expect(blocked.isFolderBlock).toBe(true)
     expect('folderSnapshot' in blocked).toBe(false)
@@ -3239,8 +3254,8 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("the snapshot and the stash go onto the run they were taken for, pinned to its id", () => {
-    const set = own<(stored: Run | null, runId: string, s: Snap | null) => Run | null>('withFolderSnapshot')
-    const stashed = own<(stored: Run | null, runId: string, stash: { sha: string; message: string }) => Run | null>('withFolderStash')
+    const set = withFolderSnapshot
+    const stashed = withFolderStash
     const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
     const s = snap([])
     expect((set(r, r.id, s) as Run & Record<string, unknown>).folderSnapshot).toEqual(s)
@@ -3254,7 +3269,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test('with nothing to stash, only the flag goes', () => {
-    const stashed = own<(stored: Run | null, runId: string, stash: { sha: string; message: string } | undefined) => Run | null>('withFolderStash')
+    const stashed = withFolderStash
     const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
     const after = stashed(r, r.id, undefined) as Run & Record<string, unknown>
     expect('isFolderBlock' in after).toBe(false)
@@ -3262,7 +3277,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("the folder clause goes before a typed answer's last full stop, and right after a pressed one's first clause", () => {
-    const put = own<(answer: string, clause: string, byPress: boolean) => string>('withFolderClause')
+    const put = withFolderClause
     expect(put('stopped #16. Its branch b and commits are kept; no agent was running.', "; the session's folder changed while it worked: a.ts", false)).toBe("stopped #16. Its branch b and commits are kept; no agent was running; the session's folder changed while it worked: a.ts.")
     expect(put('stopped #16; its red agent (n) has stopped. Its branch and commits are kept.', '; folder changed: a.ts', true)).toBe('stopped #16; folder changed: a.ts; its red agent (n) has stopped. Its branch and commits are kept.')
     expect(put('handed off #16 at red; /issue-forge resume 16 continues it in any session.', '; folder changed: a.ts', true)).toBe('handed off #16 at red; folder changed: a.ts; /issue-forge resume 16 continues it in any session.')
@@ -3271,8 +3286,8 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   test("the folder stash's message, and the note a resume's answer gets after a folder block", () => {
     const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
-    expect(own<(run: Run, phase: string) => string>('folderStashMessage')(r, 'red')).toBe('issue-forge #16 red after the folder check (run 16-1)')
-    const note = own<(run: Run) => string>('folderResumeNote')
+    expect(folderStashMessage(r, 'red')).toBe('issue-forge #16 red after the folder check (run 16-1)')
+    const note = folderResumeNote
     expect(note(r)).toBe('; its worktree\'s uncommitted files go to the stash "issue-forge #16 red after the folder check (run 16-1)" first')
     expect(note(run({ step: 'red' }))).toBe('')
     expect(note({ ...run({ step: 'blocked', blocked: { at: 'green', reason: 'r', next: 'n' } }), isFolderBlock: true } as Run)).toBe('; its worktree\'s uncommitted files go to the stash "issue-forge #16 green after the folder check (run 16-1)" first')
