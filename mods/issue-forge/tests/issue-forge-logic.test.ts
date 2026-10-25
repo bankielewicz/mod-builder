@@ -3186,6 +3186,15 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(changes(snap(many(201)), snap(many(201)))).toBeNull()
     expect(changes(snap(many(201)), snap(many(202)))).toEqual({ paths: [], count: 202, isHashless: false })
     expect(changes(snap(many(3)), snap(many(201)))).toEqual({ paths: [], count: 201, isHashless: false })
+    // Back under the cap: the count is the entries listed now.
+    expect(changes(snap(many(201)), snap(many(3)))).toEqual({ paths: [], count: 3, isHashless: false })
+  })
+
+  test('the edges: entries of one path keep their order; a pressed clause by count; answers with no full stop', () => {
+    expect(snap([{ xy: ' M', path: 'a' }, { xy: '??', path: 'a' }])).toEqual({ phase: 'red', at: 5, entries: [{ xy: ' M', path: 'a' }, { xy: '??', path: 'a' }] })
+    expect(folderClause({ paths: [], count: 250, isHashless: false }, true)).toBe('; folder changed: 250 entries')
+    expect(withFolderClause('stopped #16', '; x', true)).toBe('stopped #16; x')
+    expect(withFolderClause('stopped #16', '; x', false)).toBe('stopped #16; x')
   })
 
   test("the block, the clause a stop or hand-off adds, and the pressed toast's, within 80 characters", () => {
