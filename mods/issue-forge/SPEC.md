@@ -2440,3 +2440,8 @@ count set in the pane.
   - Mods: "Every session on your machine that runs your mod shares one `$.store`", so "Read again right before you write" [read: `docs/research/Mods/Build/Draw-in-the-interface-with-a-mod.md:837-842`]. A finished run's record keeps fields another session wrote, its driver among them, which is why `endedWhileAsked` reads the step before the driver.
   - The tests stub `$.ui.ask` as a `tool.call` of `AskUserQuestion` and move the mock clock to bring on the watch [read: `Test and troubleshoot/Test-a-mod.md:178`, `:203-211`].
   - Plugins: increment `version` on every release [read: `docs/research/claude-plugins/Publish-and-distribute-a-plugin.md:44`, `:166`], so this is 0.9.3, not a change to the merged 0.9.2.
+- **Built** (PR #159 round 1, CLI 2.1.310):
+  - The block above: `fade1e8`.
+  - Test `25224a8` (#1): 591 of 591 pass, and the row fails with "was taken over" against `f41bfd1`'s `endedWhileAsked`.
+  - Refactor `c7b3fc7` (#5, #6): 591 of 591.
+  - QA: tsc, tests included, exits 0. Logic coverage stays 100.00/99.82/99.40, with every line and branch of `endedWhileAsked` taken (lcov). No live run, by the owner's waiver (#4).
