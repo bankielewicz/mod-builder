@@ -4905,31 +4905,33 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(w.files[FENCE]).toBe('retired\n')
   })
 
-  test("the folder changing by the time the agent's answer arrives blocks the run, before its gate", async ($, on) => {
+  // The check when the agent's answer arrives isn't reachable here: a kit spawn gets no agentId, so the phase ends at
+  // "didn't start" (gotchas.md:288-293). It shares folderNow and folderBlock with the 5 s check, tested above and in logic.
+  test("a spawn that gets no agent id: the phase ends at didn't start, its fence retired, with no folder block", async ($, on) => {
     const spawn = releasable()
     const store: Record<string, unknown> = { [RUN]: atRed() }
     const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold }, store)
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
-    w.rootStatus = ' M already.ts\0'
-    w.rootHashes = { 'already.ts': 'h-new' }
     spawn.release()
     await waitFor(w, () => stored(store).step === 'blocked')
-    expect(stored(store).blocked?.reason).toBe(`the session's folder ${ROOT} changed while the red agent worked: already.ts; issue-forge can't tell whether the agent or someone else made the change`)
-    expect(w.commits).toEqual([])
+    expect(stored(store).blocked?.reason).toBe("the red agent didn't start: no agent id")
+    expect(stored(store).isFolderBlock).toBeUndefined()
+    expect(w.files[FENCE]).toBe('retired\n')
   })
 
-  test('an edit already there when the phase began, and unchanged since, blocks nothing', async ($, on) => {
+  test('an edit already there when the phase began, and unchanged since, blocks nothing at the 5 s check', async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
-    const w = engine(on, { worktrees: [WT], rootStatus: ' M before.ts\0' }, store)
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), rootStatus: ' M before.ts\0' }, store)
     await start($)
     await run($, 'resume')
-    await until(w, () => w.spawned.length >= 1, "#16's red agent")
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(stored(store).folderSnapshot).toMatchObject({ phase: 'red', entries: [{ xy: ' M', path: 'before.ts', hash: 'h-before.ts' }] })
+    await w.clock.advance(5_000)
     await w.clock.settle()
-    await waitFor(w, () => stored(store).step !== 'red')
-    expect(JSON.stringify(stored(store))).not.toContain("the session's folder")
-    expect('folderSnapshot' in stored(store) && stored(store).folderSnapshot?.phase === 'red').toBe(false)
+    expect(stored(store).step).toBe('red')
+    expect(w.taskStops).toEqual([])
   })
 
   test("a change found at a stop is named in the stop's answer", async ($, on) => {
