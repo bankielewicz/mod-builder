@@ -86,6 +86,12 @@ export type AgentRef = { id: string; name?: string; phase: Phase }
 /** A stash entry the mod made, found by its unique message and kept by its commit. */
 export type StashRef = { sha: string; message: string }
 
+/** One entry of `git status --porcelain=v1 -z -uall --no-renames` in the session's folder, with git's hash of the file when it could be read (Change 0.10.0). */
+export type FolderEntry = { path: string; xy: string; hash?: string }
+
+/** The session's folder as a phase's agent began (Change 0.10.0): its entries, or past 200 of them a count and a digest. */
+export type FolderSnapshot = { phase: Phase; at: number; entries: FolderEntry[] } | { phase: Phase; at: number; count: number; digest: string }
+
 export type PhaseTime = { startedAt: number; endedAt?: number }
 
 /** The session whose drive is under way (Change 0.3.0): its `$.session.id()` at session start, and since when. */
@@ -162,6 +168,12 @@ export type Run = {
    * (Change 0.7.0). Both absent in runs stored before.
    */
   blocked?: { at: Step; reason: string; next: string; steps?: string[]; isFinal?: boolean }
+  /** The session's folder as this phase's agent began, in a worktree run: compared while it works (Change 0.10.0, #156). */
+  folderSnapshot?: FolderSnapshot
+  /** Set by a block from the folder check: the resume stashes the worktree's uncommitted files first (Change 0.10.0). */
+  isFolderBlock?: boolean
+  /** The stash that resume made (Change 0.10.0). */
+  folderStash?: StashRef
 }
 
 /** What the module is doing right now inside a step: a label and since when. */
