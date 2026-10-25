@@ -2904,6 +2904,23 @@ export function fenceClashBlock(agent: string, root: string, issue: number, isEn
   }
 }
 
+type FenceKeptRef = { runId: string; agent: string; paths: readonly string[]; refs: readonly string[] }
+
+/**
+ * What a queued fence write (a 5 s rewrite, or the id write) writes, from the fence its queue turn finds kept: null when a
+ * retirement or another agent's fence has replaced the one it was asked for; else that fence's paths and refs with this
+ * write's added, less the paths this write drops (another run's name file). Not by object identity: a rewrite replaces the
+ * kept fence with an equal one, and an id write queued behind it must still land (PR #162 review round 1, finding 1).
+ */
+export function fenceMerge(current: FenceKeptRef | null, from: FenceKeptRef, want: { paths: readonly string[]; refs: readonly string[] }): { paths: string[]; refs: string[] } | null {
+  if (!current || current.runId !== from.runId || current.agent !== from.agent) return null
+  const dropped = from.paths.filter(p => !want.paths.includes(p))
+  return {
+    paths: [...new Set([...current.paths, ...want.paths])].filter(p => !dropped.includes(p)),
+    refs: [...new Set([...current.refs, ...want.refs])],
+  }
+}
+
 /** A name file, which another run can share, as against an id file, which is this agent's alone. */
 export function isFenceNamePath(path: string): boolean {
   return path.includes(`/${FENCE_DIR}/name/`)

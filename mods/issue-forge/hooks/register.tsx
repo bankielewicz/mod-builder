@@ -54,6 +54,7 @@ import {
   fenceGoesOnLine,
   fenceHeldBy,
   fenceLine,
+  fenceMerge,
   fenceOwner,
   fencePaths,
   fencePreflightInput,
@@ -643,20 +644,23 @@ function fenceTurn(step: () => Promise<void>): Promise<void> {
 
 /**
  * Writes the agent's fence files as live until FENCE_TTL_S from now; the 5 s check writes them again. A rewrite or the id
- * write names the fence it extends (`from`): if a retirement has replaced that fence by its turn, it writes nothing.
+ * write names the fence it extends (`from`): it merges onto the fence its turn finds, and writes nothing if a retirement
+ * or another agent's fence has replaced that one (fenceMerge).
  */
 async function writeFence($: EngineInterface, runId: string, agent: string, refs: string[], paths: string[], root: string, from: FenceKept | null = null): Promise<void> {
-  const isStale = () => from !== null && fenceKept !== from
   await fenceTurn(async () => {
-    if (isStale()) return
     const line = fenceLine(root, (await nowS($)) + FENCE_TTL_S)
-    // A rewrite is a compare-and-swap on the exact line: a file that no longer holds this run's last line isn't written,
+    // Turns run one at a time, so only a retirement (which clears the kept fence at once) can change it while this one waits.
+    const kept = fenceKept
+    const merged = from ? fenceMerge(kept, from, { paths, refs }) : { paths, refs }
+    if (!merged) return
+    // A rewrite is a compare-and-swap on the exact line: a file that no longer holds the line last written isn't written,
     // and the next 5 s check reads what it holds (finding 5). Read, then written: not atomic.
-    const was = from ? await readFence($, paths) : []
-    const isOurs = (path: string) => !from || !from.paths.includes(path) || was.find(r => r.path === path)?.text?.replace(/\n$/, '') === from.line
-    if (isStale()) return
-    fenceKept = { runId, agent, refs, paths, root, line }
-    await Promise.all(paths.filter(isOurs).map(path => $.fs.write(path, `${line}\n`)))
+    const was = from && kept ? await readFence($, merged.paths) : []
+    const isOurs = (path: string) => !from || !kept || !kept.paths.includes(path) || was.find(r => r.path === path)?.text?.replace(/\n$/, '') === kept.line
+    if (fenceKept !== kept) return
+    fenceKept = { runId, agent, refs: merged.refs, paths: merged.paths, root, line }
+    await Promise.all(merged.paths.filter(isOurs).map(path => $.fs.write(path, `${line}\n`)))
   })
 }
 
