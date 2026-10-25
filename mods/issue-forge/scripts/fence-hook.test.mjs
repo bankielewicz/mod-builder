@@ -28,12 +28,12 @@ function home(files = {}) {
 
 const live = (root = ROOT, until = now() + 60) => `live ${until} ${root}`
 
-/** Runs the script on one call; `raw` sends the text as it is. */
-function hook(call, { files = { [`id/${ID}`]: live() }, raw } = {}) {
+/** Runs the script on one call; `raw` sends the text as it is, `script` runs another copy of it. */
+function hook(call, { files = { [`id/${ID}`]: live() }, raw, script = SCRIPT } = {}) {
   const dir = home(files)
   try {
     const input = raw ?? JSON.stringify({ session_id: 's1', transcript_path: '/t', cwd: '/srv/session', hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', ...call })
-    const r = spawnSync('bash', [SCRIPT], { input, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, CLAUDE_PLUGIN_ROOT: PLUGIN } })
+    const r = spawnSync('bash', [script], { input, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, CLAUDE_PLUGIN_ROOT: PLUGIN } })
     return { code: r.status, err: r.stderr }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -170,4 +170,26 @@ test("hooks.json runs the fence, in exec form, for the tools that can change som
 test("the module's preflight call is refused with an issue-forge: reason", () => {
   const r = hook({ agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' } }, { files: {} })
   refused(r)
+})
+
+/** A copy of the script that reads its bash as 4.1: BASH_VERSINFO is read-only, so the copy reads another array. */
+function onOldBash() {
+  const dir = mkdtempSync(join(tmpdir(), 'fence-old-'))
+  const path = join(dir, 'fence.sh')
+  writeFileSync(path, readFileSync(SCRIPT, 'utf8').replace('\n', '\nOLD_VERSINFO=(4 1)\n').replaceAll('BASH_VERSINFO', 'OLD_VERSINFO'))
+  return { path, done: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+test('on bash before 4.2 the preflight gets the version refusal, so no agent starts (PR #162 review round 1, finding 2)', () => {
+  const old = onOldBash()
+  try {
+    const r = hook({ agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' } }, { files: {}, script: old.path })
+    refused(r)
+    assert.match(r.err, /needs bash 4\.2 or later/)
+    assert.match(hook(agent('Edit', { file_path: `${ROOT}/a.ts` }), { script: old.path }).err, /needs bash 4\.2 or later/)
+    passes(hook({ tool_name: 'Bash', tool_input: { command: 'ls' } }, { script: old.path }))
+    passes(hook({ agent_id: 'aother-1', agent_type: 'reviewer', tool_name: 'Write', tool_input: { file_path: '/etc/x', content: 'x' } }, { files: {}, script: old.path }))
+  } finally {
+    old.done()
+  }
 })
