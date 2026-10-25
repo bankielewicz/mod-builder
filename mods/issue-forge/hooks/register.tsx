@@ -242,7 +242,10 @@ let drivenLast: Run | null = null
 let publishAsking: string | null = null
 /** Ends the long command running now (a stop, or its timeout). */
 let stopCommand: (() => void) | null = null
-/** The one agent of the run allowed to call tools; the run's other agents are refused (SPEC 9). */
+/**
+ * The one agent of the run allowed to call tools; the guard refuses the run's other agents (SPEC 9). On 2.1.310 the guard
+ * never sees the mod's own agents' calls (re-entry, #156), so hooks/fence.sh refuses them instead (Change 0.10.0).
+ */
 let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
 let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; baseManifests: readonly string[] } | null = null
@@ -258,7 +261,8 @@ const FENCE_CHECK_MS = 5000
 /**
  * Every agent id and name a run of this repository has started, in memory for the tool.call guard,
  * the hand-back drop and the end of a drive (which ends them with TaskStop, #40), and in the store so a
- * new run or a reload never forgets one: one TaskStop didn't end is still refused by the guard.
+ * new run or a reload never forgets one: one TaskStop didn't end is refused by the guard where the guard sees it (#156), and
+ * by the fence once its file says retired or expires (Change 0.10.0).
  */
 let knownRefs = new Set<string>()
 /** The last run write queued: updateRun chains each one after it. */
@@ -501,7 +505,7 @@ async function recordPinned($: EngineInterface, run: Run, repo: string): Promise
   await updateRun($, keyOf(run), stored => (stored?.id === run.id && !isTakenOver(stored) ? advance(stored, { type: 'pinned', repo }, now) : null))
 }
 
-/** Adds agents to the run's known list (memory and store); they are refused tools unless live. */
+/** Adds agents to the run's known list (memory and store); the guard refuses them tools unless live, where it sees them (#156). */
 async function rememberAgents($: EngineInterface, run: Run, refs: readonly string[]): Promise<void> {
   for (const ref of refs) knownRefs.add(ref)
   const key = agentsKey(run.repo ?? run.root, run.issue)
@@ -584,8 +588,9 @@ async function stillOwned($: EngineInterface, run: Run): Promise<void> {
 }
 
 /**
- * Ends this session's drive at once, as a Stop does, writing nothing: the command is ended and the guard refuses the
- * agent from now on. Ending the agent itself is `endAgents`, which every caller runs next (#40).
+ * Ends this session's drive at once, as a Stop does, writing nothing: the command is ended, and the agent is no longer
+ * live to the guard, where the guard sees it (#156). Ending the agent itself is `endAgents`, which every caller runs next
+ * (#40), and which also retires its fence (Change 0.10.0).
  */
 function endLocalDrive(): void {
   if (driving) driving.isStopped = true
@@ -1364,7 +1369,7 @@ async function spawnPhase($: EngineInterface, run: Run, which: Phase, a: { subag
     liveAgent = agentId
     liveWork = { root: run.root, workRoot: workOf(run), testGlobs: run.profile?.testGlobs ?? [], baseManifests }
   }
-  // A stop (or another run) while the spawn was pending wins: the agent is refused tools and ended below (#40).
+  // A stop (or another run) while the spawn was pending wins: the agent is ended below (#40), its fence already retired.
   const latest = await loadRun($, keyOf(run))
   if (!latest || latest.id !== run.id || latest.step !== run.step || !isDriving(run)) {
     if (agentId) {
@@ -2424,6 +2429,7 @@ export const register: Register = (on, raw) => {
   })
 
   // A run's agent that isn't live (stopped, or orphaned by a reload) is refused; the live one is kept in the run's folder (guardAction).
+  // On 2.1.310 this hook is skipped for the agents this mod spawns (re-entry, #156): hooks/fence.sh refuses their calls instead.
   on('tool.call', async ($, e, next) => {
     if (!e.agentId) return next(e)
     const ctx = { liveAgent, known: knownRefs, workRoot: liveWork?.workRoot ?? null, root: liveWork?.root ?? null }
