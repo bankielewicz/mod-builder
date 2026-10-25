@@ -5111,4 +5111,24 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     write.release()
     expect((await handing).text).toContain("the session's folder changed while it worked: stray.txt")
   })
+
+  // PR #162 review round 1, finding 1 (Codex 4372144796): a stop that retires the fence while the 5 s check's rewrite is
+  // in flight must not be undone by it, or the ended agent's queued calls pass for up to 30 s more.
+  test("a stop while the 5 s check rewrites the fence: retired lands last, and stays", async ($, on) => {
+    const write = releasable()
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    const first = w.files[FENCE]
+    w.writeHold = { when: (path: string, text: string) => path === FENCE && text.startsWith('live ') && text !== first, until: write.hold }
+    await w.clock.advance(5_000)
+    await waitFor(w, () => w.writeHold?.isHeld === true)
+    const stopping = run($, 'stop')
+    await w.clock.settle()
+    write.release()
+    await stopping
+    await w.clock.settle()
+    expect(w.files[FENCE]).toBe('retired\n')
+  })
 })
