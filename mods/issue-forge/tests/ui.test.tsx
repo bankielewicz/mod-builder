@@ -1623,6 +1623,8 @@ describe('parallel runs (Change 0.3.0)', () => {
     ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 0 } }), '#16 was taken over by another session while you chose'],
     // PR #155 review round 1, finding 2: a new run of #16 in its place.
     ['replaces', (r: any) => ({ ...r, id: '16-other', driver: { session: OTHER, since: 0 } }), '#16 was replaced while you chose'],
+    // PR #159 review round 1, finding 1: finished in another session, its record still naming that session as driver.
+    ['finishes', (r: any) => ({ ...r, step: 'done', driver: { session: OTHER, since: 0 } }), '#16 finished while you chose'],
   ] as const) {
     test(`#153: another session ${what} #16 while the menu is open, and Hand #16 off and start #17 here still starts #17`, async ($, on) => {
       const store: Record<string, unknown> = {}
