@@ -1495,7 +1495,8 @@ describe('review of PR #41, code-review pass', () => {
     await run($, '16')
     await until(w, () => w.spawned.length === 1, 'red')
     expect(w.argv).toContainEqual(['git', 'worktree', 'add', '--no-track', '-b', BRANCH, WT, 'origin/main'])
-    const looked = w.calls.filter(c => c.cwd === ROOT && c.argv[0] === 'git' && (c.argv[1] === 'status' || (c.argv[1] === 'rev-parse' && c.argv[2] === '--abbrev-ref')))
+    // The folder check (Change 0.10.0) reads the checkout's status to compare it later, and never blocks on what it holds.
+    const looked = w.calls.filter(c => c.cwd === ROOT && c.argv[0] === 'git' && ((c.argv[1] === 'status' && !c.argv.includes('--no-renames')) || (c.argv[1] === 'rev-parse' && c.argv[2] === '--abbrev-ref')))
     expect(looked).toEqual([])
   })
 })
