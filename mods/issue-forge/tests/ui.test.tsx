@@ -1621,6 +1621,8 @@ describe('parallel runs (Change 0.3.0)', () => {
   for (const [what, change, lead] of [
     ['stops', (r: any) => ({ ...r, step: 'stopped' }), '#16 was stopped in another session while you chose'],
     ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 0 } }), '#16 was taken over by another session while you chose'],
+    // PR #155 review round 1, finding 2: a new run of #16 in its place.
+    ['replaces', (r: any) => ({ ...r, id: '16-other', driver: { session: OTHER, since: 0 } }), '#16 was replaced while you chose'],
   ] as const) {
     test(`#153: another session ${what} #16 while the menu is open, and Hand #16 off and start #17 here still starts #17`, async ($, on) => {
       const store: Record<string, unknown> = {}
@@ -1671,6 +1673,21 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect((await pending).text).toBe('#44 runs in another session; use that session, or answer Take over in an interactive one.')
     expect(w.asked.at(-1)).toContain('If that session has ended, take it over?')
     expect(key(16) in store).toBe(false)
+  })
+
+  // PR #155 review round 1, finding 2: #44's record gone from the store (pruned, or deleted by another session).
+  test('#153: #44 deleted while the menu is open, and Stop #44, then start #16 says it was replaced', async ($, on) => {
+    const store: Record<string, unknown> = { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) }
+    const w = engine(on, { baseProfile: WORKTREE, localProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    let answer: (label: string) => void = () => undefined
+    w.hold = new Promise<string>(resolve => (answer = resolve))
+    const pending = run($, '16')
+    await until(w, () => w.asked.length > 0, 'the menu question')
+    delete store[key(44)]
+    answer('Stop #44, then start #16')
+    expect((await pending).text).toBe('#44 was replaced while you chose; starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    expect((store[key(16)] as any)?.issue).toBe(16)
   })
 
   // PR #155 review round 1, finding 1: a finished record keeps its driver until that session releases it.
