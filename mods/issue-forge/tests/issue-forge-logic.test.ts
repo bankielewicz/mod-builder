@@ -1116,7 +1116,7 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     expect(r.workRoot).toBe(WT)
     expect(workOf(r)).toBe(WT)
     expect(workOf(run())).toBe(ROOT)
-    expect(phasePrompt('red', r)).toContain(`Repository root: ${WT}. Work only inside it, and run every command from it.`)
+    expect(phasePrompt('red', r)).toContain(`Repository root: ${WT}. Work only inside it. Give every file path in full, starting ${WT}/. Start every Bash command with cd ${WT} && (issue-forge refuses a Bash command that doesn't, and any edit or command that names a path outside ${WT}).`)
     expect(phasePrompt('red', run())).toContain(`Repository root: ${ROOT}. Work only inside it`)
   })
 
