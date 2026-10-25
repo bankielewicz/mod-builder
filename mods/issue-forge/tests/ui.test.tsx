@@ -5133,18 +5133,21 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   // PR #162 review round 1, finding 5 (the owner's content check): another repository's run of #16 can hold the name file.
-  const OTHER_LINE = 'live 9999999999 /elsewhere/scratch/issue-forge/issue-16-x\n'
+  // Its line is as issue-forge writes one: at most 30 s ahead of now.
+  const OTHER = '/elsewhere/scratch/issue-forge/issue-16-x'
+  const otherLine = (w: World) => `live ${Math.floor(w.clock.now() / 1000) + 30} ${OTHER}\n`
 
   test("a name another run's live line holds: the spawn is refused, the run blocks naming that folder, and its line stays", async ($, on) => {
     const store: Record<string, unknown> = { [RUN]: atRed() }
     const w = engine(on, { ...LIVE, worktrees: [WT] }, store)
-    w.files[FENCE] = OTHER_LINE
+    const line = otherLine(w)
+    w.files[FENCE] = line
     await start($)
     await run($, 'resume')
     await waitFor(w, () => stored(store).step === 'blocked')
     expect(w.spawned).toEqual([])
-    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: 'the fence name issue-forge-16-red-1 is live in /elsewhere/scratch/issue-forge/issue-16-x (another run of #16), so no agent was started' })
-    expect(w.files[FENCE]).toBe(OTHER_LINE)
+    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: `the fence name issue-forge-16-red-1 is live in ${OTHER} (another run of #16), so no agent was started` })
+    expect(w.files[FENCE]).toBe(line)
   })
 
   test("another run's line in the name file before the id file exists: the agent is ended, the run blocks, and that line is left as it is", async ($, on) => {
@@ -5153,13 +5156,30 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     await start($)
     await run($, 'resume')
     await until(w, () => w.spawned.length === 1, "#16's red agent")
-    w.files[FENCE] = OTHER_LINE
+    const line = otherLine(w)
+    w.files[FENCE] = line
     await w.clock.advance(5_000)
     await waitFor(w, () => stored(store).step === 'blocked')
-    expect(stored(store).blocked?.reason).toBe('the fence name issue-forge-16-red-1 is live in /elsewhere/scratch/issue-forge/issue-16-x (another run of #16), so the agent was ended')
+    expect(stored(store).blocked?.reason).toBe(`the fence name issue-forge-16-red-1 is live in ${OTHER} (another run of #16), so the agent was ended`)
     await waitFor(w, () => w.taskStops.length > 0)
     await w.clock.settle()
     expect(w.taskStops).toEqual(['a77'])
-    expect(w.files[FENCE]).toBe(OTHER_LINE)
+    expect(w.files[FENCE]).toBe(line)
+    expect(w.logs).toContain(`issue-forge fence check: ${FENCE} holds another run's line (${OTHER}), at the 5 s check`)
+  })
+
+  test("a name line further ahead than issue-forge writes is tampering, and the retirement writes over it, so the name recovers", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.files[FENCE] = `live 9999999999 ${OTHER}\n`
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked?.reason).toBe('the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended')
+    await waitFor(w, () => w.files[FENCE] === 'retired\n')
+    expect(w.files[FENCE]).toBe('retired\n')
+    expect(w.logs).toContain(`issue-forge fence check: ${FENCE} holds a line issue-forge didn't write, at the 5 s check`)
   })
 })

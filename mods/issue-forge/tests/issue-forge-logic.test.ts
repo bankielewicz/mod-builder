@@ -3237,21 +3237,27 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
 
   // PR #162 review round 1, finding 5 (the owner's content check): a name file is keyed by the agent's name alone, so
   // another repository's run of the same issue can hold it. Its line names another run's folder.
-  test("a fence file's line: this run's own, another run's (a live line naming another folder), or changed", () => {
-    const owner = (text: string | null, mine: string, root: string): unknown => (logic as Record<string, any>).fenceOwner?.(text, mine, root)
+  test("a fence file's line: this run's own, another run's (a live line naming another folder, at most 35 s ahead), or changed", () => {
+    const owner = (text: string | null, mine: string, root: string, nowS: number): unknown => (logic as Record<string, any>).fenceOwner?.(text, mine, root, nowS)
     const mine = 'live 100 /repo/wt'
-    expect(owner('live 100 /repo/wt\n', mine, '/repo/wt')).toEqual({ kind: 'mine' })
-    expect(owner('live 130 /other/scratch/issue-forge/b\n', mine, '/repo/wt')).toEqual({ kind: 'other', root: '/other/scratch/issue-forge/b' })
-    expect(owner('live 130 /repo/wt\n', mine, '/repo/wt')).toEqual({ kind: 'changed' })
-    expect(owner('retired\n', mine, '/repo/wt')).toEqual({ kind: 'changed' })
-    expect(owner(null, mine, '/repo/wt')).toEqual({ kind: 'changed' })
-    expect(owner('garbage', mine, '/repo/wt')).toEqual({ kind: 'changed' })
+    expect(owner('live 100 /repo/wt\n', mine, '/repo/wt', 90)).toEqual({ kind: 'mine' })
+    expect(owner('live 130 /other/scratch/issue-forge/b\n', mine, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/scratch/issue-forge/b' })
+    // issue-forge writes at most 30 s ahead: a line further ahead than 35 s (5 s of clock slack) isn't one it wrote.
+    expect(owner('live 130 /other/wt\n', mine, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/wt' })
+    expect(owner('live 131 /other/wt\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('live 9999999999 /\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('live 130 /repo/wt\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('retired\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner(null, mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('garbage', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('live x /other/wt', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
   })
 
-  test("before a spawn: a live, unexpired name line for another run's folder holds the name; anything else doesn't", () => {
+  test("before a spawn: another run's live, unexpired name line holds the name; anything else doesn't", () => {
     const heldBy = (text: string | null, root: string, nowS: number): unknown => (logic as Record<string, any>).fenceHeldBy?.(text, root, nowS)
     expect(heldBy('live 130 /other/wt\n', '/repo/wt', 120)).toBe('/other/wt')
     expect(heldBy('live 130 /other/wt\n', '/repo/wt', 131)).toBeNull()
+    expect(heldBy('live 9999999999 /other/wt\n', '/repo/wt', 120)).toBeNull()
     expect(heldBy('live 130 /repo/wt\n', '/repo/wt', 120)).toBeNull()
     expect(heldBy('retired\n', '/repo/wt', 120)).toBeNull()
     expect(heldBy(null, '/repo/wt', 120)).toBeNull()
