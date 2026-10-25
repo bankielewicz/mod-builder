@@ -2619,11 +2619,12 @@ export function foreignChange(stored: Run | null, runId: string, me: string): 's
 
 /**
  * What became of the run a start-menu choice was to hand off or stop, read again once the question is answered: it can end
- * while the question is open (#153). The start goes on, and its answer leads with this.
+ * while the question is open (#153). The start goes on, and its answer leads with this. A finished run is told apart first:
+ * its record keeps the driver that finished it (PR #155 review round 1, finding 1).
  */
 export function endedWhileAsked(issue: number, stored: Run | null, runId: string, me: string): string {
   const change = foreignChange(stored, runId, me)
-  const what = change === 'stopped' ? 'was stopped in another session' : change === 'takenOver' ? 'was taken over by another session' : change === 'gone' ? 'was replaced' : stored?.step === 'done' ? 'finished' : null
+  const what = change === 'gone' ? 'was replaced' : stored?.step === 'done' ? 'finished' : change === 'stopped' ? 'was stopped in another session' : change === 'takenOver' ? 'was taken over by another session' : null
   return what ? `#${issue} ${what} while you chose` : `#${issue}'s drive here ended while you chose`
 }
 
