@@ -2820,6 +2820,87 @@ export function fenceTamperBlock(agent: string): { reason: string; next: string 
   return { reason: `the fence file for ${agent} was changed or removed, so the agent was ended`, next: `check ~/${FENCE_DIR}/` }
 }
 
+// A name file is keyed by the agent's name alone, so another repository's run of the same issue can hold it (PR #162
+// review round 1, finding 5). Its line then names another run's folder: this run's is `workOf(run)`, exactly.
+
+/** A live line's time and folder, or null for anything else. */
+const liveLineOf = (text: string | null): { until: number; root: string } | null => {
+  const m = /^live (\d+) (.+)$/.exec((text ?? '').replace(/\n$/, ''))
+  return m ? { until: Number(m[1]), root: m[2] as string } : null
+}
+
+export type FenceOwner = { kind: 'mine' } | { kind: 'other'; root: string } | { kind: 'changed' }
+
+/** issue-forge writes a line at most FENCE_TTL_S ahead; 5 s more is for clock slack. A line further ahead isn't one it wrote. */
+const FENCE_AHEAD_S = FENCE_TTL_S + 5
+
+/**
+ * What a fence file holds against the line this run last wrote: that line; another run's, a well-formed live line naming
+ * another folder no further ahead than issue-forge writes; or anything else, which is tampering (the owner, PR #162 review
+ * round 1, finding 5). The 5 s check, the spawn check and the retirement all read files through this.
+ */
+export function fenceOwner(text: string | null, mine: string, root: string, nowS: number): FenceOwner {
+  if (text !== null && text.replace(/\n$/, '') === mine) return { kind: 'mine' }
+  const live = liveLineOf(text)
+  return live && live.root !== root && live.until <= nowS + FENCE_AHEAD_S ? { kind: 'other', root: live.root } : { kind: 'changed' }
+}
+
+/** Before a spawn: the folder of another run whose unexpired line holds this name file, else null. */
+export function fenceHeldBy(text: string | null, root: string, nowS: number): string | null {
+  const owner = fenceOwner(text, '', root, nowS)
+  return owner.kind === 'other' && (liveLineOf(text)?.until ?? 0) >= nowS ? owner.root : null
+}
+
+export type FenceRead = { path: string; text: string | null }
+export type FenceTickPlan = { kind: 'keep'; paths: string[]; others: { path: string; root: string }[] } | { kind: 'clash'; root: string } | { kind: 'tamper' }
+
+/**
+ * The 5 s check's decision from what the agent's fence files hold. Another run's line in the name file is left to it, and
+ * the agent goes on fenced by its id file; with no id file yet, its calls would be checked against that run's folder, so it
+ * is a clash. Any other line it didn't write, in either file, is tampering.
+ */
+export function fenceTickPlan(reads: readonly FenceRead[], mine: string, root: string, nowS: number): FenceTickPlan {
+  const hasId = reads.some(r => !isFenceNamePath(r.path))
+  const paths: string[] = []
+  const others: { path: string; root: string }[] = []
+  for (const r of reads) {
+    const owner = fenceOwner(r.text, mine, root, nowS)
+    if (owner.kind === 'mine') paths.push(r.path)
+    else if (owner.kind === 'other' && isFenceNamePath(r.path)) {
+      if (!hasId) return { kind: 'clash', root: owner.root }
+      others.push({ path: r.path, root: owner.root })
+    } else return { kind: 'tamper' }
+  }
+  return { kind: 'keep', paths, others }
+}
+
+/** What a retirement writes `retired` over: everything but another run's line in a name file (the owner's departure, finding 5). */
+export function retirablePaths(reads: readonly FenceRead[], mine: string, root: string, nowS: number): string[] {
+  return reads.filter(r => !(isFenceNamePath(r.path) && fenceOwner(r.text, mine, root, nowS).kind === 'other')).map(r => r.path)
+}
+
+/** The debug line naming what the 5 s check found in a fence file that isn't this run's line. */
+export function fenceClassLine(path: string, owner: FenceOwner): string {
+  const holds = owner.kind === 'other' ? `another run's line (${owner.root})` : "a line issue-forge didn't write"
+  return `issue-forge fence check: ${path} holds ${holds}, at the 5 s check`
+}
+
+export function fenceGoesOnLine(agent: string): string {
+  return `issue-forge fence check: ${agent} goes on, fenced by its id file; its name file is left to the other run`
+}
+
+export function fenceClashBlock(agent: string, root: string, issue: number, isEnded: boolean): { reason: string; next: string } {
+  return {
+    reason: `the fence name ${agent} is live in ${root} (another run of #${issue}), so ${isEnded ? 'the agent was ended' : 'no agent was started'}`,
+    next: `wait for that run's agent to end, or stop that run (a line its session left lapses within ${FENCE_TTL_S} s)`,
+  }
+}
+
+/** A name file, which another run can share, as against an id file, which is this agent's alone. */
+export function isFenceNamePath(path: string): boolean {
+  return path.includes(`/${FENCE_DIR}/name/`)
+}
+
 /** The folder snapshot onto its run, pinned to the run's id; null clears it. */
 export function withFolderSnapshot(stored: Run | null, runId: string, snapshot: FolderSnapshot | null): Run | null {
   if (!stored || stored.id !== runId) return null

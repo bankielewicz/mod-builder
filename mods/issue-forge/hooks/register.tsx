@@ -49,11 +49,18 @@ import {
   FENCE_TTL_S,
   FOLDER_STATUS_ARGS,
   fenceBlock,
+  fenceClashBlock,
+  fenceClassLine,
+  fenceGoesOnLine,
+  fenceHeldBy,
   fenceLine,
+  fenceOwner,
   fencePaths,
   fencePreflightInput,
   fencePreflightOk,
   fenceTamperBlock,
+  fenceTickPlan,
+  retirablePaths,
   folderBlock,
   folderChanges,
   folderClause,
@@ -641,21 +648,40 @@ async function writeFence($: EngineInterface, runId: string, agent: string, refs
   const isStale = () => from !== null && fenceKept !== from
   await fenceTurn(async () => {
     if (isStale()) return
-    const line = fenceLine(root, Math.floor((await $.clock.now()) / 1000) + FENCE_TTL_S)
+    const line = fenceLine(root, (await nowS($)) + FENCE_TTL_S)
+    // A rewrite is a compare-and-swap on the exact line: a file that no longer holds this run's last line isn't written,
+    // and the next 5 s check reads what it holds (finding 5). Read, then written: not atomic.
+    const was = from ? await readFence($, paths) : []
+    const isOurs = (path: string) => !from || !from.paths.includes(path) || was.find(r => r.path === path)?.text?.replace(/\n$/, '') === from.line
     if (isStale()) return
     fenceKept = { runId, agent, refs, paths, root, line }
-    await Promise.all(paths.map(path => $.fs.write(path, `${line}\n`)))
+    await Promise.all(paths.filter(isOurs).map(path => $.fs.write(path, `${line}\n`)))
   })
 }
 
-/** `retired` into the fence files of this session's agent when `refs` names it: hooks/fence.sh then refuses its every call. */
+/**
+ * `retired` into the fence files of this session's agent when `refs` names it: hooks/fence.sh then refuses its every call.
+ * Read in its turn, then written over all but another run's line in a name file (the owner's departure, finding 5).
+ */
 async function retireFence($: EngineInterface, refs: readonly string[]): Promise<void> {
   const f = fenceKept
   if (!f || !f.refs.some(ref => refs.includes(ref))) return
   fenceKept = null
   await fenceTurn(async () => {
-    await Promise.all(f.paths.map(path => $.fs.write(path, `${FENCE_RETIRED}\n`).catch(() => undefined)))
+    const reads = await readFence($, f.paths)
+    const retirable = retirablePaths(reads, f.line, f.root, await nowS($))
+    await Promise.all(retirable.map(path => $.fs.write(path, `${FENCE_RETIRED}\n`).catch(() => undefined)))
   })
+}
+
+/** What each fence file holds now; null for one that can't be read. */
+async function readFence($: EngineInterface, paths: readonly string[]): Promise<{ path: string; text: string | null }[]> {
+  return Promise.all(paths.map(async path => ({ path, text: await $.fs.read(path).catch(() => null) })))
+}
+
+/** The clock in whole seconds, as fence lines hold it. */
+async function nowS($: EngineInterface): Promise<number> {
+  return Math.floor((await $.clock.now()) / 1000)
 }
 
 /** The session's folder as git lists it now, hashed where it can be; null when git status fails. */
@@ -695,11 +721,18 @@ async function folderSince($: EngineInterface, w: FolderWatch | null): Promise<F
 async function fenceTick($: EngineInterface, d: Drive): Promise<void> {
   const f = fenceKept
   if (f && f.runId === d.runId) {
-    for (const path of f.paths) {
-      const text = await $.fs.read(path).catch(() => null)
-      if (text === null || text.replace(/\n$/, '') !== f.line) return breach($, d, fenceTamperBlock(f.agent))
+    const reads = await readFence($, f.paths)
+    const at = await nowS($)
+    for (const r of reads) {
+      const owner = fenceOwner(r.text, f.line, f.root, at)
+      if (owner.kind !== 'mine') $.ui.log(fenceClassLine(r.path, owner), { to: 'debug' })
     }
-    await writeFence($, f.runId, f.agent, f.refs, f.paths, f.root, f).catch(() => undefined)
+    const plan = fenceTickPlan(reads, f.line, f.root, at)
+    if (plan.kind === 'tamper') return breach($, d, fenceTamperBlock(f.agent))
+    if (plan.kind === 'clash') return breach($, d, fenceClashBlock(f.agent, plan.root, d.issue, true))
+    // Another run's line in the name file is left to it: the agent goes on, fenced by its id file (finding 5).
+    if (plan.others.length > 0) $.ui.log(fenceGoesOnLine(f.agent), { to: 'debug' })
+    await writeFence($, f.runId, f.agent, f.refs, plan.paths, f.root, f).catch(() => undefined)
     const problem = await fenceProblem($)
     if (problem) return breach($, d, fenceBlock(problem))
   }
@@ -1367,6 +1400,16 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
     const why = fenceBlock(problem)
     return block(why.reason, why.next)
   }
+  const fenceAgent = name ?? `issue-forge-${run.issue}-${which}`
+  // A name file is keyed by the name alone: another repository's run of this issue may hold it, and its line stays (finding 5).
+  const [namePath] = fencePaths(home, name)
+  if (namePath) {
+    const heldBy = fenceHeldBy(await $.fs.read(namePath).catch(() => null), workOf(run), await nowS($))
+    if (heldBy) {
+      const why = fenceClashBlock(fenceAgent, heldBy, run.issue, false)
+      return block(why.reason, why.next)
+    }
+  }
   if (isWatched) {
     const snapshot = await readFolder($, run.root, which)
     if (snapshot) {
@@ -1374,7 +1417,6 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
       await updateRun($, keyOf(run), stored => withFolderSnapshot(stored, run.id, snapshot))
     }
   }
-  const fenceAgent = name ?? `issue-forge-${run.issue}-${which}`
   try {
     await writeFence($, run.id, fenceAgent, [fenceAgent], fencePaths(home, name), workOf(run))
   } catch (err) {
