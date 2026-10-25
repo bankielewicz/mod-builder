@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -140,6 +140,31 @@ test('Read, Grep and Glob pass for a live agent, wherever they point', () => {
 test("an unreadable fence line is refused, and so is a call whose tool name can't be read", () => {
   refused(hook(agent('Read', { file_path: `${ROOT}/a` }), { files: { [`id/${ID}`]: 'live soon' } }))
   refused(hook({}, { raw: `{"agent_id":"${ID}","agent_type":"${NAME}","tool_input":{"file_path":"${ROOT}/a"}}` }))
+})
+
+test('MultiEdit gets the path check Edit gets', () => {
+  passes(hook(agent('MultiEdit', { file_path: `${ROOT}/a.ts`, edits: [{ old_string: 'a', new_string: 'b' }] })))
+  refused(hook(agent('MultiEdit', { file_path: '/srv/session/a.ts', edits: [{ old_string: 'a', new_string: 'b' }] })))
+})
+
+test("a write-capable tool the fence can't check is refused for a live issue-forge agent, and passes for anyone else", () => {
+  for (const [tool, input] of [['PowerShell', { command: 'Set-Content x y' }], ['EnterWorktree', { name: 'w' }], ['ExitWorktree', {}], ['mcp__fs__write_file', { path: '/x', content: 'y' }]]) {
+    refused(hook(agent(tool, input)))
+    passes(hook({ agent_id: 'aother-1', agent_type: 'reviewer', tool_name: tool, tool_input: input }, { files: {} }))
+    passes(hook({ tool_name: tool, tool_input: input }))
+  }
+})
+
+test("hooks.json runs the fence, in exec form, for the tools that can change something and no others", () => {
+  const hooks = JSON.parse(readFileSync(join(dirname(SCRIPT), 'hooks.json'), 'utf8'))
+  assert.deepEqual(hooks.modules, ['./register.tsx'])
+  const [entry, ...rest] = hooks.hooks.PreToolUse
+  assert.equal(rest.length, 0)
+  assert.equal(entry.matcher, '^(Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit|EnterWorktree|ExitWorktree|mcp__.*)$')
+  assert.deepEqual(entry.hooks, [{ type: 'command', command: 'bash', args: ['${CLAUDE_PLUGIN_ROOT}/hooks/fence.sh'] }])
+  const matches = tool => new RegExp(entry.matcher).test(tool)
+  for (const tool of ['Bash', 'PowerShell', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'EnterWorktree', 'ExitWorktree', 'mcp__github__create_issue']) assert.equal(matches(tool), true, tool)
+  for (const tool of ['Read', 'Grep', 'Glob', 'Agent', 'SendMessage', 'WebFetch', 'BashOutput', 'TodoWrite']) assert.equal(matches(tool), false, tool)
 })
 
 test("the module's preflight call is refused with an issue-forge: reason", () => {
