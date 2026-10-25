@@ -5072,4 +5072,43 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     await waitFor(w, () => stored(store).step === 'blocked')
     expect(stored(store).blocked?.reason).toBe(`the session's folder ${ROOT} changed while the red agent worked: a.txt; issue-forge can't tell whether the agent or someone else made the change`)
   })
+
+  // PR #162 review round 1, finding 4 (Codex 4372144808): the stop, the hand-off and the watch end the drive first, and
+  // phase()'s finally can then drop the folder watch before their own compare. In the kit, a late spawn does it: the spawn
+  // resolves while the stop's store write is held, its branch ends the agent, and phase() returns.
+  const writeHeld = (w: World) => waitFor(w, () => w.storeHold?.isHeld === true)
+
+  test("a stop the late spawn's end overtakes still compares the folder, and names the change", async ($, on) => {
+    const spawn = releasable()
+    const write = releasable()
+    const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold, storeHold: { when: (v: any) => v?.step === 'stopped', until: write.hold }, listed: [[red('running')], [red('killed')], [], []] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    const stopping = run($, 'stop')
+    await writeHeld(w)
+    spawn.release()
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('#16: its red agent')))
+    await w.clock.settle()
+    write.release()
+    expect((await stopping).text).toContain("the session's folder changed while it worked: stray.txt")
+  })
+
+  test("a hand-off the late spawn's end overtakes still compares the folder, and names the change", async ($, on) => {
+    const spawn = releasable()
+    const write = releasable()
+    const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold, storeHold: { when: (v: any) => v?.step === 'red' && v?.driver === undefined && v?.folderSnapshot !== undefined, until: write.hold }, listed: [[red('running')], [red('killed')], [], []] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    const handing = run($, 'handoff')
+    await writeHeld(w)
+    spawn.release()
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('#16: its red agent')))
+    await w.clock.settle()
+    write.release()
+    expect((await handing).text).toContain("the session's folder changed while it worked: stray.txt")
+  })
 })
