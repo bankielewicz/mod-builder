@@ -3325,6 +3325,27 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(goesOn('issue-forge-16-red-1')).toBe('issue-forge fence check: issue-forge-16-red-1 goes on, fenced by its id file; its name file is left to the other run')
   })
 
+  // Finding 1's queue judged a write stale by object identity, so an id write queued behind a 5 s rewrite was dropped once
+  // the rewrite replaced the kept fence. Stale means retired or another agent's; a write merges onto the fence it finds.
+  test("a queued fence write: stale only when retired or another agent's, and merged onto the fence its turn finds", () => {
+    const merge = (current: unknown, from: unknown, want: unknown): unknown => (logic as Record<string, any>).fenceMerge?.(current, from, want)
+    const NAME = '/f/name/issue-forge-16-red-1'
+    const ID = '/f/id/aid-1'
+    const kept = (paths: string[], refs: string[], agent = 'issue-forge-16-red-1', runId = '16-1') => ({ runId, agent, paths, refs })
+    const before = kept([NAME], ['issue-forge-16-red-1'])
+    // A retirement came first, or another agent's fence is kept now: nothing is written.
+    expect(merge(null, before, { paths: [NAME], refs: ['issue-forge-16-red-1'] })).toBeNull()
+    expect(merge(kept([NAME], ['x'], 'issue-forge-16-green-1'), before, { paths: [NAME], refs: ['x'] })).toBeNull()
+    expect(merge(kept([NAME], ['x'], 'issue-forge-16-red-1', '17-1'), before, { paths: [NAME], refs: ['x'] })).toBeNull()
+    // The id write, queued behind a rewrite that replaced the kept fence with an equal one: it still lands.
+    expect(merge(kept([NAME], ['issue-forge-16-red-1']), before, { paths: [NAME, ID], refs: ['issue-forge-16-red-1', 'aid-1'] })).toEqual({ paths: [NAME, ID], refs: ['issue-forge-16-red-1', 'aid-1'] })
+    // A rewrite asked before the id write landed keeps the id file it didn't know of.
+    expect(merge(kept([NAME, ID], ['issue-forge-16-red-1', 'aid-1']), before, { paths: [NAME], refs: ['issue-forge-16-red-1'] })).toEqual({ paths: [NAME, ID], refs: ['issue-forge-16-red-1', 'aid-1'] })
+    // A rewrite that drops another run's name file leaves it out, and keeps the rest.
+    const withId = kept([NAME, ID], ['issue-forge-16-red-1', 'aid-1'])
+    expect(merge(withId, withId, { paths: [ID], refs: withId.refs })).toEqual({ paths: [ID], refs: ['issue-forge-16-red-1', 'aid-1'] })
+  })
+
   // PR #162 review round 1, item 6: each folder change found says in the debug log which check found it.
   test('the debug line naming where a folder change was found', () => {
     const found = logic.folderFoundLine
