@@ -46,6 +46,13 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+      - name: Each plugin's script tests, outside the kit
+        # A plugin's own scripts (a command hook's, say) can't run under `claude plugin test`, whose sandbox refuses
+        # child_process and node:fs, so their tests sit in <plugin>/scripts/*.test.mjs and run under node.
+        run: |
+          files=$(git ls-files ':(glob)plugins/*/scripts/*.test.mjs' ':(glob)mods/*/scripts/*.test.mjs')
+          if [ -z "$files" ]; then echo "no plugin script tests"; exit 0; fi
+          node --test $files
       - name: Archetypes still generate working mods
         if: hashFiles('plugins/mod-builder/skills/build/scripts/check-archetypes.sh') != ''
         run: bash plugins/mod-builder/skills/build/scripts/check-archetypes.sh
