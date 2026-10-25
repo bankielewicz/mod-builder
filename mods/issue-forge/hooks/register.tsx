@@ -44,6 +44,7 @@ import {
   elsewhereText,
   endOutcome,
   endedClause,
+  endedWhileAsked,
   handOffAnswer,
   lateAnswer,
   movedOnAnswer,
@@ -1749,13 +1750,20 @@ async function startRun($: EngineInterface, at: Repo | null, issue: number, name
       return resumeRun($, at, action.issue, true)
     case 'resume':
       return resumeRun($, at, action.issue)
+    // The run chosen can end while the question is open, as when another session stops it or takes it over. Read again,
+    // a run no longer there to stop or hand off lets the start go on, led by what became of it (#153; the owner,
+    // 2026-10-25: "Start #M, say why").
     case 'stopThenStart': {
       const stopped = await stopRun($, at, action.issue)
-      return stopped.startsWith('stopped') ? `stopped #${action.issue}; ${await begin($, at, issue, isChosen, ghRepo)}` : stopped
+      if (stopped.startsWith('stopped')) return `stopped #${action.issue}; ${await begin($, at, issue, isChosen, ghRepo)}`
+      const chosen = others.find(r => r.issue === action.issue)
+      const now = chosen ? await loadRun($, keyOf(chosen)) : null
+      return chosen && !isActive(now) ? `${endedWhileAsked(action.issue, now, chosen.id, sessionId)}; ${await begin($, at, issue, isChosen, ghRepo)}` : stopped
     }
     case 'handOffThenStart': {
       const off = await handOff($)
-      return off?.step ? `handed off #${action.issue} at ${off.step}${endedClause(off.ended)}; ${await begin($, at, issue, isChosen, ghRepo)}` : 'this session is driving no run.'
+      const lead = off ? `handed off #${action.issue} at ${off.step ?? 'its step'}${endedClause(off.ended)}` : endedWhileAsked(action.issue, d && (await loadRun($, d.key)), d?.runId ?? '', sessionId)
+      return `${lead}; ${await begin($, at, issue, isChosen, ghRepo)}`
     }
     case 'keep':
       return keepText(issue)
