@@ -2624,8 +2624,12 @@ export function foreignChange(stored: Run | null, runId: string, me: string): 's
  */
 export function endedWhileAsked(issue: number, stored: Run | null, runId: string, me: string): string {
   const change = foreignChange(stored, runId, me)
-  const what = change === 'gone' ? 'was replaced' : stored?.step === 'done' ? 'finished' : change === 'stopped' ? 'was stopped in another session' : change === 'takenOver' ? 'was taken over by another session' : null
-  return what ? `#${issue} ${what} while you chose` : `#${issue}'s drive here ended while you chose`
+  const said = (what: string) => `#${issue} ${what} while you chose`
+  if (change === 'gone') return said('was replaced')
+  if (stored?.step === 'done') return said('finished')
+  if (change === 'stopped') return said('was stopped in another session')
+  if (change === 'takenOver') return said('was taken over by another session')
+  return `#${issue}'s drive here ended while you chose`
 }
 
 /** The workspace the starting checkout's profile names (for the menu's wording); anything unreadable is ask. */
