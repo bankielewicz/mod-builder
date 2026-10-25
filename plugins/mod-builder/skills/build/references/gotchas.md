@@ -324,9 +324,10 @@ Re-check [field] items against the d.ts after a Claude Code update.
   still listed `killed` 30 s later (`-p` stream-json). Both on 2.1.310. The 2.1.310 d.ts keeps an entry
   "until the engine drops its task: as a teammate ends or seconds after, a subagent's later". So after
   such a `TaskStop`, count an agent the list no longer has as ended.
-- **[probe]** Whether a mod's own `tool.call` hook gets a call depends on when the call is made. Seen
-  on 2.1.310 in issue #40's two issue-forge live checks (a `--plugin-dir` copy, `@inline`, and an
-  installed one, `@claudemod`) and in its throwaway probe mod. issue-forge's case is issue #156.
+- **[probe]** Whether a mod's own `tool.call` hook gets a call depends on when the call, or the spawn
+  behind an agent's call, is issued. Seen on 2.1.310 in issue #40's two issue-forge live checks (a
+  `--plugin-dir` copy, `@inline`, and an installed one, `@claudemod`), in its throwaway probe mod, and
+  in a second probe mod for PR #157. issue-forge's case is issue #156.
   - **While one of the mod's hooks runs, it does.** `TaskStop` (`$.tool.call`) and the start menu's
     `$.ui.ask` (logged as a `$.tool.call` of `AskUserQuestion`; pre-merge run only), both from
     issue-forge's `command.run` hook, each logged `hooks module <plugin>@<source>: tool.call nested in
@@ -343,18 +344,21 @@ Re-check [field] items against the d.ts after a Claude Code update.
     `settled` line. Other plugins' `tool.call` hooks ran them (`tool.call nested in <plugin>`), and so
     did a classic `PreToolUse` hook (hookify's). The docs also tie an agent to the call that started it
     (`next.error.cause` `rewritten` covers "an agent started by that call", Mods-reference.md:43).
-  - **A spawn issued while a hook runs is different.** The probe mod awaited its spawn inside
-    `command.run`, and its agent's calls logged `tool.call nested in <plugin>#<n>` for its own hook,
-    as an unnamed subagent, a named one and a teammate (2.1.310). On 2.1.296, P4 (issue-forge's probe
-    for Change 0.2.0) issued its spawn unawaited from `command.run`, and its own `tool.call` hook
-    logged and rewrote the agents' `Bash` calls.
-  - So for a mod to guard or steer its own agents with its `tool.call` hook, issue the spawn while a
+  - **A spawn issued while a hook runs is different, even unawaited, and even for calls after that
+    hook has returned.** A second probe mod issued its spawn with `void spawnOne(…)` inside
+    `command.run` and returned at once. Each of its agent's six `Bash` calls, 1.8 s to 24 s after
+    the hook returned, logged `tool.call nested in <plugin>#<n>` for the probe's own hook, with no
+    re-entry line. That held for an unnamed subagent (`claude -p --input-format stream-json`) and an
+    in-process teammate (interactive tmux), on 2.1.310. #40's probe mod, which awaited its spawn,
+    saw the same for an unnamed subagent, a named one and a teammate. So did P4 (issue-forge's probe
+    for Change 0.2.0) on 2.1.296, issuing unawaited from `command.run`.
+  - So to guard or steer its own agents with its `tool.call` hook, a mod issues the spawn while a
     hook is running. For a spawn made after its hooks have returned, only other plugins' `tool.call`
-    hooks and classic `PreToolUse` hooks were seen to run on the agent's calls; the mod's own classic
-    hooks weren't checked. Also not checked: issue-forge's timing on 2.1.296, P4's unawaited shape on
-    2.1.310, and an unnamed subagent spawned after the hook returned. Nor is it known whether the
-    hook's `.catch` runs for a skipped call: the docs give `.catch` `kind: 're-entry'` "when the hook
-    was skipped" [Mods-reference.md:42], but the logs have no line either way.
+    hooks and classic `PreToolUse` hooks were seen to run on the agent's calls; the mod's own
+    classic hooks weren't checked. Also not checked: issue-forge's timing on 2.1.296, and an unnamed
+    subagent spawned after the hook returned. Nor is it known whether the hook's `.catch` runs for a
+    skipped call: the docs give `.catch` `kind: 're-entry'` "when the hook was skipped"
+    [Mods-reference.md:42], but the logs have no line either way.
   - A mod's own registered tool is a different case: its `tool.call` hook has to answer it, and the
     2.1.300 probe in "Modules" (a nested `$.tool.call` that another hook answered) doesn't say whose
     hook that was.
