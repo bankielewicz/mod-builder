@@ -2855,8 +2855,8 @@ export function fenceOwner(text: string | null, mine: string, root: string, nowS
 
 /** Before a spawn: the folder of another run whose unexpired line holds this name file, else null. */
 export function fenceHeldBy(text: string | null, root: string, nowS: number): string | null {
-  const owner = fenceOwner(text, '', root, nowS)
-  return owner.kind === 'other' && (liveLineOf(text)?.until ?? 0) >= nowS ? owner.root : null
+  const live = liveLineOf(text)
+  return live && live.until >= nowS && fenceOwner(text, '', root, nowS).kind === 'other' ? live.root : null
 }
 
 export type FenceRead = { path: string; text: string | null }
