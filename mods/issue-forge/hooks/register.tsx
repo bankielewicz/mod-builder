@@ -45,6 +45,27 @@ import {
   endOutcome,
   endedClause,
   endedWhileAsked,
+  FENCE_RETIRED,
+  FENCE_TTL_S,
+  FOLDER_STATUS_ARGS,
+  fenceBlock,
+  fenceLine,
+  fencePaths,
+  fencePreflightInput,
+  fencePreflightOk,
+  fenceTamperBlock,
+  folderBlock,
+  folderChanges,
+  folderClause,
+  folderEntries,
+  folderResumeNote,
+  folderSnapshot,
+  folderStashMessage,
+  hashablePaths,
+  withFolderClause,
+  withFolderSnapshot,
+  withFolderStash,
+  withHashes,
   handOffAnswer,
   lateAnswer,
   movedOnAnswer,
@@ -157,7 +178,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, EndedAgents, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, ListedAgent, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
+import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, EndedAgents, FolderChanges, FolderSnapshot, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, ListedAgent, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -225,6 +246,15 @@ let stopCommand: (() => void) | null = null
 let liveAgent: string | null = null
 /** The live agent's run: where the guard keeps it (Change 0.2.0; an agent's cwd is ignored, P4). */
 let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; baseManifests: readonly string[] } | null = null
+/**
+ * The fence files of this session's phase agent and the line they hold (Change 0.10.0, #156): hooks/fence.sh reads them,
+ * since the guard above never sees the mod's own agents' calls (re-entry). The 5 s check reads them back and writes them again.
+ */
+let fenceKept: { runId: string; agent: string; refs: string[]; paths: string[]; root: string; line: string } | null = null
+/** The session's folder as this session's phase agent began, for a worktree run: the 5 s check and a stop compare against it. */
+let folderWatch: { runId: string; root: string; phase: Phase; snapshot: FolderSnapshot } | null = null
+/** How long the fence preflight may take: the script reads stdin and one file. */
+const FENCE_CHECK_MS = 5000
 /**
  * Every agent id and name a run of this repository has started, in memory for the tool.call guard,
  * the hand-back drop and the end of a drive (which ends them with TaskStop, #40), and in the store so a
@@ -568,12 +598,99 @@ function endLocalDrive(): void {
   }
 }
 
+// ── The fence and the folder check (Change 0.10.0, #156) ──────────────────
+
+/** Runs hooks/fence.sh on a synthetic call it must refuse: null when it did, else what happened instead. */
+async function fenceProblem($: EngineInterface): Promise<string | null> {
+  let r: ProcessRunResult
+  try {
+    r = await $.process.run(['bash', `${$.plugin.root}/hooks/fence.sh`], { stdin: fencePreflightInput(), timeoutMs: FENCE_CHECK_MS })
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+  if (fencePreflightOk(r)) return null
+  const said = r.stderr.trim().split('\n')[0] ?? ''
+  return `exit ${r.exitCode}${said ? `: ${truncate(said, 120)}` : ''}`
+}
+
+/** Writes the agent's fence files as live until FENCE_TTL_S from now; the 5 s check writes them again. */
+async function writeFence($: EngineInterface, runId: string, agent: string, refs: string[], paths: string[], root: string): Promise<void> {
+  const line = fenceLine(root, Math.floor((await $.clock.now()) / 1000) + FENCE_TTL_S)
+  fenceKept = { runId, agent, refs, paths, root, line }
+  await Promise.all(paths.map(path => $.fs.write(path, `${line}\n`)))
+}
+
+/** `retired` into the fence files of this session's agent when `refs` names it: hooks/fence.sh then refuses its every call. */
+async function retireFence($: EngineInterface, refs: readonly string[]): Promise<void> {
+  const f = fenceKept
+  if (!f || !f.refs.some(ref => refs.includes(ref))) return
+  fenceKept = null
+  await Promise.all(f.paths.map(path => $.fs.write(path, `${FENCE_RETIRED}\n`).catch(() => undefined)))
+}
+
+/** The session's folder as git lists it now, hashed where it can be; null when git status fails. */
+async function readFolder($: EngineInterface, root: string, phase: Phase): Promise<FolderSnapshot | null> {
+  const status = await git($, root, FOLDER_STATUS_ARGS).catch(() => null)
+  if (!status || status.exitCode !== 0) return null
+  const entries = folderEntries(status.stdout)
+  const paths = hashablePaths(entries)
+  const hashed = paths.length === 0 ? null : await git($, root, ['hash-object', '--stdin-paths'], `${paths.join('\n')}\n`).catch(() => null)
+  return folderSnapshot(phase, await $.clock.now(), withHashes(entries, paths, hashed && hashed.exitCode === 0 ? hashed.stdout : null))
+}
+
+/** What changed in the session's folder since this session's phase agent began, if a run's folder is watched. */
+async function folderNow($: EngineInterface, runId: string): Promise<FolderChanges | null> {
+  const w = folderWatch
+  if (!w || w.runId !== runId) return null
+  const now = await readFolder($, w.root, w.phase)
+  return now ? folderChanges(w.snapshot, now) : null
+}
+
+/**
+ * The 5 s check, while this session's phase agent works: its fence files read back and written again, the fence run
+ * once more, and the session's folder compared. Any of them failing ends the agent and blocks the run (`breach`).
+ */
+async function fenceTick($: EngineInterface, d: Drive): Promise<void> {
+  const f = fenceKept
+  if (f && f.runId === d.runId) {
+    for (const path of f.paths) {
+      const text = await $.fs.read(path).catch(() => null)
+      if (text === null || text.replace(/\n$/, '') !== f.line) return breach($, d, fenceTamperBlock(f.agent))
+    }
+    await writeFence($, f.runId, f.agent, f.refs, f.paths, f.root).catch(() => undefined)
+    const problem = await fenceProblem($)
+    if (problem) return breach($, d, fenceBlock(problem))
+  }
+  const w = folderWatch
+  const changes = await folderNow($, d.runId)
+  if (w && changes) return breach($, d, { ...folderBlock(w.root, w.phase, changes), isFolderBlock: true })
+}
+
+/**
+ * Blocks the run this session drives, mid-phase, and ends its agent: the drive ends as a stop's does, and its own end says
+ * why (announce). The block is written first, while this session still drives the run: the drive's end clears the driver.
+ */
+async function breach($: EngineInterface, d: Drive, b: { reason: string; next: string; isFolderBlock?: boolean }): Promise<void> {
+  if (drivingNow() !== d) return
+  folderWatch = null
+  try {
+    const now = await $.clock.now()
+    await updateRun($, d.key, stored => (stored?.id === d.runId && isWorking(stored.step) && stored.driver?.session === sessionId ? advance(stored, { type: 'block', ...b }, now) : null))
+  } finally {
+    if (drivingNow() === d) endLocalDrive()
+    $.ui.status(undefined)
+    await endAgents($, knownRefs)
+  }
+}
+
 /**
  * Ends this session's issue-forge agents still going whose id, name or teammate name is in `refs`, with the built-in
  * TaskStop, then lists them again: each outcome is what that listing shows, never a promise (#40).
  */
 async function endAgents($: EngineInterface, refs: Iterable<string>): Promise<EndedAgents> {
   const wanted = [...refs]
+  // First, so the fence refuses the agent's next call even while TaskStop waits (Change 0.10.0).
+  await retireFence($, wanted)
   if (wanted.length === 0) return []
   let listed: ListedAgent[]
   try {
@@ -1189,6 +1306,51 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
   if (name) knownRefs.add(name)
   const model = which === 'red' ? options.redModel : which === 'green' ? options.greenModel : options.refactorModel
   await setActivity($, `starting the ${which} agent`)
+  // Change 0.10.0 (#156): the session's folder is watched in a worktree run, and the agent is fenced in every run.
+  const isWatched = isWorktreeRun(run)
+  // A snapshot a drive left on the run (a hand-off, a takeover, a reload): compared before anything else.
+  if (isWatched && run.folderSnapshot) {
+    const now = await readFolder($, run.root, which)
+    const changes = now ? folderChanges(run.folderSnapshot, now) : null
+    if (changes) return { type: 'block', ...folderBlock(run.root, which, changes), isFolderBlock: true }
+  }
+  // After a folder block, the worktree's uncommitted files go to a stash first, so the phase starts from its last commit.
+  if (run.isFolderBlock) {
+    const stash = await stashAll($, run, folderStashMessage(run, which))
+    await updateRun($, keyOf(run), stored => withFolderStash(stored, run.id, stash))
+    if (stash) $.ui.toast(truncate(`#${run.issue}: the worktree went to stash ${stash.sha.slice(0, 7)} before ${which}`, 80))
+  }
+  const problem = await fenceProblem($)
+  if (problem) {
+    const why = fenceBlock(problem)
+    return block(why.reason, why.next)
+  }
+  if (isWatched) {
+    const snapshot = await readFolder($, run.root, which)
+    if (snapshot) {
+      folderWatch = { runId: run.id, root: run.root, phase: which, snapshot }
+      await updateRun($, keyOf(run), stored => withFolderSnapshot(stored, run.id, snapshot))
+    }
+  }
+  const fenceAgent = name ?? `issue-forge-${run.issue}-${which}`
+  try {
+    await writeFence($, run.id, fenceAgent, [fenceAgent], fencePaths(home, name), workOf(run))
+  } catch (err) {
+    folderWatch = null
+    const why = fenceBlock(`its file couldn't be written: ${err instanceof Error ? err.message : String(err)}`)
+    return block(why.reason, why.next)
+  }
+  try {
+    return await spawnPhase($, run, which, { subagentType, prompt, model, name })
+  } finally {
+    if (folderWatch?.runId === run.id) folderWatch = null
+    if (fenceKept?.runId === run.id) await retireFence($, fenceKept.refs)
+  }
+}
+
+/** The phase's agent, from its spawn to its answer: phase() has fenced it and, in a worktree run, watches the folder. */
+async function spawnPhase($: EngineInterface, run: Run, which: Phase, a: { subagentType: string; prompt: string; model: string; name: string | undefined }): Promise<RunEvent | null> {
+  const { subagentType, prompt, model, name } = a
   const baseManifests = [...(await manifestsAt($, workOf(run), run.mergeBase)), ...(await manifestsAt($, workOf(run), baseRefOf(run)))]
   const spawned = await $.agent.spawn({ subagentType, prompt, description: `issue-forge #${run.issue} ${which}`, model, cwd: workOf(run), ...(name ? { name } : {}) })
   const agentId = spawned.agentId
@@ -1227,11 +1389,31 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
     return null
   }
   if (spawned.deny !== undefined || !agentId) return block(`the ${which} agent didn't start: ${spawned.deny ?? 'no agent id'}`, 'check the agent type and model options')
+  // The fence by the agent's id too, now it has one: whatever its agent_type, hooks/fence.sh finds it (Change 0.10.0).
+  const f = fenceKept
+  if (f?.runId === run.id) {
+    try {
+      await writeFence($, run.id, f.agent, [...f.refs, agentId, ...(spawned.teammateId ? [spawned.teammateId] : [])], [...f.paths, ...fencePaths(home, undefined, agentId)], f.root)
+    } catch (err) {
+      await endAgents($, spawnRefs(agentId, name, spawned.teammateId))
+      const why = fenceBlock(`its file couldn't be written: ${err instanceof Error ? err.message : String(err)}`)
+      return block(why.reason, why.next)
+    }
+  }
   await rememberAgents($, run, spawnRefs(agentId, name, spawned.teammateId))
   await saveRun($, advance(latest, { type: 'spawned', agent: { id: agentId, ...(name ? { name } : {}), phase: which } }, await $.clock.now()), (run as Stamped).driveGen)
   await setActivity($, 'agent working')
   try {
-    return { type: 'agentDone', ...(answer ? await answer : { answer: '' }) }
+    const done = answer ? await answer : { answer: '' }
+    // Once the agent has answered, the session's folder is read: a change blocks the run before its gate (Change 0.10.0).
+    const w = folderWatch
+    const changes = await folderNow($, run.id)
+    if (w && changes) {
+      await endAgents($, spawnRefs(agentId, name, spawned.teammateId))
+      return { type: 'block', ...folderBlock(w.root, which, changes), isFolderBlock: true }
+    }
+    if (w?.runId === run.id) await updateRun($, keyOf(run), stored => withFolderSnapshot(stored, run.id, null)).catch(() => undefined)
+    return { type: 'agentDone', ...done }
   } finally {
     if (liveAgent === agentId) {
       liveAgent = null
@@ -1579,8 +1761,11 @@ async function watch($: EngineInterface, d: Drive): Promise<void> {
     endLocalDrive()
     $.ui.status(undefined)
     const ended = await endAgents($, knownRefs)
-    $.ui.toast(`#${d.issue} ${change === 'takenOver' ? 'was taken over by another session' : change === 'stopped' ? 'was stopped in another session' : 'was replaced'}; this session stopped driving it${endedClause(ended)}.`)
-  }
+    // Once the agent has ended, the folder is read (Change 0.10.0); a takeover keeps the stored snapshot for its resume.
+    const changes = await folderNow($, d.runId)
+    folderWatch = null
+    $.ui.toast(`#${d.issue} ${change === 'takenOver' ? 'was taken over by another session' : change === 'stopped' ? 'was stopped in another session' : 'was replaced'}; this session stopped driving it${endedClause(ended)}${folderClause(changes, false)}.`)
+  } else if (drivingNow() === d) await fenceTick($, d)
   if (stored?.repo) await refreshOthers($, stored.repo)
 }
 
@@ -1923,7 +2108,7 @@ async function resumeRun($: EngineInterface, at: Repo | null, issue: number | nu
   const isBehindNow = await isBehind($)
   void openPane($).catch(() => undefined)
   startDrive($, driven)
-  return `resuming #${back.issue} at ${back.step}${isBehindNow ? `; ${BEHIND_TEXT}` : ''}.`
+  return `resuming #${back.issue} at ${back.step}${folderResumeNote(back)}${isBehindNow ? `; ${BEHIND_TEXT}` : ''}.`
 }
 
 async function publishRun($: EngineInterface, at: Repo | null, issue: number | null, byPress = false): Promise<string> {
@@ -1979,17 +2164,20 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
     // (#40; PR #151 review round 1, finding 8; round 2, finding 4).
     if (isHere) endedHere = await endAgents($, knownRefs)
   }
+  // Once the agent has ended, the session's folder is read, and a change is named (Change 0.10.0).
+  const changes = isHere ? await folderNow($, run.id) : null
+  if (isHere) folderWatch = null
   if (isHere) $.ui.status(undefined)
   // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
   if (!stopped) return movedOnAnswer(run.issue, endedHere, byPress)
   // A run not driven here: only its own agents, once the write confirms the stop; a run this session drives keeps its agent
   // (the owner, 2026-10-24: "option 1 is per design").
   const ended = endedHere ?? (await endAgents($, refsOf(run)))
-  return stopAnswer(run.issue, stopped.branch, ended, { isElsewhere, byPress })
+  return withFolderClause(stopAnswer(run.issue, stopped.branch, ended, { isElsewhere, byPress }), folderClause(changes, byPress), byPress)
 }
 
 /** Ends this session's drive and its agents and clears it as the driver, keeping the step: any session can resume the run. */
-async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: EndedAgents } | null> {
+async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: EndedAgents; changes: FolderChanges | null } | null> {
   const d = drivingNow()
   if (!d) return null
   endLocalDrive()
@@ -2002,7 +2190,10 @@ async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: 
     // Whatever the store write did, the drive is over, so its agents go (PR #151 review round 2, finding 1).
     ended = await endAgents($, knownRefs)
   }
-  return { step, ended }
+  // Read once the agent has ended (Change 0.10.0); the stored snapshot stays, so whoever resumes compares first.
+  const changes = await folderNow($, d.runId)
+  folderWatch = null
+  return { step, ended, changes }
 }
 
 async function handOffRun($: EngineInterface, issue: number | null, byPress = false): Promise<string> {
@@ -2010,7 +2201,7 @@ async function handOffRun($: EngineInterface, issue: number | null, byPress = fa
   if (!d) return 'this session is driving no run.'
   if (issue !== null && issue !== d.issue) return `this session drives #${d.issue}, not #${issue}.`
   const off = await handOff($)
-  return handOffAnswer(d.issue, off?.step ?? null, off?.ended ?? [], byPress)
+  return withFolderClause(handOffAnswer(d.issue, off?.step ?? null, off?.ended ?? [], byPress), folderClause(off?.changes ?? null, byPress), byPress)
 }
 
 async function statusOf($: EngineInterface, at: Repo | null, issue: number | null): Promise<string> {
@@ -2246,7 +2437,13 @@ export const register: Register = (on, raw) => {
       return { deny: newPluginRefusal(manifest.relative) }
     }
     return next(call)
-  }).catch(($, e, next) => next(e))
+  }).catch(($, e, next) => {
+    // Mods-reference.md:42 says a hook skipped for re-entry has its .catch asked with kind 're-entry'; 2.1.310 wasn't seen
+    // doing it (#156, #160). Each time it is asked, the debug log says how, so the evidence gathers run by run (Change 0.10.0).
+    const error = next.error as { kind?: string; cause?: string } | undefined
+    $.ui.log(`tool.call .catch asked: kind=${error?.kind ?? '-'} cause=${error?.cause ?? '-'} tool=${e.tool} agent=${e.agentId ?? '-'}`, { to: 'debug' })
+    return next(e)
+  })
 
   // An unnamed phase agent's report (or a named one's, with agent teams off) reaches the main loop as a peer prompt; the pane already has it (C0).
   on('prompt.submit', async ($, e, next) => {

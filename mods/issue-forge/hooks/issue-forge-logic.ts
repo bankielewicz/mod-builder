@@ -2808,11 +2808,21 @@ export function withFolderSnapshot(stored: Run | null, runId: string, snapshot: 
   return snapshot ? { ...rest, folderSnapshot: snapshot } : rest
 }
 
-/** The stash a resume after a folder block made, onto its run; the block's flag goes with it. */
-export function withFolderStash(stored: Run | null, runId: string, stash: StashRef): Run | null {
+/** The stash a resume after a folder block made, onto its run; the block's flag goes with it, stash or not. */
+export function withFolderStash(stored: Run | null, runId: string, stash: StashRef | undefined): Run | null {
   if (!stored || stored.id !== runId) return null
   const { isFolderBlock: _f, ...rest } = stored
-  return { ...rest, folderStash: stash }
+  return stash ? { ...rest, folderStash: stash } : rest
+}
+
+/** A folder clause into an answer: before a typed one's last full stop, right after a pressed one's first clause (80 characters). */
+export function withFolderClause(answer: string, clause: string, byPress: boolean): string {
+  if (!clause) return answer
+  if (byPress) {
+    const at = answer.search(/[;.]/)
+    return at < 0 ? `${answer}${clause}` : `${answer.slice(0, at)}${clause}${answer.slice(at)}`
+  }
+  return answer.endsWith('.') ? `${answer.slice(0, -1)}${clause}.` : `${answer}${clause}`
 }
 
 export function folderStashMessage(run: Run, phase: string): string {
