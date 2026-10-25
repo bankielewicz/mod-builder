@@ -363,6 +363,8 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (e.path === profilePath && world.hasProfile) return { value: JSON.stringify(world.switched && world.baseProfile ? world.baseProfile : (world.localProfile ?? PROFILE)) }
     if (isWorktreeProfile(e.path) && world.hasProfile) return { value: JSON.stringify(world.wtProfiles[worktreeOf(e.path) ?? ''] ?? world.baseProfile ?? PROFILE) }
     if (e.path === LCOV_PATH) return { value: LCOV.replace(`SF:${ROOT}/`, `SF:${world.lcovRoot ?? ROOT}/`) }
+    // What the mod wrote reads back, as the fence's 5 s check reads its files (Change 0.10.0).
+    if (e.path in world.files) return { value: world.files[e.path] }
     return { deny: 'ENOENT' }
   })
   on('fs.stat', ($: any, e: any) => {
