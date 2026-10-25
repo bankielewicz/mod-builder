@@ -2390,3 +2390,4 @@ count set in the pane.
 
   #106, #107 and #104 are open and have no "Base branch" line [checked: `gh issue view`, 2026-10-25]. The check costs three red agents on haiku, each stopped within a few minutes. It leaves three stopped runs in the `--plugin-dir` copy's store, and three worktrees and branches under `scratch/issue-forge/`, kept until the owner says to remove them. No push, PR or issue comment comes from the runs.
 - **Done means:** when the run chosen to hand off or stop had already ended while the menu's question was open, "Hand #N off and start #M here" and "Stop #N, then start #M" go on to start #M, and the answer says what became of #N. A run still active, which the person declined to take over, still starts nothing.
+- **Approved:** the owner, 2026-10-25, "Approve (Recommended)", the live check included. The advisor checked the change against both doc sets first.
