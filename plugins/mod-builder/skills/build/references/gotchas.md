@@ -219,7 +219,9 @@ Re-check [field] items against the d.ts after a Claude Code update.
 - **[probe]** A spawn started from a `command.run` handler in `void (async () => …)()` outlives the
   handler. Its `turn.complete` (with the `agentId` and its `answer`) arrived about 10 s later. The
   subagent's own tool calls are `tool.call`s carrying that `agentId`. Its Write and Bash ran without
-  a prompt under `defaultMode: "auto"`; other permission modes weren't checked.
+  a prompt under `defaultMode: "auto"`; other permission modes weren't checked. Whose hook saw those
+  calls wasn't recorded. Which of a mod's own hooks get an agent's calls depends on when the spawn is
+  made (the re-entry entry, below).
 - **[probe]** Plain `claude -p "/cmd"` exits as soon as the command answers, so a detached spawn
   never even resolves. To keep a headless session alive, use `--input-format stream-json` with
   stdin held open, or test in an interactive session.
@@ -229,14 +231,18 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `{ drop: reason }` for its own agents keeps the main model idle, and the `turn.complete` still
   arrives. The reason is shown to the person. With agent teams off, a named agent's text starts
   `<agent-message from="<name>">`. With them on, in an interactive session, a named agent is a
-  teammate and hands back another way (next entry).
+  teammate and hands back another way (next entry). Under `claude -p --input-format stream-json` with
+  them on (2.1.310), a named spawn was an ordinary subagent (next entry); whether its text then starts
+  with the name or the `agentId` wasn't checked.
 - **[probe]** With agent teams on (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), a named
   `$.agent.spawn` starts a teammate: its answer and its `$.agent.list()` entry carry
   `teammateId: "<name>@session-<id>"`, and its `agentId` reads `a<name>-<hex>`. With them off it's an
   ordinary subagent (`agentId: "a<hex>"`, no `teammateId`). Either way, its `tool.call`s carry the
-  `agentId` the spawn returned. When that teammate finishes, the
-  hand-back arrives as a `session.receive` with origin `{ kind: 'peer', teammate: '<name>',
-  isVerified: true }`, no `agentId`, and text `{"type":"idle_notification",…,"result":"<answer>"}`.
+  `agentId` the spawn returned (2.1.296). On 2.1.310 the spawning mod's own `tool.call` hook didn't
+  get them at all for a spawn made after its hook had returned (the re-entry entry, below). When that
+  teammate finishes, the hand-back arrives as a `session.receive` with origin `{ kind: 'peer',
+  teammate: '<name>', isVerified: true }`, no `agentId`, and text
+  `{"type":"idle_notification",…,"result":"<answer>"}`.
   No `prompt.submit` fires for it, and it starts a main-model turn. Answering that `session.receive`
   with `{ consumed: reason }` keeps the main model idle, and the delivery didn't come again within
   78 s. Probed on 2.1.296 (issue-forge P4, issue #27). A mod whose named agents must stay quiet
@@ -259,7 +265,10 @@ Re-check [field] items against the d.ts after a Claude Code update.
   teammate), each spawned with `cwd: <session>/wt`, ran `pwd` in the session's folder. To keep an
   agent in another folder, a `tool.call` hook rewrites its Bash `command` to
   `cd -- '<dir>' || exit 1`, a newline, then the command: that moved both kinds into `<dir>`.
-  Probed on 2.1.296 (issue-forge P4).
+  Probed on 2.1.296 (issue-forge P4, whose spawn was issued, unawaited, while its `command.run` hook
+  ran). On 2.1.310 the spawning mod's own `tool.call` hook didn't get the calls of an agent spawned
+  after its hook had returned, so issue-forge's rewrite never ran in #40's live checks (the re-entry
+  entry, below). Whether `cwd` is still ignored on 2.1.310 wasn't checked.
 - **[probe]** When another plugin answers the `Agent` call in-line with a completed result (as
   duet does for a Codex run that edits), `$.agent.spawn` resolves `{ model, agentId }` from that
   result, for example `{ model: "codex", agentId: "duet-…" }`. There is no local loop behind it, so
@@ -284,43 +293,85 @@ Re-check [field] items against the d.ts after a Claude Code update.
   `$.prompt.submit` does carry the `origin` it is given, so a `peer` hand-back drop can be tested.
 - **[probe]** A mod ends an agent it spawned with the built-in `TaskStop` tool, by the `agentId`
   `$.agent.spawn` returned: `$.tool.call({ tool: 'TaskStop', task_id: <agentId> })`. `$.agent` itself
-  has only `register`, `spawn` and `list` [d.ts 2.1.309; Mods-reference.md:208].
+  has only `register`, `spawn` and `list` [d.ts 2.1.310; Mods-reference.md:208].
   - It ended an unnamed subagent (`Successfully stopped task: <id> (…)`, `task_type: "local_agent"`)
     and an in-process teammate (`task_type: "in_process_teammate"`). For the teammate, the message
     names a task id that isn't the `agentId` (`tnp9e29pr` for `astopprobe-q4z-worker-…`), so don't
     check the answer's text for the `agentId`.
   - In the four runs that read the status back (three of a throwaway mod, one of issue-forge 0.9.1
-    with `--plugin-dir`; issue #40), it went to `killed`. No tool call came after the stop, in the
-    hook's log or in the transcript. No permission dialog came up.
+    with `--plugin-dir`; issue #40), it went to `killed`. No permission dialog came up. The installed
+    copy of issue-forge 0.9.1, stopped during a real run, answered that its agent "has stopped".
+  - **A queued call can still run** (issue #156). In both issue-forge runs, the agent's last message
+    held two tool calls, the second written about 2.6 s before the stop. The first, a `Bash`, was
+    running when the stop came. It ended `outcome=ok` before `TaskStop` answered (`--plugin-dir`), or
+    `outcome=error` just after (installed). The second was dispatched after `TaskStop` answered and
+    ran: a `Bash` 0.1 s later and a `Read` 0.6 s later, each `outcome=ok`. The throwaway mod's agent
+    made one call a message, and its hook logged none after the stop. The transcript has only the
+    queued call's `tool_use`, written before the stop, and no result. The debug log shows it, as
+    `tool_dispatch_start tool=<tool> toolUseId=<id>` after the `TaskStop … answered` line. Why it ran
+    isn't established: in both logs its hooks started within a millisecond of the teammate's
+    `lifecycle aborted` line, so the abort may have raced its dispatch. Two runs aren't enough to say
+    a queued call always runs. Still, don't take a stop to mean nothing more runs. A guard that would
+    refuse such a call has to be a hook that gets it (the re-entry entry, below).
   - All under `auto` on 2.1.310; other permission modes weren't checked.
-  - The installed copy of issue-forge 0.9.1, stopped during a real run, answered that its agent
-    "has stopped", with no tool call after the stop (2.1.310).
 - **[probe]** `$.agent.list()`'s `spawnedBy` for a mod's spawn is the plugin's plain name, not
   `<name>@inline`, for a `--plugin-dir` copy (2.1.310). An installed copy's stop matched its agent,
   but issue-forge's filter takes the plain name, `<name>@…` or no `spawnedBy` at all, so whether an
-  installed copy's agents carry the field, and what it holds, wasn't recorded. The 2.1.309 d.ts types
+  installed copy's agents carry the field, and what it holds, wasn't recorded. The 2.1.310 d.ts types
   it optional; it is in 2.1.305's binary and 2.1.306's and 2.1.308's types, and 2.1.296 wasn't checked.
 - **[probe]** After a `TaskStop` that wasn't refused, a killed in-process teammate read `killed` at
   once and was gone from `$.agent.list()` 30 s later (an interactive session). A killed subagent was
-  still listed `killed` 30 s later (`-p` stream-json). Both on 2.1.310. The 2.1.309 d.ts keeps an entry
+  still listed `killed` 30 s later (`-p` stream-json). Both on 2.1.310. The 2.1.310 d.ts keeps an entry
   "until the engine drops its task: as a teammate ends or seconds after, a subagent's later". So after
   such a `TaskStop`, count an agent the list no longer has as ended.
-- **[probe]** `TaskStop` called with `$.tool.call` from a mod's `command.run` hook (a typed
-  `/issue-forge stop`) skipped every `tool.call` hook of that plugin. The debug log has `hooks module
-  <plugin>@<source> tool.call skipped: re-entry (the plugin's own code raised it; origin <plugin>)`
-  right after it, for a `--plugin-dir` copy (`@inline`) and an installed one (`@claudemod`) alike
-  (2.1.310).
-  - The same line follows the `Agent` call each `$.agent.spawn` makes from the mod's detached drive
-    code. No such line followed the command's `AskUserQuestion` calls, so whether those reached the
-    plugin's own guard isn't known.
-  - The 2.1.309 d.ts says the call "runs through every hook but the calling one (the plugin's others
-    see it)". The docs give `re-entry` (a `next.error.kind`) for a call made "by that hook or by your
-    mod's code outside its hooks" [Mods-reference.md:42], which covers the detached spawn but not a
-    call from another hook.
-  - Another plugin's classic PreToolUse hook (hookify's) did run for issue-forge's `TaskStop`.
-  - So don't count on a mod's own `tool.call` guard to see a built-in tool the mod calls itself. A
-    mod's own registered tool is a different case: its `tool.call` hook has to answer it, and the 2.1.300 probe
-    in "Modules" (a nested `$.tool.call` that another hook answered) doesn't say whose hook that was.
+- **[probe]** Whether a mod's own `tool.call` hook gets a call depends on whether the call, or the
+  spawn behind an agent's call, is issued from a hook before that hook returns. Seen on 2.1.310 in
+  issue #40's two issue-forge live checks (a `--plugin-dir` copy, `@inline`, and an installed one,
+  `@claudemod`), in its throwaway probe mod, and in a second probe mod for PR #157. Each log line
+  names the one hook it belongs to (`nested in <plugin>#<n>`). issue-forge's case is issue #156.
+  - **While the hook that makes the call is running, it does.** `TaskStop` (`$.tool.call`) and the
+    start menu's `$.ui.ask` (logged as a `$.tool.call` of `AskUserQuestion`; pre-merge run only), both from
+    issue-forge's `command.run` hook, each logged `hooks module <plugin>@<source>: tool.call nested in
+    <plugin>#<n>`, then `hooks module <plugin>@<source> tool.call settled in …`. That matches the d.ts:
+    the call "runs through every hook but the calling one (the plugin's others see it)" [d.ts 2.1.310,
+    `$.tool.call`].
+  - **After the hook that started that code has returned, it doesn't.** issue-forge's drive starts
+    with `void drive(…)` inside `command.run`, and spawned 85 s and 93 s after that hook settled,
+    while others of its hooks (`ui.render`) kept running. The `Agent` call its
+    `$.agent.spawn` makes logged `hooks module <plugin>@<source> tool.call skipped: re-entry (the
+    plugin's own code raised it; origin <plugin>)`. The docs give `re-entry` for an event "from inside
+    a mods API call by that hook or by your mod's code outside its hooks" [Mods-reference.md:42].
+  - **Nor does it get the calls of an agent spawned then.** Each of the red agent's own `Bash` and
+    `Read` calls (an in-process teammate) logged the same re-entry line for issue-forge, and no
+    `settled` line. Other plugins' `tool.call` hooks ran them (`tool.call nested in <plugin>`), and so
+    did a classic `PreToolUse` hook (hookify's). The docs also tie an agent to the call that started it
+    (`next.error.cause` `rewritten` covers "an agent started by that call", Mods-reference.md:43).
+  - **A spawn issued from a hook before it returns is different, awaited or not, and even for the
+    agent's calls after that hook has returned.** #40's probe mod awaited `$.agent.spawn` inside
+    `command.run`, which settled in 117 ms to 188 ms. Its agent's calls came 2 s to 5 s later, and
+    each logged `tool.call nested in <plugin>#<n>` for the probe's own hook, as an unnamed subagent,
+    a named one and a teammate. A second probe mod issued its spawn with `void spawnOne(…)`. Its
+    `Agent` call logged `nested` before its `command.run` settled (in 7 ms and 57 ms). Each of its
+    agent's six `Bash` calls, 1.8 s to 24 s after the hook returned, was `nested` too, with no
+    re-entry line, as an unnamed subagent (`claude -p --input-format stream-json`) and an in-process
+    teammate (interactive tmux). Both probes ran on 2.1.310. On 2.1.296, P4 (issue-forge's probe for
+    Change 0.2.0) issued unawaited from `command.run`, and its own hook got and rewrote the agents'
+    `Bash` calls.
+  - So to guard or steer its own agents with its `tool.call` hook, a mod issues the spawn from a
+    hook, before that hook returns. For a spawn made after the hook that started the code had
+    returned, only other plugins' `tool.call` hooks and classic `PreToolUse` hooks were seen to run
+    on the agent's calls; the mod's own classic hooks weren't checked. Also not checked:
+    - issue-forge's timing on 2.1.296;
+    - an unnamed or named non-teammate agent spawned after the hook returned, since both such
+      agents seen were teammates;
+    - a spawn from detached code while another of the mod's hooks happens to be running.
+
+    Nor is it known whether the hook's `.catch` runs for a skipped call: the docs give `.catch`
+    `kind: 're-entry'` "when the hook was skipped" [Mods-reference.md:42], but the logs have no line
+    either way. The second probe's logging `.catch` never fired, since nothing was skipped.
+  - A mod's own registered tool is a different case: its `tool.call` hook has to answer it, and the
+    2.1.300 probe in "Modules" (a nested `$.tool.call` that another hook answered) doesn't say whose
+    hook that was.
 
 - **[probe]** codex-cli 0.163.0's binary carries the string `"chat"` is no longer supported` beside `wire_api`:
   Codex speaks only OpenAI's Responses API, so a `model_providers` entry can't point it at a Chat
