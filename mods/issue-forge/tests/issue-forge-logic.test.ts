@@ -3265,6 +3265,66 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(heldBy('live 130 /repo/wt/scratch/issue-forge/b\n', '/repo/wt', 120)).toBe('/repo/wt/scratch/issue-forge/b')
   })
 
+  // The 5 s check's whole decision, as a table: the kit can't reach the "goes on" branch end to end (a kit spawn's agentId
+  // is dropped, probed on 2.1.310), so this table is its coverage.
+  test("the 5 s check's decision, for every class of name line, with the id file there or not", () => {
+    const plan = (reads: { path: string; text: string | null }[]): unknown => (logic as Record<string, any>).fenceTickPlan?.(reads, MINE, '/repo/wt', 100)
+    const NAME = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
+    const ID = '/home/u/.claude/issue-forge-data/fence/id/aid-1'
+    const MINE = 'live 120 /repo/wt'
+    const name = {
+      ours: `${MINE}\n`,
+      other: 'live 125 /other/wt\n',
+      farAhead: 'live 9999999999 /other/wt\n',
+      malformed: 'live soon /other/wt\n',
+      missing: null,
+      retired: 'retired\n',
+      ourFolderOtherTime: 'live 121 /repo/wt\n',
+    }
+    const goes = (paths: string[], others: { path: string; root: string }[] = []) => ({ kind: 'keep', paths, others })
+    const rows: [keyof typeof name, boolean, unknown][] = [
+      ['ours', false, goes([NAME])],
+      ['ours', true, goes([NAME, ID])],
+      ['other', false, { kind: 'clash', root: '/other/wt' }],
+      ['other', true, goes([ID], [{ path: NAME, root: '/other/wt' }])],
+      ['farAhead', false, { kind: 'tamper' }],
+      ['farAhead', true, { kind: 'tamper' }],
+      ['malformed', false, { kind: 'tamper' }],
+      ['malformed', true, { kind: 'tamper' }],
+      ['missing', false, { kind: 'tamper' }],
+      ['missing', true, { kind: 'tamper' }],
+      ['retired', false, { kind: 'tamper' }],
+      ['retired', true, { kind: 'tamper' }],
+      ['ourFolderOtherTime', false, { kind: 'tamper' }],
+      ['ourFolderOtherTime', true, { kind: 'tamper' }],
+    ]
+    for (const [cls, hasId, want] of rows) {
+      const reads = [{ path: NAME, text: name[cls] }, ...(hasId ? [{ path: ID, text: `${MINE}\n` }] : [])]
+      expect([cls, hasId, plan(reads)]).toEqual([cls, hasId, want])
+    }
+    // An id file is this agent's alone: any line but its own there is tampering, another run's included.
+    expect(plan([{ path: NAME, text: `${MINE}\n` }, { path: ID, text: 'live 125 /other/wt\n' }])).toEqual({ kind: 'tamper' })
+    expect(plan([{ path: NAME, text: `${MINE}\n` }, { path: ID, text: null }])).toEqual({ kind: 'tamper' })
+  })
+
+  test('what a retirement writes over: everything but another run\'s in-window name line', () => {
+    const retirable = (reads: { path: string; text: string | null }[]): unknown => (logic as Record<string, any>).retirablePaths?.(reads, 'live 120 /repo/wt', '/repo/wt', 100)
+    const NAME = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
+    const ID = '/home/u/.claude/issue-forge-data/fence/id/aid-1'
+    expect(retirable([{ path: NAME, text: 'live 120 /repo/wt\n' }, { path: ID, text: 'live 120 /repo/wt\n' }])).toEqual([NAME, ID])
+    expect(retirable([{ path: NAME, text: 'live 125 /other/wt\n' }, { path: ID, text: 'live 120 /repo/wt\n' }])).toEqual([ID])
+    for (const text of ['live 9999999999 /other/wt\n', 'garbage', null, 'retired\n', 'live 121 /repo/wt\n']) expect(retirable([{ path: NAME, text }])).toEqual([NAME])
+    expect(retirable([{ path: ID, text: 'live 125 /other/wt\n' }])).toEqual([ID])
+  })
+
+  test("the debug line naming the class a fence file holds, and when the agent goes on", () => {
+    const line = (path: string, owner: unknown): unknown => (logic as Record<string, any>).fenceClassLine?.(path, owner)
+    expect(line('/f/name/x', { kind: 'other', root: '/other/wt' })).toBe("issue-forge fence check: /f/name/x holds another run's line (/other/wt), at the 5 s check")
+    expect(line('/f/name/x', { kind: 'changed' })).toBe("issue-forge fence check: /f/name/x holds a line issue-forge didn't write, at the 5 s check")
+    const goesOn = (agent: string): unknown => (logic as Record<string, any>).fenceGoesOnLine?.(agent)
+    expect(goesOn('issue-forge-16-red-1')).toBe('issue-forge fence check: issue-forge-16-red-1 goes on, fenced by its id file; its name file is left to the other run')
+  })
+
   test("the name clash's block, at the spawn and at the 5 s check, and which fence files are name files", () => {
     const clash = (agent: string, root: string, issue: number, isEnded: boolean): unknown => (logic as Record<string, any>).fenceClashBlock?.(agent, root, issue, isEnded)
     expect(clash('issue-forge-16-red-1', '/other/wt', 16, false)).toEqual({
