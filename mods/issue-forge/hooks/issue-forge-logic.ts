@@ -2684,9 +2684,11 @@ export function folderEntries(porcelainZ: string): FolderEntry[] {
     .map(record => ({ xy: record.slice(0, 2), path: record.slice(3) }))
 }
 
-/** The paths `git hash-object --stdin-paths` can read: not deleted, not a folder (a nested repository), one line each. */
+/** Whether `git hash-object --stdin-paths` can read the entry: not deleted, not a folder (a nested repository), one line. */
+const isHashable = (e: FolderEntry): boolean => !e.xy.includes('D') && !e.path.endsWith('/') && !e.path.includes('\n')
+
 export function hashablePaths(entries: readonly FolderEntry[]): string[] {
-  return entries.filter(e => !e.xy.includes('D') && !e.path.endsWith('/') && !e.path.includes('\n')).map(e => e.path)
+  return entries.filter(isHashable).map(e => e.path)
 }
 
 /** `hash-object`'s lines put on their paths; no output, or one that doesn't line up, leaves the entries unhashed. */
@@ -2734,7 +2736,8 @@ export function folderChanges(before: FolderSnapshot, after: FolderSnapshot): Fo
     const b = now.get(path)
     if (!a || !b || a.xy !== b.xy) return true
     if (a.hash === undefined || b.hash === undefined) {
-      isHashless = true
+      // A deleted entry or a folder is never hashed: only a hashable one without its hash means hash-object failed.
+      if (isHashable(a)) isHashless = true
       return false
     }
     return a.hash !== b.hash
