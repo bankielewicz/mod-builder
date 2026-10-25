@@ -256,7 +256,8 @@ let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; ba
  */
 let fenceKept: { runId: string; agent: string; refs: string[]; paths: string[]; root: string; line: string } | null = null
 /** The session's folder as this session's phase agent began, for a worktree run: the 5 s check and a stop compare against it. */
-let folderWatch: { runId: string; root: string; phase: Phase; snapshot: FolderSnapshot } | null = null
+let folderWatch: FolderWatch | null = null
+type FolderWatch = { runId: string; root: string; phase: Phase; snapshot: FolderSnapshot }
 /** How long the fence preflight may take: the script reads stdin and one file. */
 const FENCE_CHECK_MS = 5000
 /**
@@ -648,10 +649,18 @@ async function readFolder($: EngineInterface, root: string, phase: Phase): Promi
   return folderSnapshot(phase, await $.clock.now(), withHashes(entries, paths, hashed && hashed.exitCode === 0 ? hashed.stdout : null))
 }
 
-/** What changed in the session's folder since this session's phase agent began, if a run's folder is watched. */
-async function folderNow($: EngineInterface, runId: string): Promise<FolderChanges | null> {
+/**
+ * The run's folder watch, if this session has one. A stop, hand-off or takeover takes it before ending the drive, which can
+ * let phase()'s `finally` drop it before their compare (PR #162 review round 1, finding 4).
+ */
+function watchOf(runId: string): FolderWatch | null {
   const w = folderWatch
-  if (!w || w.runId !== runId) return null
+  return w?.runId === runId ? w : null
+}
+
+/** What changed in the session's folder since the watched phase agent began; null with no watch. */
+async function folderSince($: EngineInterface, w: FolderWatch | null): Promise<FolderChanges | null> {
+  if (!w) return null
   const now = await readFolder($, w.root, w.phase)
   return now ? folderChanges(w.snapshot, now) : null
 }
@@ -671,8 +680,8 @@ async function fenceTick($: EngineInterface, d: Drive): Promise<void> {
     const problem = await fenceProblem($)
     if (problem) return breach($, d, fenceBlock(problem))
   }
-  const w = folderWatch
-  const changes = await folderNow($, d.runId)
+  const w = watchOf(d.runId)
+  const changes = await folderSince($, w)
   if (w && changes) return breach($, d, { ...folderBlock(w.root, w.phase, changes), isFolderBlock: true })
 }
 
@@ -1416,8 +1425,8 @@ async function spawnPhase($: EngineInterface, run: Run, which: Phase, a: { subag
   try {
     const done = answer ? await answer : { answer: '' }
     // Once the agent has answered, the session's folder is read: a change blocks the run before its gate (Change 0.10.0).
-    const w = folderWatch
-    const changes = await folderNow($, run.id)
+    const w = watchOf(run.id)
+    const changes = await folderSince($, w)
     if (w && changes) {
       await endAgents($, spawnRefs(agentId, name, spawned.teammateId))
       return { type: 'block', ...folderBlock(w.root, which, changes), isFolderBlock: true }
@@ -1768,11 +1777,12 @@ async function watch($: EngineInterface, d: Drive): Promise<void> {
   const stored = await loadRun($, d.key)
   const change = foreignChange(stored, d.runId, sessionId)
   if (change && drivingNow() === d) {
+    const watched = watchOf(d.runId)
     endLocalDrive()
     $.ui.status(undefined)
     const ended = await endAgents($, knownRefs)
     // Once the agent has ended, the folder is read (Change 0.10.0); a takeover keeps the stored snapshot for its resume.
-    const changes = await folderNow($, d.runId)
+    const changes = await folderSince($, watched)
     folderWatch = null
     $.ui.toast(`#${d.issue} ${change === 'takenOver' ? 'was taken over by another session' : change === 'stopped' ? 'was stopped in another session' : 'was replaced'}; this session stopped driving it${endedClause(ended)}${folderClause(changes, false)}.`)
   } else if (drivingNow() === d) await fenceTick($, d)
@@ -2162,6 +2172,7 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
     if (refused) return refused
   } else if (isElsewhere && !(await confirmTakeOver($, run))) return elsewhereText(run.issue)
   const isHere = drivingNow()?.runId === run.id
+  const watched = isHere ? watchOf(run.id) : null
   if (isHere) endLocalDrive()
   const now = await $.clock.now()
   let endedHere: EndedAgents | null = null
@@ -2175,7 +2186,7 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
     if (isHere) endedHere = await endAgents($, knownRefs)
   }
   // Once the agent has ended, the session's folder is read, and a change is named (Change 0.10.0).
-  const changes = isHere ? await folderNow($, run.id) : null
+  const changes = await folderSince($, watched)
   if (isHere) folderWatch = null
   if (isHere) $.ui.status(undefined)
   // The write is pinned to the run's id: a run replaced while a question was open is left alone, and said so.
@@ -2190,6 +2201,7 @@ async function stopRun($: EngineInterface, at: Repo | null, issue: number | null
 async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: EndedAgents; changes: FolderChanges | null } | null> {
   const d = drivingNow()
   if (!d) return null
+  const watched = watchOf(d.runId)
   endLocalDrive()
   $.ui.status(undefined)
   let step: Step | null = null
@@ -2201,7 +2213,7 @@ async function handOff($: EngineInterface): Promise<{ step: Step | null; ended: 
     ended = await endAgents($, knownRefs)
   }
   // Read once the agent has ended (Change 0.10.0); the stored snapshot stays, so whoever resumes compares first.
-  const changes = await folderNow($, d.runId)
+  const changes = await folderSince($, watched)
   folderWatch = null
   return { step, ended, changes }
 }
