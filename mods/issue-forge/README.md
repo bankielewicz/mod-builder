@@ -374,5 +374,6 @@ checked on 2.1.300; 0.7.2 (the pane after `/clear`) checked on 2.1.306;
 0.9.0 (the store under 4 MiB) loaded on 2.1.309, where its tests ran and `/issue-forge status` named two old runs
 (no run started live); 0.9.1 (a stop ends its agents) loaded on 2.1.310, where its tests ran and a live run on
 #94, stopped during red, ended the red agent with no tool call after the stop; 0.9.2 (a run that ends while
-the start menu is open) loaded on 2.1.310, where its tests and demo ran. Written spec-first with
+the start menu is open) loaded on 2.1.310, where its tests and demo ran and two live sessions took both
+choices through a run another session stopped. Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.

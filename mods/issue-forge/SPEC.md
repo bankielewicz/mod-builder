@@ -2391,3 +2391,20 @@ count set in the pane.
   #106, #107 and #104 are open and have no "Base branch" line [checked: `gh issue view`, 2026-10-25]. The check costs three red agents on haiku, each stopped within a few minutes. It leaves three stopped runs in the `--plugin-dir` copy's store, and three worktrees and branches under `scratch/issue-forge/`, kept until the owner says to remove them. No push, PR or issue comment comes from the runs.
 - **Done means:** when the run chosen to hand off or stop had already ended while the menu's question was open, "Hand #N off and start #M here" and "Stop #N, then start #M" go on to start #M, and the answer says what became of #N. A run still active, which the person declined to take over, still starts nothing.
 - **Approved:** the owner, 2026-10-25, "Approve (Recommended)", the live check included. The advisor checked the change against both doc sets first.
+- **Built** (2026-10-25, CLI 2.1.310, types 2.1.310):
+  - SPEC `d94d89a`, approval `d7be37f`.
+  - Red `b6bd530`: 4 of 586 failed, each by assertion (`endedWhileAsked` reached through the module; the three UI tests answered `this session is driving no run.` and `no active run here.`). The guard passed before the change, as planned.
+  - Green `358b655`: 586 of 586. Refactor `31884ac`: the logic test calls `endedWhileAsked` directly, with its assertions unchanged.
+  - Release `c87b03d`: 0.9.2 in `plugin.json` and the marketplace entry, and the README's start-menu sentence. `claude plugin validate --strict` prints the same hooks, calls and reach lines as `main`'s copy, so the "What it reaches" table doesn't change.
+  - **QA:**
+    - `claude plugin validate .` and `claude plugin validate --strict mods/issue-forge` pass.
+    - `claude plugin test mods/issue-forge`: 586 of 586.
+    - The typecheck, tests included, exits 0.
+    - Logic coverage: lines 100.00%, branches 99.82%, functions 99.40%, the same as `main`. Every line and branch of `endedWhileAsked` is taken (lcov `DA` and `BRDA`).
+    - The smoke test (`/issue-forge demo`, `-p`): the log has `loaded` and `admitted` for this worktree's folder, and no failure line.
+  - **Live check** (two interactive sessions in a private tmux, each started in this worktree with `--plugin-dir mods/issue-forge`, auto mode):
+    1. A drove #106 (at baseline), and `/issue-forge 107` opened the menu. B: `/issue-forge stop 106`, answered Take over: `stopped #106. … its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.` A's watch toasted `#106 was stopped in another session; this session stopped driving it.` 3 s later, with the menu still open. A picked "Hand #106 off and start #107 here": `#106 was stopped in another session while you chose; starting #107; the pane shows progress. Nothing is pushed until you say yes.`, and #107 started.
+    2. A: `/issue-forge handoff` (`handed off #107 at baseline; …`), then `/issue-forge 104`, whose menu named #107 `interrupted during baseline`. B: `/issue-forge stop 107` (`stopped #107. … no agent was running.`). A picked "Stop #107, then start #104": `#107 was stopped in another session while you chose; starting #104; the pane shows progress. Nothing is pushed until you say yes.` Then `/issue-forge stop 104`.
+
+    Each stop came before red, so no agent was spawned and the check made no model calls (no subagent transcript, and no `agent.spawn` line from issue-forge in either debug log). The `--plugin-dir` store already held two old ready runs, #27 and #16, from earlier live checks. They were left as they were, and the first start's menu named them.
+  - **Left by the live check, for the owner:** three stopped runs (#106, #107, #104) in the `--plugin-dir` copy's store, and their worktrees and branches: `scratch/issue-forge/issue-104-issue-forge-configurable-phases-and-meth`, `…/issue-106-issue-forge-a-phase-agent-whose-context` and `…/issue-107-mod-lab-check-the-test-sandbox-once-per`, under this worktree.
