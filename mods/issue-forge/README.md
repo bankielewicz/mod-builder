@@ -196,6 +196,11 @@ ahead with what you typed; in a session driving a run, it then explains how to s
 starts nothing. If #N has an active run already, you get
 its status instead.
 
+The run you chose to hand off or stop can end while the question is open, as when another session
+stops it or takes it over. #N then starts anyway, and the answer begins with what became of that run:
+`#44 was stopped in another session while you chose; starting #N; …`. If the run is still active and
+you say no to taking it over, nothing starts.
+
 A run records which session drives it. In any other session, Resume, Publish and Stop on that run ask
 `If that session has ended, take it over?` before they act (a press of the pane's Stop or Publish asks its own
 question instead, which names the other session). The mod can't tell a crashed session from a
@@ -368,5 +373,6 @@ checked on 2.1.300; 0.7.2 (the pane after `/clear`) checked on 2.1.306;
 0.8.0 (`formatCommand`) loaded on 2.1.309, where its tests ran (no gate ran live);
 0.9.0 (the store under 4 MiB) loaded on 2.1.309, where its tests ran and `/issue-forge status` named two old runs
 (no run started live); 0.9.1 (a stop ends its agents) loaded on 2.1.310, where its tests ran and a live run on
-#94, stopped during red, ended the red agent with no tool call after the stop. Written spec-first with
+#94, stopped during red, ended the red agent with no tool call after the stop; 0.9.2 (a run that ends while
+the start menu is open) loaded on 2.1.310, where its tests and demo ran. Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.
