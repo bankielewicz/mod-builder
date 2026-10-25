@@ -49,6 +49,14 @@ type World = {
   issueBody: string
   /** When set, $.agent.spawn stays pending until this settles. */
   spawnHold: Promise<void> | null
+  /** The fence preflight's answer (Change 0.10.0): absent, the script's own no-fence-file refusal; 'throws', bash can't start. */
+  fenceCheck?: { exitCode: number; stderr: string } | 'throws'
+  /** How many times the fence preflight ran. */
+  fenceChecks?: number
+  /** `git status --porcelain=v1 -z -uall --no-renames` in the session's folder (Change 0.10.0); absent, clean. */
+  rootStatus?: string
+  /** `git hash-object`'s answer per path; absent, `h-<path>`. */
+  rootHashes?: Record<string, string>
   /** What refs/heads/<branch> points at; absent, the stub's HEAD. */
   tip?: string
   /** When set, the test command stays running until this settles. */
@@ -412,7 +420,17 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     }
     // As OpenSSH 10.2 does: ssh -G applies ~/.ssh/config and prints the host it would reach, lowercased, without connecting.
     if (cmd === 'ssh' && a[0] === '-G') return world.sshFails ? fail('sh: 1: ssh: not found', 127) : ok(`user git\nhostname ${world.sshHosts?.[a[1] ?? ''] ?? (a[1] ?? '').toLowerCase()}\nport 22\n`)
+    // The fence preflight (Change 0.10.0): hooks/fence.sh refuses the synthetic call, as the script does with no fence file.
+    if (cmd === 'bash' && (a[0] ?? '').endsWith('/hooks/fence.sh')) {
+      world.fenceChecks = (world.fenceChecks ?? 0) + 1
+      const check = world.fenceCheck
+      if (check === 'throws') return { deny: 'spawn bash ENOENT' }
+      return check ? { value: { stdout: '', isStdoutTruncated: false, isStderrTruncated: false, ...check } } : fail('issue-forge: this agent has no fence file, so it may not call tools; end your turn now.\n', 2)
+    }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
+    // The folder check (Change 0.10.0) reads the session's folder with --no-renames, and hashes what it lists.
+    if (a[0] === 'status' && a.includes('--no-renames')) return ok(world.rootStatus ?? '')
+    if (a[0] === 'hash-object') return ok(`${String(e.init?.stdin ?? '').split('\n').filter((p: string) => p !== '').map((p: string) => world.rootHashes?.[p] ?? `h-${p}`).join('\n')}\n`)
     // A held index.lock (#28): the call takes the next scripted failure, and the lock file stays while that failure says so.
     const failing = world.gitFails
     if (failing && (s === failing.on || s.startsWith(`${failing.on} `))) {
