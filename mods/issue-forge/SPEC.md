@@ -2591,3 +2591,44 @@ count set in the pane.
   - a retired agent resumed through `SendMessage` in the live check.
 
   The flagged additions are approved with it: the `cd` refusal, the 30 s expiry, `--no-renames`, the fence in `here` runs, `/dev/null`, and the 5 s preflight. Also: "Fold into 0.2.35" for the gotchas, and "Post it" for #160 (comment 6401362031). The optional `${CLAUDE_PLUGIN_DATA}` home isn't taken (3.7). The advisor checked the change against `docs/research/Mods` and `docs/research/claude-plugins` before the ask. Its fixes are in `d634444`.
+- **Built** (2026-10-25, CLI 2.1.310, types 2.1.310). SPEC `e5ae596`, `d634444`, approval `6ab5297`.
+  - **The script:** red `c70a529` (13 of 19 fail by assertion, against a stub that passes every call), green `07c9994` (19 of 19).
+  - **The logic:** the approved prompt line's test changed in its own commit, `a3084b6`. Red `1d72134` (16 of 273 fail by assertion), green `f6d2200`.
+  - **The drive, the stop, the hand-off and the watch:** red `deb450b` (17 of 624 fail by assertion), green `959da69`. Test commits, each with its reason:
+    - `4ab4f08` and `527de42`: the kit's stubs answer the preflight, the session folder's status and `hash-object`, and serve what `fs.write` wrote;
+    - `b5c6494`: two red tests the kit can't run as written;
+    - `cbe68a6`: PR #41's checkout test leaves out the folder check's status read;
+    - `34a8aaa`: the 0.10.0 tests read the store the mod writes.
+  - **Later cycles:** `2a5188e` and `9545897` (a never-hashed entry isn't a failed hash). Refactor `5ce179a`. Records and 0.10.0 `0706eb7`. Coverage rows `9093a64`.
+  - **The matcher:** `9e87d8e` and `bb1c00e` (3 of 22 fail by assertion, then 22 of 22). Records `34aba19`.
+  - **The live check's fixes:** `0343954` and `84f89f0` (8 of 627 fail by assertion, then 627 of 627).
+  - **mod-builder 0.2.35:** `1c1e09f` (the CI step), `513a1ab` (gotchas), `d6c3b4d` (its SPEC and versions).
+  - **Where it differs from the approved text:**
+    1. **The matcher** (3): every tool at approval, now the tools that can change something, by the owner's later choice. MultiEdit gets Edit's check. PowerShell, EnterWorktree, ExitWorktree and `mcp__*` are refused for an issue-forge agent, since nothing in them can be checked: the fail-closed rule, applied to the tools the matcher adds.
+    2. **The script** runs one `cat` and no `grep` or `sed`. `$(</dev/stdin)` can't open a socket, which is how node hands a child its stdin (`No such device or address`). A failed read passes the call, which the preflight would catch. The script also refuses issue-forge's agents when bash is older than 4.2 (`printf '%(%s)T'`), and the preflight requires the no-fence-file refusal by its own text. So on an old bash, no agent starts.
+    3. **The `next` texts** (4.4, 3.4, 3.5) leave out "then /issue-forge resume". The pane and `/issue-forge status` add it to every block (`afterBlock`), and the live check's pane showed it twice. The fence block's next now names bash 4.2. The resume's note says "any uncommitted files in its worktree", since git saves no stash when there's nothing to keep. The live check's resume had none.
+    4. **The check at the agent's answer** (4.3) has no UI test. A kit spawn gets no `agentId`, so the phase ends at "didn't start" right after the spawn (`gotchas.md:288-293`). It shares `folderNow` and `folderBlock` with the 5 s check. In its place, a test checks that path's fence is retired and no folder block is written.
+    5. **The fence by id:** a write that fails ends the agent and blocks the run, so an agent the name file doesn't cover can't go on unfenced.
+    6. **The phase's spawn** moved into `spawnPhase`, so `phase()` can retire the fence and drop the folder watch in one `finally`.
+    7. **`breach`** writes the block first, while this session still drives the run, and then ends the drive. The drive's own end clears the driver, which would otherwise make the block's write match nothing.
+  - **Not run:** the corrected UI tests (`34a8aaa`) against the pre-green code. The blast-radius hook held the command (an `rm -rf` on a variable path) and said not to retry without the owner. The red at `deb450b` failed by assertion, though partly because its tests read a copy of the store.
+  - **QA** (head `84f89f0`):
+    - `claude plugin validate --strict` passes for `.`, `mods/issue-forge` and `plugins/mod-builder`;
+    - `claude plugin test`: 627 of 627 for issue-forge, 375 of 375 for mod-builder;
+    - `node --test mods/issue-forge/scripts/fence-hook.test.mjs`: 22 of 22;
+    - the typecheck, tests included, exits 0;
+    - logic coverage is lines 100.00%, branches 99.83%, functions 99.46% (`main`: 100.00, 99.82, 99.40), and the only untaken branches are three `main` already had (`:372`, `:395`, `:603`);
+    - `check-sandbox.mjs` and `check-archetypes.sh` pass;
+    - the smoke test (`/issue-forge demo`, `-p`) logs `issue-forge@inline loaded`, `admitted`, and `Registered 6 hooks from 17 plugins`, against 5 with `main`'s copy, so the fence registers.
+  - **Live check** [probe, 2026-10-25 19:10-19:27 UTC, 2.1.310, an interactive private tmux in this worktree, `--plugin-dir mods/issue-forge`, auto mode, `teammateMode: "in-process"`, red agents and the main loop on haiku; `/issue-forge 139` through the start menu's "Start #139 in a new worktree"]:
+    1. **The folder check.** At 19:13:40.885 a file was written into the session's folder, while red-1 worked. The pane read `✕ blocked at red: the session's folder /mnt/c/…/issue-156-guard-stopgap changed while the red agent worked: fence-live-check.txt; …` by 19:13:43.192, and `TaskStop answered in 90ms` ended red-1. Both its fence files read `retired`.
+    2. **The exec-form hook fired** for every Bash call of each red agent: `Hooks: PreToolUse:Bash [bash …/mods/issue-forge/hooks/fence.sh] (plugin issue-forge@inline) finished with status 0 (23ms)`. Read calls started no fence process. In all, 36 fence runs: 34 passed and 2 refused, at 22 ms on average and 35 ms at most. Every Bash call red-1 made started `cd <worktree> &&`. red-2 tried once to write `/tmp/claude-1000-red-139-ui.txt`, and was refused: `issue-forge: this command names /tmp/claude-1000-red-139-ui.txt, outside this run's folder …`.
+    3. **`.catch`:** issue-forge's `tool.call` was skipped for re-entry 66 times, and its logging `.catch` was asked 0 times.
+    4. **The resume** answered `resuming #139 at red; its worktree's uncommitted files go to the stash "issue-forge #139 red after the folder check (run 139-1792955481198)" first.` No stash was made, since red-1 had only read. That wording is why the note now says "any". red-2 wrote the failing tests, and gate R passed (`900a8d4`).
+    5. **The retired agent resumed through `SendMessage`.** While gate R ran, the main loop sent red-2 (idle, its fence `retired`) a message asking for one Bash command. Its call was refused, `status 2 (22ms)`, and its transcript reads `issue-forge: this run was stopped or restarted; end your turn now without further tool calls.`
+    6. Green had started on its default model (sonnet), so `/issue-forge stop` came then: `stopped #139. … its red agent (issue-forge-139-red-2) has stopped; its green …`. green-1's fence file reads `retired`.
+  - **Left by the live check, for the owner:**
+    - the stopped #139 run in the `--plugin-dir` store;
+    - its worktree `scratch/issue-forge/issue-139-mod-lab-close-a-pane-it-opened-by-itself` under this worktree, and its local branch, with red's commit `900a8d4`;
+    - fence files under `~/.claude/issue-forge-data/fence/`;
+    - the session's transcripts.

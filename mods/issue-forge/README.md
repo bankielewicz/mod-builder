@@ -405,5 +405,8 @@ checked on 2.1.300; 0.7.2 (the pane after `/clear`) checked on 2.1.306;
 it (#156); 0.9.2 (a run that ends while
 the start menu is open) loaded on 2.1.310, where its tests and demo ran and two live sessions took both
 choices through a run another session stopped; 0.9.3 (a run finished while the menu is open reads finished)
-loaded on 2.1.310, where its tests and demo ran. Written spec-first with
+loaded on 2.1.310, where its tests and demo ran; 0.10.0 (the fence and the folder check, #156) loaded on 2.1.310,
+where its tests, its script's tests and demo ran, and a live run on #139 blocked on a file written into the session's
+folder, the fence refused a live agent's `/tmp` path and a retired agent resumed through `SendMessage`, and the
+guard's `.catch` was never asked in 66 skips. Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.
