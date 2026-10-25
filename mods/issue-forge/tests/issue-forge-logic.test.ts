@@ -3139,7 +3139,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   // PR #162 review round 1, finding 3 (Codex 4372144807): porcelain v1 lists a dirty submodule as ` M sub`, with no slash,
   // and hash-object exits 128 on its folder, which dropped every hash. A path stat doesn't find to be a file isn't hashed.
   test("a path stat finds isn't a file (a submodule) gets its kind, goes to no hash-object, and isn't a failed hash", () => {
-    const withKinds = (list: Entry[], paths: string[], kinds: string[]): unknown => (logic as Record<string, any>).withKinds?.(list, paths, kinds)
+    const withKinds = logic.withKinds
     const list: Entry[] = [{ xy: ' M', path: 'a.ts' }, { xy: ' M', path: 'sub' }, { xy: '??', path: 'link' }]
     expect(withKinds(list, ['a.ts', 'sub', 'link'], ['file', 'dir', 'other'])).toEqual([{ xy: ' M', path: 'a.ts' }, { xy: ' M', path: 'sub', kind: 'dir' }, { xy: '??', path: 'link', kind: 'other' }])
     const sub: Entry = { xy: ' M', path: 'sub', kind: 'dir' } as Entry
@@ -3238,7 +3238,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   // PR #162 review round 1, finding 5 (the owner's content check): a name file is keyed by the agent's name alone, so
   // another repository's run of the same issue can hold it. Its line names another run's folder.
   test("a fence file's line: this run's own, another run's (a live line naming another folder, at most 35 s ahead), or changed", () => {
-    const owner = (text: string | null, mine: string, root: string, nowS: number): unknown => (logic as Record<string, any>).fenceOwner?.(text, mine, root, nowS)
+    const owner = logic.fenceOwner
     const mine = 'live 100 /repo/wt'
     expect(owner('live 100 /repo/wt\n', mine, '/repo/wt', 90)).toEqual({ kind: 'mine' })
     expect(owner('live 130 /other/scratch/issue-forge/b\n', mine, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/scratch/issue-forge/b' })
@@ -3254,7 +3254,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("before a spawn: another run's live, unexpired name line holds the name; anything else doesn't", () => {
-    const heldBy = (text: string | null, root: string, nowS: number): unknown => (logic as Record<string, any>).fenceHeldBy?.(text, root, nowS)
+    const heldBy = logic.fenceHeldBy
     expect(heldBy('live 130 /other/wt\n', '/repo/wt', 120)).toBe('/other/wt')
     expect(heldBy('live 130 /other/wt\n', '/repo/wt', 131)).toBeNull()
     expect(heldBy('live 9999999999 /other/wt\n', '/repo/wt', 120)).toBeNull()
@@ -3268,7 +3268,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   // The 5 s check's whole decision, as a table: the kit can't reach the "goes on" branch end to end (a kit spawn's agentId
   // is dropped, probed on 2.1.310), so this table is its coverage.
   test("the 5 s check's decision, for every class of name line, with the id file there or not", () => {
-    const plan = (reads: { path: string; text: string | null }[]): unknown => (logic as Record<string, any>).fenceTickPlan?.(reads, MINE, '/repo/wt', 100)
+    const plan = (reads: { path: string; text: string | null }[]) => logic.fenceTickPlan(reads, MINE, '/repo/wt', 100)
     const NAME = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
     const ID = '/home/u/.claude/issue-forge-data/fence/id/aid-1'
     const MINE = 'live 120 /repo/wt'
@@ -3308,7 +3308,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test('what a retirement writes over: everything but another run\'s in-window name line', () => {
-    const retirable = (reads: { path: string; text: string | null }[]): unknown => (logic as Record<string, any>).retirablePaths?.(reads, 'live 120 /repo/wt', '/repo/wt', 100)
+    const retirable = (reads: { path: string; text: string | null }[]) => logic.retirablePaths(reads, 'live 120 /repo/wt', '/repo/wt', 100)
     const NAME = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
     const ID = '/home/u/.claude/issue-forge-data/fence/id/aid-1'
     expect(retirable([{ path: NAME, text: 'live 120 /repo/wt\n' }, { path: ID, text: 'live 120 /repo/wt\n' }])).toEqual([NAME, ID])
@@ -3318,28 +3318,28 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test("the debug line naming the class a fence file holds, and when the agent goes on", () => {
-    const line = (path: string, owner: unknown): unknown => (logic as Record<string, any>).fenceClassLine?.(path, owner)
+    const line = logic.fenceClassLine
     expect(line('/f/name/x', { kind: 'other', root: '/other/wt' })).toBe("issue-forge fence check: /f/name/x holds another run's line (/other/wt), at the 5 s check")
     expect(line('/f/name/x', { kind: 'changed' })).toBe("issue-forge fence check: /f/name/x holds a line issue-forge didn't write, at the 5 s check")
-    const goesOn = (agent: string): unknown => (logic as Record<string, any>).fenceGoesOnLine?.(agent)
+    const goesOn = logic.fenceGoesOnLine
     expect(goesOn('issue-forge-16-red-1')).toBe('issue-forge fence check: issue-forge-16-red-1 goes on, fenced by its id file; its name file is left to the other run')
   })
 
   // PR #162 review round 1, item 6: each folder change found says in the debug log which check found it.
   test('the debug line naming where a folder change was found', () => {
-    const found = (c: unknown, where: string): unknown => (logic as Record<string, any>).folderFoundLine?.(c, where)
+    const found = logic.folderFoundLine
     expect(found({ paths: ['a.ts', 'b.ts'], count: 2, isHashless: false }, 'the 5 s check')).toBe('issue-forge folder check: 2 changed, found at the 5 s check')
     expect(found({ paths: [], count: 201, isHashless: false }, 'the answer')).toBe('issue-forge folder check: 201 changed, found at the answer')
   })
 
   test("the name clash's block, at the spawn and at the 5 s check, and which fence files are name files", () => {
-    const clash = (agent: string, root: string, issue: number, isEnded: boolean): unknown => (logic as Record<string, any>).fenceClashBlock?.(agent, root, issue, isEnded)
+    const clash = logic.fenceClashBlock
     expect(clash('issue-forge-16-red-1', '/other/wt', 16, false)).toEqual({
       reason: 'the fence name issue-forge-16-red-1 is live in /other/wt (another run of #16), so no agent was started',
       next: "wait for that run's agent to end, or stop that run (a line its session left lapses within 30 s)",
     })
     expect((clash('issue-forge-16-red-1', '/other/wt', 16, true) as { reason: string }).reason).toBe('the fence name issue-forge-16-red-1 is live in /other/wt (another run of #16), so the agent was ended')
-    const isName = (path: string): unknown => (logic as Record<string, any>).isFenceNamePath?.(path)
+    const isName = logic.isFenceNamePath
     expect(isName('/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1')).toBe(true)
     expect(isName('/home/u/.claude/issue-forge-data/fence/id/aid-1')).toBe(false)
   })
