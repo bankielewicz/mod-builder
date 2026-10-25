@@ -1652,6 +1652,12 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(endedWhileAsked(16, { ...mine, step: 'blocked', driver: undefined }, 'r1', ME)).toBe("#16's drive here ended while you chose")
   })
 
+  test('endedWhileAsked: a run that finished in another session still names it as driver, and reads finished, not taken over (PR #155 review round 1, finding 1)', () => {
+    // finishedRecord keeps `driver`, and a drive writes `done` before it releases (or never does, if that session crashed).
+    const done = at(44, 'done', { id: 'r1', driver: { session: OTHER, since: 1 } })
+    expect(endedWhileAsked(44, done, 'r1', ME)).toBe('#44 finished while you chose')
+  })
+
   test("checkoutWorkspaceOf: the starting checkout's workspace names the menu's start option; anything unreadable is ask", () => {
     expect(checkoutWorkspaceOf('{"workspace":"here"}')).toBe('here')
     expect(checkoutWorkspaceOf('{"workspace":"worktree"}')).toBe('worktree')

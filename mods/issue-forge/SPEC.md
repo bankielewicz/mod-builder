@@ -2408,3 +2408,40 @@ count set in the pane.
 
     Each stop came before red, so no agent was spawned and the check made no model calls (no subagent transcript, and no `agent.spawn` line from issue-forge in either debug log). The `--plugin-dir` store already held two old ready runs, #27 and #16, from earlier live checks. They were left as they were, and the first start's menu named them.
   - **Left by the live check, for the owner:** three stopped runs (#106, #107, #104) in the `--plugin-dir` copy's store, and their worktrees and branches: `scratch/issue-forge/issue-104-issue-forge-configurable-phases-and-meth`, `…/issue-106-issue-forge-a-phase-agent-whose-context` and `…/issue-107-mod-lab-check-the-test-sandbox-once-per`, under this worktree.
+  - **After the PR opened:** `0436b5e` corrects README "Built on"'s 0.9.1 clause (a call ran after #40's live stop, #156), by the owner's choice: "Fix it in #155 (Recommended)".
+
+## Change 0.9.3 (2026-10-25)
+
+> PR #155 (0.9.2) merged as `4e2db4d`, at `0436b5e`, before the owner's `/code-review pr 155 & pr 157` ran. The round's fixes were pushed to the merged branch (`d73219d`..`584f020`), so they reach `main` in a follow-up PR, by the owner's choice: "Follow-up PR, 0.9.3 (Recommended)".
+
+- **What changes:** a run that finished in another session while the start menu was open now reads "finished" rather than "was taken over" (round 1 #1 below). New guard tests cover the replaced rows (#2). The rest of the round is records.
+- **What gets touched:** `hooks/issue-forge-logic.ts` (`endedWhileAsked`'s order), `tests/` (one logic row, three UI tests), this SPEC, README "Built on", and 0.9.3 in `plugin.json` and the marketplace entry. No new reach.
+- **Done means:** "Stop #N, then start #M", for a run another session finished while the question was open, says `#N finished while you chose`.
+
+- **PR #155 review round 1** (2026-10-25): the owner's `/code-review pr 155 & pr 157`. Codex had no findings on `0436b5e`, code or security. Six findings bear on #155; the owner answered the two that change approved text or cost model calls.
+  1. **A run that finished elsewhere reads "was taken over"** (F3). `endedWhileAsked` asks `foreignChange` first, and its driver check fires for a `done` record that still names another session. `finishedRecord` keeps `driver` (`issue-forge-logic.ts:2455-2462`), and a drive writes `done` before its `releaseDriver`, or never releases if that session crashed. Fix: test `done` first, as the approved row says ("finished … when its step is `done`"). Red: a logic row and a stop-then-start UI test with `driver: { session: OTHER }` on the `done` record.
+  2. **Untested re-read branches** (F6). `register.tsx` is outside the coverage gate, and the UI tests reached only stopped and taken over. Added: hand off with #16 replaced (a new run id) while the menu is open, and stop-then-start with #44's record deleted, both answering "was replaced while you chose". These pass from the start, as guards. The finished case is round 1 #1's red test.
+  3. **"in another session" when this session's own pane Stop stopped it** (F2). The `stopped` record doesn't say who stopped it, and `watch`'s toast uses the same words on the same evidence. Whether the pane takes a press while the menu's question is open wasn't checked; a pressed Stop asks its own question (`refusedPress`). The owner, 2026-10-25: "Keep as approved". So the wording stays, and this is a known limit.
+  4. **The `off.step ?? 'its step'` fallback can't be reached** (F4). Its step always has a value, since `drive()` sets `drivenLast` with `driving`. It's the wording #153 proposed and `handOffAnswer` uses. No change. A test would have to break that invariant, so it's untested by design.
+  5. **Hand off then start hands off whatever this session drives at answer time,** not the run the menu named (F5). That's `handOff($)` on `drivingNow()`, as on `main`, so it predates #155. Filed as #158 by the owner's rule ("already existed then post github issue"). Whether a pane resume can start another drive while the menu's question is open wasn't checked.
+  6. **README "Built on" and the Gating hooks row disagree** (F7). Built on now says a call ran after the stop, and the row still calls the guard "a second layer". That predates #155 and is in #156 §3. Noted on #156.
+  - **Built** (round 1, CLI 2.1.310):
+    - The block above: `d73219d`.
+    - Red `f41bfd1`: 2 of 588 failed by assertion ("was taken over"). Green `4f3dd48`: 588 of 588. Tests `8224207` (#2): 590 of 590.
+    - QA: `validate .` and `validate --strict mods/issue-forge` pass; tsc, tests included, exits 0; logic coverage stays 100.00/99.82/99.40, with every line and branch of `endedWhileAsked` taken; the smoke log has `loaded` and `admitted`, with no failure line.
+- **PR #159 review round 1** (2026-10-25): the owner's `/code-review pr 159`. Codex had no findings on `588991b`, code or security. The review found no bug in the code change; its six findings are tests, records and readability:
+  1. **The hand-off table had no "finishes" row,** so 0.9.3's fix wasn't reached on that path. Added, as a guard. It passes now and fails against the pre-fix logic (`f41bfd1`'s `endedWhileAsked`). The watch toasts "was taken over" for that record, which the next finding covers.
+  2. **`foreignChange` still reads a finished run, still naming another session as driver, as "taken over",** so `watch` toasts "was taken over" where the start menu now says "finished". This predates #159, and it isn't a defect. A run this session drives can only be finished elsewhere after another session takes it over, since resume and publish write their own session as driver (`isTakenOver`, `register.tsx:442`). So "was taken over" is true from the driving session's view. The start menu's run isn't driven here, so "finished" fits there. The owner, 2026-10-25: "Record it, no issue (Recommended)".
+  3. **Change 0.9.3 cited no Anthropic documents.** Added below.
+  4. **No live check of the changed answer.** The only code change is the order of checks in `endedWhileAsked`. Logic rows cover it fully, and UI tests reach it through `startRun`. The path around it was live-checked in 0.9.2 on this build. A faithful check needs a run another session finishes, which only a real publish writes (a push and a PR); the other way is hand-editing the store file under `~/.claude`. The owner, 2026-10-25: "Waive it (Recommended)".
+  5. **The stop-then-start tests repeated their setup.** The three that share a shape (stopped, deleted, finished) are now one table, with the menu-question assertion kept for each row. The resumed-then-no guard stays apart.
+  6. **`endedWhileAsked` was a five-way ternary whose meaning depended on order.** It now returns early for a replaced and a finished run, then maps stopped and taken over. Behaviour is unchanged.
+- **Against Anthropic's documents** (for 0.9.3, read 2026-10-25):
+  - Mods: "Every session on your machine that runs your mod shares one `$.store`", so "Read again right before you write" [read: `docs/research/Mods/Build/Draw-in-the-interface-with-a-mod.md:837-842`]. A finished run's record keeps fields another session wrote, its driver among them, which is why `endedWhileAsked` reads the step before the driver.
+  - The tests stub `$.ui.ask` as a `tool.call` of `AskUserQuestion` and move the mock clock to bring on the watch [read: `Test and troubleshoot/Test-a-mod.md:178`, `:203-211`].
+  - Plugins: increment `version` on every release [read: `docs/research/claude-plugins/Publish-and-distribute-a-plugin.md:44`, `:166`], so this is 0.9.3, not a change to the merged 0.9.2.
+- **Built** (PR #159 round 1, CLI 2.1.310):
+  - The block above: `fade1e8`.
+  - Test `25224a8` (#1): 591 of 591 pass, and the row fails with "was taken over" against `f41bfd1`'s `endedWhileAsked`.
+  - Refactor `c7b3fc7` (#5, #6): 591 of 591.
+  - QA: tsc, tests included, exits 0. Logic coverage stays 100.00/99.82/99.40, with every line and branch of `endedWhileAsked` taken (lcov). No live run, by the owner's waiver (#4).

@@ -2619,12 +2619,17 @@ export function foreignChange(stored: Run | null, runId: string, me: string): 's
 
 /**
  * What became of the run a start-menu choice was to hand off or stop, read again once the question is answered: it can end
- * while the question is open (#153). The start goes on, and its answer leads with this.
+ * while the question is open (#153). The start goes on, and its answer leads with this. A finished run is told apart first:
+ * its record keeps the driver that finished it (PR #155 review round 1, finding 1).
  */
 export function endedWhileAsked(issue: number, stored: Run | null, runId: string, me: string): string {
   const change = foreignChange(stored, runId, me)
-  const what = change === 'stopped' ? 'was stopped in another session' : change === 'takenOver' ? 'was taken over by another session' : change === 'gone' ? 'was replaced' : stored?.step === 'done' ? 'finished' : null
-  return what ? `#${issue} ${what} while you chose` : `#${issue}'s drive here ended while you chose`
+  const said = (what: string) => `#${issue} ${what} while you chose`
+  if (change === 'gone') return said('was replaced')
+  if (stored?.step === 'done') return said('finished')
+  if (change === 'stopped') return said('was stopped in another session')
+  if (change === 'takenOver') return said('was taken over by another session')
+  return `#${issue}'s drive here ended while you chose`
 }
 
 /** The workspace the starting checkout's profile names (for the menu's wording); anything unreadable is ask. */
