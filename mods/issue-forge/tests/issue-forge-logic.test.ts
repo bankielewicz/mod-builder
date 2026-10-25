@@ -3136,6 +3136,17 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(hashablePaths([{ xy: '??', path: 'odd\nname' }])).toEqual([])
   })
 
+  // PR #162 review round 1, finding 3 (Codex 4372144807): porcelain v1 lists a dirty submodule as ` M sub`, with no slash,
+  // and hash-object exits 128 on its folder, which dropped every hash. A path stat doesn't find to be a file isn't hashed.
+  test("a path stat finds isn't a file (a submodule) gets its kind, goes to no hash-object, and isn't a failed hash", () => {
+    const withKinds = (list: Entry[], paths: string[], kinds: string[]): unknown => (logic as Record<string, any>).withKinds?.(list, paths, kinds)
+    const list: Entry[] = [{ xy: ' M', path: 'a.ts' }, { xy: ' M', path: 'sub' }, { xy: '??', path: 'link' }]
+    expect(withKinds(list, ['a.ts', 'sub', 'link'], ['file', 'dir', 'other'])).toEqual([{ xy: ' M', path: 'a.ts' }, { xy: ' M', path: 'sub', kind: 'dir' }, { xy: '??', path: 'link', kind: 'other' }])
+    const sub: Entry = { xy: ' M', path: 'sub', kind: 'dir' } as Entry
+    expect(hashablePaths([{ xy: ' M', path: 'a.ts' }, sub])).toEqual(['a.ts'])
+    expect(changes(snap([sub, { xy: ' M', path: 'a.ts', hash: 'h1' }]), snap([sub, { xy: ' M', path: 'a.ts', hash: 'h2' }]))).toEqual({ paths: ['a.ts'], count: 1, isHashless: false })
+  })
+
   test("hash-object's lines go onto their paths; no output leaves the entries without hashes", () => {
     const list = entries()
     const hashed = withHashes(list, ['src/new.ts', 'a.ts', 'n/x.ts'], 'h1\nh2\nh3\n')

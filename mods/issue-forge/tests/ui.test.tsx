@@ -5059,4 +5059,17 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect('folderSnapshot' in stored(store)).toBe(false)
     expect(w.calls.some(c => c.argv.includes('--no-renames'))).toBe(false)
   })
+
+  test('a dirty submodule beside a dirty file: the file changing again is still caught by its hash (PR #162 review round 1, finding 3)', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]], rootStatus: ' M a.txt\0 M sub\0', rootKinds: { sub: 'dir' } }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(stored(store).folderSnapshot?.entries).toEqual([{ xy: ' M', path: 'a.txt', hash: 'h-a.txt' }, { xy: ' M', path: 'sub', kind: 'dir' }])
+    w.rootHashes = { 'a.txt': 'h-a.txt-again' }
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked?.reason).toBe(`the session's folder ${ROOT} changed while the red agent worked: a.txt; issue-forge can't tell whether the agent or someone else made the change`)
+  })
 })
