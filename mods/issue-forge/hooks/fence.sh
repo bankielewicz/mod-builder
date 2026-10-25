@@ -117,8 +117,9 @@ place() {
   return 0
 }
 
+# hooks.json matches only the tools that can change something; a retired agent's reads are permitted by design.
 case $tool in
-  Edit | Write | NotebookEdit)
+  Edit | MultiEdit | Write | NotebookEdit)
     key=file_path
     [[ $tool == NotebookEdit ]] && key=notebook_path
     count "$key"
@@ -133,6 +134,8 @@ case $tool in
     exit 0
     ;;
   Bash) ;;
+  # Matched because they can write, but there's no path in them to check: refused for issue-forge's own agents.
+  PowerShell | EnterWorktree | ExitWorktree | mcp__*) deny "the fence can't check ${tool}, so it refuses it; use Edit, Write or Bash in $root." ;;
   *) exit 0 ;;
 esac
 
