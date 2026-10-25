@@ -2416,3 +2416,7 @@ count set in the pane.
   4. **The `off.step ?? 'its step'` fallback can't be reached** (F4). Its step always has a value, since `drive()` sets `drivenLast` with `driving`. It's the wording #153 proposed and `handOffAnswer` uses. No change. A test would have to break that invariant, so it's untested by design.
   5. **Hand off then start hands off whatever this session drives at answer time,** not the run the menu named (F5). That's `handOff($)` on `drivingNow()`, as on `main`, so it predates #155. Filed as a new issue by the owner's rule ("already existed then post github issue"). Whether a pane resume can start another drive while the menu's question is open wasn't checked.
   6. **README "Built on" and the Gating hooks row disagree** (F7). Built on now says a call ran after the stop, and the row still calls the guard "a second layer". That predates #155 and is in #156 §3. Noted on #156.
+  - **Built** (round 1, CLI 2.1.310):
+    - The block above: `d73219d`.
+    - Red `f41bfd1`: 2 of 588 failed by assertion ("was taken over"). Green `4f3dd48`: 588 of 588. Tests `8224207` (#2): 590 of 590.
+    - QA: `validate .` and `validate --strict mods/issue-forge` pass; tsc, tests included, exits 0; logic coverage stays 100.00/99.82/99.40, with every line and branch of `endedWhileAsked` taken; the smoke log has `loaded` and `admitted`, with no failure line.
