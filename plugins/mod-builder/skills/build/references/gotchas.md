@@ -308,9 +308,11 @@ Re-check [field] items against the d.ts after a Claude Code update.
     ran: a `Bash` 0.1 s later and a `Read` 0.6 s later, each `outcome=ok`. The throwaway mod's agent
     made one call a message, and its hook logged none after the stop. The transcript has only the
     queued call's `tool_use`, written before the stop, and no result. The debug log shows it, as
-    `tool_dispatch_start tool=<tool> toolUseId=<id>` after the `TaskStop … answered` line. So don't
-    take a stop to mean nothing more runs. A guard that would refuse such a call has to be a hook that
-    gets it (the re-entry entry, below).
+    `tool_dispatch_start tool=<tool> toolUseId=<id>` after the `TaskStop … answered` line. Why it ran
+    isn't established: in both logs its hooks started within a millisecond of the teammate's
+    `lifecycle aborted` line, so the abort may have raced its dispatch. Two runs aren't enough to say
+    a queued call always runs. Still, don't take a stop to mean nothing more runs. A guard that would
+    refuse such a call has to be a hook that gets it (the re-entry entry, below).
   - All under `auto` on 2.1.310; other permission modes weren't checked.
 - **[probe]** `$.agent.list()`'s `spawnedBy` for a mod's spawn is the plugin's plain name, not
   `<name>@inline`, for a `--plugin-dir` copy (2.1.310). An installed copy's stop matched its agent,
