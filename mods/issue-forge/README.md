@@ -376,5 +376,6 @@ checked on 2.1.300; 0.7.2 (the pane after `/clear`) checked on 2.1.306;
 #94, stopped during red, ended the red agent, though one read-only call it had made before the stop ran after
 it (#156); 0.9.2 (a run that ends while
 the start menu is open) loaded on 2.1.310, where its tests and demo ran and two live sessions took both
-choices through a run another session stopped. Written spec-first with
+choices through a run another session stopped; 0.9.3 (a run finished while the menu is open reads finished)
+loaded on 2.1.310, where its tests and demo ran. Written spec-first with
 `/mod-builder:build`; see `SPEC.md`.

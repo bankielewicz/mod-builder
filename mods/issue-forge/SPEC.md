@@ -2409,6 +2409,15 @@ count set in the pane.
     Each stop came before red, so no agent was spawned and the check made no model calls (no subagent transcript, and no `agent.spawn` line from issue-forge in either debug log). The `--plugin-dir` store already held two old ready runs, #27 and #16, from earlier live checks. They were left as they were, and the first start's menu named them.
   - **Left by the live check, for the owner:** three stopped runs (#106, #107, #104) in the `--plugin-dir` copy's store, and their worktrees and branches: `scratch/issue-forge/issue-104-issue-forge-configurable-phases-and-meth`, `…/issue-106-issue-forge-a-phase-agent-whose-context` and `…/issue-107-mod-lab-check-the-test-sandbox-once-per`, under this worktree.
   - **After the PR opened:** `0436b5e` corrects README "Built on"'s 0.9.1 clause (a call ran after #40's live stop, #156), by the owner's choice: "Fix it in #155 (Recommended)".
+
+## Change 0.9.3 (2026-10-25)
+
+> PR #155 (0.9.2) merged as `4e2db4d`, at `0436b5e`, before the owner's `/code-review pr 155 & pr 157` ran. The round's fixes were pushed to the merged branch (`d73219d`..`584f020`), so they reach `main` in a follow-up PR, by the owner's choice: "Follow-up PR, 0.9.3 (Recommended)".
+
+- **What changes:** a run that finished in another session while the start menu was open now reads "finished" rather than "was taken over" (round 1 #1 below). New guard tests cover the replaced rows (#2). The rest of the round is records.
+- **What gets touched:** `hooks/issue-forge-logic.ts` (`endedWhileAsked`'s order), `tests/` (one logic row, three UI tests), this SPEC, README "Built on", and 0.9.3 in `plugin.json` and the marketplace entry. No new reach.
+- **Done means:** "Stop #N, then start #M", for a run another session finished while the question was open, says `#N finished while you chose`.
+
 - **PR #155 review round 1** (2026-10-25): the owner's `/code-review pr 155 & pr 157`. Codex had no findings on `0436b5e`, code or security. Six findings bear on #155; the owner answered the two that change approved text or cost model calls.
   1. **A run that finished elsewhere reads "was taken over"** (F3). `endedWhileAsked` asks `foreignChange` first, and its driver check fires for a `done` record that still names another session. `finishedRecord` keeps `driver` (`issue-forge-logic.ts:2455-2462`), and a drive writes `done` before its `releaseDriver`, or never releases if that session crashed. Fix: test `done` first, as the approved row says ("finished … when its step is `done`"). Red: a logic row and a stop-then-start UI test with `driver: { session: OTHER }` on the `done` record.
   2. **Untested re-read branches** (F6). `register.tsx` is outside the coverage gate, and the UI tests reached only stopped and taken over. Added: hand off with #16 replaced (a new run id) while the menu is open, and stop-then-start with #44's record deleted, both answering "was replaced while you chose". These pass from the start, as guards. The finished case is round 1 #1's red test.
