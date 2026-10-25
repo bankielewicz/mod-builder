@@ -2756,7 +2756,8 @@ export function folderBlock(root: string, phase: Phase, c: FolderChanges): { rea
   const how = c.isHashless ? ' (compared by git status only: git hash-object failed)' : ''
   return {
     reason: `the session's folder ${root} changed while the ${phase} agent worked: ${folderList(c)}; issue-forge can't tell whether the agent or someone else made the change${how}`,
-    next: "check those files (issue-forge doesn't undo them), then /issue-forge resume",
+    // The pane and /issue-forge status add ", then /issue-forge resume" (afterBlock).
+    next: "check those files (issue-forge doesn't undo them)",
   }
 }
 
@@ -2797,11 +2798,11 @@ export function fencePreflightOk(r: { exitCode: number; stderr: string } | null)
 }
 
 export function fenceBlock(what: string): { reason: string; next: string } {
-  return { reason: `the fence can't run (${what}), so no agent was started`, next: 'issue-forge needs bash on PATH to run hooks/fence.sh; then /issue-forge resume' }
+  return { reason: `the fence can't run (${what}), so no agent was started`, next: 'issue-forge needs bash 4.2 or later on PATH to run hooks/fence.sh' }
 }
 
 export function fenceTamperBlock(agent: string): { reason: string; next: string } {
-  return { reason: `the fence file for ${agent} was changed or removed, so the agent was ended`, next: `check ~/${FENCE_DIR}/, then /issue-forge resume` }
+  return { reason: `the fence file for ${agent} was changed or removed, so the agent was ended`, next: `check ~/${FENCE_DIR}/` }
 }
 
 /** The folder snapshot onto its run, pinned to the run's id; null clears it. */
@@ -2836,5 +2837,6 @@ export function folderStashMessage(run: Run, phase: string): string {
 export function folderResumeNote(run: Run): string {
   if (!run.isFolderBlock) return ''
   const at = run.step === 'blocked' && run.blocked ? run.blocked.at : run.step
-  return `; its worktree's uncommitted files go to the stash "${folderStashMessage(run, at)}" first`
+  // "Any": git saves no stash when there's nothing to keep (#156's live check: the agent had only read).
+  return `; any uncommitted files in its worktree go to the stash "${folderStashMessage(run, at)}" first`
 }
