@@ -2445,3 +2445,121 @@ count set in the pane.
   - Test `25224a8` (#1): 591 of 591 pass, and the row fails with "was taken over" against `f41bfd1`'s `endedWhileAsked`.
   - Refactor `c7b3fc7` (#5, #6): 591 of 591.
   - QA: tsc, tests included, exits 0. Logic coverage stays 100.00/99.82/99.40, with every line and branch of `endedWhileAsked` taken (lcov). No live run, by the owner's waiver (#4).
+
+## Change 0.10.0 (2026-10-25)
+
+> Issue #156, "issue-forge: its tool.call guard is skipped for its own agents' calls (re-entry), so a stopped agent's last call still runs and worktree steering doesn't apply". The owner chose it next, 2026-10-25: "#156 (Recommended)". After the probe, the owner chose a stopgap now and the redesign later (#160), and said this release "also gets two guards that don't need any hook to reach the agent": a stricter phase prompt, and a check of the session's folder. Then, for the fence: "Probe it now, add if it works (Recommended)", and once it worked, "the hardened command hook is the right design for this release".
+
+- **Why** [probe, 2.1.310, haiku; #156 comment 6399859220, and the probe below]:
+  - **issue-forge's own `tool.call` guard (`guardAction`) never runs for its own agents.** The drive spawns each phase from detached code (`void drive(…)`, `register.tsx:1597-1598`), 85-93 s after `command.run` returned. For each call of an agent spawned that way, the mod's `tool.call` logged `skipped: re-entry (the plugin's own code raised it…)`, in 6 agents (subagents and teammates) across two sessions. The skipped hook's `.catch` wasn't called in any of 88 skips. The hooks module's `classic.PreToolUse` was skipped as well.
+  - **Every agent worked in the session's folder.** All 10 agents, subagents and teammates, ran `pwd` in the session's folder, not the `cwd` their spawn named, and a relative `Write` landed there. In this repository, the session's folder is the shared main folder. Today only the phase prompt's "Repository root: <worktree>. Work only inside it, and run every command from it." (`issue-forge-logic.ts:1584`) keeps an agent in its worktree.
+  - **A plugin's own `PreToolUse` command hook does run for those agents** (#160's probe 1, the throwaway plugin `fenceprobe-m2q`, one in-process teammate spawned from detached code, interactive private tmux):
+    - its module's `tool.call` logged `skipped: re-entry` for every call, and its `hooks.json` command hook ran for each: `16:56:20.152Z Hooks: PreToolUse:Bash [bash ".../fenceprobe-m2q/hooks/log.sh"] (plugin fenceprobe-m2q@inline) finished with status 0`;
+    - its stdin carried `agent_id: "afenceprobe-m2q-f1-2a64565a25217c93"` (the `agentId` the spawn returned) and `agent_type: "fenceprobe-m2q-f1"` (the teammate's name);
+    - the agent's relative `Write` reached the hook with `file_path` already absolute, in the session's folder;
+    - the hook's exit 2 refused the call, and the agent read `PreToolUse:Bash hook error: [bash "…/log.sh"]: FENCE PROBE DENY tick 2` as its result; tick 2 didn't run.
+
+    Not checked: an unnamed subagent (the 2.1.310 d.ts says `agent_id` is "Present only when the hook fires from within a subagent", `BaseHookInput`), a named agent with agent teams off (what its `agent_type` holds), 2.1.296, Windows.
+- **Against Anthropic's documents** (read 2026-10-25: each folder's `README.md`, then the pages that bear on it):
+  - Mods: `hooks/hooks.json` holds `modules` and "Can also hold settings hooks under `hooks`" [read: `docs/research/Mods/Test and troubleshoot/Mods-reference.md:22`]. A `tool.call` hook refuses by returning `{ deny }`, and "Claude reads the `deny` text as the tool's result" [read: `Build/React-to-events-with-a-mod.md:109-116`], which is why the guard stays for any agent it reaches. `.catch` gets `kind: 're-entry'` "when the hook was skipped" [read: `Mods-reference.md:42`]: not observed in 88 skips on 2.1.310 (#156 comment 6399859220, section 2), so nothing here relies on it. "The timer's callback runs outside any event" [read: `Build/Use-the-mods-API.md:203`]. `$.process.run` "takes an argument list and uses no shell", resolves "whatever the exit code", and "rejects if the program can't start or is still running at the timeout" [read: `Use-the-mods-API.md:401`]. A test stubs it as `($, e) => ({ value: { exitCode, stdout, stderr } })`, with `e.argv` and `e.init` [read: `Test and troubleshoot/Test-a-mod.md:180`].
+  - Plugins: a hook can be "a shell command, an HTTP request, an MCP tool call, a prompt to a model, or a subagent", saved in `hooks/hooks.json` [read: `docs/research/claude-plugins/Add-components-to-a-plugin.md:91`, `:330-334`]. A plugin's hooks fire "when a session loads the plugin … from then on", so "narrow its `matcher`" to limit them [read: `:366`]. "Every hook process receives `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA`", and "When you pass `args` instead, each element is passed as one argument with no shell and needs no quoting" [read: `:374-375`]. "On Windows, the substituted paths use forward slashes" [read: `:649`], and nothing in `docs/research` says which shell runs a hook there. Increment `version` on every release [read: `Publish-and-distribute-a-plugin.md:44`, `:166`].
+- **What changes.** Each numbered item is an acceptance criterion with at least one red test (below).
+  1. **Records** (#156 section 3):
+     - In this SPEC, Change 0.9.1's "Seen in the live check's log" (above) is corrected in place, with a note. Its live-check bullet ("The red agent's transcript has no record after the stop") gets a note that the debug log shows a queued call dispatched after `TaskStop` answered (#156 section 2).
+     - README: the Gating hooks row's "a second layer behind the stop's `TaskStop`"; the "Agents ignore the folder they're spawned in" limit; line 28's "is refused" (the gates' `newPluginAt` still blocks a new manifest before any commit, `register.tsx:1270-1273`); and "Built on".
+     - Code comments that promise the guard: `register.tsx:224`, `:474`, `:556-559` (`endLocalDrive`), `:2235`.
+     - The stop's answer already promises no refusal (0.9.1), so it doesn't change.
+  2. **The phase prompt** (`phasePrompt`, all runs): the root line becomes `Repository root: <root>. Work only inside it. Give every file path in full, starting <root>/. Start every Bash command with cd <quoted root> && (issue-forge refuses a Bash command that doesn't, and any edit or command that names a path outside <root>).` `<quoted root>` is `shellQuote(root)`.
+  3. **The fence: a `PreToolUse` command hook** in `hooks/hooks.json`, in exec form with no matcher, so every tool call reaches it: `{ "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/fence.sh"] }`. The script is bash with `grep` and `sed`, and nothing else: no `jq`, `node`, `python` or `git`. So it costs O(1): it reads stdin and at most one file.
+     1. **Fence files**, written by the module, one line each, under `<home>/.claude/issue-forge-data/fence/`:
+        - `name/<agentName>` before each spawn, since a teammate's `agent_type` is its name and its first call can come before the spawn resolves;
+        - `id/<agentId>` once the spawn returns one.
+
+        A live agent's line is `live <until> <root>`. `<until>` is a time in epoch seconds that the drive's 1 s ticker writes again every 5 s, 30 s ahead. `<root>` is the run's folder (`workOf(run)`). When the agent ends, the line becomes `retired`: at its phase's end, in `endLocalDrive` (a stop, hand-off or takeover), and in `phase()`'s late-spawn branch. A crash or reload leaves a `live` line that expires within 30 s. `$.fs` has no delete (d.ts 2.1.310), so files stay as `retired`.
+     2. **Whose call it is:** stdin's `agent_id` and `agent_type`. With no `agent_id`, the call is the main thread's: exit 0. Otherwise the script reads `id/<agent_id>`, else `name/<agent_type>`. With neither file, an `agent_type` of issue-forge's form (`issue-forge-<N>-<red|green|refactor>-<k>`, or `issue-forge:<red|green|refactor>`) is refused (exit 2): **no fence file means deny.** Any other agent passes (exit 0). An id or type holding characters outside `[A-Za-z0-9_.:@-]` is never used as a file name; it is refused if it has issue-forge's form, else passed.
+     3. **What it refuses, for an issue-forge agent** (each with exit 2 and a one-line reason on stderr that starts `issue-forge:`):
+        - `retired`, or a `live` line whose `<until>` has passed: every tool, with 0.9.1's `RETIRED` text. This closes #156 section 2 for the calls the hook sees.
+        - `Edit`, `Write`, `NotebookEdit` (`file_path`, or `notebook_path`): a path that isn't `<root>` or under `<root>/`, has a `..` segment, or can't be placed (`\x`, `\\server\share`, `~`, `D:x`, as `guardAction`'s `isUnplaceable`). A relative path is read against `<root>`, never the session's folder. The probe saw it arrive already absolute, in the session's folder, which this refuses.
+        - `Bash`: a command that doesn't start `cd <root> && `, with the root bare, single-quoted or double-quoted. Also a command with a word that names a path outside the run's folder: an absolute path not under `<root>` (except `/dev/null`, `/dev/stdout`, `/dev/stderr`), a word starting with `~`, `$HOME`, `${HOME}`, `$OLDPWD` or `cd -`, a `..` segment, or one of the protected names below. Words are split on blanks, quotes and `;|&<>()=`. This is a word check for honest mistakes, not a sandbox.
+        - **Protected names**, in any edit path or Bash word: the fence folder (`issue-forge-data`), the plugin's own folder (`$CLAUDE_PLUGIN_ROOT`, which holds the script and `hooks.json`), and `.claude/settings` (`~/.claude/settings*.json`).
+        - **An ambiguous parse:** the field being checked (`command`, `file_path` or `notebook_path`), or `agent_id`, found zero times or more than once as a JSON key in stdin. Escapes `\"`, `\\` and `\/` are undone before a check. Any other escape (`\uXXXX`) is left as it is, so that path fails the prefix check and is refused.
+        - **Its own failure:** once a call is known to be issue-forge's, any failing command in the script exits 2 (`trap 'exit 2' ERR`). A failure exits 2 rather than 1, since a hook's other non-zero exits let the call go on [field: Claude Code's hooks docs; not in `docs/research`].
+
+        `Read`, `Grep`, `Glob` and every other tool pass for a live agent. Its hand-back (`SubagentHandback`, `SendMessage`) needs them.
+     4. **Preflight, before each spawn:** the module runs `$.process.run(['bash', '<$.plugin.root>/hooks/fence.sh'], { stdin, timeoutMs: 5000 })` on a synthetic call from an issue-forge-shaped agent with no fence file. It requires exit 2 and stderr starting `issue-forge:`. If the call rejects (no `bash`, no script, a timeout) or answers anything else, no agent is spawned. The run blocks with `the fence can't run (<what happened>), so no agent was started`, and next `issue-forge needs bash on PATH to run hooks/fence.sh; then /issue-forge resume`. That turns the two fail-open cases, a missing script and no shell, into "no fence, no agent". The 5 s check (item 4) runs the same preflight while an agent works. A failure there ends the agent and blocks the run the same way.
+     5. **Tampering:** on each 5 s check the module reads the live agent's two fence files back, with `$.fs.read`. A file that is missing, or that differs from what the module last wrote, ends the agent (`TaskStop`) and blocks the run: `the fence file for <agent> was changed or removed`.
+     6. **The in-module guard stays** (`guardAction` in `tool.call`), for any agent it reaches. A later build, or #160's redesign, may bring it back.
+  4. **The folder check** (worktree runs only, `isWorktreeRun`; a `here` run edits the session's folder by design). It detects; it can't prevent or undo.
+     1. **What is read:** `git status --porcelain=v1 -z --untracked-files=all --no-renames` in the run's `root`, through `git()`, so with `GIT_ENV` (`GIT_OPTIONAL_LOCKS=0`, `register.tsx:268`) and no `.git/index.lock` taken from another session's commit (#28). Then `git hash-object --stdin-paths`, also through `git()`, for each listed path that exists in the folder. Deleted entries (`D` on either side) and entries ending in `/` (a nested repository or worktree, which git doesn't descend into) are left out of that call, since a missing path or a folder makes it fail. `--no-renames` lists a rename as its two paths, a deletion and an addition, so both are taken without parsing rename records. A path holding a newline is compared by its status line only. If `hash-object` exits non-zero, that check compares status lines only and says so in any block it causes. `-uall` lists a new file inside an untracked folder as itself, not as `?? dir/`.
+     2. **The snapshot:** `{ phase, at, entries: [{ path, xy, hash? }] }`, stored on the run as `folderSnapshot` right before the spawn, with a store write pinned to the run's id. Past 200 entries it stores `{ phase, at, count, digest }` instead: a 32-bit FNV-1a over the sorted entries, in the logic module. A block then reads `N entries changed (too many to list)`. It is cleared when the phase's check passes.
+     3. **When it is compared:**
+        - every 5 s while the phase's agent is live (the drive's existing watch tick);
+        - when the agent's answer arrives (`phase()`, before `agentDone`);
+        - once the agent is listed as ended at a stop, hand-off or takeover (after `endAgents`);
+        - at the start of a phase step whose stored run still holds a `folderSnapshot`, before anything else. That is a resume or a takeover after a hand-off, a reload or a crash.
+
+        The window closes once the agent has ended, not when the stop is typed.
+     4. **A change during a phase** (the 5 s check, the answer, or a phase's start): the live agent is ended (`TaskStop`) and its fence files become `retired`. The run blocks at that phase with `the session's folder <root> changed while the <phase> agent worked: a.ts, b.ts (and N more); issue-forge can't tell whether the agent or someone else made the change`, and next `check those files (issue-forge doesn't undo them), then /issue-forge resume`. The block sets `isFolderBlock`, and `folderSnapshot` is cleared.
+     5. **A change found at a stop, hand-off or takeover:** there is no phase left to block, so the answer names the files. The typed stop's answer, the Hand off answer and the watch's toast add `; the session's folder changed while it worked: <files>` (a pressed Stop's 80-character toast gets `; folder changed: <first file>`). A stop drops `folderSnapshot` with the record. A hand-off or takeover keeps it, so the session that resumes compares first (3, last case).
+     6. **The resume after a folder block:** with `isFolderBlock` set, the phase first stashes the worktree's uncommitted files by SHA (`stashAll`, message `issue-forge #<N> <phase> after the folder check`). The stash is recorded on the run as `folderStash`, and the flag is cleared. The rerun starts from the phase's last commit, and the resume's answer names the stash. Any other resume keeps today's behaviour, which is #161.
+     7. **Known limits** (README "Limits worth knowing"):
+        - It can't undo what was written.
+        - It can't tell the agent's writes from yours or another session's in the same checkout. That checkout should have one writer while a run works there.
+        - Writes to gitignored paths (here `scratch/`, where the run's worktree lives) and outside the repository aren't seen.
+        - A queued call that finishes after `TaskStop` answers (#156 section 2: one ran 2.7 s after) isn't seen by a stop's check, since a stopped run has nothing left to compare. For a hand-off or takeover, the next phase start compares.
+        - Native Windows is unverified: the preflight refuses to spawn there if `bash` doesn't run the script.
+- **What gets touched:**
+  - `mods/issue-forge/hooks/hooks.json` (the `PreToolUse` command hook);
+  - `hooks/fence.sh` (new);
+  - `hooks/issue-forge-logic.ts`: the prompt line; fence-line text; status and hash parsing; snapshot, compare, digest and cap; the block and answer texts;
+  - `hooks/register.tsx`: fence writes and refresh, the preflight, the tamper read, the folder check at the four points, the stash after a folder block, and the comments in item 1;
+  - `types/index.d.ts`: `Run.folderSnapshot`, `isFolderBlock`, `folderStash`;
+  - tests: `tests/issue-forge-logic.test.ts`, `tests/ui.test.tsx`, and a new `scripts/fence-hook.test.mjs` (node, outside the kit);
+  - `README.md`: commands unchanged; the limits; the Gating hooks row; the "What it reaches" table (validate doesn't list command hooks: a row for `hooks.json`'s `PreToolUse` `bash hooks/fence.sh`, plus whatever validate prints for the new `$.process.run` and `$.fs.read`); Built on;
+  - `plugin.json` and the marketplace entry at 0.10.0;
+  - this SPEC.
+  - **Outside the mod**, for the script's tests to run in CI: a step in `.github/workflows/ci.yml`, and the same in its byte-for-byte template `plugins/mod-builder/skills/build/ci/ci.yml`, that runs `node --test` on every tracked `plugins/*/scripts/*.test.mjs` and `mods/*/scripts/*.test.mjs`. The template is part of the build skill, so it changes through `/plugin-dev:skill-development` (CLAUDE.md), with mod-builder at 0.2.35 in its `plugin.json`, its marketplace entry and its SPEC.
+  - **At run time:**
+    - one `bash` process per tool call in every session with issue-forge enabled, which exits at once for a call that isn't an issue-forge agent's;
+    - per spawn, one preflight process, one `git status` and one `git hash-object`;
+    - while an agent works, every 5 s, the same three plus two `$.fs.read`s and two `$.fs.write`s;
+    - files under `~/.claude/issue-forge-data/fence/`, about 100 bytes per agent, kept.
+- **Tests (fail before the change):**
+  - **Logic:** the prompt line, for a worktree run and a `here` run (changes the test at `issue-forge-logic.test.ts:1119`, in its own commit, since the approved line changes). Parsing `-z` status with `-uall` and `--no-renames`. Which paths go to `hash-object`: none deleted, none ending in `/`. Compare:
+    - an edit to a file that was already dirty is caught (same `xy`, new hash);
+    - a new file inside an untracked folder is caught;
+    - a deleted file and a renamed file are named;
+    - a status-only fallback when hashes are missing.
+
+    Also: the cap and digest at 201 entries; the block, stop, hand-off, toast and pressed-toast texts, the last within 80 characters; the fence line and its expiry.
+  - **UI (kit):**
+    - the preflight stub answering exit 0 refuses the spawn and blocks;
+    - one that rejects, the same;
+    - the folder changing between the snapshot and the 5 s tick ends the agent and blocks the run, naming the file;
+    - the same at the answer;
+    - an edit between phases (after one phase's check passed, before the next snapshot) doesn't block;
+    - a change found at a stop is named in the stop's answer;
+    - a hand-off keeps `folderSnapshot`, and the next phase start compares against it first;
+    - a resume after a folder block stashes first and names the stash;
+    - a tampered or missing fence file ends the agent and blocks;
+    - fence files are written `live` before the spawn and `retired` at the phase's end and at a stop.
+
+    The kit's shared `process.run` stub learns to answer `bash …/fence.sh` with exit 2, in its own commit, since every spawn now runs the preflight. A kit spawn gets no `agentId` (`gotchas.md:288-293`), so the `id/` file is tested through the logic that words it, and the `name/` file end to end.
+  - **Script** (`scripts/fence-hook.test.mjs`, `node --test`; it pipes JSON into `bash hooks/fence.sh` with `HOME` set to a temporary folder, then checks the exit code and stderr):
+    - the main thread passes;
+    - another plugin's agent passes;
+    - an issue-forge agent with no file is refused;
+    - `retired`, and an expired `live`, are refused for every tool;
+    - a live agent's edit under `<root>` passes, and one outside, one with `..`, `~` or `D:x`, and one under a protected name are refused;
+    - a Bash command without the `cd` prefix is refused, and with it passes;
+    - Bash naming `/etc/x`, `~/.ssh`, `$HOME`, `cd -`, `../x` or `issue-forge-data` is refused, and `2>/dev/null` passes;
+    - a duplicated `command` key is refused;
+    - a JSON-escaped quote inside a command doesn't fool the parse;
+    - `Read` passes.
+- **Done means:**
+  - A worktree run's agent can't edit outside its worktree, or run a Bash command that names a path outside it. If it writes into the session's folder by another way (a test runner, say), the run blocks within about 5 s with the files named. The fence is a command hook that refuses issue-forge's agents unless it can place them.
+  - A stopped agent's queued call is refused.
+  - If the fence can't run, no agent starts.
+  - **Live check** (an interactive private tmux, `--plugin-dir` on this worktree's copy, `teammateMode: "in-process"`, `redModel` set to `haiku` for `issue-forge@inline`; one red agent): a real run on an open issue with no "Base branch" line, in a new worktree. Once the red agent is working, a file in the session's folder is changed by hand: the run blocks within about 5 s, naming it, and the red agent is ended. The debug log shows `Hooks: PreToolUse:… [bash …/fence.sh] (plugin issue-forge@inline)` lines for the red agent's calls. `/issue-forge resume` stashes first and names the stash, then `/issue-forge stop`. It leaves one stopped run in the `--plugin-dir` store, a worktree and branch, and one stash, kept until the owner says to remove them.
+- **Version:** 0.10.0, a minor release: a new hook and script (new reach), new fields on the stored run, and a new reason to block. No command or option changes. (The owner, 2026-10-25: "Version: 0.10.0, new behaviour".)
+- **Not changed:** the commands and options; the in-module guard and its tests; the pane; `here` runs, apart from the prompt line and the fence; the stop rule (0.9.1); any resume other than one after a folder block (#161).
