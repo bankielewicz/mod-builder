@@ -3325,6 +3325,13 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(goesOn('issue-forge-16-red-1')).toBe('issue-forge fence check: issue-forge-16-red-1 goes on, fenced by its id file; its name file is left to the other run')
   })
 
+  // PR #162 review round 1, item 6: each folder change found says in the debug log which check found it.
+  test('the debug line naming where a folder change was found', () => {
+    const found = (c: unknown, where: string): unknown => (logic as Record<string, any>).folderFoundLine?.(c, where)
+    expect(found({ paths: ['a.ts', 'b.ts'], count: 2, isHashless: false }, 'the 5 s check')).toBe('issue-forge folder check: 2 changed, found at the 5 s check')
+    expect(found({ paths: [], count: 201, isHashless: false }, 'the answer')).toBe('issue-forge folder check: 201 changed, found at the answer')
+  })
+
   test("the name clash's block, at the spawn and at the 5 s check, and which fence files are name files", () => {
     const clash = (agent: string, root: string, issue: number, isEnded: boolean): unknown => (logic as Record<string, any>).fenceClashBlock?.(agent, root, issue, isEnded)
     expect(clash('issue-forge-16-red-1', '/other/wt', 16, false)).toEqual({

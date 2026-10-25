@@ -5182,4 +5182,57 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(w.files[FENCE]).toBe('retired\n')
     expect(w.logs).toContain(`issue-forge fence check: ${FENCE} holds a line issue-forge didn't write, at the 5 s check`)
   })
+
+  // PR #162 review round 1, item 6: the debug log says which check found a folder change. The answer's check isn't reachable
+  // in the kit (a kit spawn's agentId is dropped); the live check's step covers it.
+  const foundAt = (where: string) => `issue-forge folder check: 1 changed, found at ${where}`
+
+  test('a folder change the 5 s check finds says so in the debug log', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(w.logs).toContain(foundAt('the 5 s check'))
+  })
+
+  test('a folder change a stop finds says so in the debug log', async ($, on) => {
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    await run($, 'stop')
+    expect(w.logs).toContain(foundAt('a stop'))
+  })
+
+  test("a folder change a hand-off finds, and one the next phase's start finds, each say so in the debug log", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')], [], []] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    await run($, 'handoff')
+    expect(w.logs).toContain(foundAt('a hand-off'))
+    await run($, 'resume')
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(w.logs).toContain(foundAt("a phase's start"))
+  })
+
+  test("a folder change found when another session stops or takes over the run says so in the debug log", async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, spawnHold: held(), answer: 'Cancel', storeHold: { when: () => false, until: Promise.resolve() }, listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    store[key(16)] = { ...(store[key(16)] as any), step: 'stopped' }
+    await w.clock.advance(5_000)
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('#16 was stopped in another session')))
+    expect(w.logs).toContain(foundAt("another session's stop or takeover"))
+  })
 })
