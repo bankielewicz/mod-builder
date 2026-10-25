@@ -3160,6 +3160,12 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(changes(before, snap([{ xy: ' M', path: 'a.ts' }, { xy: '??', path: 'b.ts' }]))).toEqual({ paths: ['b.ts'], count: 1, isHashless: true })
   })
 
+  test("an entry that is never hashed (deleted, or a folder) isn't a failed hash", () => {
+    const before = snap([{ xy: ' D', path: 'gone.ts' }, { xy: '??', path: 'nested/' }, { xy: ' M', path: 'a.ts', hash: 'h1' }])
+    const after = snap([{ xy: ' D', path: 'gone.ts' }, { xy: '??', path: 'nested/' }, { xy: ' M', path: 'a.ts', hash: 'h1' }, { xy: '??', path: 'new.ts', hash: 'h2' }])
+    expect(changes(before, after)).toEqual({ paths: ['new.ts'], count: 1, isHashless: false })
+  })
+
   test('past the cap, digests are compared, and a change has a count and no names', () => {
     const many = (n: number) => Array.from({ length: n }, (_, i) => ({ xy: '??', path: `f${i}`, hash: 'h' }))
     expect(changes(snap(many(201)), snap(many(201)))).toBeNull()
