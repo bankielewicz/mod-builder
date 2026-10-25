@@ -34,6 +34,7 @@ import {
   elapsed,
   endOutcome,
   endedLine,
+  endedWhileAsked,
   elsewhereText,
   entrySize,
   expandHome,
@@ -1639,6 +1640,16 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(foreignChange({ ...mine, driver: { session: OTHER, since: 1 } }, 'r1', ME)).toBe('takenOver')
     expect(foreignChange(null, 'r1', ME)).toBe('gone')
     expect(foreignChange({ ...mine, id: 'r2' }, 'r1', ME)).toBe('gone')
+  })
+
+  test('endedWhileAsked: what became of the run the start menu named, read again once its question is answered (#153)', () => {
+    const mine = at(16, 'red', { id: 'r1', driver: { session: ME, since: 0 } })
+    expect(endedWhileAsked(16, { ...mine, step: 'stopped' }, 'r1', ME)).toBe('#16 was stopped in another session while you chose')
+    expect(endedWhileAsked(16, { ...mine, driver: { session: OTHER, since: 1 } }, 'r1', ME)).toBe('#16 was taken over by another session while you chose')
+    expect(endedWhileAsked(16, null, 'r1', ME)).toBe('#16 was replaced while you chose')
+    expect(endedWhileAsked(16, { ...mine, id: 'r2' }, 'r1', ME)).toBe('#16 was replaced while you chose')
+    expect(endedWhileAsked(16, { ...mine, step: 'done', driver: undefined }, 'r1', ME)).toBe('#16 finished while you chose')
+    expect(endedWhileAsked(16, { ...mine, step: 'blocked', driver: undefined }, 'r1', ME)).toBe("#16's drive here ended while you chose")
   })
 
   test("checkoutWorkspaceOf: the starting checkout's workspace names the menu's start option; anything unreadable is ask", () => {

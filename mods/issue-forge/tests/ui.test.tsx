@@ -1616,6 +1616,63 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect((await run($, 'status 16')).text).toContain('interrupted during red; /issue-forge resume restarts it')
   })
 
+  // #153: the run a "…then start #M" choice names can end while the menu's question is open (the store is shared live
+  // between sessions); the start goes on, and its answer says what became of that run.
+  for (const [what, change, lead] of [
+    ['stops', (r: any) => ({ ...r, step: 'stopped' }), '#16 was stopped in another session while you chose'],
+    ['takes over', (r: any) => ({ ...r, driver: { session: OTHER, since: 0 } }), '#16 was taken over by another session while you chose'],
+  ] as const) {
+    test(`#153: another session ${what} #16 while the menu is open, and Hand #16 off and start #17 here still starts #17`, async ($, on) => {
+      const store: Record<string, unknown> = {}
+      const w = engine(on, { baseProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+      await start($)
+      await run($, '16')
+      await until(w, () => w.spawned.length === 1, "#16's red agent")
+      let answer: (label: string) => void = () => undefined
+      w.hold = new Promise<string>(resolve => (answer = resolve))
+      const asked = w.asked.length
+      const pending = run($, '17')
+      await until(w, () => w.asked.length > asked, 'the menu question')
+      store[key(16)] = change(store[key(16)])
+      await w.clock.advance(5_000)
+      await until(w, () => w.toasts.some(t => t.startsWith('#16 was')), 'the watch ending the drive')
+      answer('Hand #16 off and start #17 here (any session can resume #16)')
+      expect((await pending).text).toBe(`${lead}; starting #17; the pane shows progress. Nothing is pushed until you say yes.`)
+      expect((store[key(17)] as any)?.issue).toBe(17)
+    })
+  }
+
+  test('#153: another session stops #44 while the menu is open, and Stop #44, then start #16 still starts #16', async ($, on) => {
+    const store: Record<string, unknown> = { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) }
+    const w = engine(on, { baseProfile: WORKTREE, localProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    let answer: (label: string) => void = () => undefined
+    w.hold = new Promise<string>(resolve => (answer = resolve))
+    const pending = run($, '16')
+    await until(w, () => w.asked.length > 0, 'the menu question')
+    expect(w.asked.at(-1)).toBe('#44 is active in this repository: blocked at gateG. What should this session do?')
+    store[key(44)] = { ...(store[key(44)] as any), step: 'stopped' }
+    answer('Stop #44, then start #16')
+    expect((await pending).text).toBe('#44 was stopped in another session while you chose; starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    expect((store[key(16)] as any)?.issue).toBe(16)
+  })
+
+  test('#153 guard: #44 resumed in another session while the menu is open, then no to taking it over: nothing starts', async ($, on) => {
+    const store: Record<string, unknown> = { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) }
+    const w = engine(on, { baseProfile: WORKTREE, localProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    let answer: (label: string) => void = () => undefined
+    w.hold = new Promise<string>(resolve => (answer = resolve))
+    const pending = run($, '16')
+    await until(w, () => w.asked.length > 0, 'the menu question')
+    store[key(44)] = { ...(store[key(44)] as any), step: 'green', blocked: undefined, driver: { session: OTHER, since: 1_000_000 } }
+    // The take-over question gets the same held label, which isn't Take over: a no.
+    answer('Stop #44, then start #16')
+    expect((await pending).text).toBe('#44 runs in another session; use that session, or answer Take over in an interactive one.')
+    expect(w.asked.at(-1)).toContain('If that session has ended, take it over?')
+    expect(key(16) in store).toBe(false)
+  })
+
   test('/issue-forge handoff and the Hand off button end this session\'s drive and keep the step', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, spawnHold: held() })
     await start($)

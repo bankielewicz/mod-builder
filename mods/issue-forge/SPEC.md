@@ -2342,3 +2342,69 @@ count set in the pane.
     - Refactor `5675664`; the SPEC's wording `ff1ecf7` (8).
     - #5 is filed as #153, and #10 is added to #152 (comment 6379471353).
     - **#3 in the kit:** a kit spawn never gets an agent id, so the write onto the run is tested as logic (`withLateAgent`) only. Its wiring in `phase()` runs only when a real spawn returns an id.
+
+## Change 0.9.2 (2026-10-25)
+
+> Issue #153, filed from PR #151's review round 2, finding 5, and retitled on 2026-10-25 to "issue-forge: '…then start #M' skips the start when the chosen run ended while the menu question was open". The owner chose it next, 2026-10-25: "#153 (Recommended)". After the check below: "Rescope, fix both (Recommended)", and for a run that ended while the question was open, "Start #M, say why (Recommended)".
+
+- **Why** (checked on `main` at `3560c67`, 0.9.1; posted as #153's comment 6391476238):
+  - **The cause #153 named can't happen.** `drive()` sets `driving` and `drivenLast` together (`register.tsx:1503-1504`), and `drivenLast` is written nowhere else but at its declaration (`:218`) and in `reflect` (`:436`). So whenever `handOff` finds a drive, `((await releaseDriver($, d)) ?? drivenLast)?.step` (`:1992`) has a step. The test the issue proposes passes on `main`: with #16 replaced in the store, or deleted from it, right before `releaseDriver` reads it, "Hand #16 off and start #17 here" answered `handed off #16 at red; starting #17; …` [ran: `claude plugin test` on a copy of `mods/issue-forge` at `3560c67`, two probe tests added].
+  - **The symptom happens through two other paths** [ran: the same copy, three probe tests that hold the menu's answer with the kit's `hold`]:
+    1. **Hand off, then start.** This session drives #16, and `/issue-forge 17` asks what to do. While the question is open, another session stops #16 or takes it over, and this session's watch ends its drive within 5 s (`watch`, `:1574-1584`). "Hand #16 off and start #17 here" then answers `this session is driving no run.`, and #17 isn't started: `handOff` looks for the drive again after the answer and finds none (`:1756-1758`, `:1984-1986`).
+    2. **Stop, then start.** #44 is blocked, and `/issue-forge 16` asks. While the question is open, another session stops #44. "Stop #44, then start #16" answers `no active run here.`, since `stopRun` looks for an active #44 (`:1945-1952`), and #16 isn't started (`:1752-1754`).
+  - Both act on what the menu saw before its question, and the question stays open as long as the person takes.
+- **Against Anthropic's documents** (read 2026-10-25: `docs/research/Mods/README.md`, then the pages that bear on it):
+  - `$.ui.ask` "resolves to the label the user picks", and the wait inside it "doesn't count against the hook's time limit" [read: `Build/React-to-events-with-a-mod.md:145`, `:180`]. So the menu can stay open for minutes.
+  - "Every session on your machine that runs your mod shares one `$.store`", and for a value several sessions change: "Read again right before you write" [read: `Build/Draw-in-the-interface-with-a-mod.md:837-842`]. The fix reads the run again after the answer and acts on what it finds.
+  - The tests use a `tool.call` stub for `$.ui.ask` and the mock clock to bring on the watch [read: `Test and troubleshoot/Test-a-mod.md:178`, `:203-211`].
+  - Anthropic's plugin docs (`docs/research/claude-plugins`) bear only on the version: "increment `version` on every release" [read: `Publish-and-distribute-a-plugin.md:44`, `:166`]. The rest is the mod's hooks module.
+- **What changes:**
+  - **Hand off, then start.** When the answer comes and this session no longer drives the run the menu named, issue-forge reads that run again by the drive's key (taken before the question), says what became of it, and starts #M:
+    - `#16 was stopped in another session while you chose; starting #17; the pane shows progress. Nothing is pushed until you say yes.`
+    - `#16 was taken over by another session while you chose; …`
+    - `#16 was replaced while you chose; …`, when there is no record, or one with another run id (the watch's word for the same case);
+    - `#16 finished while you chose; …`, when its step is `done`;
+    - `#16's drive here ended while you chose; …`, when the record shows none of these, as when its step blocked and the drive ended by itself.
+
+    With the drive still going, the answer stays `handed off #16 at red; …`.
+  - **Stop, then start.** When `stopRun` doesn't stop it, issue-forge reads the run the menu named again. If it is no longer active (no record, `stopped` or `done`, `isActive`, `issue-forge-logic.ts:1106-1108`), the answer says what became of it, worded as above, and starts #M: `#44 was stopped in another session while you chose; starting #16; …`. If it is still active, `stopRun`'s answer stands and nothing starts, as now. For example, another session resumed #44 while the question was open, `stopRun` asked "take it over?", and the person said no.
+  - **One pure function** words it: `endedWhileAsked(issue, stored, runId, me)` in the logic module, built on `foreignChange` (`issue-forge-logic.ts:2614-2618`), plus the `done` and no-change rows.
+  - **Not changed:** the menu (`startChoices`), its labels and default, the other actions, `handOff`, `stopRun`, the pane and the stored run's shape. The demo has no start-menu state, so it doesn't change.
+- **What gets touched:**
+  - `hooks/issue-forge-logic.ts`: `endedWhileAsked`.
+  - `hooks/register.tsx`: the `stopThenStart` and `handOffThenStart` cases of `startRun` (`:1752-1759`).
+  - Tests: the new ones below. No existing test changes.
+  - `README.md`: a sentence under the start-menu table (`:186-196`), the "What it reaches" table regenerated from `claude plugin validate` (no new reach is expected: `$.store.get` is read already), and "Built on".
+  - `plugin.json` and the marketplace entry at 0.9.2 (patch: a fix).
+  - **Cost:** at run time, one more `$.store.get` on these two paths only. The live check's cost is below.
+- **Tests (fail before the change):**
+  - Logic: `endedWhileAsked` words each row: stopped, taken over, no record, another run id, `done`, and a record with none of these.
+  - UI (the kit's `hold` keeps the menu open, and the store stubs read the test's own object):
+    1. Driving #16, `/issue-forge 17`. While the question is open, another session stops #16 and the watch ends the drive. "Hand #16 off and start #17 here" answers `#16 was stopped in another session while you chose; starting #17; …`, and #17's run is stored.
+    2. The same with #16 taken over: `#16 was taken over by another session while you chose; starting #17; …`.
+    3. #44 blocked, `/issue-forge 16`. While the question is open, another session stops #44. "Stop #44, then start #16" answers `#44 was stopped in another session while you chose; starting #16; …`, and #16's run is stored.
+  - A guard that passes before and after: #44 resumed by another session while the question is open; "Stop #44, then start #16", then no to "take it over?". The answer is `stopRun`'s, and no #16 run is stored.
+- **Live check** (QA, after the tests): two interactive sessions, A and B, in a private tmux, each started in this worktree with `--plugin-dir mods/issue-forge` and `--settings` setting `redModel` to `haiku` for `issue-forge@inline`, so each red agent costs little.
+  1. A: `/issue-forge 106`, so A drives #106. A: `/issue-forge 107`. While A's menu is open, B: `/issue-forge stop 106`, and yes to "take it over?". A's watch toasts within 5 s. A picks "Hand #106 off and start #107 here". The answer leads with `#106 was stopped in another session while you chose`, and #107 starts.
+  2. A: `/issue-forge handoff`. A: `/issue-forge 104`. While A's menu is open, B: `/issue-forge stop 107`. A picks "Stop #107, then start #104". The answer leads with `#107 was stopped in another session while you chose`, and #104 starts. Then A: `/issue-forge stop 104`.
+
+  #106, #107 and #104 are open and have no "Base branch" line [checked: `gh issue view`, 2026-10-25]. The check costs three red agents on haiku, each stopped within a few minutes. It leaves three stopped runs in the `--plugin-dir` copy's store, and three worktrees and branches under `scratch/issue-forge/`, kept until the owner says to remove them. No push, PR or issue comment comes from the runs.
+- **Done means:** when the run chosen to hand off or stop had already ended while the menu's question was open, "Hand #N off and start #M here" and "Stop #N, then start #M" go on to start #M, and the answer says what became of #N. A run still active, which the person declined to take over, still starts nothing.
+- **Approved:** the owner, 2026-10-25, "Approve (Recommended)", the live check included. The advisor checked the change against both doc sets first.
+- **Built** (2026-10-25, CLI 2.1.310, types 2.1.310):
+  - SPEC `d94d89a`, approval `d7be37f`.
+  - Red `b6bd530`: 4 of 586 failed, each by assertion (`endedWhileAsked` reached through the module; the three UI tests answered `this session is driving no run.` and `no active run here.`). The guard passed before the change, as planned.
+  - Green `358b655`: 586 of 586. Refactor `31884ac`: the logic test calls `endedWhileAsked` directly, with its assertions unchanged.
+  - Release `c87b03d`: 0.9.2 in `plugin.json` and the marketplace entry, and the README's start-menu sentence. `claude plugin validate --strict` prints the same hooks, calls and reach lines as `main`'s copy, so the "What it reaches" table doesn't change.
+  - **QA:**
+    - `claude plugin validate .` and `claude plugin validate --strict mods/issue-forge` pass.
+    - `claude plugin test mods/issue-forge`: 586 of 586.
+    - The typecheck, tests included, exits 0.
+    - Logic coverage: lines 100.00%, branches 99.82%, functions 99.40%, the same as `main`. Every line and branch of `endedWhileAsked` is taken (lcov `DA` and `BRDA`).
+    - The smoke test (`/issue-forge demo`, `-p`): the log has `loaded` and `admitted` for this worktree's folder, and no failure line.
+  - **Live check** (two interactive sessions in a private tmux, each started in this worktree with `--plugin-dir mods/issue-forge`, auto mode):
+    1. A drove #106 (at baseline), and `/issue-forge 107` opened the menu. B: `/issue-forge stop 106`, answered Take over: `stopped #106. … its agents run in the session driving it, which ends its drive and them at its next check (every 5 s) if it is still open.` A's watch toasted `#106 was stopped in another session; this session stopped driving it.` 3 s later, with the menu still open. A picked "Hand #106 off and start #107 here": `#106 was stopped in another session while you chose; starting #107; the pane shows progress. Nothing is pushed until you say yes.`, and #107 started.
+    2. A: `/issue-forge handoff` (`handed off #107 at baseline; …`), then `/issue-forge 104`, whose menu named #107 `interrupted during baseline`. B: `/issue-forge stop 107` (`stopped #107. … no agent was running.`). A picked "Stop #107, then start #104": `#107 was stopped in another session while you chose; starting #104; the pane shows progress. Nothing is pushed until you say yes.` Then `/issue-forge stop 104`.
+
+    Each stop came before red, so no agent was spawned and the check made no model calls (no subagent transcript, and no `agent.spawn` line from issue-forge in either debug log). The `--plugin-dir` store already held two old ready runs, #27 and #16, from earlier live checks. They were left as they were, and the first start's menu named them.
+  - **Left by the live check, for the owner:** three stopped runs (#106, #107, #104) in the `--plugin-dir` copy's store, and their worktrees and branches: `scratch/issue-forge/issue-104-issue-forge-configurable-phases-and-meth`, `…/issue-106-issue-forge-a-phase-agent-whose-context` and `…/issue-107-mod-lab-check-the-test-sandbox-once-per`, under this worktree.
