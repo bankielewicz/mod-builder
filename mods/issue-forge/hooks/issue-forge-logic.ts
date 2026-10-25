@@ -2777,6 +2777,14 @@ export function folderBlock(root: string, phase: Phase, c: FolderChanges): { rea
 }
 
 /** What a stop, a hand-off or the watch's toast adds when the folder changed; a press's toast is cut to 80 characters. */
+/** Which check found a folder change (PR #162 review round 1, item 6). */
+export type FolderWhere = 'the 5 s check' | 'the answer' | "a phase's start" | 'a stop' | 'a hand-off' | "another session's stop or takeover"
+
+/** The debug log's line for a folder change, naming the check that found it. */
+export function folderFoundLine(c: FolderChanges, where: FolderWhere): string {
+  return `issue-forge folder check: ${c.count} changed, found at ${where}`
+}
+
 export function folderClause(c: FolderChanges | null, byPress: boolean): string {
   if (!c) return ''
   if (byPress) return `; folder changed: ${c.paths[0] !== undefined ? truncate(c.paths[0], 22) : `${c.count} entries`}`
