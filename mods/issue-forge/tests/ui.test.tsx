@@ -57,6 +57,10 @@ type World = {
   rootStatus?: string
   /** `git hash-object`'s answer per path; absent, `h-<path>`. */
   rootHashes?: Record<string, string>
+  /** What `fs.stat` finds at a path `rootStatus` lists; absent, a file. `hash-object` fails on a `dir`, as git does on a submodule. */
+  rootKinds?: Record<string, 'file' | 'dir' | 'other'>
+  /** The first `fs.write` that `when` picks lands only once `until` settles (PR #162 review round 1, finding 1). */
+  writeHold?: { when: (path: string, text: string) => boolean; until: Promise<void>; isHeld?: boolean }
   /** What refs/heads/<branch> points at; absent, the stub's HEAD. */
   tip?: string
   /** When set, the test command stays running until this settles. */
@@ -367,11 +371,20 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (e.path in world.files) return { value: world.files[e.path] }
     return { deny: 'ENOENT' }
   })
+  // The paths the session folder's status lists, which the folder check stats before hashing (PR #162 review round 1, finding 3).
+  const rootListed = (path: string) => path.startsWith(`${ROOT}/`) && (world.rootStatus ?? '').split('\0').some(entry => entry.slice(3) === path.slice(ROOT.length + 1))
   on('fs.stat', ($: any, e: any) => {
     if (e.path === LCOV_PATH) return { value: { kind: 'file', size: LCOV.length, mtimeMs: world.clock.now(), isLink: false } }
+    if (rootListed(e.path)) return { value: { kind: world.rootKinds?.[e.path.slice(ROOT.length + 1)] ?? 'file', size: 1, mtimeMs: 0, isLink: false } }
     return e.path in world.files ? { value: { kind: 'file', size: world.files[e.path]!.length, mtimeMs: 0, isLink: false } } : { deny: 'ENOENT' }
   })
-  on('fs.write', ($: any, e: any) => ((world.files[e.path] = e.text), { value: undefined }))
+  on('fs.write', ($: any, e: any) => {
+    const land = () => ((world.files[e.path] = e.text), { value: undefined })
+    const hold = world.writeHold
+    if (!hold || hold.isHeld || !hold.when(e.path, e.text)) return land()
+    hold.isHeld = true
+    return hold.until.then(land)
+  })
   on('process.run', ($: any, e: any) => {
     const argv = e.argv as string[]
     world.argv.push(argv)
@@ -432,7 +445,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     // The folder check (Change 0.10.0) reads the session's folder with --no-renames, and hashes what it lists.
     if (a[0] === 'status' && a.includes('--no-renames')) return ok(world.rootStatus ?? '')
-    if (a[0] === 'hash-object') return ok(`${String(e.init?.stdin ?? '').split('\n').filter((p: string) => p !== '').map((p: string) => world.rootHashes?.[p] ?? `h-${p}`).join('\n')}\n`)
+    if (a[0] === 'hash-object') {
+      const paths = String(e.init?.stdin ?? '').split('\n').filter((p: string) => p !== '')
+      const dir = paths.find((p: string) => world.rootKinds?.[p] === 'dir')
+      if (dir) return fail(`fatal: Unable to hash ${dir}\n`, 128)
+      return ok(`${paths.map((p: string) => world.rootHashes?.[p] ?? `h-${p}`).join('\n')}\n`)
+    }
     // A held index.lock (#28): the call takes the next scripted failure, and the lock file stays while that failure says so.
     const failing = world.gitFails
     if (failing && (s === failing.on || s.startsWith(`${failing.on} `))) {
