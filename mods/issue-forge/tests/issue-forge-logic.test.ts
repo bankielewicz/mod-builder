@@ -34,6 +34,7 @@ import {
   elapsed,
   endOutcome,
   endedLine,
+  endedWhileAsked,
   elsewhereText,
   entrySize,
   expandHome,
@@ -1642,12 +1643,6 @@ describe('parallel runs (Change 0.3.0)', () => {
   })
 
   test('endedWhileAsked: what became of the run the start menu named, read again once its question is answered (#153)', () => {
-    // Red reaches the function through the module, so its absence fails by assertion, not by a TypeError.
-    const endedWhileAsked = (...args: unknown[]): string => {
-      const fn = (logic as unknown as Record<string, unknown>).endedWhileAsked
-      expect(typeof fn).toBe('function')
-      return (fn as (...a: unknown[]) => string)(...args)
-    }
     const mine = at(16, 'red', { id: 'r1', driver: { session: ME, since: 0 } })
     expect(endedWhileAsked(16, { ...mine, step: 'stopped' }, 'r1', ME)).toBe('#16 was stopped in another session while you chose')
     expect(endedWhileAsked(16, { ...mine, driver: { session: OTHER, since: 1 } }, 'r1', ME)).toBe('#16 was taken over by another session while you chose')
