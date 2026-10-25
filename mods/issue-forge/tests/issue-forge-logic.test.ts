@@ -3247,6 +3247,22 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(stashed(r, 'other', { sha: 'abc1234', message: 'm' })).toBeNull()
   })
 
+  test('with nothing to stash, only the flag goes', () => {
+    const stashed = own<(stored: Run | null, runId: string, stash: { sha: string; message: string } | undefined) => Run | null>('withFolderStash')
+    const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
+    const after = stashed(r, r.id, undefined) as Run & Record<string, unknown>
+    expect('isFolderBlock' in after).toBe(false)
+    expect('folderStash' in after).toBe(false)
+  })
+
+  test("the folder clause goes before a typed answer's last full stop, and right after a pressed one's first clause", () => {
+    const put = own<(answer: string, clause: string, byPress: boolean) => string>('withFolderClause')
+    expect(put('stopped #16. Its branch b and commits are kept; no agent was running.', "; the session's folder changed while it worked: a.ts", false)).toBe("stopped #16. Its branch b and commits are kept; no agent was running; the session's folder changed while it worked: a.ts.")
+    expect(put('stopped #16; its red agent (n) has stopped. Its branch and commits are kept.', '; folder changed: a.ts', true)).toBe('stopped #16; folder changed: a.ts; its red agent (n) has stopped. Its branch and commits are kept.')
+    expect(put('handed off #16 at red; /issue-forge resume 16 continues it in any session.', '; folder changed: a.ts', true)).toBe('handed off #16 at red; folder changed: a.ts; /issue-forge resume 16 continues it in any session.')
+    expect(put('stopped #16. Its branch b and commits are kept.', '', false)).toBe('stopped #16. Its branch b and commits are kept.')
+  })
+
   test("the folder stash's message, and the note a resume's answer gets after a folder block", () => {
     const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
     expect(own<(run: Run, phase: string) => string>('folderStashMessage')(r, 'red')).toBe('issue-forge #16 red after the folder check (run 16-1)')

@@ -4815,3 +4815,222 @@ describe('#40: a drive that ends, ends its agents', () => {
     expect(w.toasts.some(t => t.includes('was taken over'))).toBe(false)
   })
 })
+
+describe('#156: the fence and the folder check (Change 0.10.0)', () => {
+  const WT = `${ROOT}/scratch/issue-forge/${BRANCH}`
+  const RUN = `issue-forge:run:${ROOT}`
+  const FENCE = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
+  const held = () => new Promise<void>(() => undefined)
+  const red = (status: string) => ({ id: 'a77', name: 'issue-forge-16-red-1', description: 'issue-forge #16 red', type: 'issue-forge:red', status, spawnedBy: 'issue-forge' })
+  const atRed = (extra: Record<string, unknown> = {}) => storedRun('red', { workRoot: WT, redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [], ...extra })
+  const releasable = () => {
+    let release: () => void = () => undefined
+    return { hold: new Promise<void>(resolve => (release = resolve)), release: () => release() }
+  }
+  const stored = (store: Record<string, unknown>) => store[RUN] as any
+  const strayReason = `the session's folder ${ROOT} changed while the red agent worked: stray.txt; issue-forge can't tell whether the agent or someone else made the change`
+
+  test("a preflight that doesn't get the script's own refusal blocks the phase, and no agent starts", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], fenceCheck: { exitCode: 0, stderr: '' } }, store)
+    await start($)
+    await run($, 'resume')
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(w.spawned).toEqual([])
+    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: "the fence can't run (exit 0), so no agent was started", next: 'issue-forge needs bash on PATH to run hooks/fence.sh; then /issue-forge resume' })
+  })
+
+  test("a preflight whose bash can't start blocks the same way", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], fenceCheck: 'throws' }, store)
+    await start($)
+    await run($, 'resume')
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(w.spawned).toEqual([])
+    expect(stored(store).blocked?.reason).toContain("the fence can't run (")
+    expect(stored(store).blocked?.reason).toContain('spawn bash ENOENT')
+  })
+
+  test("the agent's fence file is live, by its name, before the spawn, and retired when its phase ends", async ($, on) => {
+    const spawn = releasable()
+    const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(w.fenceChecks).toBe(1)
+    expect(w.files[FENCE]).toMatch(new RegExp(`^live \\d+ ${WT}\\n$`))
+    spawn.release()
+    await waitFor(w, () => w.files[FENCE] === 'retired\n')
+    expect(w.files[FENCE]).toBe('retired\n')
+  })
+
+  test("a stop retires the agent's fence file", async ($, on) => {
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    await run($, 'stop')
+    expect(w.files[FENCE]).toBe('retired\n')
+  })
+
+  test("the 5 s check writes the fence line again, later, while the agent works", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], spawnHold: held() }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    const first = Number((w.files[FENCE] ?? '').split(' ')[1])
+    await w.clock.advance(5_000)
+    await waitFor(w, () => Number((w.files[FENCE] ?? '').split(' ')[1]) > first)
+    expect(Number((w.files[FENCE] ?? '').split(' ')[1])).toBeGreaterThan(first)
+    expect(stored(store).step).toBe('red')
+  })
+
+  test('the folder changing while the agent works: the 5 s check ends the agent and blocks the run, naming the file', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(stored(store).folderSnapshot).toMatchObject({ phase: 'red', entries: [] })
+    w.rootStatus = '?? stray.txt\0'
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: strayReason, next: "check those files (issue-forge doesn't undo them), then /issue-forge resume" })
+    expect(stored(store).isFolderBlock).toBe(true)
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.files[FENCE]).toBe('retired\n')
+  })
+
+  test("the folder changing by the time the agent's answer arrives blocks the run, before its gate", async ($, on) => {
+    const spawn = releasable()
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], spawnHold: spawn.hold }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = ' M already.ts\0'
+    w.rootHashes = { 'already.ts': 'h-new' }
+    spawn.release()
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked?.reason).toBe(`the session's folder ${ROOT} changed while the red agent worked: already.ts; issue-forge can't tell whether the agent or someone else made the change`)
+    expect(w.commits).toEqual([])
+  })
+
+  test('an edit already there when the phase began, and unchanged since, blocks nothing', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], rootStatus: ' M before.ts\0' }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length >= 1, "#16's red agent")
+    await w.clock.settle()
+    await waitFor(w, () => stored(store).step !== 'red')
+    expect(JSON.stringify(stored(store))).not.toContain("the session's folder")
+    expect('folderSnapshot' in stored(store) && stored(store).folderSnapshot?.phase === 'red').toBe(false)
+  })
+
+  test("a change found at a stop is named in the stop's answer", async ($, on) => {
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    expect((await run($, 'stop')).text).toBe(`stopped #16. Its branch ${BRANCH} and commits are kept; its red agent (issue-forge-16-red-1) has stopped; the session's folder changed while it worked: stray.txt.`)
+  })
+
+  test("a pressed Stop's toast names the first changed file within its 80 characters", async ($, on) => {
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), answer: 'Stop the run', listed: [[red('running')], [red('killed')]] }, { [RUN]: atRed() })
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    const ui = await pane($)
+    await ui.press({ key: 'stop' })
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('stopped #16')))
+    await ui.unmount()
+    expect(w.toasts.some(t => t.startsWith('stopped #16; folder changed: stray.txt; its red agent'))).toBe(true)
+  })
+
+  test('a hand-off keeps the snapshot, and the next phase start compares against it before anything else', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')], [], []] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    await run($, 'handoff')
+    expect(stored(store).folderSnapshot).toMatchObject({ phase: 'red' })
+    w.rootStatus = '?? stray.txt\0'
+    const checks = w.fenceChecks
+    await run($, 'resume')
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked?.reason).toBe(strayReason)
+    expect(w.spawned.length).toBe(1)
+    expect(w.fenceChecks).toBe(checks)
+  })
+
+  test('a takeover found by the watch: its toast names the changed file', async ($, on) => {
+    const store: Record<string, unknown> = {}
+    const w = engine(on, { baseProfile: { ...PROFILE, workspace: 'worktree' }, spawnHold: held(), answer: 'Cancel', storeHold: { when: () => false, until: Promise.resolve() }, listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, '16')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.rootStatus = '?? stray.txt\0'
+    store[key(16)] = { ...(store[key(16)] as any), step: 'stopped' }
+    await w.clock.advance(5_000)
+    await waitFor(w, () => w.toasts.some(t => t.startsWith('#16 was stopped in another session') && t.includes('has stopped')))
+    expect(w.toasts).toContain("#16 was stopped in another session; this session stopped driving it; its red agent (issue-forge-16-red-1) has stopped; the session's folder changed while it worked: stray.txt.")
+  })
+
+  test('a resume after a folder block stashes the worktree first, and its answer names the stash', async ($, on) => {
+    const message = 'issue-forge #16 red after the folder check (run 16-1)'
+    const store: Record<string, unknown> = { [RUN]: storedRun('blocked', { workRoot: WT, redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], blocked: { at: 'red', reason: strayReason, next: 'n' }, isFolderBlock: true }) }
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), stashList: `abc1234def0\tOn ${BRANCH}: ${message}\n` }, store)
+    await start($)
+    expect((await run($, 'resume')).text).toBe(`resuming #16 at red; its worktree's uncommitted files go to the stash "${message}" first.`)
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    const push = w.calls.find(c => c.argv[1] === 'stash' && c.argv[2] === 'push')
+    expect(push).toMatchObject({ argv: ['git', 'stash', 'push', '--include-untracked', '-m', message], cwd: WT })
+    expect(stored(store).folderStash).toEqual({ sha: 'abc1234def0', message })
+    expect('isFolderBlock' in stored(store)).toBe(false)
+  })
+
+  test('a fence file changed or removed while the agent works: the agent is ended and the run blocks', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.files[FENCE] = 'live 9999999999 /\n'
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked).toMatchObject({ reason: 'the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended', next: 'check ~/.claude/issue-forge-data/fence/, then /issue-forge resume' })
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test('the preflight failing on the 5 s check ends the agent and blocks the run', async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.fenceCheck = { exitCode: 0, stderr: '' }
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked?.reason).toBe("the fence can't run (exit 0), so no agent was started")
+    await waitFor(w, () => w.taskStops.length > 0)
+    expect(w.taskStops).toEqual(['a77'])
+  })
+
+  test("a here run's agent is fenced too, but its folder isn't watched", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: storedRun('red', { redCommit: undefined, used: { red: 0, green: 0, refactor: 0 }, agents: [] }) }
+    const w = engine(on, { head: BRANCH, spawnHold: held() }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    expect(w.files[FENCE]).toMatch(new RegExp(`^live \\d+ ${ROOT}\\n$`))
+    expect('folderSnapshot' in stored(store)).toBe(false)
+    expect(w.calls.some(c => c.argv.includes('--no-renames'))).toBe(false)
+  })
+})
