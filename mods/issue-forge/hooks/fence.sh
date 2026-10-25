@@ -67,14 +67,15 @@ if [[ $id =~ $safe && -f "$fence/id/$id" ]]; then
 elif [[ $type =~ $safe && -f "$fence/name/$type" ]]; then
   file="$fence/name/$type"
 fi
-if [[ -z $file ]]; then
-  ((ours)) && deny 'this agent has no fence file, so it may not call tools; end your turn now.'
-  exit 0
-fi
+[[ -z $file ]] && ((!ours)) && exit 0
 
-# From here the call is an issue-forge agent's: anything that fails refuses it.
-trap 'exit 2' ERR
+# From here the call is an issue-forge agent's. The bash check comes first, so the module's preflight (an agent with no
+# fence file) gets it on an old bash and no agent starts (PR #162 review round 1, finding 2).
 ((BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2))) || deny "the fence needs bash 4.2 or later (this is $BASH_VERSION); end your turn now."
+[[ -z $file ]] && deny 'this agent has no fence file, so it may not call tools; end your turn now.'
+
+# Anything that fails from here refuses the call.
+trap 'exit 2' ERR
 
 RETIRED='this run was stopped or restarted; end your turn now without further tool calls.'
 line=
