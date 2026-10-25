@@ -254,7 +254,10 @@ let liveWork: { root: string; workRoot: string; testGlobs: readonly string[]; ba
  * The fence files of this session's phase agent and the line they hold (Change 0.10.0, #156): hooks/fence.sh reads them,
  * since the guard above never sees the mod's own agents' calls (re-entry). The 5 s check reads them back and writes them again.
  */
-let fenceKept: { runId: string; agent: string; refs: string[]; paths: string[]; root: string; line: string } | null = null
+let fenceKept: FenceKept | null = null
+type FenceKept = { runId: string; agent: string; refs: string[]; paths: string[]; root: string; line: string }
+/** Every fence write, one at a time in the order asked, so a retirement lands after a rewrite already going (PR #162 review round 1, finding 1). */
+let fenceQueue: Promise<void> = Promise.resolve()
 /** The session's folder as this session's phase agent began, for a worktree run: the 5 s check and a stop compare against it. */
 let folderWatch: FolderWatch | null = null
 type FolderWatch = { runId: string; root: string; phase: Phase; snapshot: FolderSnapshot }
@@ -620,11 +623,29 @@ async function fenceProblem($: EngineInterface): Promise<string | null> {
   return `exit ${r.exitCode}${said ? `: ${truncate(said, 120)}` : ''}`
 }
 
-/** Writes the agent's fence files as live until FENCE_TTL_S from now; the 5 s check writes them again. */
-async function writeFence($: EngineInterface, runId: string, agent: string, refs: string[], paths: string[], root: string): Promise<void> {
-  const line = fenceLine(root, Math.floor((await $.clock.now()) / 1000) + FENCE_TTL_S)
-  fenceKept = { runId, agent, refs, paths, root, line }
-  await Promise.all(paths.map(path => $.fs.write(path, `${line}\n`)))
+/** Runs one fence write in its turn; the queue goes on whatever the write did. */
+function fenceTurn(step: () => Promise<void>): Promise<void> {
+  const turn = fenceQueue.then(step)
+  fenceQueue = turn.then(
+    () => undefined,
+    () => undefined,
+  )
+  return turn
+}
+
+/**
+ * Writes the agent's fence files as live until FENCE_TTL_S from now; the 5 s check writes them again. A rewrite or the id
+ * write names the fence it extends (`from`): if a retirement has replaced that fence by its turn, it writes nothing.
+ */
+async function writeFence($: EngineInterface, runId: string, agent: string, refs: string[], paths: string[], root: string, from: FenceKept | null = null): Promise<void> {
+  const isStale = () => from !== null && fenceKept !== from
+  await fenceTurn(async () => {
+    if (isStale()) return
+    const line = fenceLine(root, Math.floor((await $.clock.now()) / 1000) + FENCE_TTL_S)
+    if (isStale()) return
+    fenceKept = { runId, agent, refs, paths, root, line }
+    await Promise.all(paths.map(path => $.fs.write(path, `${line}\n`)))
+  })
 }
 
 /** `retired` into the fence files of this session's agent when `refs` names it: hooks/fence.sh then refuses its every call. */
@@ -632,7 +653,9 @@ async function retireFence($: EngineInterface, refs: readonly string[]): Promise
   const f = fenceKept
   if (!f || !f.refs.some(ref => refs.includes(ref))) return
   fenceKept = null
-  await Promise.all(f.paths.map(path => $.fs.write(path, `${FENCE_RETIRED}\n`).catch(() => undefined)))
+  await fenceTurn(async () => {
+    await Promise.all(f.paths.map(path => $.fs.write(path, `${FENCE_RETIRED}\n`).catch(() => undefined)))
+  })
 }
 
 /** The session's folder as git lists it now, hashed where it can be; null when git status fails. */
@@ -676,7 +699,7 @@ async function fenceTick($: EngineInterface, d: Drive): Promise<void> {
       const text = await $.fs.read(path).catch(() => null)
       if (text === null || text.replace(/\n$/, '') !== f.line) return breach($, d, fenceTamperBlock(f.agent))
     }
-    await writeFence($, f.runId, f.agent, f.refs, f.paths, f.root).catch(() => undefined)
+    await writeFence($, f.runId, f.agent, f.refs, f.paths, f.root, f).catch(() => undefined)
     const problem = await fenceProblem($)
     if (problem) return breach($, d, fenceBlock(problem))
   }
@@ -1412,7 +1435,7 @@ async function spawnPhase($: EngineInterface, run: Run, which: Phase, a: { subag
   const f = fenceKept
   if (f?.runId === run.id) {
     try {
-      await writeFence($, run.id, f.agent, [...f.refs, agentId, ...(spawned.teammateId ? [spawned.teammateId] : [])], [...f.paths, ...fencePaths(home, undefined, agentId)], f.root)
+      await writeFence($, run.id, f.agent, [...f.refs, agentId, ...(spawned.teammateId ? [spawned.teammateId] : [])], [...f.paths, ...fencePaths(home, undefined, agentId)], f.root, f)
     } catch (err) {
       await endAgents($, spawnRefs(agentId, name, spawned.teammateId))
       const why = fenceBlock(`its file couldn't be written: ${err instanceof Error ? err.message : String(err)}`)
