@@ -1673,6 +1673,21 @@ describe('parallel runs (Change 0.3.0)', () => {
     expect(key(16) in store).toBe(false)
   })
 
+  // PR #155 review round 1, finding 1: a finished record keeps its driver until that session releases it.
+  test('#153: #44 finished in another session while the menu is open, and Stop #44, then start #16 says it finished', async ($, on) => {
+    const store: Record<string, unknown> = { [key(44)]: blocked44({ repo: `${ROOT}/.git` }) }
+    const w = engine(on, { baseProfile: WORKTREE, localProfile: WORKTREE, spawnHold: held(), storeHold: { when: () => false, until: Promise.resolve() } }, store)
+    await start($)
+    let answer: (label: string) => void = () => undefined
+    w.hold = new Promise<string>(resolve => (answer = resolve))
+    const pending = run($, '16')
+    await until(w, () => w.asked.length > 0, 'the menu question')
+    store[key(44)] = { ...(store[key(44)] as any), step: 'done', blocked: undefined, driver: { session: OTHER, since: 1_000_000 } }
+    answer('Stop #44, then start #16')
+    expect((await pending).text).toBe('#44 finished while you chose; starting #16; the pane shows progress. Nothing is pushed until you say yes.')
+    expect((store[key(16)] as any)?.issue).toBe(16)
+  })
+
   test('/issue-forge handoff and the Hand off button end this session\'s drive and keep the step', async ($, on) => {
     const w = engine(on, { baseProfile: WORKTREE, spawnHold: held() })
     await start($)
