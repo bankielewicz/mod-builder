@@ -4843,7 +4843,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     await run($, 'resume')
     await waitFor(w, () => stored(store).step === 'blocked')
     expect(w.spawned).toEqual([])
-    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: "the fence can't run (exit 0), so no agent was started", next: 'issue-forge needs bash on PATH to run hooks/fence.sh; then /issue-forge resume' })
+    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: "the fence can't run (exit 0), so no agent was started", next: 'issue-forge needs bash 4.2 or later on PATH to run hooks/fence.sh' })
   })
 
   test("a preflight whose bash can't start blocks the same way", async ($, on) => {
@@ -4902,7 +4902,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     w.rootStatus = '?? stray.txt\0'
     await w.clock.advance(5_000)
     await waitFor(w, () => stored(store).step === 'blocked')
-    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: strayReason, next: "check those files (issue-forge doesn't undo them), then /issue-forge resume" })
+    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: strayReason, next: "check those files (issue-forge doesn't undo them)" })
     expect(stored(store).isFolderBlock).toBe(true)
     await waitFor(w, () => w.taskStops.length > 0)
     expect(w.taskStops).toEqual(['a77'])
@@ -4995,7 +4995,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     const store: Record<string, unknown> = { [RUN]: storedRun('blocked', { workRoot: WT, redCommit: undefined, used: { red: 1, green: 0, refactor: 0 }, agents: [], blocked: { at: 'red', reason: strayReason, next: 'n' }, isFolderBlock: true }) }
     const w = engine(on, { ...LIVE, worktrees: [WT],spawnHold: held(), stashList: `abc1234def0\tOn ${BRANCH}: ${message}\n` }, store)
     await start($)
-    expect((await run($, 'resume')).text).toBe(`resuming #16 at red; its worktree's uncommitted files go to the stash "${message}" first.`)
+    expect((await run($, 'resume')).text).toBe(`resuming #16 at red; any uncommitted files in its worktree go to the stash "${message}" first.`)
     await until(w, () => w.spawned.length === 1, "#16's red agent")
     const push = w.calls.find(c => c.argv[1] === 'stash' && c.argv[2] === 'push')
     expect(push).toMatchObject({ argv: ['git', 'stash', 'push', '--include-untracked', '-m', message], cwd: WT })
@@ -5012,7 +5012,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     w.files[FENCE] = 'live 9999999999 /\n'
     await w.clock.advance(5_000)
     await waitFor(w, () => stored(store).step === 'blocked')
-    expect(stored(store).blocked).toMatchObject({ reason: 'the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended', next: 'check ~/.claude/issue-forge-data/fence/, then /issue-forge resume' })
+    expect(stored(store).blocked).toMatchObject({ reason: 'the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended', next: 'check ~/.claude/issue-forge-data/fence/' })
     await waitFor(w, () => w.taskStops.length > 0)
     expect(w.taskStops).toEqual(['a77'])
   })

@@ -3203,7 +3203,7 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     const one = { paths: ['a.ts'], count: 1, isHashless: false }
     expect(block('/repo', 'red', one)).toEqual({
       reason: "the session's folder /repo changed while the red agent worked: a.ts; issue-forge can't tell whether the agent or someone else made the change",
-      next: "check those files (issue-forge doesn't undo them), then /issue-forge resume",
+      next: "check those files (issue-forge doesn't undo them)",
     })
     const seven = { paths: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], count: 7, isHashless: true }
     expect(block('/repo', 'green', seven).reason).toBe("the session's folder /repo changed while the green agent worked: a, b, c, d, e (and 2 more); issue-forge can't tell whether the agent or someone else made the change (compared by git status only: git hash-object failed)")
@@ -3238,12 +3238,19 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   test("the fence's blocks: it can't run, or a fence file was changed", () => {
     expect(fenceBlock('bash: not found')).toEqual({
       reason: "the fence can't run (bash: not found), so no agent was started",
-      next: 'issue-forge needs bash on PATH to run hooks/fence.sh; then /issue-forge resume',
+      next: 'issue-forge needs bash 4.2 or later on PATH to run hooks/fence.sh',
     })
     expect(fenceTamperBlock('issue-forge-16-red-1')).toEqual({
       reason: 'the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended',
-      next: 'check ~/.claude/issue-forge-data/fence/, then /issue-forge resume',
+      next: 'check ~/.claude/issue-forge-data/fence/',
     })
+  })
+
+  test("the status line names the resume step once: the pane and status add it to every block's next", () => {
+    const blocked = { ...run({ step: 'blocked', blocked: { at: 'red', ...folderBlock('/repo', 'red', { paths: ['a.ts'], count: 1, isHashless: false }) } }) } as Run
+    const status = statusText(blocked, false, 6)
+    expect(status).toContain("next: check those files (issue-forge doesn't undo them), then /issue-forge resume")
+    expect(status).not.toContain('resume, then /issue-forge resume')
   })
 
   test('a folder block records the flag and drops the snapshot; a resume keeps the flag; a stop drops the snapshot', () => {
@@ -3297,8 +3304,8 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
     expect(folderStashMessage(r, 'red')).toBe('issue-forge #16 red after the folder check (run 16-1)')
     const note = folderResumeNote
-    expect(note(r)).toBe('; its worktree\'s uncommitted files go to the stash "issue-forge #16 red after the folder check (run 16-1)" first')
+    expect(note(r)).toBe('; any uncommitted files in its worktree go to the stash "issue-forge #16 red after the folder check (run 16-1)" first')
     expect(note(run({ step: 'red' }))).toBe('')
-    expect(note({ ...run({ step: 'blocked', blocked: { at: 'green', reason: 'r', next: 'n' } }), isFolderBlock: true } as Run)).toBe('; its worktree\'s uncommitted files go to the stash "issue-forge #16 green after the folder check (run 16-1)" first')
+    expect(note({ ...run({ step: 'blocked', blocked: { at: 'green', reason: 'r', next: 'n' } }), isFolderBlock: true } as Run)).toBe('; any uncommitted files in its worktree go to the stash "issue-forge #16 green after the folder check (run 16-1)" first')
   })
 })
