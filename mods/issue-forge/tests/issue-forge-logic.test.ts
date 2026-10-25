@@ -3235,6 +3235,42 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(paths('/home/u', undefined, 'aid-1')).toEqual(['/home/u/.claude/issue-forge-data/fence/id/aid-1'])
   })
 
+  // PR #162 review round 1, finding 5 (the owner's content check): a name file is keyed by the agent's name alone, so
+  // another repository's run of the same issue can hold it. Its line names another run's folder.
+  test("a fence file's line: this run's own, another run's (a live line naming another folder), or changed", () => {
+    const owner = (text: string | null, mine: string, root: string): unknown => (logic as Record<string, any>).fenceOwner?.(text, mine, root)
+    const mine = 'live 100 /repo/wt'
+    expect(owner('live 100 /repo/wt\n', mine, '/repo/wt')).toEqual({ kind: 'mine' })
+    expect(owner('live 130 /other/scratch/issue-forge/b\n', mine, '/repo/wt')).toEqual({ kind: 'other', root: '/other/scratch/issue-forge/b' })
+    expect(owner('live 130 /repo/wt\n', mine, '/repo/wt')).toEqual({ kind: 'changed' })
+    expect(owner('retired\n', mine, '/repo/wt')).toEqual({ kind: 'changed' })
+    expect(owner(null, mine, '/repo/wt')).toEqual({ kind: 'changed' })
+    expect(owner('garbage', mine, '/repo/wt')).toEqual({ kind: 'changed' })
+  })
+
+  test("before a spawn: a live, unexpired name line for another run's folder holds the name; anything else doesn't", () => {
+    const heldBy = (text: string | null, root: string, nowS: number): unknown => (logic as Record<string, any>).fenceHeldBy?.(text, root, nowS)
+    expect(heldBy('live 130 /other/wt\n', '/repo/wt', 120)).toBe('/other/wt')
+    expect(heldBy('live 130 /other/wt\n', '/repo/wt', 131)).toBeNull()
+    expect(heldBy('live 130 /repo/wt\n', '/repo/wt', 120)).toBeNull()
+    expect(heldBy('retired\n', '/repo/wt', 120)).toBeNull()
+    expect(heldBy(null, '/repo/wt', 120)).toBeNull()
+    // A folder under this one is another run's too: the main folder and a worktree of it under scratch/ both run #N.
+    expect(heldBy('live 130 /repo/wt/scratch/issue-forge/b\n', '/repo/wt', 120)).toBe('/repo/wt/scratch/issue-forge/b')
+  })
+
+  test("the name clash's block, at the spawn and at the 5 s check, and which fence files are name files", () => {
+    const clash = (agent: string, root: string, issue: number, isEnded: boolean): unknown => (logic as Record<string, any>).fenceClashBlock?.(agent, root, issue, isEnded)
+    expect(clash('issue-forge-16-red-1', '/other/wt', 16, false)).toEqual({
+      reason: 'the fence name issue-forge-16-red-1 is live in /other/wt (another run of #16), so no agent was started',
+      next: "wait for that run's agent to end, or stop that run (a line its session left lapses within 30 s)",
+    })
+    expect((clash('issue-forge-16-red-1', '/other/wt', 16, true) as { reason: string }).reason).toBe('the fence name issue-forge-16-red-1 is live in /other/wt (another run of #16), so the agent was ended')
+    const isName = (path: string): unknown => (logic as Record<string, any>).isFenceNamePath?.(path)
+    expect(isName('/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1')).toBe(true)
+    expect(isName('/home/u/.claude/issue-forge-data/fence/id/aid-1')).toBe(false)
+  })
+
   test("the preflight: a synthetic issue-forge call with no fence file, which only the script's own refusal answers", () => {
     const input = JSON.parse(fencePreflightInput())
     expect(input).toMatchObject({ agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' } })

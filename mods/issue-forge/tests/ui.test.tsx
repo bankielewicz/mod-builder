@@ -5131,4 +5131,35 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     await w.clock.settle()
     expect(w.files[FENCE]).toBe('retired\n')
   })
+
+  // PR #162 review round 1, finding 5 (the owner's content check): another repository's run of #16 can hold the name file.
+  const OTHER_LINE = 'live 9999999999 /elsewhere/scratch/issue-forge/issue-16-x\n'
+
+  test("a name another run's live line holds: the spawn is refused, the run blocks naming that folder, and its line stays", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT] }, store)
+    w.files[FENCE] = OTHER_LINE
+    await start($)
+    await run($, 'resume')
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(w.spawned).toEqual([])
+    expect(stored(store).blocked).toMatchObject({ at: 'red', reason: 'the fence name issue-forge-16-red-1 is live in /elsewhere/scratch/issue-forge/issue-16-x (another run of #16), so no agent was started' })
+    expect(w.files[FENCE]).toBe(OTHER_LINE)
+  })
+
+  test("another run's line in the name file before the id file exists: the agent is ended, the run blocks, and that line is left as it is", async ($, on) => {
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]] }, store)
+    await start($)
+    await run($, 'resume')
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    w.files[FENCE] = OTHER_LINE
+    await w.clock.advance(5_000)
+    await waitFor(w, () => stored(store).step === 'blocked')
+    expect(stored(store).blocked?.reason).toBe('the fence name issue-forge-16-red-1 is live in /elsewhere/scratch/issue-forge/issue-16-x (another run of #16), so the agent was ended')
+    await waitFor(w, () => w.taskStops.length > 0)
+    await w.clock.settle()
+    expect(w.taskStops).toEqual(['a77'])
+    expect(w.files[FENCE]).toBe(OTHER_LINE)
+  })
 })
