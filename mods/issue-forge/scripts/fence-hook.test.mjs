@@ -176,7 +176,8 @@ test("the module's preflight call is refused with an issue-forge: reason", () =>
 function onOldBash() {
   const dir = mkdtempSync(join(tmpdir(), 'fence-old-'))
   const path = join(dir, 'fence.sh')
-  writeFileSync(path, readFileSync(SCRIPT, 'utf8').replace('\n', '\nOLD_VERSINFO=(4 1)\n').replaceAll('BASH_VERSINFO', 'OLD_VERSINFO'))
+  const [shebang, ...rest] = readFileSync(SCRIPT, 'utf8').replaceAll('BASH_VERSINFO', 'OLD_VERSINFO').split('\n')
+  writeFileSync(path, [shebang, 'OLD_VERSINFO=(4 1)', ...rest].join('\n'))
   return { path, done: () => rmSync(dir, { recursive: true, force: true }) }
 }
 
