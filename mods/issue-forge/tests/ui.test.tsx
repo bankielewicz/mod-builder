@@ -53,6 +53,10 @@ type World = {
   fenceCheck?: { exitCode: number; stderr: string } | 'throws'
   /** How many times the fence preflight ran. */
   fenceChecks?: number
+  /** The next fence preflight answers only once this settles (PR #162 review round 2, finding 1). */
+  fenceHold?: Promise<void>
+  /** True once the held preflight has been asked. */
+  fenceHeld?: boolean
   /** `git status --porcelain=v1 -z -uall --no-renames` in the session's folder (Change 0.10.0); absent, clean. */
   rootStatus?: string
   /** `git hash-object`'s answer per path; absent, `h-<path>`. */
@@ -439,8 +443,12 @@ function engine(on: any, w: Partial<World> = {}, store: Record<string, unknown> 
     if (cmd === 'bash' && (a[0] ?? '').endsWith('/hooks/fence.sh')) {
       world.fenceChecks = (world.fenceChecks ?? 0) + 1
       const check = world.fenceCheck
-      if (check === 'throws') return { deny: 'spawn bash ENOENT' }
-      return check ? { value: { stdout: '', isStdoutTruncated: false, isStderrTruncated: false, ...check } } : fail('issue-forge: this agent has no fence file, so it may not call tools; end your turn now.\n', 2)
+      const answer = check === 'throws' ? { deny: 'spawn bash ENOENT' } : check ? { value: { stdout: '', isStdoutTruncated: false, isStderrTruncated: false, ...check } } : fail('issue-forge: this agent has no fence file, so it may not call tools; end your turn now.\n', 2)
+      const hold = world.fenceHold
+      if (!hold) return answer
+      world.fenceHold = undefined
+      world.fenceHeld = true
+      return hold.then(() => answer)
     }
     if (cmd !== 'git') return fail(`unknown ${cmd}`)
     // The folder check (Change 0.10.0) reads the session's folder with --no-renames, and hashes what it lists.
