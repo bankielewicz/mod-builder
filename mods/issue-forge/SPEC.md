@@ -2715,4 +2715,23 @@ count set in the pane.
      This changes item 4.2's snapshot shape.
   5. **A root holding an apostrophe** (Codex 4372568593; reproduced: the prompt's own `shellQuote` prefix `cd '/srv/owner'\''s repo/wt' &&` was refused, and the refusal's hint `cd '/srv/owner's repo/wt' &&` isn't valid shell). **Fix** (the owner: "approve, but implement it by storing, not parsing"): the module writes the exact prefix it tells the agent to use, `cd <shellQuote(root)> &&`, as a second line of the agent's fence file; `fence.sh` matches that spelling byte for byte (it becomes the root's mark, before the others), and prints its hint from the same stored line. One source of truth, so the hint is valid shell and always accepted, and the script has no quoting logic. The approved bare, single- and double-quoted spellings stay accepted (3.3). A fence file with no second line, from before, is read as now. Tests: roots holding an apostrophe, a blank, a double quote, a backslash and a `$`, each accepted with the stored prefix and refused with a wrong one. This changes item 3.1's file format and 3.3's spellings.
 
-  The stopping rule (memory, from PR #57's review): findings 3 and 5 are a word check's edge cases in their second round. If a third round brings more, the fence is documented as the tripwire it is (3.3: "a word check for honest mistakes, not a sandbox") rather than chased.
+  **Open, for the owner (not decided):** whether later rounds' word-check edge cases are fixed or documented. Findings 3 and 5 are such cases, in their second round. A stopping rule has been used before: on PR #57 after Codex's fourth round, and for duet's key-file guard, where the owner accepted documenting a text-match guard's limits as a tripwire. It was first written here as a rule for this fence from round 3, without the owner's say; that sentence is replaced by this one.
+  - **Built** (round 2): the block above `3c8ed5f`. Each finding red, then green:
+    - 1, the stop during the preflight: the kit's preflight hold `77afe56`; red `e60f214` (1 of 648 fail by assertion) and `20e8d15` (a stop during the first write; 2 of 649, run against the code before the fix); green `a1e0303` (649 of 649).
+    - 2, the 5 s check outside the queue: red `ece517f` (1 of 650 fail by assertion: `the fence file for issue-forge-16-red-1 was changed or removed`), green `c74080b` (650 of 650).
+    - 3, protected names under the root: red `2b293aa` (1 of 24 fail by assertion), green `bc0e74f` (24 of 24).
+    - 5, the stored prefix: red `c7423b2` (4 of 650 and 1 of 26 fail by assertion), green `078f005` (650 of 650, 26 of 26). Cross-checked: the module's `fenceLine` for roots holding `'`, a blank, `"`, `\` and `$` passes the real script.
+    - 4, capped snapshots: red `e079c17` (2 of 651 fail by assertion); its shape test expected `isHashed: true` for entries with no hash, which was wrong, fixed in `19c0503`; green `2036e04` (651 of 651).
+    - Refactor `4f1654b`: one `cdPrefix` for the prompt and the fence file; the live line read without a branch that can't be taken.
+  - **Where it differs from the block above:**
+    1. Finding 1's second check sits inside the `try` whose `finally` already retires the fence, so the phase doesn't call the retirement itself.
+    2. A capped snapshot with no status digest (from before) compares by count, as the block says, and the block's reason keeps its wording, `(compared by git status only: git hash-object failed)`, though there the cause is the old snapshot.
+  - **QA** (head `4f1654b`, CLI 2.1.310):
+    - `claude plugin validate --strict` passes for `.`, `mods/issue-forge` and `plugins/mod-builder`;
+    - `claude plugin test`: issue-forge 651 of 651, mod-builder 375 of 375;
+    - `node --test mods/issue-forge/scripts/fence-hook.test.mjs`: 26 of 26;
+    - the typecheck, tests included, exits 0;
+    - logic coverage: lines 100.00%, branches 99.83%, functions 99.49%; the same three untaken branches `main` has;
+    - `check-sandbox.mjs`: its first run failed once, `tests/node-fs.test.ts is not in the output`, and three runs after it passed; not reproduced;
+    - the smoke test: its first run left no debug log; the rerun logged `loaded`, `admitted` and `Registered 6 hooks from 17 plugins`.
+  - **C9 and C10 run after this round's push**, with nothing editing the worktree: these fixes change the first fence write and the 5 s check those steps exercise, and a `--plugin-dir` copy reloads on every save, after which a live fence line isn't renewed (a side agent's note).
