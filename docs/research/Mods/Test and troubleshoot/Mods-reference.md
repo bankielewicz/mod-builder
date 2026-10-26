@@ -21,7 +21,7 @@ A mod is a plugin directory with these files:
 | `.claude-plugin/plugin.json` | Yes | The plugin [manifest](/docs/en/plugins/manifest-reference). Mods add no required fields. |
 | `hooks/hooks.json` | Yes | `modules`: an array with one path, relative to this file, to the hooks module, as in `"modules": ["./register.js"]`. Can also hold [settings hooks](/docs/en/hooks) under `hooks`. |
 | The hooks module, such as [`hooks/register.js`](/docs/en/plugins/mods/create#write-a-mod-yourself) | Yes | The mod's entry point. Exports `register(on, options)`. Named `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, or `.tsx`. An ES module. |
-| [`types/index.d.ts`](/docs/en/plugins/mods/interface#declare-the-values), named by `types` in the manifest | When the mod uses `$.state` or adds a namespace to the mods API | Declares `PluginState` values and any namespace the mod adds |
+| [`types/index.d.ts`](/docs/en/plugins/mods/interface#declare-the-values), unless `types` in the manifest names another path | When the mod uses `$.state` or adds a namespace to the mods API | Declares `PluginState` values and any namespace the mod adds. To leave `types` out of the manifest, you need v2.1.299 or later. |
 | Files whose names end in `.test.ts` or `.test.tsx` | No | Tests that [`claude plugin test`](/docs/en/plugins/mods/test#write-a-test) runs |
 
 `register` receives `on` and `options`. `options` holds the values of the [`userConfig`](/docs/en/plugins/components#user-configuration) fields the manifest declares, with defaults filled in.
@@ -110,7 +110,7 @@ On `skill.prompt`, `e.source`, `e.pluginName`, `e.path`, `e.frontmatter`, and `e
 
 ### Commands and configuration
 
-Command and configuration events fire when a command runs or is listed, and when a `/config` row is shown or changed:
+Command and configuration events fire when a command runs or is listed, when a `/config` row is shown or changed, and on a settings read:
 
 | Event | Fires when | A hook can return |
 | :- | :- | :- |
@@ -118,6 +118,14 @@ Command and configuration events fire when a command runs or is listed, and when
 | `command.describe` | Once for each command, for the command list | `{ description, argumentHint, isHidden }` |
 | `config.set` | A `/config` row is about to change | `next({ ...e, value })` or `{ deny: reason }` |
 | `config.describe` | Once for each `/config` row | `{ label, description, isHidden }` |
+| [`settings.read`](/docs/en/plugins/mods/events#settings-read-hook) | A mod calls [`$.settings.read`](/docs/en/plugins/mods/api#reach-files-processes-and-the-network), or Claude Code builds the session's merged settings | `next(e)`, `{ value }`, or `{ deny: reason }` |
+
+#### `e.layers` and `e.source` on `settings.read`
+
+* **`e.layers`**: one `{ source, settings }` object for each source in use that holds settings, lowest [precedence](/docs/en/settings#settings-precedence) first. See [What a `settings.read` hook receives](/docs/en/plugins/mods/events#settings-read-receives).
+* **`e.source`**: the one source a mod asked for, as in `$.settings.read({ source: 'policy' })`. Absent on Claude Code's own read and on any other read of the merged settings
+
+On `settings.read`, the event firing on Claude Code's own read and the `e.layers` field require Claude Code v2.1.304 or later. For when the hook runs and what the hook can return, with an example, see [Change or refuse a settings read](/docs/en/plugins/mods/events#settings-read-hook).
 
 ### Turns
 
@@ -261,28 +269,36 @@ Elements are the building blocks of a tree a `ui.render` hook returns, and you g
 
 | Element | Main props | Terminal | Desktop | VS Code |
 | :- | :- | :-: | :-: | :-: |
-| [`Box`](/docs/en/plugins/mods/interface#build-a-tree-from-elements) | `key`, flex layout, [`gap`, `padding`, `margin`](#box-spacing-steps), `width`, `height`, [`borderStyle`](#box-border-styles), `backgroundColor`, `position`, `hover` | ✓ | ✓ | ✓ |
-| [`Text`](/docs/en/plugins/mods/interface#build-a-tree-from-elements) | `color`, `backgroundColor`, [`bold`](#text-bold), `italic`, `underline`, `dimColor`, `inverse`, `wrap`, [`size`, `weight`, `mono`, `tabular`](#text-typography) | ✓ | ✓ | ✓ |
-| [`Button`](/docs/en/plugins/mods/interface#respond-to-presses-and-typing) | `key`, `label`, `onPress`, `hotkey`, `plain`, `dimColor`, `autoFocus`, `action` | ✓ | ✓ | ✓ |
+| [`Box`](/docs/en/plugins/mods/interface#build-a-tree-from-elements) | `key`, flex layout, [`gap`, `padding`, `margin`](#box-spacing-steps), `width`, `height`, `minWidth`, `minHeight`, [`borderStyle`](#box-border-styles), `borderColor`, `borderDimColor`, `backgroundColor`, `position`, `top`, `left`, `right`, `bottom`, `overflow`, `display`, `hover` | ✓ | ✓ | ✓ |
+| [`Text`](/docs/en/plugins/mods/interface#build-a-tree-from-elements) | `color`, `backgroundColor`, [`bold`](#text-bold), `italic`, `underline`, `strikethrough`, `dimColor`, `inverse`, `wrap`, [`size`, `weight`, `mono`, `tabular`](#text-typography), `hover` | ✓ | ✓ | ✓ |
+| [`Button`](/docs/en/plugins/mods/interface#respond-to-presses-and-typing) | `key`, `label`, `onPress`, `hotkey`, `plain`, `dimColor`, `autoFocus`, `action`, `hover` | ✓ | ✓ | ✓ |
 | [`Link`](/docs/en/plugins/mods/interface#link-in-the-desktop-app) | `href`, `label`. See [Limits](#limits). | ✓ | ✓ | ✓ |
 | [`Code`](/docs/en/plugins/mods/gallery#show-code-and-changes) | `source`, `language`, `path`, `startLine`, `format`, `wrap` | ✓ | ✓ | ✓ |
 | `Markdown` | `text`, `key`, `dimColor`, `onLinkPress`, `pressableLinks` | ✓ | ✓ | ✓ |
 | [`Input`](/docs/en/plugins/mods/interface#take-typed-input-and-draw-a-row-for-each-item) | `key`, `label`, `placeholder`, `value`, `submitLabel`, `onSubmit`, `onInput`, `autoFocus` | ✓ | ✓ | ✓ |
 | `Select` | `key`, `label`, `options`, `value`, `onSelect`, `autoFocus` | ✓ | ✓ | ✓ |
-| `Svg` | An SVG document, up to 131,072 characters | | ✓ | ✓ |
-| [`Client`](/docs/en/plugins/mods/interface#build-a-tree-from-elements) | `module`, `key` | ✓ | ✓ | |
+| `Svg` | a `source` of SVG markup up to 131,072 characters, `alt` text, `width`, `height`, and `isInteractive` | | ✓ | ✓ |
+| [`Client`](/docs/en/plugins/mods/interface#build-a-tree-from-elements) | `module`, `key`, `props`, `width`, `height`, `flexGrow` | ✓ | ✓ | |
 | [`Raster`](/docs/en/plugins/mods/interface#draw-a-grid-of-colored-cells) | `key`, `columns` up to 512, `rows` up to 256, `cells`. See [Draw a grid of colored cells](/docs/en/plugins/mods/interface#draw-a-grid-of-colored-cells). | ✓ | | |
-| `Image` | PNG or RGBA bytes up to 2 MiB, or a file path, `columns` and `rows` up to 255, and `alt` text. See [which terminals draw it](/docs/en/plugins/mods/gallery#image-and-client). | ✓ | | |
+| `Image` | `key`, a `source` such as PNG or RGBA bytes up to 2 MiB, or a file path, `columns` and `rows` up to 255, and `alt` text. See [which terminals draw it](/docs/en/plugins/mods/gallery#image-and-client). | ✓ | | |
 
-More `Button` rules: `action` names one of Claude Code's own [keybinding actions](/docs/en/keybindings), and the user's binding for it presses the button when that binding is a chord or a modified key. A digit `hotkey` on a button in the band also fires when the user types that digit alone into an empty prompt and pauses. When two buttons in one drawing name the same `hotkey`, the later one gets it. `autoFocus` accepts only `true` on any control, so omit the prop to leave it off.
+More `Button` rules:
+
+* **`action`**: names one of Claude Code's own [keybinding actions](/docs/en/keybindings), and the user's binding for it presses the button when that binding is a chord or a modified key
+* **Digit hotkeys on the band**: a digit `hotkey` on a button in the band also fires when the user types that digit alone into an empty prompt and pauses
+* **A collapsed band**: while the band is [collapsed](/docs/en/plugins/mods/interface#when-the-user-collapses-the-band), neither an `action` binding nor a hotkey presses a button in it
+* **Two buttons on one hotkey**: when two buttons in one drawing name the same `hotkey`, the later one gets it
+
+`autoFocus` accepts only `true` on any control, so omit the prop to leave it off.
 
 The VS Code extension ignores some element props and draws the element as if you had left them out:
 
-* **`Box`**: `position` and `hover`
-* **`Text`**: `size`, `mono`, and `tabular`
-* **`Button`**: `hotkey`, `plain`, `autoFocus`, and `action`, so the user presses a button there with a click, or with Enter once it has focus
+* **`Box`**: `position` with its `top`, `left`, `right`, and `bottom`, `alignSelf`, `borderDimColor`, and `hover`
+* **`Text`**: `size`, `mono`, `tabular`, and `hover`
+* **`Button`**: `hotkey`, `plain`, `autoFocus`, `action`, and `hover`, so the user presses a button there with a click, or with Enter once it has focus
 * **`Code`**: `language`, `path`, `startLine`, `format`, and `wrap`, so code draws without colors or line numbers, and a `format: 'diff'` block shows the diff's raw text
 * **`Input` and `Select`**: `autoFocus`
+* **`Svg`**: `isInteractive`
 
 ### `Box` border styles
 

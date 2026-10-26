@@ -88,6 +88,8 @@ The line starts with the mod's name, then `hooks module did not load:` and a rea
 
 Fix the error the reason names.
 
+If the reason ends with `; the version loaded before is unloaded`, no version of the mod is running now. Once you fix the error, run [`/reload-plugins`](/docs/en/plugins/cli-reference#reload-plugins) in the session to load the mod again. If you installed the mod and didn't write it, ask its author to fix the error.
+
 ### `options do not fit plugin.json userConfig`
 
 The line starts with the mod's name, then `hooks module did not load: options do not fit plugin.json userConfig:` and a reason. An option fails validation against its [`userConfig`](/docs/en/plugins/components#user-configuration) field, such as a number above the field's `max`, or a required field has no value.
@@ -99,6 +101,21 @@ Set or change the value. The end of the line names its `pluginConfigs` entry in 
 The line starts with the mod's name, then `hooks module did not load:`, the file, and `code nested too deep to scan: more than 2000 scopes`. A file in a hooks module can't nest scopes, such as functions, blocks, and loops, more than [2,000 deep](/docs/en/plugins/mods/reference#limits). [`claude plugin validate`](/docs/en/plugins/mods/create#check-what-claude-code-reads-from-your-mod) reports the same reason.
 
 Rewrite the code so its scopes nest less deeply.
+
+### `the engine ran out of stack linking the file and its imports`
+
+Code in the hooks module is nested too deeply, or its chain of imports is too long, for Claude Code to load it. The line starts with the mod's name and `hooks module did not load:`, then gives a file's name and this reason.
+
+In that file and the files its imports reach, find the most deeply nested code and rewrite it to nest less, or shorten the chain of imports. If you didn't write the mod, ask its author to fix it.
+
+### `the parser stopped` or `the engine ran out of stack loading the file`
+
+Code in one file of the hooks module is nested so deeply that Claude Code ran out of stack reading it. The line starts with the mod's name and `hooks module did not load:`, then gives that file's name and one of these reasons:
+
+* `code nested too deep to scan (the parser stopped: <message>)`
+* `the engine ran out of stack loading the file (code nested too deep): <message>`
+
+The reason gives no line number and doesn't say what kind of code is nested, so look through the file yourself for its most deeply nested part. Rewrite that part to nest less. If you installed the mod and didn't write it, ask its author to.
 
 ### No mod loads in a directory you opened for the first time
 
@@ -150,6 +167,15 @@ The line starts with the mod's name and names a `$.prompt.submit`, `$.command.ru
 There's nothing to fix.
 
 Before v2.1.292, the call ran a second time, so the prompt was submitted, the command run, or the subagent started twice.
+
+### `This mod's change didn't load` or `the earlier version is no longer running`
+
+A change to a [mod Claude wrote in this session](/docs/en/plugins/mods/create#ask-claude-for-a-mod) couldn't load. The transcript line starts with the mod's name and ends with the reason:
+
+* `This mod's change didn't load, so the earlier version is still running: <reason>.`
+* `This mod didn't load, and the earlier version is no longer running: <reason>.`
+
+Claude doesn't see this line, so paste it into your next message when you ask Claude for a fix.
 
 ### `$.agent.register refused: the hooks module that made the call is no longer loaded`
 
@@ -208,6 +234,15 @@ The [tree](/docs/en/plugins/mods/interface#build-a-tree-from-elements) your hook
 
 Read the reason on that line. Common causes are a prop the element doesn't take and an element the app doesn't have.
 
+### `needs a key`, `is drawn twice`, or `key each once`
+
+An element in the tree your `ui.render` hook returns has no valid [`key`](/docs/en/plugins/mods/interface#which-controls-need-a-key), or two elements share one. Find the message you got:
+
+* **`<Input> needs a key` or `<Select> needs a key`**: the element has no `key` prop, or its `key` is empty or isn't a string, as in `key: 3`. Give it a non-empty string as its `key`.
+* **`<Button> needs a key`**: give the button a non-empty string as its `key`
+* **`is drawn twice; each takes its own key`**: two elements of the kind the message names have the same `key`, as in `Input "size" is drawn twice; each takes its own key`. Give each element its own `key`.
+* **`key each once` from `press` in a [test](/docs/en/plugins/mods/test#test-a-drawing)**: the drawing has more than one button with the key you passed. Buttons with the same label and no `key` prop share that label as their key. Give each button its own `key`.
+
 ### A `ui.render` line says `threw while drawn`
 
 The line names the [render site](/docs/en/plugins/mods/reference#render-sites), then says `threw while drawn:` and the error, as in `first-mod: ui.render (ToolUse) threw while drawn: <error>; the engine drew its own`. Claude Code hit that error while drawing the tree your [`ui.render`](/docs/en/plugins/mods/reference#interface) hook returned, or while drawing the site from the [`props` your hook passed to `next`](/docs/en/plugins/mods/interface#change-what-claude-code-already-draws). The ending `the engine drew its own` means the site shows Claude Code's usual content.
@@ -242,11 +277,18 @@ Your mod calls [`$.ui.toast`](/docs/en/plugins/mods/api#show-something-without-s
 
 Before v2.1.290, Claude Code dropped a toast raised within two seconds of the last one it showed for your mod, and the debug log line for the dropped toast said `within 2000ms of the last; dropped`.
 
+### The band shows `plugin panel hidden`
+
+The band is [collapsed](/docs/en/plugins/mods/interface#when-the-user-collapses-the-band). It collapses when you press Ctrl+X then Ctrl+A, or the keys you bound in their place, and in [fullscreen rendering](/docs/en/fullscreen) when you click the `[-]` on its first row. It stays collapsed until you expand it or start Claude Code again, and meanwhile no hotkey or `action` binding presses a button in it.
+
+To expand the band, press the keys the row names, Ctrl+X then Ctrl+A by default, or in fullscreen rendering click the row.
+
 ### Hotkeys do nothing
 
-Your pane doesn't have keyboard focus, or the drawing is in the VS Code extension, where buttons have no hotkeys. Do the one that matches:
+Your pane or band doesn't have keyboard focus, your button is in a collapsed band, or the drawing is in the VS Code extension, where buttons have no hotkeys. Do the one that matches:
 
-* **No keyboard focus**: press Ctrl+X then Tab, or click the pane. To have the pane take focus when it opens, open it with `focus: true` from a command.
+* **No keyboard focus**: press Ctrl+X then Tab or, in [fullscreen rendering](/docs/en/fullscreen), click the pane or band. To have the pane take focus when it opens, open it with `focus: true` from a command.
+* **The button is in a collapsed band**: the band shows one dim row that starts with `▸ plugin panel hidden`. Press the keys the row names, Ctrl+X then Ctrl+A by default, to [expand it](#plugin-panel-hidden).
 * **In the VS Code extension**: click the button, or press Enter on it once it has focus
 
 ### A drawing works in the terminal and not in the Desktop app or VS Code
@@ -278,6 +320,48 @@ Module-level variables are re-initialized on each reload.
 A value resets, or a saved value is replaced by its default. Each of those commands resets `$.state` to its defaults, and `session.start` doesn't fire again.
 
 [Load the saved value again](/docs/en/plugins/mods/interface#load-a-saved-value-again-after-clear) in a `classic.SessionStart` hook.
+
+### A key your `settings.read` hook returns doesn't take effect
+
+Returned `env` entries don't become environment variables. Returned `allow`, `ask`, and `deny` rules aren't checked on tool calls. Set those in a [settings file](/docs/en/settings), or call [`$.env.set`](/docs/en/plugins/mods/api#reach-files-processes-and-the-network) for environment variables.
+
+For another key, check [which mods get `settings.read` and from which version](/docs/en/plugins/mods/events#settings-read-hook), then search the [debug log](#read-the-debug-log) for `settings.read` and look for one of these lines:
+
+| Log line | Meaning and step |
+| :- | :- |
+| `settings.read hook skipped`, after your mod's name | Your hook failed. [Fix the error the line reports](#hook-skipped). |
+| `settings.read bypassed by cc-plugin-sec-default`, on a line that names your mod ahead of it | The [built-in guard](/docs/en/plugins/mods/admin#know-what-happens-by-default) skipped your hook. Ask your organization's administrator to [install the mod as one of the organization's mods](/docs/en/plugins/mods/admin#install-your-organizations-mods). |
+| `settings.read: the answer for <key> is no value the key can hold` | The returned value doesn't fit the key's schema. [Return one it allows](#settings-read-key-refused). |
+| `settings.read: the merge never settles for <key>` | The keys the line names keep the settings sources' values. Set them in a settings file. |
+| `answered settings.read without next()`, after a mod's name | Relevant only if that mod [runs before yours](/docs/en/plugins/mods/events#the-order-mods-run-in). Then your hook didn't run on that read. [Turn that mod off](/docs/en/plugins/mods/overview#turn-mods-on-or-off), or if your organization deployed it, ask its administrator to. |
+| `settings.read: refused to the engine` | The read was refused, so no hook's `{ value }` applied. [Find what refused it](#settings-read-refused). |
+
+If no line explains the key, check the mods that run before yours for a `settings.read` hook that [changes the key](/docs/en/plugins/mods/events#settings-read-example). Turn that mod off, or ask your organization's administrator to. If no hook does, set the key in a settings file.
+
+### `the answer for <key> is no value the key can hold`
+
+This [debug log](#read-the-debug-log) line means Claude Code refused the value your [`settings.read`](/docs/en/plugins/mods/events#settings-read-hook) hook returned for the named key, and that key alone:
+
+```text theme={null}
+settings.read: the answer for <key> is no value the key can hold; the settings' own value stands
+```
+
+The value you returned for the named key didn't fit that key's schema, for example by type or by range. Return a value that the key's [settings reference](/docs/en/settings-reference) entry allows. While your value doesn't fit, the key keeps the value merged from the settings sources before any hook answered. The line calls it the settings' own value.
+
+### `settings.read: refused to the engine`
+
+This [debug log](#read-the-debug-log) line means [Claude Code's own read](/docs/en/plugins/mods/events#settings-read-hook) was refused, so no hook's `{ value }` applied, yours included. When a `settings.read` hook refuses that read with [`{ deny: reason }`](/docs/en/plugins/mods/events#settings-read-returns), the line carries that hook's reason:
+
+```text theme={null}
+settings.read: refused to the engine (engine: $.settings.read: <reason>); the settings' own values stand
+```
+
+Search your own hook's code for the `<reason>` text:
+
+* **Your code has it**: your hook refused the read. Make it return `{ value }` when [`next.origin`](/docs/en/plugins/mods/events#settings-read-origin) shows Claude Code's own read.
+* **Your code doesn't have it**: [turn off](/docs/en/plugins/mods/overview#turn-mods-on-or-off) your other mods one at a time. After each, rerun this session's command from your shell with one `--debug-file` on a new path, and search that file for `refused to the engine`. If the line is there, turn off the next mod. If not, the last mod you turned off refused the read, so keep it off.
+
+With no other mod left, use a [settings file](/docs/en/settings) for the keys your hook returns. Its values hold while the read is refused.
 
 ## Read the debug log
 
