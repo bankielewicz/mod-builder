@@ -159,11 +159,28 @@ back='(^|[[:space:];&|])cd[[:space:]]+-([[:space:];&|]|$)'
 words=${cmd//[\'\"\`;|&<>()=]/ }
 words=${words//[$'\n\t\r']/ }
 read -r -a list <<<"$words" || true
+# tidy PATH: placed, with // and /./ folded, so a protected name can't hide behind either.
+tidy() {
+  local p=$1
+  while [[ $p == *//* ]]; do p=${p//\/\//\/}; done
+  while [[ $p == */./* ]]; do p=${p//\/.\//\/}; done
+  placed=$p
+  return 0
+}
+
+PROTECTED="the fence's or the plugin's own files; leave them alone."
 for w in "${list[@]}"; do
   shown=${w//$mark/$root}
+  # Under the root, or relative to it: the protected names still apply (PR #162 review round 2, finding 3).
   if [[ $w == "$mark" || $w == "$mark"/* ]]; then
     [[ /${w#"$mark"}/ == */../* ]] && deny "$shown has a .. segment; stay in this run's folder $root."
+    tidy "$shown"
+    protected "$placed" && deny "this command names $shown, $PROTECTED"
     continue
+  fi
+  if [[ $w != /* && $w != '~'* && ! $w =~ ^[A-Za-z]: ]]; then
+    tidy "$root/$w"
+    protected "$placed" && deny "this command names $shown, $PROTECTED"
   fi
   [[ $w == "$mark"* ]] && deny "this command names $shown, outside this run's folder $root; name paths in it only."
   case $w in
