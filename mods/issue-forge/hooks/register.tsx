@@ -188,7 +188,7 @@ import {
   worktreePath,
   worktreeStateOf,
 } from './issue-forge-logic'
-import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, EndedAgents, FolderChanges, FolderSnapshot, FolderWhere, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, ListedAgent, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
+import type { Activity, BaseRemote, CheckoutState, Command, CommandResult, DemoState, DemoView, EndedAgents, FolderChanges, FenceTickPlan, FolderSnapshot, FolderWhere, Gate, Kept, KeptWorktreePlan, LegacyEntry, LineContext, ListedAgent, MergeCheck, OtherRun, Phase, Profile, RemoteFound, RemoteVerdict, Run, RunEvent, RunPick, StashRef, Step, Tone, TurnEnd } from './issue-forge-logic'
 
 /**
  * Issue Forge: one GitHub issue to a pull request, test-first (SPEC.md "How it works").
@@ -633,7 +633,7 @@ async function fenceProblem($: EngineInterface): Promise<string | null> {
 }
 
 /** Runs one fence write in its turn; the queue goes on whatever the write did. */
-function fenceTurn(step: () => Promise<void>): Promise<void> {
+function fenceTurn<T>(step: () => Promise<T>): Promise<T> {
   const turn = fenceQueue.then(step)
   fenceQueue = turn.then(
     () => undefined,
@@ -643,7 +643,7 @@ function fenceTurn(step: () => Promise<void>): Promise<void> {
 }
 
 /**
- * Writes the agent's fence files as live until FENCE_TTL_S from now; the 5 s check writes them again. A rewrite or the id
+ * Writes the agent's fence files as live until FENCE_TTL_S from now; the 5 s check writes them again (checkFence). The id
  * write names the fence it extends (`from`): it merges onto the fence its turn finds, and writes nothing if a retirement
  * or another agent's fence has replaced that one (fenceMerge).
  */
@@ -726,26 +726,46 @@ async function folderSince($: EngineInterface, w: FolderWatch | null, where: Fol
  * once more, and the session's folder compared. Any of them failing ends the agent and blocks the run (`breach`).
  */
 async function fenceTick($: EngineInterface, d: Drive): Promise<void> {
-  const f = fenceKept
-  if (f && f.runId === d.runId) {
-    const reads = await readFence($, f.paths)
-    const at = await nowS($)
-    for (const r of reads) {
-      const owner = fenceOwner(r.text, f.line, f.root, at)
-      if (owner.kind !== 'mine') $.ui.log(fenceClassLine(r.path, owner), { to: 'debug' })
+  if (fenceKept?.runId === d.runId) {
+    // In a turn of the fence queue, so no write is landing while the files are read (PR #162 review round 2, finding 2).
+    const found = await fenceTurn(() => checkFence($, d.runId))
+    // Acted on after the turn: the block's retirement takes a turn of its own, and from inside this one would wait on it.
+    if (found?.plan.kind === 'tamper') return breach($, d, fenceTamperBlock(found.agent))
+    if (found?.plan.kind === 'clash') return breach($, d, fenceClashBlock(found.agent, found.plan.root, d.issue, true))
+    if (found) {
+      const problem = await fenceProblem($)
+      if (problem) return breach($, d, fenceBlock(problem))
     }
-    const plan = fenceTickPlan(reads, f.line, f.root, at)
-    if (plan.kind === 'tamper') return breach($, d, fenceTamperBlock(f.agent))
-    if (plan.kind === 'clash') return breach($, d, fenceClashBlock(f.agent, plan.root, d.issue, true))
-    // Another run's line in the name file is left to it: the agent goes on, fenced by its id file (finding 5).
-    if (plan.others.length > 0) $.ui.log(fenceGoesOnLine(f.agent), { to: 'debug' })
-    await writeFence($, f.runId, f.agent, f.refs, plan.paths, f.root, f).catch(() => undefined)
-    const problem = await fenceProblem($)
-    if (problem) return breach($, d, fenceBlock(problem))
   }
   const w = watchOf(d.runId)
   const changes = await folderSince($, w, 'the 5 s check')
   if (w && changes) return breach($, d, { ...folderBlock(w.root, w.phase, changes), isFolderBlock: true })
+}
+
+/**
+ * The 5 s check's fence part, in a turn of the fence queue: the agent's files read and classified against the line last
+ * written, and on `keep` written again. Its plan and the agent, for fenceTick to act on; null once the fence is retired.
+ */
+async function checkFence($: EngineInterface, runId: string): Promise<{ plan: FenceTickPlan; agent: string } | null> {
+  const f = fenceKept
+  if (!f || f.runId !== runId) return null
+  const reads = await readFence($, f.paths)
+  const at = await nowS($)
+  for (const r of reads) {
+    const owner = fenceOwner(r.text, f.line, f.root, at)
+    if (owner.kind !== 'mine') $.ui.log(fenceClassLine(r.path, owner), { to: 'debug' })
+  }
+  const plan = fenceTickPlan(reads, f.line, f.root, at)
+  if (plan.kind !== 'keep') return { plan, agent: f.agent }
+  // Another run's line in the name file is left to it: the agent goes on, fenced by its id file (round 1, finding 5).
+  if (plan.others.length > 0) $.ui.log(fenceGoesOnLine(f.agent), { to: 'debug' })
+  // A retirement during the reads clears the kept fence at once, and then nothing is written.
+  if (fenceKept !== f) return null
+  // The read in this turn is the compare: every path the plan keeps still holds the line last written.
+  const line = fenceLine(f.root, at + FENCE_TTL_S)
+  fenceKept = { ...f, paths: plan.paths, line }
+  await Promise.all(plan.paths.map(path => $.fs.write(path, `${line}\n`))).catch(() => undefined)
+  return { plan, agent: f.agent }
 }
 
 /**
