@@ -5207,6 +5207,22 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(w.files[FENCE]?.startsWith('live ') ?? false).toBe(false)
   })
 
+  test("a stop while the phase writes its first fence line: the line is retired, and no agent starts", async ($, on) => {
+    const write = releasable()
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), writeHold: { when: (path: string, text: string) => path === FENCE && text.startsWith('live '), until: write.hold } }, store)
+    await start($)
+    await run($, 'resume')
+    await waitFor(w, () => w.writeHold?.isHeld === true)
+    const stopping = run($, 'stop')
+    await w.clock.settle()
+    write.release()
+    expect((await stopping).text).toContain('stopped #16')
+    await w.clock.settle()
+    expect(w.spawned).toEqual([])
+    expect(w.files[FENCE]).toBe('retired\n')
+  })
+
   // PR #162 review round 1, item 6: the debug log says which check found a folder change. The answer's check isn't reachable
   // in the kit (a kit spawn's agentId is dropped); the live check's step covers it.
   const foundAt = (where: string) => `issue-forge folder check: 1 changed, found at ${where}`
