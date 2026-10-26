@@ -5191,6 +5191,22 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(w.logs).toContain(`issue-forge fence check: ${FENCE} holds a line issue-forge didn't write, at the 5 s check`)
   })
 
+  // PR #162 review round 2, finding 1 (Codex 4372538889): a stop that lands while the phase awaits its preflight must leave no
+  // live fence and start no agent.
+  test("a stop while the phase's preflight runs: no fence is left live, and no agent starts", async ($, on) => {
+    const preflight = releasable()
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), fenceHold: preflight.hold }, store)
+    await start($)
+    await run($, 'resume')
+    await waitFor(w, () => w.fenceHeld === true)
+    expect((await run($, 'stop')).text).toContain('stopped #16')
+    preflight.release()
+    await w.clock.settle()
+    expect(w.spawned).toEqual([])
+    expect(w.files[FENCE]?.startsWith('live ') ?? false).toBe(false)
+  })
+
   // PR #162 review round 1, item 6: the debug log says which check found a folder change. The answer's check isn't reachable
   // in the kit (a kit spawn's agentId is dropped); the live check's step covers it.
   const foundAt = (where: string) => `issue-forge folder check: 1 changed, found at ${where}`
