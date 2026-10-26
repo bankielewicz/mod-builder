@@ -3226,7 +3226,9 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
   })
 
   test('the fence: a live line with its expiry, the two files an agent has, and only names safe as files', () => {
-    expect(fenceLine('/repo/wt', 100)).toBe('live 100 /repo/wt')
+    // The second line is the prefix the phase prompt gives the agent, stored for hooks/fence.sh (round 2, finding 5).
+    expect(fenceLine('/repo/wt', 100)).toBe('live 100 /repo/wt\ncd /repo/wt &&')
+    expect(fenceLine("/srv/owner's repo/wt", 100)).toBe("live 100 /srv/owner's repo/wt\ncd '/srv/owner'\\''s repo/wt' &&")
     expect(FENCE_RETIRED).toBe('retired')
     expect(FENCE_TTL_S).toBe(30)
     const paths = fencePaths
@@ -3251,6 +3253,11 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(owner(null, mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
     expect(owner('garbage', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
     expect(owner('live x /other/wt', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    // A file with its stored prefix line (round 2, finding 5): the live line is the first.
+    const mine2 = 'live 100 /repo/wt\ncd /repo/wt &&'
+    expect(owner(`${mine2}\n`, mine2, '/repo/wt', 90)).toEqual({ kind: 'mine' })
+    expect(owner("live 125 /other/wt\ncd /other/wt &&\n", mine2, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/wt' })
+    expect(logic.fenceHeldBy("live 125 /other/wt\ncd /other/wt &&\n", '/repo/wt', 95)).toBe('/other/wt')
   })
 
   test("before a spawn: another run's live, unexpired name line holds the name; anything else doesn't", () => {

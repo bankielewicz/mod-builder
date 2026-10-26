@@ -186,6 +186,35 @@ test("a Bash word naming the plugin's own files is refused under the run's folde
   passes(bash("cd '/srv/repo' && ls mods && cat mods/other/README.md"))
 })
 
+// PR #162 review round 2, finding 5 (Codex 4372568593; the owner: "implement it by storing, not parsing"). The module
+// writes the prefix it tells the agent to use, `cd <shellQuote(root)> &&`, as the fence file's second line; the script
+// matches it byte for byte and prints its hint from it. These are shellQuote's spellings of each root.
+const STORED = [
+  ["/srv/owner's repo/wt", "cd '/srv/owner'\\''s repo/wt' &&"],
+  ['/srv/my repo/wt', "cd '/srv/my repo/wt' &&"],
+  ['/srv/a"b/wt', `cd '/srv/a"b/wt' &&`],
+  ['/srv/a\\b/wt', "cd '/srv/a\\b/wt' &&"],
+  ['/srv/a$b/wt', "cd '/srv/a$b/wt' &&"],
+]
+
+test("a root holding ' , a blank, \", \\ or $: the stored prefix passes byte for byte, a near miss is refused with it as the hint", () => {
+  for (const [root, prefix] of STORED) {
+    const files = { [`id/${ID}`]: `${live(root)}\n${prefix}` }
+    const bash = command => hook(agent('Bash', { command }), { files })
+    assert.deepEqual(bash(`${prefix} ls`), { code: 0, err: '' }, root)
+    const nearMiss = bash(`${prefix.replace('/wt', '/wx')} ls`)
+    assert.equal(nearMiss.code, 2, root)
+    assert.ok(nearMiss.err.includes(`start every Bash command with ${prefix} (this one doesn't)`), `${root}: ${nearMiss.err}`)
+  }
+})
+
+test("a fence file with no stored prefix, from before, is read as before: bare, single- and double-quoted roots", () => {
+  passes(hook(agent('Bash', { command: `cd ${ROOT} && ls` })))
+  passes(hook(agent('Bash', { command: `cd '${ROOT}' && ls` })))
+  passes(hook(agent('Bash', { command: `cd "${ROOT}" && ls` })))
+  assert.match(hook(agent('Bash', { command: 'ls' })).err, new RegExp(`start every Bash command with cd '${ROOT}' && `))
+})
+
 /** A copy of the script that reads its bash as 4.1: BASH_VERSINFO is read-only, so the copy reads another array. */
 function onOldBash() {
   const dir = mkdtempSync(join(tmpdir(), 'fence-old-'))
