@@ -5223,6 +5223,27 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(w.files[FENCE]).toBe('retired\n')
   })
 
+  // PR #162 review round 2, finding 2 (Codex 4372538898): the 5 s check read the fence files outside the fence queue, so a
+  // write still landing read as tampering. Codex's case is the id write (no agentId in the kit); this is the first name write.
+  test("the 5 s check while the first fence line is being written waits for it, and doesn't take the agent for tampered", async ($, on) => {
+    const write = releasable()
+    const store: Record<string, unknown> = { [RUN]: atRed() }
+    const w = engine(on, { ...LIVE, worktrees: [WT], spawnHold: held(), listed: [[red('running')], [red('killed')]], writeHold: { when: (path: string, text: string) => path === FENCE && text.startsWith('live '), until: write.hold } }, store)
+    await start($)
+    await run($, 'resume')
+    await waitFor(w, () => w.writeHold?.isHeld === true)
+    await w.clock.advance(5_000)
+    await w.clock.settle()
+    write.release()
+    await w.clock.settle()
+    expect(stored(store).blocked?.reason).toBeUndefined()
+    await until(w, () => w.spawned.length === 1, "#16's red agent")
+    await w.clock.advance(5_000)
+    await w.clock.settle()
+    expect(stored(store).step).toBe('red')
+    expect(w.taskStops).toEqual([])
+  })
+
   // PR #162 review round 1, item 6: the debug log says which check found a folder change. The answer's check isn't reachable
   // in the kit (a kit spawn's agentId is dropped); the live check's step covers it.
   const foundAt = (where: string) => `issue-forge folder check: 1 changed, found at ${where}`
