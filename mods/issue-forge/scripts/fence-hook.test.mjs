@@ -28,12 +28,12 @@ function home(files = {}) {
 
 const live = (root = ROOT, until = now() + 60) => `live ${until} ${root}`
 
-/** Runs the script on one call; `raw` sends the text as it is, `script` runs another copy of it. */
-function hook(call, { files = { [`id/${ID}`]: live() }, raw, script = SCRIPT } = {}) {
+/** Runs the script on one call; `raw` sends the text as it is, `script` runs another copy of it, `plugin` sets its folder. */
+function hook(call, { files = { [`id/${ID}`]: live() }, raw, script = SCRIPT, plugin = PLUGIN } = {}) {
   const dir = home(files)
   try {
     const input = raw ?? JSON.stringify({ session_id: 's1', transcript_path: '/t', cwd: '/srv/session', hook_event_name: 'PreToolUse', tool_use_id: 'toolu_1', ...call })
-    const r = spawnSync('bash', [script], { input, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, CLAUDE_PLUGIN_ROOT: PLUGIN } })
+    const r = spawnSync('bash', [script], { input, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir, CLAUDE_PLUGIN_ROOT: plugin } })
     return { code: r.status, err: r.stderr }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -170,6 +170,20 @@ test("hooks.json runs the fence, in exec form, for the tools that can change som
 test("the module's preflight call is refused with an issue-forge: reason", () => {
   const r = hook({ agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' } }, { files: {} })
   refused(r)
+})
+
+// PR #162 review round 2, finding 3 (Codex 4372538895): protected names apply to every Bash word (SPEC 3.3), the ones
+// under the run's folder and relative ones too, as in a `here` run in a repository that holds the plugin.
+test("a Bash word naming the plugin's own files is refused under the run's folder too, absolute or relative", () => {
+  const files = { [`id/${ID}`]: live('/srv/repo') }
+  const plugin = '/srv/repo/mods/issue-forge'
+  const bash = command => hook(agent('Bash', { command }), { files, plugin })
+  refused(bash("cd '/srv/repo' && printf broken > /srv/repo/mods/issue-forge/hooks/fence.sh"))
+  refused(bash("cd '/srv/repo' && printf broken > mods/issue-forge/hooks/fence.sh"))
+  refused(bash("cd '/srv/repo' && printf broken > ./mods//issue-forge/hooks/hooks.json"))
+  refused(bash("cd '/srv/repo' && cat mods/issue-forge/README.md"))
+  refused(hook(agent('Write', { file_path: '/srv/repo/mods/issue-forge/hooks/fence.sh', content: 'x' }), { files, plugin }))
+  passes(bash("cd '/srv/repo' && ls mods && cat mods/other/README.md"))
 })
 
 /** A copy of the script that reads its bash as 4.1: BASH_VERSINFO is read-only, so the copy reads another array. */
