@@ -1427,6 +1427,12 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
       await updateRun($, keyOf(run), stored => withFolderSnapshot(stored, run.id, snapshot))
     }
   }
+  // A stop, hand-off or takeover while the preflight or the snapshot ran: no fence, and no agent (PR #162 review round 2,
+  // finding 1).
+  if (!isDriving(run)) {
+    if (folderWatch?.runId === run.id) folderWatch = null
+    return null
+  }
   try {
     await writeFence($, run.id, fenceAgent, [fenceAgent], fencePaths(home, name), workOf(run))
   } catch (err) {
@@ -1435,6 +1441,8 @@ async function phase($: EngineInterface, run: Run, which: Phase, p: Profile): Pr
     return block(why.reason, why.next)
   }
   try {
+    // One that landed during the write found no fence to retire yet: the finally below retires it.
+    if (!isDriving(run)) return null
     return await spawnPhase($, run, which, { subagentType, prompt, model, name })
   } finally {
     if (folderWatch?.runId === run.id) folderWatch = null
