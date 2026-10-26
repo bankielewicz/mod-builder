@@ -3159,7 +3159,8 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(snap([{ xy: ' M', path: 'b' }, { xy: '??', path: 'a' }])).toEqual({ phase: 'red', at: 5, entries: [{ xy: '??', path: 'a' }, { xy: ' M', path: 'b' }] })
     const many = Array.from({ length: 201 }, (_, i) => ({ xy: '??', path: `f${i}` }))
     const big = snap(many)
-    expect(big).toEqual({ phase: 'red', at: 5, count: 201, digest: expect.any(String) })
+    // With a status-only digest and whether every hashable entry had its hash (round 2, finding 4).
+    expect(big).toEqual({ phase: 'red', at: 5, count: 201, digest: expect.any(String), statusDigest: expect.any(String), isHashed: true })
     expect(snap([...many].reverse())).toEqual(big)
     expect(FOLDER_CAP).toBe(200)
   })
@@ -3199,6 +3200,25 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(changes(snap(many(3)), snap(many(201)))).toEqual({ paths: [], count: 201, isHashless: false })
     // Back under the cap: the count is the entries listed now.
     expect(changes(snap(many(201)), snap(many(3)))).toEqual({ paths: [], count: 3, isHashless: false })
+  })
+
+  // PR #162 review round 2, finding 4 (Codex 4372538900): past the cap, a side not fully hashed compared full digests, so
+  // a hash-object failure on one check read as 201 changed entries. Now status digests are compared, and said so.
+  test('past the cap, a side not fully hashed compares status digests, and says so', () => {
+    const many = (n: number, hashed = true, xy = ' M') => Array.from({ length: n }, (_, i) => ({ xy, path: `f${i}`, ...(hashed ? { hash: `h${i}` } : {}) }))
+    expect(snap(many(201, false))).toMatchObject({ count: 201, isHashed: false })
+    expect(changes(snap(many(201)), snap(many(201, false)))).toBeNull()
+    expect(changes(snap(many(201, false)), snap(many(201)))).toBeNull()
+    expect(changes(snap(many(201)), snap(many(201, false, 'M ')))).toEqual({ paths: [], count: 201, isHashless: true })
+    // A content change both sides hashed is still seen.
+    const changed = many(201).map((e, i) => (i === 7 ? { ...e, hash: 'other' } : e))
+    expect(changes(snap(many(201)), snap(changed))).toEqual({ paths: [], count: 201, isHashless: false })
+    // A capped snapshot stored before these fields is taken as not fully hashed: compared by count.
+    const old = { phase: 'red', at: 1, count: 201, digest: 'd' } as Snap
+    expect(changes(old, snap(many(201)))).toBeNull()
+    expect(changes(old, snap(many(202)))).toEqual({ paths: [], count: 202, isHashless: true })
+    // The block and the debug line say so whenever the fallback is in effect.
+    expect(logic.folderFoundLine({ paths: [], count: 201, isHashless: true }, 'the 5 s check')).toBe('issue-forge folder check: 201 changed, found at the 5 s check, compared by git status only')
   })
 
   test('the edges: entries of one path keep their order; a pressed clause by count; answers with no full stop', () => {
