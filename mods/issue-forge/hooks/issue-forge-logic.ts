@@ -2797,9 +2797,13 @@ export const FENCE_RETIRED = 'retired'
 const FENCE_DIR = '.claude/issue-forge-data/fence'
 const FENCE_NO_FILE = 'issue-forge: this agent has no fence file'
 
-/** What hooks/fence.sh reads for a live agent: until when (epoch seconds), and the one folder it may work in. */
+/**
+ * What hooks/fence.sh reads for a live agent: until when (epoch seconds) and the one folder it may work in, then the cd
+ * prefix the phase prompt gives the agent, stored so the script matches it byte for byte and prints it as its hint, with no
+ * quoting of its own (PR #162 review round 2, finding 5).
+ */
 export function fenceLine(root: string, until: number): string {
-  return `live ${until} ${root}`
+  return `live ${until} ${root}\ncd ${shellQuote(root)} &&`
 }
 
 /** A name hooks/fence.sh will look up as a file: the script refuses or passes any other without touching the disk. */
@@ -2831,9 +2835,9 @@ export function fenceTamperBlock(agent: string): { reason: string; next: string 
 // A name file is keyed by the agent's name alone, so another repository's run of the same issue can hold it (PR #162
 // review round 1, finding 5). Its line then names another run's folder: this run's is `workOf(run)`, exactly.
 
-/** A live line's time and folder, or null for anything else. */
+/** A live line's time and folder, from a fence file's first line, or null for anything else. */
 const liveLineOf = (text: string | null): { until: number; root: string } | null => {
-  const m = /^live (\d+) (.+)$/.exec((text ?? '').replace(/\n$/, ''))
+  const m = /^live (\d+) (.+)$/.exec((text ?? '').split('\n')[0] ?? '')
   return m ? { until: Number(m[1]), root: m[2] as string } : null
 }
 

@@ -79,7 +79,11 @@ trap 'exit 2' ERR
 
 RETIRED='this run was stopped or restarted; end your turn now without further tool calls.'
 line=
-IFS= read -r line <"$file" || true
+stored=
+{
+  IFS= read -r line || true
+  IFS= read -r stored || true
+} <"$file"
 [[ $line == retired ]] && deny "$RETIRED"
 [[ $line =~ ^live\ ([0-9]+)\ (.+)$ ]] || deny "this agent's fence file can't be read, so it may not call tools; end your turn now."
 until=${BASH_REMATCH[1]}
@@ -88,6 +92,16 @@ while [[ $root == *//* ]]; do root=${root//\/\//\/}; done
 root=${root%/}
 printf -v now '%(%s)T' -1
 ((now <= until)) || deny "$RETIRED"
+
+# The second line is the cd prefix the phase prompt gives the agent, as the module spelled it: matched byte for byte and
+# printed as the hint, so this script quotes nothing itself (PR #162 review round 2, finding 5). A file from before has none.
+hint="cd '$root' &&"
+quoted=
+if [[ $stored == 'cd '*' &&' ]]; then
+  hint=$stored
+  quoted=${stored#cd }
+  quoted=${quoted% &&}
+fi
 
 count tool_name
 ((found == 1)) || deny "this call's tool can't be read, so the fence refuses it; end your turn now."
@@ -141,18 +155,19 @@ case $tool in
 esac
 
 count command
-((found == 1)) || deny "this Bash call's command can't be read, so the fence refuses it; start it with cd '$root' && ."
+((found == 1)) || deny "this Bash call's command can't be read, so the fence refuses it; start it with $hint ."
 value command
 unescape "$got"
 cmd=$out
 
-# Each spelling of the root becomes one mark, so a root holding a blank stays one word.
+# Each spelling of the root becomes one mark, so a root holding a blank stays one word: the stored one first.
 mark=$'\002'
+if [[ -n $quoted ]]; then cmd=${cmd//"$quoted"/$mark}; fi
 cmd=${cmd//"'$root'"/$mark}
 cmd=${cmd//"\"$root\""/$mark}
 cmd=${cmd//"$root"/$mark}
 start="^cd[[:space:]]+$mark[[:space:]]*&&"
-[[ $cmd =~ $start ]] || deny "start every Bash command with cd '$root' && (this one doesn't), and name no path outside that folder."
+[[ $cmd =~ $start ]] || deny "start every Bash command with $hint (this one doesn't), and name no path outside that folder."
 back='(^|[[:space:];&|])cd[[:space:]]+-([[:space:];&|]|$)'
 [[ $cmd =~ $back ]] && deny "cd - leaves this run's folder $root; stay in it."
 
