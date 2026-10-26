@@ -1588,7 +1588,7 @@ export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): st
     REPORT,
     '',
     // Change 0.10.0 (#156): the agent's cwd is ignored, so the fence (hooks/fence.sh) refuses what this line asks against.
-    `Repository root: ${workOf(run)}. Work only inside it. Give every file path in full, starting ${workOf(run)}/. Start every Bash command with cd ${shellQuote(workOf(run))} && (issue-forge refuses a Bash command that doesn't, and any edit or command that names a path outside ${workOf(run)}).`,
+    `Repository root: ${workOf(run)}. Work only inside it. Give every file path in full, starting ${workOf(run)}/. Start every Bash command with ${cdPrefix(workOf(run))} (issue-forge refuses a Bash command that doesn't, and any edit or command that names a path outside ${workOf(run)}).`,
     `Branch: ${run.branch} (base ${run.base})`,
     ...(p ? profileLines(p) : []),
     '',
@@ -2818,7 +2818,12 @@ const FENCE_NO_FILE = 'issue-forge: this agent has no fence file'
  * quoting of its own (PR #162 review round 2, finding 5).
  */
 export function fenceLine(root: string, until: number): string {
-  return `live ${until} ${root}\ncd ${shellQuote(root)} &&`
+  return `live ${until} ${root}\n${cdPrefix(root)}`
+}
+
+/** The prefix every Bash command of a phase agent starts with: the phase prompt says it, and the fence file stores it. */
+export function cdPrefix(root: string): string {
+  return `cd ${shellQuote(root)} &&`
 }
 
 /** A name hooks/fence.sh will look up as a file: the script refuses or passes any other without touching the disk. */
@@ -2852,7 +2857,7 @@ export function fenceTamperBlock(agent: string): { reason: string; next: string 
 
 /** A live line's time and folder, from a fence file's first line, or null for anything else. */
 const liveLineOf = (text: string | null): { until: number; root: string } | null => {
-  const m = /^live (\d+) (.+)$/.exec((text ?? '').split('\n')[0] ?? '')
+  const m = /^live (\d+) (.+)(?:\n|$)/.exec(text ?? '')
   return m ? { until: Number(m[1]), root: m[2] as string } : null
 }
 
