@@ -2673,7 +2673,10 @@ export function paneAction(panes: readonly { id: string; isShown: boolean; isPla
 /** `git status` as the folder check reads it: every untracked file by itself, and a rename as its two paths. */
 export const FOLDER_STATUS_ARGS = ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames']
 
-/** Past this many entries a snapshot keeps a count and a digest, so a stored run stays small (the store's 4 MiB, #140). */
+/**
+ * Past this many entries a snapshot keeps a count and digests, so a stored run stays small (the store's 4 MiB, #140). It is
+ * about the stored run's bytes, not processes: hashing is one `hash-object --stdin-paths` for the whole batch.
+ */
 export const FOLDER_CAP = 200
 
 /** `git status --porcelain=v1 -z`: `XY path` per NUL-ended record (no rename records under `--no-renames`). */
@@ -2729,7 +2732,15 @@ const byPath = (a: FolderEntry, b: FolderEntry): number => (a.path < b.path ? -1
 export function folderSnapshot(phase: Phase, at: number, entries: readonly FolderEntry[]): FolderSnapshot {
   const sorted = [...entries].sort(byPath)
   if (sorted.length <= FOLDER_CAP) return { phase, at, entries: sorted }
-  return { phase, at, count: sorted.length, digest: fnv1a(sorted.map(e => `${e.xy} ${e.path} ${e.hash ?? ''}`).join('\n')) }
+  return {
+    phase,
+    at,
+    count: sorted.length,
+    digest: fnv1a(sorted.map(e => `${e.xy} ${e.path} ${e.hash ?? ''}`).join('\n')),
+    // For the status-only fallback an uncapped snapshot gets per entry (PR #162 review round 2, finding 4).
+    statusDigest: fnv1a(sorted.map(e => `${e.xy} ${e.path}`).join('\n')),
+    isHashed: sorted.every(e => !isHashable(e) || e.hash !== undefined),
+  }
 }
 
 export type FolderChanges = { paths: string[]; count: number; isHashless: boolean }
@@ -2740,8 +2751,12 @@ export type FolderChanges = { paths: string[]; count: number; isHashless: boolea
  */
 export function folderChanges(before: FolderSnapshot, after: FolderSnapshot): FolderChanges | null {
   if ('digest' in before || 'digest' in after) {
-    const isSame = 'digest' in before && 'digest' in after && before.digest === after.digest && before.count === after.count
-    return isSame ? null : { paths: [], count: 'digest' in after ? after.count : after.entries.length, isHashless: false }
+    const count = 'digest' in after ? after.count : after.entries.length
+    if (!('digest' in before) || !('digest' in after)) return { paths: [], count, isHashless: false }
+    if (before.isHashed === true && after.isHashed === true) return before.digest === after.digest && before.count === after.count ? null : { paths: [], count, isHashless: false }
+    // A side not fully hashed, or stored before the status digest (then by count): status alone, and said so (finding 4).
+    const isSame = before.count === after.count && (before.statusDigest === undefined || after.statusDigest === undefined || before.statusDigest === after.statusDigest)
+    return isSame ? null : { paths: [], count, isHashless: true }
   }
   const was = new Map(before.entries.map(e => [e.path, e]))
   const now = new Map(after.entries.map(e => [e.path, e]))
@@ -2782,7 +2797,7 @@ export type FolderWhere = 'the 5 s check' | 'the answer' | "a phase's start" | '
 
 /** The debug log's line for a folder change, naming the check that found it. */
 export function folderFoundLine(c: FolderChanges, where: FolderWhere): string {
-  return `issue-forge folder check: ${c.count} changed, found at ${where}`
+  return `issue-forge folder check: ${c.count} changed, found at ${where}${c.isHashless ? ', compared by git status only' : ''}`
 }
 
 export function folderClause(c: FolderChanges | null, byPress: boolean): string {

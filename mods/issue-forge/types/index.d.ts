@@ -93,8 +93,14 @@ export type StashRef = { sha: string; message: string }
  */
 export type FolderEntry = { path: string; xy: string; hash?: string; kind?: 'dir' | 'other' }
 
-/** The session's folder as a phase's agent began (Change 0.10.0): its entries, or past 200 of them a count and a digest. */
-export type FolderSnapshot = { phase: Phase; at: number; entries: FolderEntry[] } | { phase: Phase; at: number; count: number; digest: string }
+/**
+ * The session's folder as a phase's agent began (Change 0.10.0): its entries, or past 200 of them a count and a digest, with
+ * a status-only digest and whether every hashable entry had its hash (PR #162 review round 2, finding 4; absent on a
+ * snapshot stored before).
+ */
+export type FolderSnapshot =
+  | { phase: Phase; at: number; entries: FolderEntry[] }
+  | { phase: Phase; at: number; count: number; digest: string; statusDigest?: string; isHashed?: boolean }
 
 export type PhaseTime = { startedAt: number; endedAt?: number }
 
