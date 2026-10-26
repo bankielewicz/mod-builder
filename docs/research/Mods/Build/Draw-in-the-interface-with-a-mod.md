@@ -508,11 +508,20 @@ When the user presses a button, types into a field, or picks from a list your mo
 * **`Input`**: takes `onSubmit(value)` and `onInput(value)`
 * **`Select`**: takes `onSelect(value)` with its choices in `options`, a list of at least one choice with unique values, such as `[{ value: 'sm', label: 'Small' }, { value: 'lg', label: 'Large' }]`
 
-A test presses or types into a control by its `key`, so give each control one. Each use of a control also fires [`ui.press`, `ui.input`, or `ui.select`](/docs/en/plugins/mods/reference#interface) with the `key` in `e.element`, and another mod can handle those events. Its hook runs before your callback, so it sees what the user types into your `Input` and can change it or answer in place of your callback. The mods API has no method that presses another mod's button.
+### Which controls need a `key`
+
+Give every `Input` and `Select` a `key` prop, such as `key: 'size'`. A `Button` can go without a `key` when it has a `label` prop or a single string child. Its key is then the `label` value or that string.
+
+Tests and other mods identify a control by its key:
+
+* **Tests**: a [test](/docs/en/plugins/mods/test#test-a-drawing) presses or types into a control by its key.
+* **Other mods**: Claude Code fires [`ui.press`, `ui.input`, or `ui.select`](/docs/en/plugins/mods/reference#interface) with the control's key in `e.element` before it runs the control's callback. Another mod's hook for that event sees what the user typed into your `Input` and can change that text or keep your callback from running. The mods API gives that mod no method to press your buttons.
+
+If a message says `needs a key` or `is drawn twice`, [find the cause by that message](/docs/en/plugins/mods/troubleshoot#needs-a-key).
 
 ### Keyboard focus and hotkeys
 
-Your mod never reads the keyboard itself. The user presses a key, Claude Code decides which of your controls it's for, and that control's callback runs. Apart from a [digit hotkey on the band](/docs/en/plugins/mods/reference#elements), that happens only while your pane or band has keyboard focus. The rest of the time, keys go to the prompt.
+Your mod never reads the keyboard itself. The user presses a key, Claude Code decides which of your controls it's for, and that control's callback runs. Apart from a [digit hotkey on the band or an `action` binding](/docs/en/plugins/mods/reference#elements), that happens only while your pane or band has keyboard focus. The rest of the time, keys go to the prompt.
 
 In the [VS Code extension](#draw-in-the-vs-code-extension), buttons have no hotkeys: the user clicks a button or presses Enter on it, and types into fields.
 
@@ -522,7 +531,7 @@ A pane gets keyboard focus when:
 
 * Your mod opens it with `focus: true` from a command or a press
 * The user presses Ctrl+X then Tab
-* The user clicks it
+* The user clicks it, which in the terminal needs [fullscreen rendering](/docs/en/fullscreen)
 
 Claude Code grants `focus: true` only while the prompt is empty and nothing else has keyboard focus. A pane that opens while the user is typing doesn't take their keystrokes.
 
@@ -539,6 +548,7 @@ This table lists what a key does while your pane or band has keyboard focus:
 | Page Up, Page Down, Home, and End | Scroll your pane or band when it has more rows than it can show |
 | Ctrl+X then an arrow key | Resizes your pane. Left or Up gives it more room, and Right or Down gives the room back. A pane beside the transcript stops widening at 45% of the terminal's width. |
 | Ctrl+X then X | Closes your pane, even while one of its fields has the focus |
+| Ctrl+X then Ctrl+A | [Collapses the band](#when-the-user-collapses-the-band) to one row while a mod draws there, or expands it again. These keys also work while the prompt has the focus. |
 | Esc | Returns keyboard focus to the prompt. With `closeOnEscape: true`, it also closes the pane. |
 
 A mod can't bind Tab or the arrow keys to anything else, so a game steers with `w`, `a`, `s`, and `d`.
@@ -556,6 +566,23 @@ How a hotkey shows depends on the button and the app:
 | With `plain: true` | `1: One` | The label with a small key beside it | The label, and the hotkey does nothing |
 
 In the terminal, name the key in a bracketed button's label, or use `plain: true`, so the user can see what to press. The [elements reference](/docs/en/plugins/mods/reference#elements) has the other `Button` rules: `action`, digit hotkeys on the band, and two buttons on one hotkey.
+
+#### When the user collapses the band
+
+In the terminal, while a mod draws in the band, the user can collapse the band to one row to get it out of the way:
+
+* **Click `[-]`**: while the band is expanded, Claude Code draws this mark at the right end of its first row. In [fullscreen rendering](/docs/en/fullscreen), the user clicks it to collapse the band.
+* **Press Ctrl+X then Ctrl+A**: this works whether the prompt, the band, or a pane has keyboard focus. The user can [bind other keys](/docs/en/keybindings#above-prompt-actions) to it through the `abovePrompt:toggle` action.
+
+A collapsed band hides everything the mods draw there and shows one dim row instead, which names the keys that expand it as the user has them bound:
+
+```text theme={null}
+▸ plugin panel hidden · ctrl+x ctrl+a or click to show
+```
+
+The same keys, or in fullscreen rendering a click on the row, expand the band again. Until then, nothing presses a button in it: no hotkey, no digit typed into an empty prompt, and no keybinding for a button's [`action`](/docs/en/plugins/mods/reference#elements). If the band has keyboard focus when the user collapses it, the focus returns to the prompt, and Ctrl+X then Tab skips the band while it's collapsed.
+
+The band stays collapsed until the user expands it, even after `/clear`, and is expanded again the next time Claude Code starts. Your mod can't expand it or tell that it's collapsed: the `ui.render` hook keeps running, and nothing in `e.props` says so. Don't make the band the only place your mod shows something the user has to answer.
 
 ### Take typed input and draw a row for each item
 
@@ -595,7 +622,7 @@ on('ui.render', { component: 'Pane' }, async ($, e, next) => {
         key: 'new-note',
         label: 'Note',
         placeholder: 'Type a note and press Enter',
-        // Draw the field empty each time, which clears it after a submit
+        // The text the field starts with
         value: '',
         submitLabel: 'add',
         autoFocus: true,
@@ -639,9 +666,7 @@ To try the pane:
 * **Add a note**: type a line and press Enter. The line appears as a new row, and the field empties.
 * **Delete a note**: press Tab until the note's `x` button has the focus, then press Enter. The `x` is the button's label and not a hotkey, so typing the letter doesn't press it.
 
-Each change follows the same render cycle as `hello-tabs`: the callback changes `notes`, calls `redraw`, and saves the list to `$.store`.
-
-The field empties after each submit because of its `value` prop. `value` is the text the field holds when it's drawn, and the user's typing replaces it until your hook draws the field again. The example always draws the field with `''`.
+Each change follows the same render cycle as `hello-tabs`: the callback changes `notes`, calls `redraw`, and saves the list to `$.store`. If your hook draws the pane again while the user is typing a note, the field keeps their text as long as the hook passes the same `value` each time. To replace their text with your own, pass a different `value`.
 
 The example saves the notes and doesn't load them. To bring them back in the next session, read them in a `session.start` hook, the way `hello-tabs` reads `count`.
 
@@ -651,6 +676,7 @@ These props make up the field's line, `Note: Type a note and press Enter ⏎ add
 | :- | :- | :- |
 | `label` | `Note` | The text before the field. The terminal draws `: ` after it. |
 | `placeholder` | `Type a note and press Enter` | Dim text that shows while the field is empty |
+| `value` | `''` | The text the field starts with. It's empty here, so the placeholder shows. |
 | `submitLabel` | `add` | The word after `⏎` that says what Enter does |
 
 Submitting an `Input` doesn't start a turn unless your callback calls [`$.prompt.submit`](/docs/en/plugins/mods/api#start-a-turn-from-a-background-job).
