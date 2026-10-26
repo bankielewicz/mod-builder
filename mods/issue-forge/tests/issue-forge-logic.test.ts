@@ -3159,8 +3159,8 @@ describe('#156: the fence and the folder check (Change 0.10.0)', () => {
     expect(snap([{ xy: ' M', path: 'b' }, { xy: '??', path: 'a' }])).toEqual({ phase: 'red', at: 5, entries: [{ xy: '??', path: 'a' }, { xy: ' M', path: 'b' }] })
     const many = Array.from({ length: 201 }, (_, i) => ({ xy: '??', path: `f${i}` }))
     const big = snap(many)
-    // With a status-only digest and whether every hashable entry had its hash (round 2, finding 4).
-    expect(big).toEqual({ phase: 'red', at: 5, count: 201, digest: expect.any(String), statusDigest: expect.any(String), isHashed: true })
+    // With a status-only digest and whether every hashable entry had its hash (round 2, finding 4): these carry none.
+    expect(big).toEqual({ phase: 'red', at: 5, count: 201, digest: expect.any(String), statusDigest: expect.any(String), isHashed: false })
     expect(snap([...many].reverse())).toEqual(big)
     expect(FOLDER_CAP).toBe(200)
   })
