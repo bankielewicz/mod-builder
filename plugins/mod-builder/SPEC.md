@@ -1435,3 +1435,23 @@ Open it with `/modlab` and watch a build with `/modlab demo`. Start a real mod w
   2. **The queued call's cause was stated as settled** (F8). In both logs, the call's hooks started within a millisecond of `lifecycle aborted` (01:05:03.487 and 03.487; 21:33:28.617 and 28.618), so the abort may have raced the dispatch. The entry now says why it ran isn't established, in `8a8f377`.
   3. **Why one `Agent` call logged two re-entry lines** before the merge (`live40` 956-957, both at 01:04:42.555Z) and one after: not understood. issue-forge has one `tool.call` hook. Recorded here and not chased, since neither the entry nor #156 depends on it.
 
+## Change 0.2.35 (2026-10-25)
+
+> Issue #156, carried by issue-forge 0.10.0's PR. The owner, 2026-10-25: "Script tests: option 1, node --test plus the CI step. The mod-builder template bump is the honest cost of TDD on a script the kit cannot run", and "Fold into 0.2.35 (option 1), but write the re-entry entry as a correction of emphasis, not a discovery".
+
+- **What changes:**
+  - **The CI template** (`skills/build/ci/ci.yml`, and its byte-for-byte copy `.github/workflows/ci.yml`) gets a step, "Each plugin's script tests, outside the kit". It runs `node --test` on every tracked `plugins/*/scripts/*.test.mjs` and `mods/*/scripts/*.test.mjs`, and passes when there are none. A plugin's own script, such as issue-forge 0.10.0's command hook `hooks/fence.sh`, can't be tested under `claude plugin test`, whose sandbox refuses `child_process` and `node:fs` (`check-sandbox.mjs`). The step comes after "Validate and test every plugin". Nothing else in the workflow changes, the 2.1.296 pin included.
+  - **`references/gotchas.md`**, from issue #156's probes on 2.1.310 [probe, 2.1.310, haiku: #156 comment 6399859220, #160 comment 6401362031]:
+    - **The re-entry entry** is rewritten as a correction of emphasis, not a discovery. The behaviour is documented, in the `next.error` row only: hooks are skipped for an event "from inside a mods API call by that hook or by your mod's code outside its hooks" [read: `docs/research/Mods/Test and troubleshoot/Mods-reference.md:42`]. The entry now says what that means for a mod's own agents:
+      - what counts as "inside a hook": not detached code or a timer callback; yes for a hook held open by an awaited `$` call, `turn.complete` and `session.receive`;
+      - that `.catch` wasn't observed being asked in 88 skips, contrary to that row;
+      - that the hooks module's `classic.PreToolUse` is skipped too, and has no agent id;
+      - that a plugin's own `hooks.json` `PreToolUse` command hook does run for those agents' calls, with `agent_id` and `agent_type`, since such hooks "run after the last mod calls `next`" [read: `Build/React-to-events-with-a-mod.md:347`].
+
+      Its "not checked" list names 2.1.296, an unnamed subagent under the command hook, the exec form, Windows, and #160's open probes.
+    - **The `cwd` entry** now says the `cwd` is still ignored on 2.1.310 (10 agents, subagents and teammates), against the 2.1.310 d.ts's `AgentSpawnInput.cwd`.
+- **Against Anthropic's plugin documents** (read 2026-10-25, `docs/research/claude-plugins`): a plugin's hooks fire on their events "from then on", once a session loads the plugin [read: `Add-components-to-a-plugin.md:366`]. Hook processes receive `CLAUDE_PLUGIN_ROOT`, and with `args` "each element is passed as one argument with no shell" [read: `:374-375`]. In CI, keep `--strict` [read: `Publish-and-distribute-a-plugin.md:50`]. Increment `version` on every release [read: `:44`, `:166`]. The skill changes went through `/plugin-dev:skill-development`. Only a reference file and a CI template change, and `SKILL.md` doesn't.
+- **Tests:** the new CI step's command, run locally, passes 19 of 19 (`mods/issue-forge/scripts/fence-hook.test.mjs`). `check-sandbox.mjs` (the canary's list against `gotchas.md`'s) and the archetype check run in QA.
+- **Done means:** CI runs a plugin's script tests, and `gotchas.md` says, with evidence, how a mod's own agents can and can't be guarded on 2.1.310.
+- **Version:** 0.2.35, a patch: a reference and a CI template, with no change to a skill's steps.
+

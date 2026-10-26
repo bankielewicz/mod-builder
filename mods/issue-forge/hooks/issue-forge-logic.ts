@@ -4,9 +4,9 @@
  * Section numbers like §4 refer to docs/specs/issue-forge.md.
  */
 
-import type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, NewPlugin, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
+import type { Activity, AgentRef, Baseline, Check, Coverage, Driver, FolderEntry, FolderSnapshot, Gate, MergeCheck, NewPlugin, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace } from '../types'
 
-export type { Activity, AgentRef, Baseline, Check, Coverage, Driver, Gate, MergeCheck, NewPlugin, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
+export type { Activity, AgentRef, Baseline, Check, Coverage, Driver, FolderEntry, FolderSnapshot, Gate, MergeCheck, NewPlugin, OtherRun, Pct, Phase, Profile, Run, StashRef, Step, Workspace }
 
 export const NAME = 'issue-forge'
 export const PROFILE_FILE = '.issue-forge.json'
@@ -1084,7 +1084,7 @@ export type RunEvent =
   | { type: 'spawned'; agent: AgentRef }
   | { type: 'agentDone'; answer: string; reason?: TurnEnd }
   | { type: 'gated'; gate: Gate; commit?: string; stash?: StashRef; testTail?: string; head?: string; blockAfter?: { reason: string; next: string } }
-  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean; gate?: Gate; testTail?: string }
+  | { type: 'block'; reason: string; next: string; keep?: Kept; isFinal?: boolean; gate?: Gate; testTail?: string; isFolderBlock?: boolean }
   | { type: 'newPlugin'; path: string }
   | { type: 'merged'; merge: MergeCheck }
   | { type: 'made'; keep: Kept }
@@ -1177,7 +1177,13 @@ export function advance(run: Run, ev: RunEvent, now: number): Run {
   // A number start's repository, once origin agrees with it: kept over a block, so resume can't move the run (PR #68 review 2).
   if (ev.type === 'pinned') return run.ghRepo ? run : { ...run, ghRepo: ev.repo }
   // A preflight that made the branch before it blocked keeps it, so resume reuses it.
-  if (ev.type === 'block') return isWorking(run.step) || run.step === 'ready' ? blockedAt({ ...run, ...ev.keep, ...gateRecord(run, ev) }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {}) : run
+  if (ev.type === 'block') {
+    if (!isWorking(run.step) && run.step !== 'ready') return run
+    // A folder block (Change 0.10.0) has compared its snapshot: the resume stashes first and takes a new one.
+    const { folderSnapshot: _s, ...rest } = run
+    const kept = ev.isFolderBlock ? { ...rest, isFolderBlock: true } : run
+    return blockedAt({ ...kept, ...ev.keep, ...gateRecord(run, ev) }, run.step, ev.reason, ev.next, ev.isFinal ? { isFinal: true } : {})
+  }
   // The guard refused a manifest: the phase's gate blocks on it (Change 0.7.0).
   if (ev.type === 'newPlugin') return isActive(run) ? { ...run, newPlugin: ev.path } : run
   if (ev.type === 'resume') {
@@ -1581,7 +1587,8 @@ export function phasePrompt(phase: Phase, run: Run, extra: PromptExtra = {}): st
     TRUST,
     REPORT,
     '',
-    `Repository root: ${workOf(run)}. Work only inside it, and run every command from it.`,
+    // Change 0.10.0 (#156): the agent's cwd is ignored, so the fence (hooks/fence.sh) refuses what this line asks against.
+    `Repository root: ${workOf(run)}. Work only inside it. Give every file path in full, starting ${workOf(run)}/. Start every Bash command with ${cdPrefix(workOf(run))} (issue-forge refuses a Bash command that doesn't, and any edit or command that names a path outside ${workOf(run)}).`,
     `Branch: ${run.branch} (base ${run.base})`,
     ...(p ? profileLines(p) : []),
     '',
@@ -2449,11 +2456,11 @@ export const TAIL_MAX_CHARS = RED_ANSWER_MAX_CHARS
 export const STALE_DAYS = 7
 const DAY_MS = 86_400_000
 /** What only a phase or publish reads, which a finished record drops. */
-const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer'] as const
+const TRIMMED_FIELDS = ['lastTestTail', 'redTestTail', 'redAnswer', 'behaviourAnswer', 'folderSnapshot'] as const
 
 /** A run done or stopped, without the test tails and red's answers, and with only the start of the issue's text. */
 export function finishedRecord(run: Run): Run {
-  const { lastTestTail: _l, redTestTail: _r, redAnswer: _a, behaviourAnswer: _b, ...rest } = run
+  const { lastTestTail: _l, redTestTail: _r, redAnswer: _a, behaviourAnswer: _b, folderSnapshot: _f, ...rest } = run
   // A body that isn't a string (a hand-edited or foreign record) stays as it is (PR #145 review round 1, finding 7).
   if (typeof run.body !== 'string' || run.body.length <= BODY_EXCERPT_CHARS) return { ...rest, body: run.body }
   // Never half an emoji: a cut that would end on a high surrogate ends one unit sooner (PR #145 review round 1, finding 9).
@@ -2656,4 +2663,325 @@ export function releasesOnEnd(reason: string): boolean {
 export function paneAction(panes: readonly { id: string; isShown: boolean; isPlaced: boolean }[], id: string): 'open' | 'close' | 'show' {
   const pane = panes.find(p => p.id === id && p.isPlaced)
   return !pane ? 'open' : pane.isShown ? 'close' : 'show'
+}
+
+// ── The fence and the folder check (Change 0.10.0, #156) ──────────────────
+// issue-forge's own tool.call hook is skipped for its agents' calls (re-entry), and the agents work in the session's
+// folder whatever cwd their spawn names. So a command hook (hooks/fence.sh) refuses what the guard would, reading one
+// fence file per agent, and the drive compares the session's folder while an agent works.
+
+/** `git status` as the folder check reads it: every untracked file by itself, and a rename as its two paths. */
+export const FOLDER_STATUS_ARGS = ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames']
+
+/**
+ * Past this many entries a snapshot keeps a count and digests, so a stored run stays small (the store's 4 MiB, #140). It is
+ * about the stored run's bytes, not processes: hashing is one `hash-object --stdin-paths` for the whole batch.
+ */
+export const FOLDER_CAP = 200
+
+/** `git status --porcelain=v1 -z`: `XY path` per NUL-ended record (no rename records under `--no-renames`). */
+export function folderEntries(porcelainZ: string): FolderEntry[] {
+  return porcelainZ
+    .split('\0')
+    .filter(record => record.length >= 4)
+    .map(record => ({ xy: record.slice(0, 2), path: record.slice(3) }))
+}
+
+/**
+ * Whether `git hash-object --stdin-paths` can read the entry: not deleted, not a folder (a nested repository, or a
+ * submodule stat found), one line.
+ */
+const isHashable = (e: FolderEntry): boolean => !e.xy.includes('D') && !e.path.endsWith('/') && !e.path.includes('\n') && e.kind === undefined
+
+export function hashablePaths(entries: readonly FolderEntry[]): string[] {
+  return entries.filter(isHashable).map(e => e.path)
+}
+
+/**
+ * What `$.fs.stat` found at each of `paths` put on its entry when it isn't a file: porcelain v1 lists a dirty submodule
+ * with no trailing slash, and hash-object fails the whole batch on its folder (PR #162 review round 1, finding 3).
+ */
+export function withKinds(entries: readonly FolderEntry[], paths: readonly string[], kinds: readonly string[]): FolderEntry[] {
+  const kindOf = new Map(paths.map((path, i) => [path, kinds[i]]))
+  return entries.map(e => {
+    const kind = kindOf.get(e.path)
+    return kind === undefined || kind === 'file' ? e : { ...e, kind: kind === 'dir' ? 'dir' : 'other' }
+  })
+}
+
+/** `hash-object`'s lines put on their paths; no output, or one that doesn't line up, leaves the entries unhashed. */
+export function withHashes(entries: readonly FolderEntry[], paths: readonly string[], out: string | null): FolderEntry[] {
+  const lines = out === null ? [] : out.split('\n').filter(line => line !== '')
+  if (lines.length !== paths.length || lines.length === 0) return [...entries]
+  const hashOf = new Map(paths.map((path, i) => [path, lines[i] as string]))
+  return entries.map(e => (hashOf.has(e.path) ? { ...e, hash: hashOf.get(e.path) as string } : e))
+}
+
+/** 32-bit FNV-1a over the text's code units, as 8 hex digits. */
+export function fnv1a(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
+const byPath = (a: FolderEntry, b: FolderEntry): number => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+
+export function folderSnapshot(phase: Phase, at: number, entries: readonly FolderEntry[]): FolderSnapshot {
+  const sorted = [...entries].sort(byPath)
+  if (sorted.length <= FOLDER_CAP) return { phase, at, entries: sorted }
+  return {
+    phase,
+    at,
+    count: sorted.length,
+    digest: fnv1a(sorted.map(e => `${e.xy} ${e.path} ${e.hash ?? ''}`).join('\n')),
+    // For the status-only fallback an uncapped snapshot gets per entry (PR #162 review round 2, finding 4).
+    statusDigest: fnv1a(sorted.map(e => `${e.xy} ${e.path}`).join('\n')),
+    isHashed: sorted.every(e => !isHashable(e) || e.hash !== undefined),
+  }
+}
+
+export type FolderChanges = { paths: string[]; count: number; isHashless: boolean }
+
+/**
+ * What differs between two snapshots: an entry that came or went, a changed status, or a changed hash. Where one side has
+ * no hash for a path, its status alone is compared, and `isHashless` says so. Past the cap, the digests are compared.
+ */
+export function folderChanges(before: FolderSnapshot, after: FolderSnapshot): FolderChanges | null {
+  if ('digest' in before || 'digest' in after) {
+    const count = 'digest' in after ? after.count : after.entries.length
+    if (!('digest' in before) || !('digest' in after)) return { paths: [], count, isHashless: false }
+    if (before.isHashed === true && after.isHashed === true) return before.digest === after.digest && before.count === after.count ? null : { paths: [], count, isHashless: false }
+    // A side not fully hashed, or stored before the status digest (then by count): status alone, and said so (finding 4).
+    const isSame = before.count === after.count && (before.statusDigest === undefined || after.statusDigest === undefined || before.statusDigest === after.statusDigest)
+    return isSame ? null : { paths: [], count, isHashless: true }
+  }
+  const was = new Map(before.entries.map(e => [e.path, e]))
+  const now = new Map(after.entries.map(e => [e.path, e]))
+  let isHashless = false
+  const paths = [...new Set([...was.keys(), ...now.keys()])].sort().filter(path => {
+    const a = was.get(path)
+    const b = now.get(path)
+    if (!a || !b || a.xy !== b.xy) return true
+    if (a.hash === undefined || b.hash === undefined) {
+      // A deleted entry or a folder is never hashed: only a hashable one without its hash means hash-object failed.
+      if (isHashable(a)) isHashless = true
+      return false
+    }
+    return a.hash !== b.hash
+  })
+  return paths.length > 0 ? { paths, count: paths.length, isHashless } : null
+}
+
+function folderList(c: FolderChanges): string {
+  if (c.paths.length === 0) return `${c.count} entries (too many to list)`
+  const more = c.paths.length > 5 ? ` (and ${c.paths.length - 5} more)` : ''
+  return `${c.paths.slice(0, 5).join(', ')}${more}`
+}
+
+/** The block a change found during a phase gives: it names the files, and owns that it can't say who wrote them. */
+export function folderBlock(root: string, phase: Phase, c: FolderChanges): { reason: string; next: string } {
+  const how = c.isHashless ? ' (compared by git status only: git hash-object failed)' : ''
+  return {
+    reason: `the session's folder ${root} changed while the ${phase} agent worked: ${folderList(c)}; issue-forge can't tell whether the agent or someone else made the change${how}`,
+    // The pane and /issue-forge status add ", then /issue-forge resume" (afterBlock).
+    next: "check those files (issue-forge doesn't undo them)",
+  }
+}
+
+/** What a stop, a hand-off or the watch's toast adds when the folder changed; a press's toast is cut to 80 characters. */
+/** Which check found a folder change (PR #162 review round 1, item 6). */
+export type FolderWhere = 'the 5 s check' | 'the answer' | "a phase's start" | 'a stop' | 'a hand-off' | "another session's stop or takeover"
+
+/** The debug log's line for a folder change, naming the check that found it. */
+export function folderFoundLine(c: FolderChanges, where: FolderWhere): string {
+  return `issue-forge folder check: ${c.count} changed, found at ${where}${c.isHashless ? ', compared by git status only' : ''}`
+}
+
+export function folderClause(c: FolderChanges | null, byPress: boolean): string {
+  if (!c) return ''
+  if (byPress) return `; folder changed: ${c.paths[0] !== undefined ? truncate(c.paths[0], 22) : `${c.count} entries`}`
+  return `; the session's folder changed while it worked: ${folderList(c)}`
+}
+
+/** A live agent's fence line lasts this long unless the drive's ticker writes it again (it does every 5 s). */
+export const FENCE_TTL_S = 30
+export const FENCE_RETIRED = 'retired'
+const FENCE_DIR = '.claude/issue-forge-data/fence'
+const FENCE_NO_FILE = 'issue-forge: this agent has no fence file'
+
+/**
+ * What hooks/fence.sh reads for a live agent: until when (epoch seconds) and the one folder it may work in, then the cd
+ * prefix the phase prompt gives the agent, stored so the script matches it byte for byte and prints it as its hint, with no
+ * quoting of its own (PR #162 review round 2, finding 5).
+ */
+export function fenceLine(root: string, until: number): string {
+  return `live ${until} ${root}\n${cdPrefix(root)}`
+}
+
+/** The prefix every Bash command of a phase agent starts with: the phase prompt says it, and the fence file stores it. */
+export function cdPrefix(root: string): string {
+  return `cd ${shellQuote(root)} &&`
+}
+
+/** A name hooks/fence.sh will look up as a file: the script refuses or passes any other without touching the disk. */
+const isFenceKey = (key: string): boolean => /^[A-Za-z0-9_.:@-]+$/.test(key) && key !== '.' && key !== '..'
+
+/** An agent's fence files: by its name, known before the spawn returns (a teammate's agent_type), and by its id. */
+export function fencePaths(home: string, name?: string, id?: string): string[] {
+  return [name !== undefined && isFenceKey(name) ? `${home}/${FENCE_DIR}/name/${name}` : null, id !== undefined && isFenceKey(id) ? `${home}/${FENCE_DIR}/id/${id}` : null].filter((p): p is string => p !== null)
+}
+
+/** The call the preflight hands hooks/fence.sh: an issue-forge agent with no fence file, which it must refuse. */
+export function fencePreflightInput(): string {
+  return JSON.stringify({ session_id: 'issue-forge-fence-check', hook_event_name: 'PreToolUse', agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' }, tool_use_id: 'issue-forge-fence-check' })
+}
+
+/** Only the script's own no-file refusal passes: any other answer, or none, means the fence can't be trusted to run. */
+export function fencePreflightOk(r: { exitCode: number; stderr: string } | null): boolean {
+  return !!r && r.exitCode === 2 && r.stderr.startsWith(FENCE_NO_FILE)
+}
+
+export function fenceBlock(what: string): { reason: string; next: string } {
+  return { reason: `the fence can't run (${what}), so no agent was started`, next: 'issue-forge needs bash 4.2 or later on PATH to run hooks/fence.sh' }
+}
+
+export function fenceTamperBlock(agent: string): { reason: string; next: string } {
+  return { reason: `the fence file for ${agent} was changed or removed, so the agent was ended`, next: `check ~/${FENCE_DIR}/` }
+}
+
+// A name file is keyed by the agent's name alone, so another repository's run of the same issue can hold it (PR #162
+// review round 1, finding 5). Its line then names another run's folder: this run's is `workOf(run)`, exactly.
+
+/** A live line's time and folder, from a fence file's first line, or null for anything else. */
+const liveLineOf = (text: string | null): { until: number; root: string } | null => {
+  const m = /^live (\d+) (.+)(?:\n|$)/.exec(text ?? '')
+  return m ? { until: Number(m[1]), root: m[2] as string } : null
+}
+
+export type FenceOwner = { kind: 'mine' } | { kind: 'other'; root: string } | { kind: 'changed' }
+
+/** issue-forge writes a line at most FENCE_TTL_S ahead; 5 s more is for clock slack. A line further ahead isn't one it wrote. */
+const FENCE_AHEAD_S = FENCE_TTL_S + 5
+
+/**
+ * What a fence file holds against the line this run last wrote: that line; another run's, a well-formed live line naming
+ * another folder no further ahead than issue-forge writes; or anything else, which is tampering (the owner, PR #162 review
+ * round 1, finding 5). The 5 s check, the spawn check and the retirement all read files through this.
+ */
+export function fenceOwner(text: string | null, mine: string, root: string, nowS: number): FenceOwner {
+  if (text !== null && text.replace(/\n$/, '') === mine) return { kind: 'mine' }
+  const live = liveLineOf(text)
+  return live && live.root !== root && live.until <= nowS + FENCE_AHEAD_S ? { kind: 'other', root: live.root } : { kind: 'changed' }
+}
+
+/** Before a spawn: the folder of another run whose unexpired line holds this name file, else null. */
+export function fenceHeldBy(text: string | null, root: string, nowS: number): string | null {
+  const live = liveLineOf(text)
+  return live && live.until >= nowS && fenceOwner(text, '', root, nowS).kind === 'other' ? live.root : null
+}
+
+export type FenceRead = { path: string; text: string | null }
+export type FenceTickPlan = { kind: 'keep'; paths: string[]; others: { path: string; root: string }[] } | { kind: 'clash'; root: string } | { kind: 'tamper' }
+
+/**
+ * The 5 s check's decision from what the agent's fence files hold. Another run's line in the name file is left to it, and
+ * the agent goes on fenced by its id file; with no id file yet, its calls would be checked against that run's folder, so it
+ * is a clash. Any other line it didn't write, in either file, is tampering.
+ */
+export function fenceTickPlan(reads: readonly FenceRead[], mine: string, root: string, nowS: number): FenceTickPlan {
+  const hasId = reads.some(r => !isFenceNamePath(r.path))
+  const paths: string[] = []
+  const others: { path: string; root: string }[] = []
+  for (const r of reads) {
+    const owner = fenceOwner(r.text, mine, root, nowS)
+    if (owner.kind === 'mine') paths.push(r.path)
+    else if (owner.kind === 'other' && isFenceNamePath(r.path)) {
+      if (!hasId) return { kind: 'clash', root: owner.root }
+      others.push({ path: r.path, root: owner.root })
+    } else return { kind: 'tamper' }
+  }
+  return { kind: 'keep', paths, others }
+}
+
+/** What a retirement writes `retired` over: everything but another run's line in a name file (the owner's departure, finding 5). */
+export function retirablePaths(reads: readonly FenceRead[], mine: string, root: string, nowS: number): string[] {
+  return reads.filter(r => !(isFenceNamePath(r.path) && fenceOwner(r.text, mine, root, nowS).kind === 'other')).map(r => r.path)
+}
+
+/** The debug line naming what the 5 s check found in a fence file that isn't this run's line. */
+export function fenceClassLine(path: string, owner: FenceOwner): string {
+  const holds = owner.kind === 'other' ? `another run's line (${owner.root})` : "a line issue-forge didn't write"
+  return `issue-forge fence check: ${path} holds ${holds}, at the 5 s check`
+}
+
+export function fenceGoesOnLine(agent: string): string {
+  return `issue-forge fence check: ${agent} goes on, fenced by its id file; its name file is left to the other run`
+}
+
+export function fenceClashBlock(agent: string, root: string, issue: number, isEnded: boolean): { reason: string; next: string } {
+  return {
+    reason: `the fence name ${agent} is live in ${root} (another run of #${issue}), so ${isEnded ? 'the agent was ended' : 'no agent was started'}`,
+    next: `wait for that run's agent to end, or stop that run (a line its session left lapses within ${FENCE_TTL_S} s)`,
+  }
+}
+
+type FenceKeptRef = { runId: string; agent: string; paths: readonly string[]; refs: readonly string[] }
+
+/**
+ * What a queued fence write (a 5 s rewrite, or the id write) writes, from the fence its queue turn finds kept: null when a
+ * retirement or another agent's fence has replaced the one it was asked for; else that fence's paths and refs with this
+ * write's added, less the paths this write drops (another run's name file). Not by object identity: a rewrite replaces the
+ * kept fence with an equal one, and an id write queued behind it must still land (PR #162 review round 1, finding 1).
+ */
+export function fenceMerge(current: FenceKeptRef | null, from: FenceKeptRef, want: { paths: readonly string[]; refs: readonly string[] }): { paths: string[]; refs: string[] } | null {
+  if (!current || current.runId !== from.runId || current.agent !== from.agent) return null
+  const dropped = from.paths.filter(p => !want.paths.includes(p))
+  return {
+    paths: [...new Set([...current.paths, ...want.paths])].filter(p => !dropped.includes(p)),
+    refs: [...new Set([...current.refs, ...want.refs])],
+  }
+}
+
+/** A name file, which another run can share, as against an id file, which is this agent's alone. */
+export function isFenceNamePath(path: string): boolean {
+  return path.includes(`/${FENCE_DIR}/name/`)
+}
+
+/** The folder snapshot onto its run, pinned to the run's id; null clears it. */
+export function withFolderSnapshot(stored: Run | null, runId: string, snapshot: FolderSnapshot | null): Run | null {
+  if (!stored || stored.id !== runId) return null
+  const { folderSnapshot: _s, ...rest } = stored
+  return snapshot ? { ...rest, folderSnapshot: snapshot } : rest
+}
+
+/** The stash a resume after a folder block made, onto its run; the block's flag goes with it, stash or not. */
+export function withFolderStash(stored: Run | null, runId: string, stash: StashRef | undefined): Run | null {
+  if (!stored || stored.id !== runId) return null
+  const { isFolderBlock: _f, ...rest } = stored
+  return stash ? { ...rest, folderStash: stash } : rest
+}
+
+/** A folder clause into an answer: before a typed one's last full stop, right after a pressed one's first clause (80 characters). */
+export function withFolderClause(answer: string, clause: string, byPress: boolean): string {
+  if (!clause) return answer
+  if (byPress) {
+    const at = answer.search(/[;.]/)
+    return at < 0 ? `${answer}${clause}` : `${answer.slice(0, at)}${clause}${answer.slice(at)}`
+  }
+  return answer.endsWith('.') ? `${answer.slice(0, -1)}${clause}.` : `${answer}${clause}`
+}
+
+export function folderStashMessage(run: Run, phase: string): string {
+  return `issue-forge #${run.issue} ${phase} after the folder check (run ${run.id})`
+}
+
+/** What a resume's answer adds after a folder block: the stash its drive makes first, by the message it will carry. */
+export function folderResumeNote(run: Run): string {
+  if (!run.isFolderBlock) return ''
+  const at = run.step === 'blocked' && run.blocked ? run.blocked.at : run.step
+  // "Any": git saves no stash when there's nothing to keep (#156's live check: the agent had only read).
+  return `; any uncommitted files in its worktree go to the stash "${folderStashMessage(run, at)}" first`
 }

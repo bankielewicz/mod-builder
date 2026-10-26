@@ -4,10 +4,33 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   DEMO_STATES,
+  FENCE_RETIRED,
+  FENCE_TTL_S,
+  FOLDER_CAP,
+  FOLDER_STATUS_ARGS,
   KEEP_FINISHED,
   RULES,
   USAGE,
   advance,
+  fenceBlock,
+  fenceLine,
+  fencePaths,
+  fencePreflightInput,
+  fencePreflightOk,
+  fenceTamperBlock,
+  fnv1a,
+  folderBlock,
+  folderChanges,
+  folderClause,
+  folderEntries,
+  folderResumeNote,
+  folderSnapshot,
+  folderStashMessage,
+  hashablePaths,
+  withFolderClause,
+  withFolderSnapshot,
+  withFolderStash,
+  withHashes,
   agentsKey,
   agentName,
   agentsToEnd,
@@ -143,7 +166,7 @@ import {
   worktreeStateOf,
 } from '../hooks/issue-forge-logic'
 import * as logic from '../hooks/issue-forge-logic'
-import type { CommandResult, Gate, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
+import type { CommandResult, FolderEntry, FolderSnapshot, Gate, GateGFacts, Profile, Run } from '../hooks/issue-forge-logic'
 import { DIFF_REAL, LCOV_REAL, STASH_LIST_REAL } from './fixtures/real'
 
 const HOME = '/home/u'
@@ -1116,7 +1139,7 @@ describe('workspace: where a run works (Change 0.2.0)', () => {
     expect(r.workRoot).toBe(WT)
     expect(workOf(r)).toBe(WT)
     expect(workOf(run())).toBe(ROOT)
-    expect(phasePrompt('red', r)).toContain(`Repository root: ${WT}. Work only inside it, and run every command from it.`)
+    expect(phasePrompt('red', r)).toContain(`Repository root: ${WT}. Work only inside it. Give every file path in full, starting ${WT}/. Start every Bash command with cd ${WT} && (issue-forge refuses a Bash command that doesn't, and any edit or command that names a path outside ${WT}).`)
     expect(phasePrompt('red', run())).toContain(`Repository root: ${ROOT}. Work only inside it`)
   })
 
@@ -3085,5 +3108,372 @@ describe('#40: a drive that ends, ends its agents', () => {
       expect(handOffAnswer(16, 'red', ended, false)).toBe('handed off #16 at red; /issue-forge resume 16 continues it in any session; its red agent (issue-forge-16-red-1) has stopped.')
       expect(handOffAnswer(16, 'red', ended, true)).toBe('handed off #16 at red; its red agent (issue-forge-16-red-1) has stopped; /issue-forge resume 16 continues it in any session.')
     })
+  })
+})
+
+describe('#156: the fence and the folder check (Change 0.10.0)', () => {
+  type Entry = FolderEntry
+  type Snap = FolderSnapshot
+  const STATUS = 'A  src/new.ts\0 M a.ts\0?? n/x.ts\0 D gone.ts\0D  staged-gone.ts\0?? nested/\0'
+  const entries = () => folderEntries(STATUS)
+  const snap = (list: Entry[]) => folderSnapshot('red', 5, list)
+  const changes = (a: Snap, b: Snap) => folderChanges(a, b)
+
+  test('git status -z with -uall and --no-renames: one entry a record, the two status letters kept', () => {
+    expect(entries()).toEqual([
+      { xy: 'A ', path: 'src/new.ts' },
+      { xy: ' M', path: 'a.ts' },
+      { xy: '??', path: 'n/x.ts' },
+      { xy: ' D', path: 'gone.ts' },
+      { xy: 'D ', path: 'staged-gone.ts' },
+      { xy: '??', path: 'nested/' },
+    ])
+    expect(FOLDER_STATUS_ARGS).toEqual(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'])
+  })
+
+  test('hash-object gets no deleted path, no folder (nested/) and no path holding a newline', () => {
+    expect(hashablePaths(entries())).toEqual(['src/new.ts', 'a.ts', 'n/x.ts'])
+    expect(hashablePaths([{ xy: '??', path: 'odd\nname' }])).toEqual([])
+  })
+
+  // PR #162 review round 1, finding 3 (Codex 4372144807): porcelain v1 lists a dirty submodule as ` M sub`, with no slash,
+  // and hash-object exits 128 on its folder, which dropped every hash. A path stat doesn't find to be a file isn't hashed.
+  test("a path stat finds isn't a file (a submodule) gets its kind, goes to no hash-object, and isn't a failed hash", () => {
+    const withKinds = logic.withKinds
+    const list: Entry[] = [{ xy: ' M', path: 'a.ts' }, { xy: ' M', path: 'sub' }, { xy: '??', path: 'link' }]
+    expect(withKinds(list, ['a.ts', 'sub', 'link'], ['file', 'dir', 'other'])).toEqual([{ xy: ' M', path: 'a.ts' }, { xy: ' M', path: 'sub', kind: 'dir' }, { xy: '??', path: 'link', kind: 'other' }])
+    const sub: Entry = { xy: ' M', path: 'sub', kind: 'dir' } as Entry
+    expect(hashablePaths([{ xy: ' M', path: 'a.ts' }, sub])).toEqual(['a.ts'])
+    expect(changes(snap([sub, { xy: ' M', path: 'a.ts', hash: 'h1' }]), snap([sub, { xy: ' M', path: 'a.ts', hash: 'h2' }]))).toEqual({ paths: ['a.ts'], count: 1, isHashless: false })
+  })
+
+  test("hash-object's lines go onto their paths; no output leaves the entries without hashes", () => {
+    const list = entries()
+    const hashed = withHashes(list, ['src/new.ts', 'a.ts', 'n/x.ts'], 'h1\nh2\nh3\n')
+    expect(hashed.find(e => e.path === 'a.ts')).toEqual({ xy: ' M', path: 'a.ts', hash: 'h2' })
+    expect(hashed.find(e => e.path === 'gone.ts')).toEqual({ xy: ' D', path: 'gone.ts' })
+    expect(withHashes(list, ['src/new.ts'], null)).toEqual(list)
+  })
+
+  test('a snapshot keeps its entries sorted by path; past 200, only a count and a digest', () => {
+    expect(snap([{ xy: ' M', path: 'b' }, { xy: '??', path: 'a' }])).toEqual({ phase: 'red', at: 5, entries: [{ xy: '??', path: 'a' }, { xy: ' M', path: 'b' }] })
+    const many = Array.from({ length: 201 }, (_, i) => ({ xy: '??', path: `f${i}` }))
+    const big = snap(many)
+    // With a status-only digest and whether every hashable entry had its hash (round 2, finding 4): these carry none.
+    expect(big).toEqual({ phase: 'red', at: 5, count: 201, digest: expect.any(String), statusDigest: expect.any(String), isHashed: false })
+    expect(snap([...many].reverse())).toEqual(big)
+    expect(FOLDER_CAP).toBe(200)
+  })
+
+  test('fnv1a, 32 bits, as hex', () => {
+    const fnv = fnv1a
+    expect(fnv('')).toBe('811c9dc5')
+    expect(fnv('a')).toBe('e40c292c')
+  })
+
+  test('folderChanges names what differs: an edit to a file already dirty, a new file in an untracked folder, a deletion, a rename', () => {
+    const before = snap([{ xy: ' M', path: 'a.ts', hash: 'h1' }, { xy: '??', path: 'n/x.ts', hash: 'h2' }, { xy: ' M', path: 'old.ts', hash: 'h3' }])
+    expect(changes(before, before)).toBeNull()
+    expect(changes(before, snap([{ xy: ' M', path: 'a.ts', hash: 'h9' }, { xy: '??', path: 'n/x.ts', hash: 'h2' }, { xy: ' M', path: 'old.ts', hash: 'h3' }]))).toEqual({ paths: ['a.ts'], count: 1, isHashless: false })
+    expect(changes(before, snap([{ xy: ' M', path: 'a.ts', hash: 'h1' }, { xy: '??', path: 'n/x.ts', hash: 'h2' }, { xy: '??', path: 'n/y.ts', hash: 'h4' }, { xy: ' M', path: 'old.ts', hash: 'h3' }]))).toEqual({ paths: ['n/y.ts'], count: 1, isHashless: false })
+    expect(changes(before, snap([{ xy: ' D', path: 'a.ts' }, { xy: '??', path: 'n/x.ts', hash: 'h2' }, { xy: ' M', path: 'old.ts', hash: 'h3' }]))).toEqual({ paths: ['a.ts'], count: 1, isHashless: false })
+    // --no-renames: a rename is the old path deleted and the new one added, so both are named.
+    expect(changes(before, snap([{ xy: ' M', path: 'a.ts', hash: 'h1' }, { xy: '??', path: 'n/x.ts', hash: 'h2' }, { xy: ' D', path: 'old.ts' }, { xy: '??', path: 'renamed.ts', hash: 'h3' }]))).toEqual({ paths: ['old.ts', 'renamed.ts'], count: 2, isHashless: false })
+  })
+
+  test('without hashes on one side, status lines alone are compared, and the result says so', () => {
+    const before = snap([{ xy: ' M', path: 'a.ts', hash: 'h1' }])
+    expect(changes(before, snap([{ xy: ' M', path: 'a.ts' }]))).toBeNull()
+    expect(changes(before, snap([{ xy: ' M', path: 'a.ts' }, { xy: '??', path: 'b.ts' }]))).toEqual({ paths: ['b.ts'], count: 1, isHashless: true })
+  })
+
+  test("an entry that is never hashed (deleted, or a folder) isn't a failed hash", () => {
+    const before = snap([{ xy: ' D', path: 'gone.ts' }, { xy: '??', path: 'nested/' }, { xy: ' M', path: 'a.ts', hash: 'h1' }])
+    const after = snap([{ xy: ' D', path: 'gone.ts' }, { xy: '??', path: 'nested/' }, { xy: ' M', path: 'a.ts', hash: 'h1' }, { xy: '??', path: 'new.ts', hash: 'h2' }])
+    expect(changes(before, after)).toEqual({ paths: ['new.ts'], count: 1, isHashless: false })
+  })
+
+  test('past the cap, digests are compared, and a change has a count and no names', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ xy: '??', path: `f${i}`, hash: 'h' }))
+    expect(changes(snap(many(201)), snap(many(201)))).toBeNull()
+    expect(changes(snap(many(201)), snap(many(202)))).toEqual({ paths: [], count: 202, isHashless: false })
+    expect(changes(snap(many(3)), snap(many(201)))).toEqual({ paths: [], count: 201, isHashless: false })
+    // Back under the cap: the count is the entries listed now.
+    expect(changes(snap(many(201)), snap(many(3)))).toEqual({ paths: [], count: 3, isHashless: false })
+  })
+
+  // PR #162 review round 2, finding 4 (Codex 4372538900): past the cap, a side not fully hashed compared full digests, so
+  // a hash-object failure on one check read as 201 changed entries. Now status digests are compared, and said so.
+  test('past the cap, a side not fully hashed compares status digests, and says so', () => {
+    const many = (n: number, hashed = true, xy = ' M') => Array.from({ length: n }, (_, i) => ({ xy, path: `f${i}`, ...(hashed ? { hash: `h${i}` } : {}) }))
+    expect(snap(many(201, false))).toMatchObject({ count: 201, isHashed: false })
+    expect(changes(snap(many(201)), snap(many(201, false)))).toBeNull()
+    expect(changes(snap(many(201, false)), snap(many(201)))).toBeNull()
+    expect(changes(snap(many(201)), snap(many(201, false, 'M ')))).toEqual({ paths: [], count: 201, isHashless: true })
+    // A content change both sides hashed is still seen.
+    const changed = many(201).map((e, i) => (i === 7 ? { ...e, hash: 'other' } : e))
+    expect(changes(snap(many(201)), snap(changed))).toEqual({ paths: [], count: 201, isHashless: false })
+    // A capped snapshot stored before these fields is taken as not fully hashed: compared by count.
+    const old = { phase: 'red', at: 1, count: 201, digest: 'd' } as Snap
+    expect(changes(old, snap(many(201)))).toBeNull()
+    expect(changes(old, snap(many(202)))).toEqual({ paths: [], count: 202, isHashless: true })
+    // The block and the debug line say so whenever the fallback is in effect.
+    expect(logic.folderFoundLine({ paths: [], count: 201, isHashless: true }, 'the 5 s check')).toBe('issue-forge folder check: 201 changed, found at the 5 s check, compared by git status only')
+  })
+
+  test('the edges: entries of one path keep their order; a pressed clause by count; answers with no full stop', () => {
+    expect(snap([{ xy: ' M', path: 'a' }, { xy: '??', path: 'a' }])).toEqual({ phase: 'red', at: 5, entries: [{ xy: ' M', path: 'a' }, { xy: '??', path: 'a' }] })
+    expect(folderClause({ paths: [], count: 250, isHashless: false }, true)).toBe('; folder changed: 250 entries')
+    expect(withFolderClause('stopped #16', '; x', true)).toBe('stopped #16; x')
+    expect(withFolderClause('stopped #16', '; x', false)).toBe('stopped #16; x')
+  })
+
+  test("the block, the clause a stop or hand-off adds, and the pressed toast's, within 80 characters", () => {
+    const block = folderBlock
+    const clause = folderClause
+    const one = { paths: ['a.ts'], count: 1, isHashless: false }
+    expect(block('/repo', 'red', one)).toEqual({
+      reason: "the session's folder /repo changed while the red agent worked: a.ts; issue-forge can't tell whether the agent or someone else made the change",
+      next: "check those files (issue-forge doesn't undo them)",
+    })
+    const seven = { paths: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], count: 7, isHashless: true }
+    expect(block('/repo', 'green', seven).reason).toBe("the session's folder /repo changed while the green agent worked: a, b, c, d, e (and 2 more); issue-forge can't tell whether the agent or someone else made the change (compared by git status only: git hash-object failed)")
+    expect(clause(one, false)).toBe("; the session's folder changed while it worked: a.ts")
+    expect(clause({ paths: [], count: 250, isHashless: false }, false)).toBe("; the session's folder changed while it worked: 250 entries (too many to list)")
+    expect(clause(one, true)).toBe('; folder changed: a.ts')
+    expect(clause({ paths: ['a-very-long-name/that/goes/on/and/on/and/on/and/on/for/a/while/longer.ts'], count: 1, isHashless: false }, true).length).toBeLessThanOrEqual(40)
+    expect(clause(null, false)).toBe('')
+  })
+
+  test('the fence: a live line with its expiry, the two files an agent has, and only names safe as files', () => {
+    // The second line is the prefix the phase prompt gives the agent, stored for hooks/fence.sh (round 2, finding 5).
+    expect(fenceLine('/repo/wt', 100)).toBe('live 100 /repo/wt\ncd /repo/wt &&')
+    expect(fenceLine("/srv/owner's repo/wt", 100)).toBe("live 100 /srv/owner's repo/wt\ncd '/srv/owner'\\''s repo/wt' &&")
+    expect(FENCE_RETIRED).toBe('retired')
+    expect(FENCE_TTL_S).toBe(30)
+    const paths = fencePaths
+    expect(paths('/home/u', 'issue-forge-16-red-1', 'aid-1')).toEqual(['/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1', '/home/u/.claude/issue-forge-data/fence/id/aid-1'])
+    expect(paths('/home/u', 'issue-forge-16-red-1', '../x')).toEqual(['/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'])
+    expect(paths('/home/u', undefined, 'aid-1')).toEqual(['/home/u/.claude/issue-forge-data/fence/id/aid-1'])
+  })
+
+  // PR #162 review round 1, finding 5 (the owner's content check): a name file is keyed by the agent's name alone, so
+  // another repository's run of the same issue can hold it. Its line names another run's folder.
+  test("a fence file's line: this run's own, another run's (a live line naming another folder, at most 35 s ahead), or changed", () => {
+    const owner = logic.fenceOwner
+    const mine = 'live 100 /repo/wt'
+    expect(owner('live 100 /repo/wt\n', mine, '/repo/wt', 90)).toEqual({ kind: 'mine' })
+    expect(owner('live 130 /other/scratch/issue-forge/b\n', mine, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/scratch/issue-forge/b' })
+    // issue-forge writes at most 30 s ahead: a line further ahead than 35 s (5 s of clock slack) isn't one it wrote.
+    expect(owner('live 130 /other/wt\n', mine, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/wt' })
+    expect(owner('live 131 /other/wt\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('live 9999999999 /\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('live 130 /repo/wt\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('retired\n', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner(null, mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('garbage', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    expect(owner('live x /other/wt', mine, '/repo/wt', 95)).toEqual({ kind: 'changed' })
+    // A file with its stored prefix line (round 2, finding 5): the live line is the first.
+    const mine2 = 'live 100 /repo/wt\ncd /repo/wt &&'
+    expect(owner(`${mine2}\n`, mine2, '/repo/wt', 90)).toEqual({ kind: 'mine' })
+    expect(owner("live 125 /other/wt\ncd /other/wt &&\n", mine2, '/repo/wt', 95)).toEqual({ kind: 'other', root: '/other/wt' })
+    expect(logic.fenceHeldBy("live 125 /other/wt\ncd /other/wt &&\n", '/repo/wt', 95)).toBe('/other/wt')
+  })
+
+  test("before a spawn: another run's live, unexpired name line holds the name; anything else doesn't", () => {
+    const heldBy = logic.fenceHeldBy
+    expect(heldBy('live 130 /other/wt\n', '/repo/wt', 120)).toBe('/other/wt')
+    expect(heldBy('live 130 /other/wt\n', '/repo/wt', 131)).toBeNull()
+    expect(heldBy('live 9999999999 /other/wt\n', '/repo/wt', 120)).toBeNull()
+    expect(heldBy('live 130 /repo/wt\n', '/repo/wt', 120)).toBeNull()
+    expect(heldBy('retired\n', '/repo/wt', 120)).toBeNull()
+    expect(heldBy(null, '/repo/wt', 120)).toBeNull()
+    // A folder under this one is another run's too: the main folder and a worktree of it under scratch/ both run #N.
+    expect(heldBy('live 130 /repo/wt/scratch/issue-forge/b\n', '/repo/wt', 120)).toBe('/repo/wt/scratch/issue-forge/b')
+  })
+
+  // The 5 s check's whole decision, as a table: the kit can't reach the "goes on" branch end to end (a kit spawn's agentId
+  // is dropped, probed on 2.1.310), so this table is its coverage.
+  test("the 5 s check's decision, for every class of name line, with the id file there or not", () => {
+    const plan = (reads: { path: string; text: string | null }[]) => logic.fenceTickPlan(reads, MINE, '/repo/wt', 100)
+    const NAME = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
+    const ID = '/home/u/.claude/issue-forge-data/fence/id/aid-1'
+    const MINE = 'live 120 /repo/wt'
+    const name = {
+      ours: `${MINE}\n`,
+      other: 'live 125 /other/wt\n',
+      farAhead: 'live 9999999999 /other/wt\n',
+      malformed: 'live soon /other/wt\n',
+      missing: null,
+      retired: 'retired\n',
+      ourFolderOtherTime: 'live 121 /repo/wt\n',
+    }
+    const goes = (paths: string[], others: { path: string; root: string }[] = []) => ({ kind: 'keep', paths, others })
+    const rows: [keyof typeof name, boolean, unknown][] = [
+      ['ours', false, goes([NAME])],
+      ['ours', true, goes([NAME, ID])],
+      ['other', false, { kind: 'clash', root: '/other/wt' }],
+      ['other', true, goes([ID], [{ path: NAME, root: '/other/wt' }])],
+      ['farAhead', false, { kind: 'tamper' }],
+      ['farAhead', true, { kind: 'tamper' }],
+      ['malformed', false, { kind: 'tamper' }],
+      ['malformed', true, { kind: 'tamper' }],
+      ['missing', false, { kind: 'tamper' }],
+      ['missing', true, { kind: 'tamper' }],
+      ['retired', false, { kind: 'tamper' }],
+      ['retired', true, { kind: 'tamper' }],
+      ['ourFolderOtherTime', false, { kind: 'tamper' }],
+      ['ourFolderOtherTime', true, { kind: 'tamper' }],
+    ]
+    for (const [cls, hasId, want] of rows) {
+      const reads = [{ path: NAME, text: name[cls] }, ...(hasId ? [{ path: ID, text: `${MINE}\n` }] : [])]
+      expect([cls, hasId, plan(reads)]).toEqual([cls, hasId, want])
+    }
+    // An id file is this agent's alone: any line but its own there is tampering, another run's included.
+    expect(plan([{ path: NAME, text: `${MINE}\n` }, { path: ID, text: 'live 125 /other/wt\n' }])).toEqual({ kind: 'tamper' })
+    expect(plan([{ path: NAME, text: `${MINE}\n` }, { path: ID, text: null }])).toEqual({ kind: 'tamper' })
+  })
+
+  test('what a retirement writes over: everything but another run\'s in-window name line', () => {
+    const retirable = (reads: { path: string; text: string | null }[]) => logic.retirablePaths(reads, 'live 120 /repo/wt', '/repo/wt', 100)
+    const NAME = '/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1'
+    const ID = '/home/u/.claude/issue-forge-data/fence/id/aid-1'
+    expect(retirable([{ path: NAME, text: 'live 120 /repo/wt\n' }, { path: ID, text: 'live 120 /repo/wt\n' }])).toEqual([NAME, ID])
+    expect(retirable([{ path: NAME, text: 'live 125 /other/wt\n' }, { path: ID, text: 'live 120 /repo/wt\n' }])).toEqual([ID])
+    for (const text of ['live 9999999999 /other/wt\n', 'garbage', null, 'retired\n', 'live 121 /repo/wt\n']) expect(retirable([{ path: NAME, text }])).toEqual([NAME])
+    expect(retirable([{ path: ID, text: 'live 125 /other/wt\n' }])).toEqual([ID])
+  })
+
+  test("the debug line naming the class a fence file holds, and when the agent goes on", () => {
+    const line = logic.fenceClassLine
+    expect(line('/f/name/x', { kind: 'other', root: '/other/wt' })).toBe("issue-forge fence check: /f/name/x holds another run's line (/other/wt), at the 5 s check")
+    expect(line('/f/name/x', { kind: 'changed' })).toBe("issue-forge fence check: /f/name/x holds a line issue-forge didn't write, at the 5 s check")
+    const goesOn = logic.fenceGoesOnLine
+    expect(goesOn('issue-forge-16-red-1')).toBe('issue-forge fence check: issue-forge-16-red-1 goes on, fenced by its id file; its name file is left to the other run')
+  })
+
+  // Finding 1's queue judged a write stale by object identity, so an id write queued behind a 5 s rewrite was dropped once
+  // the rewrite replaced the kept fence. Stale means retired or another agent's; a write merges onto the fence it finds.
+  test("a queued fence write: stale only when retired or another agent's, and merged onto the fence its turn finds", () => {
+    const merge = (current: unknown, from: unknown, want: unknown): unknown => (logic as Record<string, any>).fenceMerge?.(current, from, want)
+    const NAME = '/f/name/issue-forge-16-red-1'
+    const ID = '/f/id/aid-1'
+    const kept = (paths: string[], refs: string[], agent = 'issue-forge-16-red-1', runId = '16-1') => ({ runId, agent, paths, refs })
+    const before = kept([NAME], ['issue-forge-16-red-1'])
+    // A retirement came first, or another agent's fence is kept now: nothing is written.
+    expect(merge(null, before, { paths: [NAME], refs: ['issue-forge-16-red-1'] })).toBeNull()
+    expect(merge(kept([NAME], ['x'], 'issue-forge-16-green-1'), before, { paths: [NAME], refs: ['x'] })).toBeNull()
+    expect(merge(kept([NAME], ['x'], 'issue-forge-16-red-1', '17-1'), before, { paths: [NAME], refs: ['x'] })).toBeNull()
+    // The id write, queued behind a rewrite that replaced the kept fence with an equal one: it still lands.
+    expect(merge(kept([NAME], ['issue-forge-16-red-1']), before, { paths: [NAME, ID], refs: ['issue-forge-16-red-1', 'aid-1'] })).toEqual({ paths: [NAME, ID], refs: ['issue-forge-16-red-1', 'aid-1'] })
+    // A rewrite asked before the id write landed keeps the id file it didn't know of.
+    expect(merge(kept([NAME, ID], ['issue-forge-16-red-1', 'aid-1']), before, { paths: [NAME], refs: ['issue-forge-16-red-1'] })).toEqual({ paths: [NAME, ID], refs: ['issue-forge-16-red-1', 'aid-1'] })
+    // A rewrite that drops another run's name file leaves it out, and keeps the rest.
+    const withId = kept([NAME, ID], ['issue-forge-16-red-1', 'aid-1'])
+    expect(merge(withId, withId, { paths: [ID], refs: withId.refs })).toEqual({ paths: [ID], refs: ['issue-forge-16-red-1', 'aid-1'] })
+  })
+
+  // PR #162 review round 1, item 6: each folder change found says in the debug log which check found it.
+  test('the debug line naming where a folder change was found', () => {
+    const found = logic.folderFoundLine
+    expect(found({ paths: ['a.ts', 'b.ts'], count: 2, isHashless: false }, 'the 5 s check')).toBe('issue-forge folder check: 2 changed, found at the 5 s check')
+    expect(found({ paths: [], count: 201, isHashless: false }, 'the answer')).toBe('issue-forge folder check: 201 changed, found at the answer')
+  })
+
+  test("the name clash's block, at the spawn and at the 5 s check, and which fence files are name files", () => {
+    const clash = logic.fenceClashBlock
+    expect(clash('issue-forge-16-red-1', '/other/wt', 16, false)).toEqual({
+      reason: 'the fence name issue-forge-16-red-1 is live in /other/wt (another run of #16), so no agent was started',
+      next: "wait for that run's agent to end, or stop that run (a line its session left lapses within 30 s)",
+    })
+    expect((clash('issue-forge-16-red-1', '/other/wt', 16, true) as { reason: string }).reason).toBe('the fence name issue-forge-16-red-1 is live in /other/wt (another run of #16), so the agent was ended')
+    const isName = logic.isFenceNamePath
+    expect(isName('/home/u/.claude/issue-forge-data/fence/name/issue-forge-16-red-1')).toBe(true)
+    expect(isName('/home/u/.claude/issue-forge-data/fence/id/aid-1')).toBe(false)
+  })
+
+  test("the preflight: a synthetic issue-forge call with no fence file, which only the script's own refusal answers", () => {
+    const input = JSON.parse(fencePreflightInput())
+    expect(input).toMatchObject({ agent_id: 'issue-forge-fence-check', agent_type: 'issue-forge-0-red-0', tool_name: 'Edit', tool_input: { file_path: '/' } })
+    const ok = fencePreflightOk
+    expect(ok({ exitCode: 2, stderr: 'issue-forge: this agent has no fence file, so it may not call tools; end your turn now.\n' })).toBe(true)
+    expect(ok({ exitCode: 0, stderr: '' })).toBe(false)
+    expect(ok({ exitCode: 2, stderr: 'issue-forge: the fence needs bash 4.2 or later (this is 3.2.57); end your turn now.\n' })).toBe(false)
+    expect(ok({ exitCode: 127, stderr: 'bash: hooks/fence.sh: No such file or directory' })).toBe(false)
+    expect(ok(null)).toBe(false)
+  })
+
+  test("the fence's blocks: it can't run, or a fence file was changed", () => {
+    expect(fenceBlock('bash: not found')).toEqual({
+      reason: "the fence can't run (bash: not found), so no agent was started",
+      next: 'issue-forge needs bash 4.2 or later on PATH to run hooks/fence.sh',
+    })
+    expect(fenceTamperBlock('issue-forge-16-red-1')).toEqual({
+      reason: 'the fence file for issue-forge-16-red-1 was changed or removed, so the agent was ended',
+      next: 'check ~/.claude/issue-forge-data/fence/',
+    })
+  })
+
+  test("the status line names the resume step once: the pane and status add it to every block's next", () => {
+    const blocked = { ...run({ step: 'blocked', blocked: { at: 'red', ...folderBlock('/repo', 'red', { paths: ['a.ts'], count: 1, isHashless: false }) } }) } as Run
+    const status = statusText(blocked, false, 6)
+    expect(status).toContain("next: check those files (issue-forge doesn't undo them), then /issue-forge resume")
+    expect(status).not.toContain('resume, then /issue-forge resume')
+  })
+
+  test('a folder block records the flag and drops the snapshot; a resume keeps the flag; a stop drops the snapshot', () => {
+    const before = snap([{ xy: ' M', path: 'a.ts', hash: 'h1' }])
+    const atRed = { ...run({ step: 'red' }), folderSnapshot: before } as Run
+    const blocked = advance(atRed, { type: 'block', reason: 'r', next: 'n', isFolderBlock: true }, 2) as Run & Record<string, unknown>
+    expect(blocked.step).toBe('blocked')
+    expect(blocked.isFolderBlock).toBe(true)
+    expect('folderSnapshot' in blocked).toBe(false)
+    const resumed = advance(blocked, { type: 'resume' }, 3) as Run & Record<string, unknown>
+    expect(resumed.step).toBe('red')
+    expect(resumed.isFolderBlock).toBe(true)
+    const stopped = advance(atRed, { type: 'stop' }, 4) as Run & Record<string, unknown>
+    expect('folderSnapshot' in stopped).toBe(false)
+    // An ordinary block keeps the snapshot, so the next phase start compares against it.
+    expect((advance(atRed, { type: 'block', reason: 'r', next: 'n' }, 2) as Run & Record<string, unknown>).folderSnapshot).toEqual(before)
+  })
+
+  test("the snapshot and the stash go onto the run they were taken for, pinned to its id", () => {
+    const set = withFolderSnapshot
+    const stashed = withFolderStash
+    const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
+    const s = snap([])
+    expect((set(r, r.id, s) as Run & Record<string, unknown>).folderSnapshot).toEqual(s)
+    expect(set(r, 'other', s)).toBeNull()
+    expect(set(null, r.id, s)).toBeNull()
+    expect('folderSnapshot' in (set({ ...r, folderSnapshot: s } as Run, r.id, null) as Run)).toBe(false)
+    const after = stashed(r, r.id, { sha: 'abc1234', message: 'm' }) as Run & Record<string, unknown>
+    expect(after.folderStash).toEqual({ sha: 'abc1234', message: 'm' })
+    expect('isFolderBlock' in after).toBe(false)
+    expect(stashed(r, 'other', { sha: 'abc1234', message: 'm' })).toBeNull()
+  })
+
+  test('with nothing to stash, only the flag goes', () => {
+    const stashed = withFolderStash
+    const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
+    const after = stashed(r, r.id, undefined) as Run & Record<string, unknown>
+    expect('isFolderBlock' in after).toBe(false)
+    expect('folderStash' in after).toBe(false)
+  })
+
+  test("the folder clause goes before a typed answer's last full stop, and right after a pressed one's first clause", () => {
+    const put = withFolderClause
+    expect(put('stopped #16. Its branch b and commits are kept; no agent was running.', "; the session's folder changed while it worked: a.ts", false)).toBe("stopped #16. Its branch b and commits are kept; no agent was running; the session's folder changed while it worked: a.ts.")
+    expect(put('stopped #16; its red agent (n) has stopped. Its branch and commits are kept.', '; folder changed: a.ts', true)).toBe('stopped #16; folder changed: a.ts; its red agent (n) has stopped. Its branch and commits are kept.')
+    expect(put('handed off #16 at red; /issue-forge resume 16 continues it in any session.', '; folder changed: a.ts', true)).toBe('handed off #16 at red; folder changed: a.ts; /issue-forge resume 16 continues it in any session.')
+    expect(put('stopped #16. Its branch b and commits are kept.', '', false)).toBe('stopped #16. Its branch b and commits are kept.')
+  })
+
+  test("the folder stash's message, and the note a resume's answer gets after a folder block", () => {
+    const r = { ...run({ step: 'red' }), isFolderBlock: true } as Run
+    expect(folderStashMessage(r, 'red')).toBe('issue-forge #16 red after the folder check (run 16-1)')
+    const note = folderResumeNote
+    expect(note(r)).toBe('; any uncommitted files in its worktree go to the stash "issue-forge #16 red after the folder check (run 16-1)" first')
+    expect(note(run({ step: 'red' }))).toBe('')
+    expect(note({ ...run({ step: 'blocked', blocked: { at: 'green', reason: 'r', next: 'n' } }), isFolderBlock: true } as Run)).toBe('; any uncommitted files in its worktree go to the stash "issue-forge #16 green after the folder check (run 16-1)" first')
   })
 })

@@ -1,1 +1,11 @@
-{ "modules": ["./register.tsx"] }
+{
+  "modules": ["./register.tsx"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|PowerShell|Edit|MultiEdit|Write|NotebookEdit|EnterWorktree|ExitWorktree|mcp__.*)$",
+        "hooks": [{ "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/fence.sh"] }]
+      }
+    ]
+  }
+}
