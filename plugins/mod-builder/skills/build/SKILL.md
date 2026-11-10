@@ -55,8 +55,9 @@ tool the full path; it does not expand `~`). `docs-index.txt` in the same folder
 ## The phases
 
 Each phase ends with a call of `mod_builder_gate`. Done has none. Call it when the phase's work is done, read
-the answer, and go on only when it says the build moved. The pane beside the chat shows where the build
-stands.
+the answer, and go on only when it says the build moved. When it refuses for a command it ran (the validator,
+the tests, the typecheck, the load), the answer carries the last lines that command printed: fix what they
+name, and nothing else, then call the gate again. The pane beside the chat shows where the build stands.
 
 | # | Phase | May write | The gate passes when |
 |---|---|---|---|
@@ -144,9 +145,10 @@ Then call the gate. It runs the validator, the tests, a typecheck against this b
 load of the mod: the same four checks Verify ends on, run here because `hooks/` closes when Green passes and
 anything they find has to be found while the code can still be changed. When it refuses for the typecheck or
 the load, its answer carries the last lines the command printed: fix what they name and call the gate again.
-If it says the types are not written yet, load `plugin-authoring` again and ask again. If it says that files
-naming themselves the build's types are not the same, stop and tell the person which files it named: one of
-them is not the build's, and the gate uses none.
+If it says the types are not written yet, load `plugin-authoring` again and ask again. The typecheck runs
+against every distinct types file that names itself this build's (they differ between sessions of one build),
+and a failure names the file it failed against. When Green passes, its answer ends with the "Built on" line
+for phase 7: keep it.
 
 ### 7. Verify
 
@@ -159,7 +161,9 @@ Built on Claude Code <version>, from the docs snapshot <stamp>, against the type
 <one line per thing that differs from the spec, or "As specified.">
 ```
 
-The hash is the one Green's gate answered with (`types sha256 ...`). Then call the gate. It runs the same four
+Write the "Built on" line by copying it from Green's answer, exactly as the gate printed it: the gate composes
+that line, with the hash of every types file it checked against, and you never do. Then call the gate. It
+refuses a "Built" block that lacks one of those hashes, and prints the line again. It runs the same four
 checks again and compares the same hashes. Green's gate passed them on this code, so a refusal here is about
 what changed since: `tests/` and `hooks/` are closed now, and if one of them is what has to change, the build
 stops here. Tell the person what failed rather than working around it.

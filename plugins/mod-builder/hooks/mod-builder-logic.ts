@@ -490,26 +490,72 @@ export function typecheckConfig(typesFile: string, modDir: string): string {
 // `content` is compared whole (the file's bytes, as the caller read them); `sha256` is the file's own hash.
 export type TypesCandidate = { path: string; content: string; sha256: string }
 
-export type TypesVerdict = { pass: true; path: string; sha256: string } | { pass: false; reason: string }
+// The types the typecheck runs against: one file for each distinct content among the candidates, in the order of
+// their hashes; or why there is none.
+export type TypesToCheck = { pass: true; types: { path: string; sha256: string }[] } | { pass: false; reason: string }
 
-// Which types the typecheck uses (SPEC.md 7.7, decision 2). Every candidate must agree: one, or several whose
-// content is the same to the byte, is used; none, or candidates that differ, refuses. It never picks among files
-// that differ: a file planted beside the build's own stops the gate instead of being used.
-export function typesVerdict(candidates: readonly TypesCandidate[], folder: string | null, version: string): TypesVerdict {
+// Which types the typecheck runs against (SPEC.md 7.9, which corrects 7.7's decision 2). Genuine types files of one
+// build differ between sessions (the Bash tool's fields differ where the sandbox is on), so candidates that differ
+// are no reason to refuse, and none of them is picked: the typecheck runs once for each distinct content and must
+// pass for every one. A planted file can then only make the check stricter or fail it; it can never make a mod
+// pass that fails against the genuine files, because those are checked too. With no candidate there is nothing
+// to check against, and that refuses.
+export function typesToCheck(candidates: readonly TypesCandidate[], folder: string | null, version: string): TypesToCheck {
   const found = Array.isArray(candidates) ? candidates : []
-  const first = found[0]
-  if (first === undefined) {
+  if (found.length === 0) {
     return {
       pass: false,
       reason: `the types of Claude Code ${version} are not written yet (looked in ${folder ?? 'no folder: CLAUDE_TMPDIR is not set and the user id could not be read'}): load the plugin-authoring skill with the Skill tool, which writes them, then ask again`,
     }
   }
-  if (found.every((one) => one.content === first.content && one.sha256 === first.sha256)) return { pass: true, path: first.path, sha256: first.sha256 }
-  const paths = found.map((one) => one.path).sort()
-  return {
-    pass: false,
-    reason: `${paths.length} files name themselves the types of Claude Code ${version} and are not the same (${paths.join(', ')}): the gate can't tell which is the build's, and uses none`,
+  // One file stands for each distinct content: the first by path, so that the same files give the same answer.
+  const byPath = [...found].sort((one, other) => (one.path < other.path ? -1 : one.path > other.path ? 1 : 0))
+  const distinct: TypesCandidate[] = []
+  for (const one of byPath) {
+    if (!distinct.some((kept) => kept.content === one.content && kept.sha256 === one.sha256)) distinct.push(one)
   }
+  const types = distinct.map((one) => ({ path: one.path, sha256: one.sha256 }))
+  types.sort((one, other) => (one.sha256 < other.sha256 ? -1 : one.sha256 > other.sha256 ? 1 : one.path < other.path ? -1 : 1))
+  return { pass: true, types }
+}
+
+// The "Built on" line of a built mod's SPEC.md, as the gate prints it for the model to copy: the build, the docs
+// snapshot, and the hash of every distinct types file the typecheck ran against, sorted.
+export function builtOnLine(version: string, snapshot: string, hashes: readonly string[]): string {
+  return `Built on Claude Code ${version}, from the docs snapshot ${snapshot}, against the types sha256 ${[...new Set(hashes)].sort().join(', ')}.`
+}
+
+// The hashes missing from the "Built" block of a SPEC.md: the part after its approved text must hold every one,
+// whole (a hash inside a longer run of hex digits is another number).
+export function builtMisses(spec: string, approvedLength: number, hashes: readonly string[]): string[] {
+  const built = typeof spec === 'string' && Number.isInteger(approvedLength) && approvedLength >= 0 ? spec.slice(approvedLength) : ''
+  const holds = (hash: string) => /^[0-9a-f]+$/.test(hash) && new RegExp(`(?<![0-9a-f])${hash}(?![0-9a-f])`).test(built)
+  return [...new Set(hashes)].sort().filter((hash) => typeof hash !== 'string' || !holds(hash))
+}
+
+// Which of the four checks a refused Green or Verify failed at, in the order verifyGate judges them: one that
+// ended with no exit code first (in the order they run), then validate, the tests, the typecheck, the load. The
+// lines a refusal quotes are that command's, whatever else failed beside it.
+export function refusedAt(runs: VerifyRuns, testsAtRed: number): 'validate' | 'test' | 'typecheck' | 'load' {
+  const order = [['validate', runs.validate], ['test', runs.test], ['typecheck', runs.typecheck], ['load', runs.load]] as const
+  const unended = order.find(([, ran]) => !ended(ran, '').pass)
+  if (unended !== undefined) return unended[0]
+  if (runs.validate.exitCode !== 0) return 'validate'
+  if (!greenGate(runs.test, testsAtRed).pass) return 'test'
+  return runs.typecheck.exitCode !== 0 ? 'typecheck' : 'load'
+}
+
+// What a refused `claude plugin validate` is quoted by: the last lines of what it printed before its "Plugin
+// directory checks for" section. That section lists what the plugin directory would refuse (a missing README, a
+// missing license), says itself that it does not change the result, and is long enough to push the real error out
+// of the last 20 lines. Without that heading, the last lines of the whole.
+export function validateLines(output: string, count = 20): string {
+  if (typeof output !== 'string') return ''
+  const lines = output.replace(/\r\n/g, '\n').split('\n')
+  const at = lines.findIndex((line) => line.trimStart().startsWith('Plugin directory checks for'))
+  // With nothing before that section there is nothing of validate's own to quote: then the last lines of the whole.
+  const own = at < 0 ? '' : lastLines(lines.slice(0, at).join('\n'), count)
+  return own !== '' ? own : lastLines(lines.join('\n'), count)
 }
 
 // The last lines of a command's output, for a refusal to carry (SPEC.md 7.7, decision 1): at most `count` lines,
