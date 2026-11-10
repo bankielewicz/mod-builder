@@ -63,6 +63,7 @@ export function phaseLabel(phase: Phase): string {
 
 // The phase after this one, or null after Done. A build moves one phase at a time.
 export function nextPhase(phase: Phase): Phase | null {
+  if (!isPhase(phase)) return null
   const next = PHASES[PHASES.indexOf(phase) + 1]
   return next === undefined ? null : next
 }
@@ -95,6 +96,7 @@ function segments(path: string): string[] | null {
 // is outside. `path` may be relative to `cwd`; `modDir` and `cwd` are absolute. Paths are compared as text, with
 // "/" between segments: a link is not followed, which is one reason the guard is not a sandbox.
 export function pathInMod(modDir: string, path: string, cwd: string): string | null {
+  if (typeof modDir !== 'string' || typeof path !== 'string' || typeof cwd !== 'string') return null
   if (!modDir.startsWith('/') || !cwd.startsWith('/') || path === '') return null
   const mod = segments(modDir)
   const target = segments(path.startsWith('/') ? path : `${cwd}/${path}`)
@@ -124,7 +126,9 @@ function area(relPath: string, foldCase: boolean): Area {
 // checked at the gate (specKept), not here.
 // A name that closes an area is compared without regard to letter case, because a file system that ignores case
 // would let "spec.md" reach SPEC.md; a name that opens one must be spelled exactly, so "Tests/" opens nothing.
+// A phase that is none, or a path that is no text, may write nothing.
 export function mayWrite(phase: Phase, relPath: string): boolean {
+  if (!isPhase(phase) || typeof relPath !== 'string') return false
   const exact = area(relPath, false)
   const folded = area(relPath, true)
   switch (phase) {
@@ -151,8 +155,9 @@ export type WriteVerdict = { allowed: true } | { allowed: false; reason: string 
 // what opens next and how to ask for it.
 export function writeVerdict(phase: Phase, relPath: string): WriteVerdict {
   if (mayWrite(phase, relPath)) return { allowed: true }
+  const shown = typeof relPath !== 'string' || relPath === '' ? 'the mod folder' : relPath
+  if (!isPhase(phase)) return { allowed: false, reason: `mod-builder: ${shown} can't be written: the build's record names no phase.` }
   const next = nextPhase(phase)
-  const shown = relPath === '' ? 'the mod folder' : relPath
   const opens =
     next === null
       ? ''
@@ -202,6 +207,22 @@ function count(tests: number): string {
   return tests === 1 ? '1 test' : `${tests} tests`
 }
 
+// Whether a recorded test count is one: a whole number, zero or more. A gate that is handed anything else has
+// nothing to compare with, and refuses: a lost or damaged record must never pass a build.
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+// A command's result the gates can read: an exit code that is a whole number and output that is text. A command
+// killed by a signal has no exit code; that, or no result at all, is no evidence of anything and passes no gate.
+function ended(run: Run, name: string): Verdict {
+  const ok = typeof run === 'object' && run !== null && Number.isInteger(run.exitCode) && typeof run.output === 'string'
+  return ok ? { pass: true } : { pass: false, reason: `${name} ended with no exit code` }
+}
+
+const VALIDATE = 'claude plugin validate --strict'
+const TEST = 'claude plugin test'
+
 // The approval question's options. "Not yet" is first, so a stray Enter can't approve; the mockups option is
 // offered only when a skill named design is in the session's list.
 export const NOT_YET = 'Not yet'
@@ -220,6 +241,7 @@ export function specGate(answer: string | null | undefined): Verdict {
 
 // Scaffold to Red: `claude plugin validate --strict` exits 0. The test run only gives the count to record.
 export function scaffoldGate(validate: Run, test: Run): Verdict {
+  for (const check of [ended(validate, VALIDATE), ended(test, TEST)]) if (!check.pass) return check
   if (validate.exitCode !== 0) return { pass: false, reason: `claude plugin validate --strict exited ${validate.exitCode}` }
   const run = parseTestRun(test.output)
   if (run === null) return { pass: false, reason: NO_COUNT }
@@ -233,6 +255,9 @@ function holdsAssertion(body: string): boolean {
 // Red to Green: the tests fail, there are more of them than at Scaffold, and every failure is an assertion.
 // A file that did not load is a "(fail)" block with no assertion in it, so it can't pass this gate.
 export function redGate(test: Run, testsAtScaffold: number): Verdict {
+  if (!isCount(testsAtScaffold)) return { pass: false, reason: 'no test count is recorded from Scaffold' }
+  const check = ended(test, TEST)
+  if (!check.pass) return check
   if (test.exitCode === 0) return { pass: false, reason: 'claude plugin test exited 0: no test fails yet' }
   const run = parseTestRun(test.output)
   if (run === null) return { pass: false, reason: NO_COUNT }
@@ -249,6 +274,9 @@ export function redGate(test: Run, testsAtScaffold: number): Verdict {
 
 // Green to Verify: every test passes, and no test went missing since Red.
 export function greenGate(test: Run, testsAtRed: number): Verdict {
+  if (!isCount(testsAtRed)) return { pass: false, reason: 'no test count is recorded from Red' }
+  const check = ended(test, TEST)
+  if (!check.pass) return check
   if (test.exitCode !== 0) return { pass: false, reason: `claude plugin test exited ${test.exitCode}: not every test passes` }
   const run = parseTestRun(test.output)
   if (run === null) return { pass: false, reason: NO_COUNT }
@@ -263,6 +291,11 @@ export type VerifyRuns = { validate: Run; test: Run; typecheck: Run; load: Run; 
 
 // Verify to Done: validate, test, the typecheck and the headless load all pass, and the load is seen in the log.
 export function verifyGate(runs: VerifyRuns, testsAtRed: number): Verdict {
+  if (!isCount(testsAtRed)) return { pass: false, reason: 'no test count is recorded from Red' }
+  if (typeof runs !== 'object' || runs === null) return { pass: false, reason: `${VALIDATE} ended with no exit code` }
+  for (const check of [ended(runs.validate, VALIDATE), ended(runs.test, TEST), ended(runs.typecheck, 'the typecheck'), ended(runs.load, 'the headless load')]) {
+    if (!check.pass) return check
+  }
   if (runs.validate.exitCode !== 0) return { pass: false, reason: `claude plugin validate --strict exited ${runs.validate.exitCode}` }
   const tests = greenGate(runs.test, testsAtRed)
   if (!tests.pass) return tests
@@ -277,15 +310,24 @@ export function verifyGate(runs: VerifyRuns, testsAtRed: number): Verdict {
 // File path from the mod's folder -> the hash of its content.
 export type Hashes = Record<string, string>
 
+function isHash(value: unknown): value is string {
+  return typeof value === 'string' && value !== ''
+}
+
+function isHashes(value: unknown): value is Hashes {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 // The files that are not as recorded: changed, gone, or (for a folder whose whole content was recorded, as
 // tests/ is when Red passes) added since. Sorted by path.
 export function changedFiles(recorded: Hashes, current: Hashes): { path: string; how: 'changed' | 'missing' | 'added' }[] {
   // A file may be named like a property every object has ("constructor"), so only own keys count.
   const has = (hashes: Hashes, path: string) => Object.prototype.hasOwnProperty.call(hashes, path)
   const found: { path: string; how: 'changed' | 'missing' | 'added' }[] = []
+  if (!isHashes(recorded) || !isHashes(current)) return found
   for (const path of Object.keys(recorded)) {
     if (!has(current, path)) found.push({ path, how: 'missing' })
-    else if (current[path] !== recorded[path]) found.push({ path, how: 'changed' })
+    else if (current[path] !== recorded[path] || !isHash(recorded[path])) found.push({ path, how: 'changed' })
   }
   for (const path of Object.keys(current)) {
     if (!has(recorded, path)) found.push({ path, how: 'added' })
@@ -296,6 +338,8 @@ export function changedFiles(recorded: Hashes, current: Hashes): { path: string;
 // A gate's hash check of the tests: refuses, naming each file, when one differs from what was recorded. Both
 // sides hold the same scope, every file under tests/ and nothing else: a file outside it would count as added.
 export function hashGate(recorded: Hashes, current: Hashes): Verdict {
+  if (!isHashes(recorded)) return { pass: false, reason: 'no hashes are recorded for tests/' }
+  if (!isHashes(current)) return { pass: false, reason: 'the files under tests/ could not be read' }
   const found = changedFiles(recorded, current)
   if (found.length === 0) return { pass: true }
   return { pass: false, reason: `not as recorded: ${found.map((file) => `${file.path} (${file.how})`).join(', ')}` }
@@ -309,11 +353,17 @@ export type SpecNow = { length: number; hash: string; approvedPartHash: string |
 // A gate's check of SPEC.md. Up to the gate that ends Green the file must be exactly as approved. From Verify on
 // it may have grown, because Verify appends the "Built" block: then its approved part must be unchanged.
 export function specKept(recorded: SpecRecord, now: SpecNow | null, phase: Phase): Verdict {
+  if (typeof recorded !== 'object' || recorded === null || !isCount(recorded.length) || !isHash(recorded.hash)) {
+    return { pass: false, reason: 'no approved SPEC.md is recorded' }
+  }
   if (now === null) return { pass: false, reason: 'not as recorded: SPEC.md (missing)' }
   const mayGrow = phase === 'verify' || phase === 'done'
-  const kept = mayGrow
-    ? now.length >= recorded.length && now.approvedPartHash === recorded.hash
-    : now.length === recorded.length && now.hash === recorded.hash
+  const readable = typeof now === 'object' && isCount(now.length) && isPhase(phase)
+  const kept = !readable
+    ? false
+    : mayGrow
+      ? now.length >= recorded.length && now.approvedPartHash === recorded.hash
+      : now.length === recorded.length && now.hash === recorded.hash
   if (kept) return { pass: true }
   return { pass: false, reason: mayGrow ? "not as recorded: SPEC.md (its approved part changed)" : 'not as recorded: SPEC.md (changed)' }
 }
@@ -322,6 +372,7 @@ export function specKept(recorded: SpecRecord, now: SpecNow | null, phase: Phase
 
 // The time a snapshot stamp names ("2026-11-10T151216Z"), in milliseconds since 1970, or null when it is no stamp.
 export function parseStamp(stamp: string): number | null {
+  if (typeof stamp !== 'string') return null
   const match = stamp.trim().match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/)
   if (match === null) return null
   const [year, month, day, hour, minute, second] = match.slice(1).map(Number)
@@ -347,13 +398,16 @@ const DAY = 24 * 60 * 60 * 1000
 // Whether session.start should start a fetch: the session is interactive, the option is not 0, and the last
 // fetch is older than `refreshDays` days, unreadable or missing, or was made by another Claude Code version.
 // A `checked` more than a day ahead of the clock is as unreadable as garbage: one wrong clock must not hold the
-// cache back until that date.
+// cache back until that date. A clock reading that is no time leaves no age to judge by, and counts as stale too.
 export function isCacheStale(state: CacheState): boolean {
   if (!state.isInteractive) return false
   const days = typeof state.refreshDays === 'number' && Number.isFinite(state.refreshDays) ? state.refreshDays : DEFAULT_REFRESH_DAYS
   if (days <= 0) return false
-  const checked = state.checked === null ? null : parseStamp(state.checked)
+  if (!(typeof state.now === 'number' && Number.isFinite(state.now))) return true
+  const checked = parseStamp(state.checked as string)
   if (checked === null || checked - state.now > DAY) return true
-  if (state.versionAtCheck !== state.version) return true
+  // A session that does not know its own version can't say the version changed: it is judged by age alone.
+  const knowsVersion = typeof state.version === 'string' && state.version !== ''
+  if (knowsVersion && state.versionAtCheck !== state.version) return true
   return state.now - checked > days * DAY
 }
