@@ -74,7 +74,8 @@ EOF
 (cd "$D" && npx -y -p typescript tsc --noEmit -p "$D/tsconfig.json")
 ```
 
-It exits 0 and prints nothing when the module and its tests typecheck.
+It exits 0 and prints nothing when the module and its tests typecheck. (`head -1` takes the first types file
+by name; the gate itself never does, and refuses when the files differ.)
 
 ## What it reaches
 
@@ -117,6 +118,15 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
   unverified for where the build's types are and for `scaffold.sh`.
 - **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold.
 - **A refused validate or test run names the exit code only**; run the command yourself to see why.
+- **The hash in a built mod's "Built on" line is written by the model** from the gate's answer; no gate
+  compares it with the hash it used. The gate's evidence and the pane hold the mod's own record of it.
+- **A build taken to Done opens other plugins' folders again**, whatever folder it named.
+- **A thrown error whose text opens with `AssertionError` passes Red** like a failed `expect`: the rule reads
+  the first line of each failure.
+- **When the session's state can't be read**, a write into a plugin's folder is refused, but a write into a mod
+  folder that has no manifest yet passes, with a line in the transcript.
+- **"The build did not move" is said of every failed gate**, though a store write that fails between the two
+  writes of the call that names the folder leaves a record behind (the next naming call takes it up).
 - A mod folder whose path holds `*`, `?` or `[` is read as a pattern by the typecheck's `tsconfig.json`.
 
 What waits until after the MVP is in `BACKLOG.md`; how each of these was found is in `SPEC.md`, section 7.
