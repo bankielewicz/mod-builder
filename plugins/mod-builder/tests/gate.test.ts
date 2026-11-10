@@ -16,10 +16,12 @@ const MANIFEST = `{ "name": "${NAME}" }`
 
 const gate = async ($: Engine, modDir?: string) => {
   const answer = await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)
-  // The first line of the answer: what a refusal quotes beneath it, and the line a passed gate adds, have tests
-  // of their own (decisions.test.ts, built.test.ts).
-  return String(answer.result).split('\n')[0] as string
+  // The whole answer: a test that compares it says that nothing follows its one line.
+  return String(answer.result)
 }
+// The first line of an answer that goes on: what a refusal quotes beneath it, and the line a passed Green or Verify
+// adds, have tests of their own (decisions.test.ts, built.test.ts).
+const first = (answer: string) => answer.split('\n')[0] as string
 const phase = (w: World) => (w.store[`build:${MOD}`] as { phase: string }).phase
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
 
@@ -194,7 +196,7 @@ test('Scaffold stays when validate fails or can\'t start', async ($, on) => {
   const w = fresh(on)
   await walk($, w, 'scaffold')
   w.runs.validate = { exitCode: 1, stdout: 'Validation failed' }
-  expect(await gate($)).toBe('mod-builder: still at phase 4 (Scaffold). Not passed: claude plugin validate --strict exited 1.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 4 (Scaffold). Not passed: claude plugin validate --strict exited 1.')
   w.runs.validate = 'never starts'
   expect(await gate($)).toBe('mod-builder: still at phase 4 (Scaffold). Not passed: claude plugin validate --strict ended with no exit code.')
   expect(phase(w)).toBe('scaffold')
@@ -215,9 +217,9 @@ test('Red stays for a file that did not load, for an old test failing beside a n
   const w = fresh(on)
   await walk($, w, 'red')
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['the file did not load'], 'expect(received).toBe()') }
-  expect(await gate($)).toBe('mod-builder: still at phase 5 (Red). Not passed: not failing by assertion: the file did not load.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 5 (Red). Not passed: not failing by assertion: the file did not load.')
   w.runs.test = { exitCode: 1, stdout: failing(['counts a turn'], ['test 1']) }
-  expect(await gate($)).toBe('mod-builder: still at phase 5 (Red). Not passed: no new test fails: every failing test had its name at Scaffold (test 1).')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 5 (Red). Not passed: no new test fails: every failing test had its name at Scaffold (test 1).')
   w.runs.test = { exitCode: 0, stdout: passing(2) }
   expect(await gate($)).toMatch(/Not passed: claude plugin test exited 0: no test fails yet/)
   expect(phase(w)).toBe('red')
@@ -235,7 +237,7 @@ test('Green to Verify passes when validate, every test, the typecheck and a head
   const w = fresh(on)
   await walk($, w, 'green')
   w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
-  expect(await gate($)).toMatch(/^mod-builder: phase 6 \(Green\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass; tests\/ and SPEC\.md are as recorded\)\. The build is now at phase 7 \(Verify\)\.$/)
+  expect(first(await gate($))).toMatch(/^mod-builder: phase 6 \(Green\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass; tests\/ and SPEC\.md are as recorded\)\. The build is now at phase 7 \(Verify\)\.$/)
 })
 
 test('a test changed after Red by any tool stops the build at the next gate, naming the file; so does one added or removed', async ($, on) => {
@@ -267,7 +269,7 @@ test('Verify to Done runs validate, the tests, the typecheck and a headless load
   const w = fresh(on)
   await walk($, w, 'verify')
   w.ran.length = 0
-  expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass\)\. The build is now at phase 8 \(Done\)\.$/)
+  expect(first(await gate($))).toMatch(/^mod-builder: phase 7 \(Verify\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass\)\. The build is now at phase 8 \(Done\)\.$/)
   const log = `${HOME}/.claude/mod-builder-data/v2/loads/s1.log`
   expect(w.ran).toEqual([
     ['npx', '--no-install', 'tsc', '-v'],
@@ -283,7 +285,7 @@ test('Verify stays when the typecheck fails, when the load\'s log shows the modu
   const w = fresh(on)
   await walk($, w, 'verify')
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2322' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.')
   w.runs.tsc = { exitCode: 0, stdout: '' }
   w.files['the load log'] = `${OTHERS}[ERROR] hooks module ${NAME}@inline failed to load: ${NAME}: /work/turn-counter/hooks/register.tsx does not parse\n`
   expect(await gate($)).toMatch(/Not passed: the headless load's debug log does not show the mod loaded/)
@@ -380,7 +382,7 @@ test('Red stays when the count did not go up, when the report can\'t be read, an
   const w = fresh(on)
   await walk($, w, 'red')
   w.runs.test = { exitCode: 1, stdout: failing([], ['counts a turn']) }
-  expect(await gate($)).toBe('mod-builder: still at phase 5 (Red). Not passed: the run has 1 test, no more than the 1 at Scaffold: no new test.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 5 (Red). Not passed: the run has 1 test, no more than the 1 at Scaffold: no new test.')
   w.runs.test = { exitCode: 1, stdout: 'the runner crashed\n' }
   expect(await gate($)).toMatch(/Not passed: the test run's last line reports no test count/)
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']), isTruncated: true }
@@ -405,9 +407,9 @@ test('Green stays when a test still fails, and when a test went missing from the
   const w = fresh(on)
   await walk($, w, 'green')
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  expect(await gate($)).toBe('mod-builder: still at phase 6 (Green). Not passed: claude plugin test exited 1: not every test passes.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: claude plugin test exited 1: not every test passes.')
   w.runs.test = { exitCode: 0, stdout: passing(1) }
-  expect(await gate($)).toBe('mod-builder: still at phase 6 (Green). Not passed: the run has 1 test, fewer than the 2 at Red.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: the run has 1 test, fewer than the 2 at Red.')
   w.runs.test = 'never starts'
   expect(await gate($)).toMatch(/Not passed: claude plugin test ended with no exit code/)
   expect(phase(w)).toBe('green')
@@ -428,7 +430,7 @@ test('Verify stays when validate fails, when a test fails, when the load exits w
   const w = fresh(on)
   await walk($, w, 'verify')
   w.runs.validate = { exitCode: 1, stdout: 'Validation failed' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: claude plugin validate --strict exited 1.')
+  expect(first(await gate($))).toBe('mod-builder: still at phase 7 (Verify). Not passed: claude plugin validate --strict exited 1.')
   w.runs.validate = { exitCode: 0, stdout: 'Validation passed' }
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
   expect(await gate($)).toMatch(/Not passed: claude plugin test exited 1: not every test passes/)
