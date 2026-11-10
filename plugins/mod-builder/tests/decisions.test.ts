@@ -108,7 +108,7 @@ test('a compiler that printed nothing is quoted from what it wrote to standard e
   w.runs.tsc = { exitCode: 1, stdout: '', stderr: 'tsc: out of memory\n' }
   expect(await gate($)).toBe(`mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 1.\nThe last lines of its output, against the types file ${TYPES} (sha256 ${TYPES_SHA}):\ntsc: out of memory`)
   w.runs.tsc = { exitCode: 1, stdout: '' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 1.')
+  expect(await gate($)).toBe(`mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 1.\nIt printed nothing. It ran against the types file ${TYPES} (sha256 ${TYPES_SHA}).`)
 })
 
 for (const at of ['green', 'verify'] as const) {
