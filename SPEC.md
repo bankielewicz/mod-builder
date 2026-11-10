@@ -437,14 +437,15 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
 ### 7.6 Step 4: what was built, what the live check showed, and what is open (2026-11-10, at `278361c`)
 
 - **The gate hook's `.catch`** (7.5's finding; `96b3f4f`): validate now reports both gating hooks `with .catch`.
-  Probed on the way [a throwaway mod under `claude plugin test`, 2.1.322]: of two hooks of one module on one
+  Probed on the way [a throwaway mod under `claude plugin test`, 2.1.322; unverified in a live session]: of two hooks of one module on one
   event the earlier registered is the upper one, and when the lower one throws, the **upper** hook's `.catch`
   is asked (`next.called` false), never the lower hook's own. Under the guard's hook, the gate's own handler
   would never have run, and the guard's handler passes a tool it doesn't guard on. So the gate's hook is now
   registered first, and its inner `try`/`catch` is gone: the handler is the one place a failed gate answers.
 - **The live check** (7.5, point 3) [ran: one interactive session in tmux, 2.1.322, sonnet, auto mode, a scratch
-  folder, a scratch copy of the plugin with a minimal `build` skill; `--settings` switched off
-  `mod-builder@claudemod` and, to keep the session to this plugin, six other plugins of the owner's]:
+  folder, a scratch copy of the plugin with a minimal `build` skill and added debug lines; `--settings`
+  switched off `mod-builder@claudemod` (already off in the owner's own settings that day) and, to keep the
+  session to this plugin, seven other plugins of the owner's]:
   1. `/mod-builder a pane that counts the turns in this session` ran the mod's own command (`command.run`,
      origin `composer`) and **raised no `prompt.submit` at all**; no model call was made. The build's types say
      the same of any submission that runs a command: "a rewrite of `text` is then not applied, and the person
@@ -465,8 +466,11 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
      person has not approved the spec (answer: "Not yet")`. So time inside `$.ui.ask` doesn't count against the
      hook's ten seconds, and nothing answered for the person. The pane showed the phase strip.
   4. The minimal skill loaded the built-in `plugin-authoring` skill and told the model that `./turn-counter`
-     wins over the folder that skill names. The model wrote only under the working folder; nothing was written
-     under `~/.claude/dev-mods/` (the side agent's note of the same day).
+     wins over the folder that skill names. The model wrote only under the working folder; loading the skill
+     made an empty folder for the session under `~/.claude/dev-mods/` and no file was written in it [ran: a
+     listing]. This shows little: the minimal skill named the two files to write. Whether a model running the
+     full skill through Scaffold, Red and Green keeps to the working folder is step 5's to show (the side
+     agent's note of the same day).
 - **Verify's typecheck** (7.5, point 2; `3de9daa`) [probe: a throwaway mod's command, headless, no model call]:
   the types are at `<CLAUDE_TMPDIR>/bundled-skills/<version>/<one folder per process>/plugin-authoring/types/
   claude-code.d.ts` (`/tmp/claude-1000/…` here; three such folders by the end of the day, the three files identical);
@@ -490,8 +494,12 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
   viewer). `${CLAUDE_PLUGIN_ROOT}` is substituted in a plugin skill's text [read: code.claude.com/docs/en/
   skills.md:491-494, fetched 2026-11-10]. The full skill has not been run by a model: that is step 5.
 - **Tests at the end of step 4** [ran]: 139 module tests, 171 rules and validate tests, 82 script tests;
-  `claude plugin validate --strict` and the typecheck pass. Each of the four changes had an independent read
-  of its tests before the red commit, and a verifier's PASS with every mutant failing its test.
+  `claude plugin validate --strict` and the typecheck pass. The committed plugin, loaded headless, logged
+  `hooks module mod-builder@inline loaded (…); events: session.start,skill.prompt,tool.call,command.run,
+  ui.render` and `Loaded 1 skills`, and answered `/mod-builder a pane that counts turns` with the line to run.
+  Each of the four changes had a verifier's PASS with every mutant failing its test, and an independent read
+  of its tests before the red commit; the tests each read asked for (two in the typecheck's, eleven in the
+  skill's and the script's) and the script as rewritten for its read were not read a second time.
 - **Decided in the plans where this spec was silent, for the owner's review:** the template is laid by a
   script, not copied by the model; the template's test is stored as `tests/pane.test.tsx.template`, because
   `claude plugin test <plugin>` runs every `*.test.ts(x)` under the plugin, `skills/` included; the script
@@ -500,6 +508,9 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
   alone fetches; what the typecheck needs is looked for before anything is run; the skill tells the model to
   run the validator and a typecheck itself before it leaves Green.
 - **Open, for the owner, before step 5:**
+  0. **Two other ways to keep `/mod-builder <what to build>`, neither probed:** the command's own hook could
+     call `$.command.run` for the skill's command, or `$.prompt.submit({ text, asUser: true })` [read: types
+     2.1.322]. 7.5 named the fallback, so the fallback is what was built.
   1. **A build that fails the typecheck or the load at Verify can't be finished** (the skill reviewer, the
      tests' reader and the side agent, each on its own): both first run at phase 7, where `hooks/` and
      `tests/` are closed, and no gate goes back. The skill's advice (check before leaving Green) is advice.
