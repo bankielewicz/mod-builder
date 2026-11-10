@@ -1,0 +1,3 @@
+.mod-builder-cache/
+.claude-plugin/types/
+node_modules/
