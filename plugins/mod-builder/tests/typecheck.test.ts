@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { DOWNLOADED, GATE, HOME, INSTALLED, MOD, NAME, TMP, TYPES, TYPES_FOLDER, TYPES_TEXT, world } from './world'
+import { BUILT, DOWNLOADED, GATE, HOME, INSTALLED, MOD, NAME, TMP, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -30,7 +30,7 @@ const atVerify = async (on: Parameters<typeof world>[0], more: Partial<World> = 
   const w = world(on, {
     ...more,
     files: {
-      [SPEC]: spec, [`${MOD}/.claude-plugin/plugin.json`]: `{ "name": "${NAME}" }`, [TEST_FILE]: 'the first test', 'the load log': LOADED,
+      [SPEC]: `${spec}${BUILT}`, [`${MOD}/.claude-plugin/plugin.json`]: `{ "name": "${NAME}" }`, [TEST_FILE]: 'the first test', 'the load log': LOADED,
       [TYPES]: TYPES_TEXT, ...more.files,
     },
   })
@@ -129,6 +129,8 @@ test('types written by another version of Claude Code are not this build\'s: in 
   w.files[`${TYPES_FOLDER}/bbbb/plugin-authoring/reference.md`] = 'no types here'
   expect(await gate($)).toMatch(/Not passed: the types of Claude Code 2\.1\.322 are not written yet/)
   w.version = '2.1.321'
+  // The "Built" block holds the hash of the types this build is checked against: those of 2.1.321 here.
+  w.files[SPEC] = `${w.files[SPEC]}\n${await sha256('// Written by Claude Code 2.1.321.\n')}\n`
   expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed /)
   expect(config(w)?.include[0]).toBe(`${TMP}/bundled-skills/2.1.321/aaaa/plugin-authoring/types/claude-code.d.ts`)
 })
@@ -164,7 +166,7 @@ test('with no CLAUDE_TMPDIR and no user id, Verify refuses and says where it cou
 test('a typecheck that finds an error keeps the build at Verify, with the compiler\'s exit code', async ($, on) => {
   const w = await atVerify(on)
   w.runs.tsc = { exitCode: 2, stdout: 'hooks/register.tsx(3,7): error TS2322\n' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.\nThe last lines of its output:\nhooks/register.tsx(3,7): error TS2322')
+  expect(await gate($)).toBe(`mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.\nThe last lines of its output, against the types file ${TYPES} (sha256 ${TYPES_SHA}):\nhooks/register.tsx(3,7): error TS2322`)
   expect(phase(w)).toBe('verify')
 })
 

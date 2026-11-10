@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -36,6 +36,8 @@ const walk = async ($: Engine, w: World, to: string) => {
     if (now === 'green') w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
     const answer = await gate($)
     if (kept(w).phase === now) throw new Error(`the walk stopped at ${now}: ${answer}`)
+    // At Verify the "Built" block is written, with the hash of the types the gate checks against.
+    if (kept(w).phase === 'verify') w.files[`${MOD}/SPEC.md`] = `${w.files[`${MOD}/SPEC.md`]}${BUILT}`
   }
 }
 

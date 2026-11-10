@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -16,7 +16,9 @@ const MANIFEST = `{ "name": "${NAME}" }`
 
 const gate = async ($: Engine, modDir?: string) => {
   const answer = await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)
-  return String(answer.result)
+  // The first line of the answer: what a refusal quotes beneath it, and the line a passed gate adds, have tests
+  // of their own (decisions.test.ts, built.test.ts).
+  return String(answer.result).split('\n')[0] as string
 }
 const phase = (w: World) => (w.store[`build:${MOD}`] as { phase: string }).phase
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
@@ -54,6 +56,8 @@ const walk = async ($: Engine, w: World, to: 'spec' | 'scaffold' | 'red' | 'gree
     if (now === 'green') w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
     const answer = await gate($)
     if (phase(w) === now) throw new Error(`the walk stopped at ${now}: ${answer}`)
+    // At Verify the "Built" block is written, with the hash of the types the gate checks against.
+    if (phase(w) === 'verify') w.files[SPEC] = `${w.files[SPEC]}${BUILT}`
   }
 }
 
@@ -263,7 +267,6 @@ test('Verify to Done runs validate, the tests, the typecheck and a headless load
   const w = fresh(on)
   await walk($, w, 'verify')
   w.ran.length = 0
-  w.files[SPEC] = '# turn-counter\n\n## Built\non 2.1.322\n'
   expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass\)\. The build is now at phase 8 \(Done\)\.$/)
   const log = `${HOME}/.claude/mod-builder-data/v2/loads/s1.log`
   expect(w.ran).toEqual([
@@ -280,7 +283,7 @@ test('Verify stays when the typecheck fails, when the load\'s log shows the modu
   const w = fresh(on)
   await walk($, w, 'verify')
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2322' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.\nThe last lines of its output:\nerror TS2322')
+  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.')
   w.runs.tsc = { exitCode: 0, stdout: '' }
   w.files['the load log'] = `${OTHERS}[ERROR] hooks module ${NAME}@inline failed to load: ${NAME}: /work/turn-counter/hooks/register.tsx does not parse\n`
   expect(await gate($)).toMatch(/Not passed: the headless load's debug log does not show the mod loaded/)

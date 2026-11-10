@@ -153,7 +153,7 @@ test('Red says every failure must be a failed assertion and what does not count;
   const green = section(6).replace(/\s+/g, ' ');
   assert.match(green, /It runs the validator, the tests, a typecheck against this build's types and a headless load of the mod: the same four checks Verify ends on/);
   assert.match(green, /its answer carries the last lines the command printed: fix what they name and call the gate again/);
-  assert.match(green, /files naming themselves the build's types are not the same, stop and tell the person/);
+  assert.match(green, /The typecheck runs against every distinct types file that names itself this build's/);
   const table = body.split('\n').filter((line) => /^\| [67] \|/.test(line)).map((line) => line.split('|')[4].trim());
   assert.deepEqual(table, ['validate, the tests, the typecheck and a headless load all pass', 'the same four pass again']);
 });
