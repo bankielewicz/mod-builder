@@ -75,7 +75,7 @@ EOF
 ```
 
 It exits 0 and prints nothing when the module and its tests typecheck. (`head -1` takes the first types file
-by name; the gate itself never does, and refuses when the files differ.)
+by name; the gate itself never picks one, and runs the typecheck against every distinct file.)
 
 ## What it reaches
 
@@ -103,23 +103,25 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
 - **It is not a sandbox.** The guard reads a tool's name and a path prefix, and the gates compare hashes. It
   catches a skipped step and a changed test or spec. A shell command can still write any file; what it changed
   under `tests/` or in `SPEC.md` stops the next gate, and `hooks/` is not hashed.
-- **The types file is trusted by agreement, not by proof.** Every file that names itself this build's types
-  must be the same to the byte, or the gate refuses and names each. The mod can't prove who wrote a file: a
-  planted file that differs from the genuine one stops the gate, and one that is identical changes nothing.
-  The sha256 of the types used is in the gate's evidence, in the pane and in the mod's "Built on" line.
+- **The types files are not proved genuine.** The typecheck runs once against every distinct file that names
+  itself this build's types (genuine ones differ between sessions), and passes only when it passes against
+  each. The mod can't prove who wrote a file: a planted one can make the check stricter or fail it, never
+  make a failing mod pass, because the genuine files must pass too. Every hash, sorted, is in the gate's
+  evidence, in the pane and in the mod's "Built on" line.
 - **While a build is open, no other plugin's folder can be written** in that session, until the build is Done.
 - **A session that ends mid-build leaves its folder bound to it**: no other session can name that folder.
 - **A `SPEC.md` changed after approval stops every later gate**, with no way back to Spec. A build can't go
-  back a phase at all; from Green on, a refused typecheck or load is answered with the command's last lines,
-  so that it can be fixed before `hooks/` closes at Verify.
+  back a phase at all; a refused validate, test run, typecheck or load is answered with the command's last 20
+  lines (for validate, the last 20 before its plugin-directory section), so that it can be fixed before
+  `hooks/` closes at Verify.
 - **Red accepts only failures that open with `AssertionError`.** A test that throws before its `expect` is
   refused, and the test has to be rewritten to drive the mod through its events.
 - **Native Windows paths are not judged**: the guard reads `/` paths only (WSL is unaffected). macOS is
   unverified for where the build's types are and for `scaffold.sh`.
 - **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold.
-- **A refused validate or test run names the exit code only**; run the command yourself to see why.
-- **The hash in a built mod's "Built on" line is written by the model** from the gate's answer; no gate
-  compares it with the hash it used. The gate's evidence and the pane hold the mod's own record of it.
+- **The "Built on" line is checked for its types hashes only.** The gate prints the exact line at Green and
+  at Verify, and Verify refuses a "Built" block that lacks any hash; the rest of the line (the version, the
+  snapshot) is the model's copy, and a hash found anywhere after the approved text of `SPEC.md` counts.
 - **A build taken to Done opens other plugins' folders again**, whatever folder it named.
 - **A thrown error whose text opens with `AssertionError` passes Red** like a failed `expect`: the rule reads
   the first line of each failure.

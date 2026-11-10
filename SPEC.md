@@ -169,10 +169,14 @@ with the line to run). Eight phases, each ending in something the plugin can obs
     as "`expect(` or `AssertionError` anywhere in the block", with no names; 7.3.)
   - **Green → Verify** (7.7, decision 1) passes only when all four pass, run by the mod in this order: `claude
     plugin validate --strict` exits 0; `claude plugin test` exits 0 with no fewer tests than at Red; the
-    typecheck exits 0; the headless load exits 0 and its log shows the mod loaded (7.4's three lines, and no
-    `<mod>: <event> hook skipped:` line, 7.8). The tests' and `SPEC.md`'s hashes are compared as now.
+    typecheck exits 0 against every distinct types file of the build, run once for each in the order of
+    their hashes (7.9, which replaces 7.7's decision 2); the headless load exits 0 and its log shows the mod
+    loaded (7.4's three lines, and no `<mod>: <event> hook skipped:` line, 7.8). The tests' and `SPEC.md`'s
+    hashes are compared as now. The answer prints the exact "Built on" line to copy into `SPEC.md` (7.9).
   - **Verify → Done** runs the same four again, after the documentation is written, and compares the same
-    hashes. A gate's answer for a failed typecheck or load carries the last 20 lines of that command's output.
+    hashes; before them it refuses a "Built" block of `SPEC.md` that lacks any of the types hashes, naming
+    each (7.9). A gate's answer for a failed validate, test run, typecheck or load carries the last 20 lines
+    of that command's output (for validate, of what it printed before its plugin-directory section; 7.9).
 - **Writes the hook can't see.** The hook doesn't parse Bash, and a shell command can write a file. So
   the gates compare hashes: `SPEC.md` is hashed at approval, and every file under `tests/` when Red
   passes; each later gate refuses when one of them differs, naming the file. A test changed after Red,
@@ -721,3 +725,69 @@ the driving session); the demonstration switched off seven plugins beyond the fi
 dialog was answered by the building session; the tests the reader of this change asked for, and the code as
 changed for its read (one reading of the bytes, the quoted lines decided by the rules), were not read a
 second time; macOS stays unverified.
+
+### 7.9 The two decisions of 7.8, and a correction of 7.7's decision 2 (2026-11-10, at `f56d397`)
+
+The owner decided the two points 7.8 left open ("Both open decisions are yes; build them test-first in one
+change"), and then, from the driving session's own demonstration, corrected 7.7's decision 2. All of it is one
+test-first change (`2dc9d9c` red, `f56d397` green; the existing tests it changes in two commits of their own
+first, `4855cb3` and `88df6cd`).
+
+**Decision A. A refused validate or test run carries the last 20 lines of what that command printed**, as a
+refused typecheck does. The owner: "the model can only fix what it is shown, and your demonstration lost a
+step to this" [read: create.md:254].
+- For validate, the lines are the last 20 of what it printed **before its "Plugin directory checks for …"
+  section**; without that heading, or with nothing before it, the last 20 of the whole. Why: the building
+  session replayed 7.8's refused Scaffold call [ran]: validate printed 37 lines, the error was on line 5, and
+  the last 20 lines were the plugin-directory section alone (README missing, LICENSE missing, the icon, the
+  digest, `Validation failed`), the very lines the model had wrongly acted on. **This choice was answered by
+  the driving session, not by the owner**: the building session asked which lines a refused validate should
+  carry, and the driving session's keystroke chose "Before directory checks" while the dialog was open; the
+  driving session, afterwards: it "is also the answer I would give (the real error was on line 5, above that
+  section), so keep it".
+- It holds at Scaffold, Red, Green and Verify. When two commands fail together, the lines are those of the
+  command the refusal names.
+
+**Decision B, which replaces 7.7's decision 2. The typecheck runs against every distinct types file.**
+7.7 had the gate refuse when the files that name themselves the build's types differ. That is wrong, and it
+strands a build at Green [ran, by the driving session, 2026-11-10]: genuine types files differ between
+sessions of one build. Under `/tmp/claude-1000/bundled-skills/2.1.322/` there are five, four with sha256
+`60ff86c1…` (23491 lines) and one `a33c3b25…` (23487 lines, written 17:07 by the driving session's sonnet
+session when it loaded plugin-authoring); the diff is the Bash tool's `allowed_domains` field, present only
+where the sandbox is on. The driving session's Green gate refused with "types differ", correctly by the rule
+and wrongly for the person. [ran, by the building session too: the five files and the two hashes.] The rule,
+as the owner gave it:
+- (a) The candidates are as before (the first line names the session's version); none still refuses.
+- (b) The candidates are grouped by content hash; the typecheck runs once for each distinct content, in the
+  order of the hashes, and passes only when it exits 0 for every one. It never picks one, and never refuses
+  because they differ.
+- (c) A failure names the types file it failed against and quotes the compiler's last 20 lines.
+- (d) The evidence, the pane and the "Built on" line carry every distinct hash, sorted; the gate prints the
+  exact line at Green and at Verify, so the model copies it and never composes it; Verify refuses a "Built"
+  block that lacks any of them, naming the hash it expected.
+- Why it is safe: "a planted file can only make the check stricter or fail it, never make a failing mod pass,
+  because the genuine files must pass too."
+
+**As built** [ran]: 188 module tests, 283 rules, validate and script tests, `claude plugin validate --strict`
+and the typecheck pass; the verifier's PASS with eleven mutants, each failing its test. In the real engine
+[ran: the built code with one added command, headless, no model call]: Green on a scaffolded mod, with the
+five real types files, answered `phase 6 (Green) passed (validate, 2 tests, the typecheck (types sha256
+60ff86c1…ceca, a33c3b25…7d76) and a headless load of turn-counter all pass; …)` followed by `The "Built on"
+line for the "Built" block of SPEC.md, to copy exactly:` and the line with both hashes; Scaffold on 7.8's
+replayed failure answered `claude plugin validate --strict exited 1.` followed by validate's own lines, among
+them `types: line 16: \`export\` at the top level is followed by \`type\` or \`interface\`: a contract
+exports types and nothing else`, and nothing of the plugin-directory section.
+
+**Decided in the plan where the owner's words were silent, for review:** the tsconfig is one file, written
+again before each typecheck run, and the typecheck stops at the first types file it fails against; at Verify
+the "Built" block is checked before the four checks run, so a refusal for it runs none of them; a block holds
+a hash when the hash stands whole anywhere in `SPEC.md` after its approved text (inside a longer run of hex
+digits it is another number); the snapshot in the line is the one the Knowledge gate recorded for the build,
+or the word `unknown`; a typecheck that fails and prints nothing still names its types file ("It printed
+nothing. It ran against the types file …"); a command that printed nothing is quoted from what it wrote to
+standard error; one file stands for each distinct content, the first by path.
+
+**Not done, or swapped:** the tests the reader of this change asked for (seven module tests, three rules
+tests) and the code as changed for its read (`refusedAt`, the whole-hash check, the file always named) were
+not read a second time; 7.8's demonstration was not run again on this code (the driving session ran its own
+from `ae7cad8`); the README's "Built on" line still names one hash, the one of 7.8's demonstration.
