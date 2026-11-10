@@ -8,7 +8,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import {
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
-  hashGate, isBuildRecord, isBuildSkill, isCacheStale, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, redGate,
+  hashGate, isBuildRecord, isBuildSkill, isCacheStale, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, pluginFolderBeingMade, redGate,
   scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, verifyGate,
 } from './mod-builder-logic'
 import type { BuildRecord, Hashes, Phase, Run, SpecNow, Verdict } from './mod-builder-logic'
@@ -22,6 +22,10 @@ const TYPECHECK_MS = 300000
 const LOAD_MS = 120000
 
 const REFRESH_MS = 300000
+
+// What stands for the hash of a link, or of anything else under tests/ that is no file and no folder. Its content
+// is not read, so it can't be recorded: Red refuses a tests/ that holds one.
+const NOT_A_FILE = 'not a file'
 
 const NO_BUILD = 'mod-builder: no build is open in this session. /mod-builder <what the mod should do> starts one.'
 
@@ -91,7 +95,7 @@ async function hashTests($: Engine, modDir: string): Promise<Hashes | null> {
           return false
         }
       } else {
-        hashes[path] = 'not a file'
+        hashes[path] = NOT_A_FILE
       }
     }
     return true
@@ -245,6 +249,8 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       if (!kept.pass) return { verdict: kept }
       // The tests are hashed before the run and after it: what is recorded must be what ran.
       const before = await hashTests($, modDir)
+      const linked = before === null ? undefined : Object.keys(before).find((path) => before[path] === NOT_A_FILE)
+      if (linked !== undefined) return refuse(`${linked} is a link or no file: a test must be a file of the mod's own, so that what it holds can be recorded`)
       const verdict = redGate(await test($, modDir), record.testsAtScaffold as number, record.namesAtScaffold as string[])
       if (!verdict.pass) return { verdict }
       const testHashes = await hashTests($, modDir)
@@ -316,7 +322,8 @@ async function gate($: Engine, modDirArgument: unknown): Promise<string> {
     if (isBuildRecord(kept) && kept.sessionId !== sessionId && kept.phase !== 'done') {
       return `mod-builder: ${modDir} is being built by another session (it is at ${phaseLabel(kept.phase)}). Name another folder.`
     }
-    const record = isBuildRecord(kept) && kept.sessionId === sessionId ? kept : newRecord(modDir, sessionId)
+    // A build this session left unfinished in the folder goes on; a finished one gives way to a new record.
+    const record = isBuildRecord(kept) && kept.sessionId === sessionId && kept.phase !== 'done' ? kept : newRecord(modDir, sessionId)
     await $.store.set(buildKey(modDir), record)
     await $.store.set(sessionKey(sessionId), { modDir })
     return `mod-builder: the build's mod folder is ${modDir}. It is at ${phaseLabel(record.phase)}. Call ${GATE_TOOL} again to ask for the next phase.`
@@ -335,6 +342,32 @@ async function gate($: Engine, modDirArgument: unknown): Promise<string> {
   await $.store.set(buildKey(record.modDir), { ...record, ...step.change, phase: next, evidence })
   $.ui.invalidate('ui.render')
   return `mod-builder: ${phaseLabel(record.phase)} passed (${step.evidence ?? ''}). The build is now at ${phaseLabel(next)}.`
+}
+
+// The folders above a path that hold a plugin's manifest, nearest first.
+async function pluginFoldersAbove($: Engine, path: string, cwd: string): Promise<string[]> {
+  const found: string[] = []
+  for (const folder of foldersAbove(path, cwd)) {
+    if (await $.fs.exists(`${folder === '/' ? '' : folder}/.claude-plugin/plugin.json`)) found.push(folder)
+  }
+  return found
+}
+
+// Whether a path lies in a plugin's folder, or makes one; true too when that can't be found out. A path from the
+// root needs no working folder to be placed; one that is not can't be placed when the session can't say its folder.
+async function liesInPlugin($: Engine, path: string): Promise<boolean> {
+  try {
+    let cwd = '/'
+    try {
+      cwd = await $.session.cwd()
+    } catch {
+      if (!path.startsWith('/')) return true
+    }
+    if (absolutePath(path, cwd) === null || pluginFolderBeingMade(path, cwd) !== null) return true
+    return (await pluginFoldersAbove($, path, cwd)).length > 0
+  } catch {
+    return true
+  }
 }
 
 // ---------------------------------------------------------------------------------------- the hooks
@@ -382,13 +415,18 @@ export const register: Register = (on, options) => {
     const path = isGuardedTool(tool) ? toolPath(tool, e as { file_path?: unknown; notebook_path?: unknown }) : null
     if (path === null) return next(e)
     // Whether this session has a build at all. When that can't be read, the guard can't tell "no build here" from
-    // "could not check", and a session with no build must pass (SPEC.md 3.3): the write goes on, and a line says so.
+    // "could not check". A write into a plugin's folder is then refused: an unreadable record must not open a mod.
+    // Any other write goes on, with a line that says so: a store that can't be read must not stop a session's
+    // ordinary edits (the owner, 2026-11-10: "Refuse inside plugins only").
     let sessionId: string
     let entry: unknown
     try {
       sessionId = await $.session.id()
       entry = await $.store.get(sessionKey(sessionId))
     } catch (error) {
+      if (await liesInPlugin($, path)) {
+        return { deny: `mod-builder: ${path} can't be written: the phase guard could not read whether this session has a build (${String(error)}), and the path is in a plugin's folder. Run with claude --debug to see why.` }
+      }
       $.ui.log(`mod-builder: the phase guard could not read whether this session has a build (${String(error)}), so it judged nothing.`)
       return next(e)
     }
@@ -396,10 +434,7 @@ export const register: Register = (on, options) => {
     // From here a build is open in this session: anything that fails refuses the write (the .catch below).
     const cwd = await $.session.cwd()
     // The plugins the path lies in: while a build is open, another plugin's folder is closed (pending or named).
-    const pluginFolders: string[] = []
-    for (const folder of foldersAbove(path, cwd)) {
-      if (await $.fs.exists(`${folder === '/' ? '' : folder}/.claude-plugin/plugin.json`)) pluginFolders.push(folder)
-    }
+    const pluginFolders = await pluginFoldersAbove($, path, cwd)
     const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
     const verdict = guardVerdict({ tool, path, cwd, sessionId, entry, record, pluginFolders })
 
