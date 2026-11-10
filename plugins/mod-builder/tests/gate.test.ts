@@ -72,7 +72,7 @@ const fresh = (on: Parameters<typeof world>[0], more: Partial<World> = {}) =>
 
 test('with no build open the gate says so and changes nothing', async ($, on) => {
   const w = world(on)
-  expect(await gate($, 'turn-counter')).toBe('mod-builder: no build is open in this session. /mod-builder <what the mod should do> starts one.')
+  expect(await gate($, 'turn-counter')).toBe('mod-builder: no build is open in this session. /mod-builder:build <what the mod should do> starts one.')
   expect(w.store).toEqual({})
 })
 
