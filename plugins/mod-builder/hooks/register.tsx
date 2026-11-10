@@ -9,9 +9,9 @@ import type { EngineInterface, Register } from 'claude-code'
 import {
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, pluginFolderBeingMade, redGate,
-  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, isTypesOf, COMPILERS, verifyGate,
+  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesVerdict, isTypesOf, lastLines, hooksSkipped, COMPILERS, verifyGate,
 } from './mod-builder-logic'
-import type { BuildRecord, Hashes, Phase, Run, SpecNow, Verdict } from './mod-builder-logic'
+import type { BuildRecord, Hashes, Phase, Run, SpecNow, TypesCandidate, Verdict } from './mod-builder-logic'
 
 type Engine = EngineInterface
 
@@ -60,14 +60,15 @@ async function readText($: Engine, path: string): Promise<string | null> {
 // One command, as the gates read it: its exit code and what it wrote to standard output. A test's own printing
 // goes to standard error, so it is not read as the runner's report. A command that could not start, or outran its
 // time, has no exit code, and the gates refuse it.
-async function run($: Engine, argv: readonly string[], timeoutMs: number, cwd?: string): Promise<Run> {
+// `errors` is what it wrote to standard error: never read as evidence, and shown only when a refusal quotes it.
+async function run($: Engine, argv: readonly string[], timeoutMs: number, cwd?: string): Promise<Run & { errors: string }> {
   try {
     const ran = await $.process.run(argv, cwd === undefined ? { timeoutMs } : { timeoutMs, cwd })
     // Output cut at the engine's limit has lost its end, where the runner's count is: it is no evidence.
-    if (ran.isStdoutTruncated) return { exitCode: Number.NaN, output: '' }
-    return { exitCode: ran.exitCode, output: ran.stdout }
+    if (ran.isStdoutTruncated) return { exitCode: Number.NaN, output: '', errors: '' }
+    return { exitCode: ran.exitCode, output: ran.stdout, errors: ran.stderr }
   } catch {
-    return { exitCode: Number.NaN, output: '' }
+    return { exitCode: Number.NaN, output: '', errors: '' }
   }
 }
 
@@ -114,7 +115,7 @@ async function hashTests($: Engine, modDir: string): Promise<Hashes | null> {
 // The command that typechecks the mod (SPEC.md 7.5), or, as a text, why there is none. The types are the ones this
 // build wrote when its plugin-authoring skill loaded, found here and never taken from the model; the tsconfig is
 // written under the plugin's data folder, outside the mod; the compiler is the first of COMPILERS that answers.
-async function typecheckCommand($: Engine, modDir: string): Promise<{ argv: readonly string[]; cwd: string } | string> {
+async function typecheckCommand($: Engine, modDir: string): Promise<{ argv: readonly string[]; cwd: string; typesSha256: string } | string> {
   const { version } = await $.session.version()
   const tmpDir = await $.env.get('CLAUDE_TMPDIR')
   // The user's id is asked for only when CLAUDE_TMPDIR places no folder: unset, empty, or no path from the root.
@@ -125,18 +126,27 @@ async function typecheckCommand($: Engine, modDir: string): Promise<{ argv: read
   } catch {
     names = []
   }
-  let typesFile: string | null = null
+  // Every file that names itself this build's types is a candidate, and all of them must agree (SPEC.md 7.7): the
+  // mod can't prove who wrote a file, so one that differs from the others stops the gate instead of being used.
+  const candidates: TypesCandidate[] = []
   for (const name of names) {
-    const file = typesFileIn(folder as string, name)
-    const text = await readText($, file)
-    if (text !== null && isTypesOf(text, version)) {
-      typesFile = file
-      break
+    const path = typesFileIn(folder as string, name)
+    // Read once, as bytes: what is compared, what is hashed and what the first line is read from are one reading.
+    let content: string
+    try {
+      content = (await $.fs.read(path, { as: 'bytes' })).base64
+    } catch {
+      continue
     }
+    const bytes = Uint8Array.from(atob(content), (char) => char.charCodeAt(0))
+    if (!isTypesOf(new TextDecoder().decode(bytes.slice(0, 256)), version)) continue
+    // The hash is the file's own, as `sha256sum` prints it.
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    candidates.push({ path, content, sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('') })
   }
-  if (typesFile === null) {
-    return `the types of Claude Code ${version} are not written yet (looked in ${folder ?? 'no folder: CLAUDE_TMPDIR is not set and the user id could not be read'}): load the plugin-authoring skill with the Skill tool, which writes them, then ask again`
-  }
+  const types = typesVerdict(candidates, folder, version)
+  if (!types.pass) return types.reason
+  const typesFile = types.path
   const home = await $.env.get('HOME')
   if (home === undefined) return 'HOME is not set, so the typecheck has no folder for its tsconfig.json'
   const config = `${home}/.claude/mod-builder-data/v2/typecheck/${await $.session.id()}/tsconfig.json`
@@ -145,7 +155,7 @@ async function typecheckCommand($: Engine, modDir: string): Promise<{ argv: read
   // file the build put in the mod (node_modules/.bin/tsc) must not be taken for one.
   const outside = config.slice(0, config.lastIndexOf('/'))
   for (const compiler of COMPILERS) {
-    if (isCompiler(await run($, [...compiler, '-v'], COMPILER_MS, outside))) return { argv: [...compiler, '--noEmit', '-p', config], cwd: outside }
+    if (isCompiler(await run($, [...compiler, '-v'], COMPILER_MS, outside))) return { argv: [...compiler, '--noEmit', '-p', config], cwd: outside, typesSha256: types.sha256 }
   }
   return 'no TypeScript compiler could be run ("npx --no-install tsc" found none, and "npx -y -p typescript tsc" could not download one): install one with "npm install -g typescript", then ask again'
 }
@@ -230,7 +240,8 @@ async function paneView($: Engine): Promise<PaneView> {
 
 // ------------------------------------------------------------------------------------------ the gate
 
-type Step = { verdict: Verdict; evidence?: string; change?: Partial<BuildRecord> }
+// `detail` is what a refusal quotes beneath its reason: the last lines of the command that failed.
+type Step = { verdict: Verdict; evidence?: string; change?: Partial<BuildRecord>; detail?: string }
 
 const refuse = (reason: string): Step => ({ verdict: { pass: false, reason } })
 
@@ -244,6 +255,59 @@ async function unchanged($: Engine, record: BuildRecord, withTests: boolean): Pr
 
 const validate = ($: Engine, modDir: string) => run($, ['claude', 'plugin', 'validate', '--strict', modDir], VALIDATE_MS)
 const test = ($: Engine, modDir: string) => run($, ['claude', 'plugin', 'test', modDir], TEST_MS)
+
+// The four checks that end Green and end Verify, run in this order: `claude plugin validate --strict`, `claude
+// plugin test`, the typecheck, and a headless load read in its debug log; the tests' and SPEC.md's hashes are
+// compared before them and after. A failed typecheck or load is answered with the last lines of what it said.
+async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
+  const { modDir } = record
+  const kept = await unchanged($, record, true)
+  if (!kept.pass) return { verdict: kept }
+  const manifest = await readText($, `${modDir}/.claude-plugin/plugin.json`)
+  let name = ''
+  try {
+    name = String((JSON.parse(manifest ?? '') as { name?: unknown }).name ?? '')
+  } catch {
+    return refuse(`${modDir}/.claude-plugin/plugin.json can't be read`)
+  }
+  // What the typecheck needs is looked for first: without the build's types or a compiler, nothing is run.
+  const typecheck = await typecheckCommand($, modDir)
+  if (typeof typecheck === 'string') return refuse(typecheck)
+  const home = await $.env.get('HOME')
+  const log = `${home ?? ''}/.claude/mod-builder-data/v2/loads/${await $.session.id()}.log`
+  // `claude --debug-file` adds to a file that is there, so the log starts empty.
+  await $.fs.write(log, '')
+  const validated = await validate($, modDir)
+  const tested = await test($, modDir)
+  const typechecked = await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd)
+  // `/cost` is answered by Claude Code itself: the session loads the mod and makes no model call.
+  const loaded = await run($, ['claude', '--plugin-dir', modDir, '-p', '/cost', '--debug-file', log], LOAD_MS)
+  const logged = (await readText($, log)) ?? ''
+  const runs = { validate: validated, test: tested, typecheck: typechecked, load: loaded, loadShown: loadShown(logged, name) }
+  const verdict = verifyGate(runs, record.testsAtRed as number)
+  if (!verdict.pass) {
+    // Which of the four it was is asked of the rules, not read from the reason's words: with the typecheck and the
+    // load taken as passed, a refusal is validate's or the tests', and nothing is quoted; with the load alone taken
+    // as passed, a refusal is the typecheck's.
+    const passed = { exitCode: 0, output: '' }
+    if (!verifyGate({ ...runs, typecheck: passed, load: passed, loadShown: true }, record.testsAtRed as number).pass) return { verdict }
+    // What a command said: what it printed, else what it wrote to standard error.
+    const said = (ran: Run & { errors: string }) => (ran.output.trim() !== '' ? ran.output : ran.errors)
+    if (!verifyGate({ ...runs, load: passed, loadShown: true }, record.testsAtRed as number).pass) {
+      const detail = lastLines(said(typechecked))
+      return detail === '' ? { verdict } : { verdict, detail }
+    }
+    // The load: what the command said when it did not exit 0, and every line of its log that says a hook of the mod
+    // was skipped; with neither, the log's lines that name the mod.
+    const skipped = hooksSkipped(logged, name)
+    const own = [...(loaded.exitCode === 0 ? [] : [said(loaded).trim()]), ...skipped].filter((part) => part !== '')
+    const detail = lastLines((own.length > 0 ? own : logged.split('\n').filter((line) => name !== '' && line.includes(name))).join('\n'))
+    return detail === '' ? { verdict } : { verdict, detail }
+  }
+  const still = await unchanged($, record, true)
+  if (!still.pass) return { verdict: still }
+  return { verdict, evidence: `validate, ${verdict.tests} tests, the typecheck (types sha256 ${typecheck.typesSha256}) and a headless load of ${name} all pass` }
+}
 
 // The check that ends the record's phase, run now.
 async function check($: Engine, record: BuildRecord): Promise<Step> {
@@ -312,48 +376,15 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
         change: { testsAtRed: verdict.tests as number, testHashes },
       }
     }
+    // Green and Verify end on the same four checks (SPEC.md 7.7, decision 1): what Verify would refuse for the code
+    // is refused at Green, while the code can still be changed.
     case 'green': {
-      const kept = await unchanged($, record, true)
-      if (!kept.pass) return { verdict: kept }
-      const verdict = greenGate(await test($, modDir), record.testsAtRed as number)
-      if (!verdict.pass) return { verdict }
-      // And again after the run: a file changed while the tests ran is a file changed.
-      const still = await unchanged($, record, true)
-      if (!still.pass) return { verdict: still }
-      return { verdict, evidence: `all ${verdict.tests} tests pass; tests/ and SPEC.md are as recorded` }
+      const step = await fourChecks($, record)
+      if (!step.verdict.pass || step.evidence === undefined) return step
+      return { ...step, evidence: `${step.evidence}; tests/ and SPEC.md are as recorded` }
     }
-    case 'verify': {
-      const kept = await unchanged($, record, true)
-      if (!kept.pass) return { verdict: kept }
-      const manifest = await readText($, `${modDir}/.claude-plugin/plugin.json`)
-      let name = ''
-      try {
-        name = String((JSON.parse(manifest ?? '') as { name?: unknown }).name ?? '')
-      } catch {
-        return refuse(`${modDir}/.claude-plugin/plugin.json can't be read`)
-      }
-      // What the typecheck needs is looked for first: without the build's types or a compiler, nothing is run.
-      const typecheck = await typecheckCommand($, modDir)
-      if (typeof typecheck === 'string') return refuse(typecheck)
-      const home = await $.env.get('HOME')
-      const log = `${home ?? ''}/.claude/mod-builder-data/v2/loads/${await $.session.id()}.log`
-      // `claude --debug-file` adds to a file that is there, so the log starts empty.
-      await $.fs.write(log, '')
-      const runs = {
-        validate: await validate($, modDir),
-        test: await test($, modDir),
-        typecheck: await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd),
-        // `/cost` is answered by Claude Code itself: the session loads the mod and makes no model call.
-        load: await run($, ['claude', '--plugin-dir', modDir, '-p', '/cost', '--debug-file', log], LOAD_MS),
-        loadShown: false,
-      }
-      runs.loadShown = loadShown((await readText($, log)) ?? '', name)
-      const verdict = verifyGate(runs, record.testsAtRed as number)
-      if (!verdict.pass) return { verdict }
-      const still = await unchanged($, record, true)
-      if (!still.pass) return { verdict: still }
-      return { verdict, evidence: `validate, ${verdict.tests} tests, the typecheck and a headless load of ${name} all pass` }
-    }
+    case 'verify':
+      return fourChecks($, record)
     case 'done':
       return refuse('the build is done: nothing follows phase 8')
   }
@@ -386,7 +417,10 @@ async function gate($: Engine, modDirArgument: unknown): Promise<string> {
     return `mod-builder: this session's build is in ${record.modDir}, and stays there. Call ${GATE_TOOL} without mod_dir.`
   }
   const step = await check($, record)
-  if (!step.verdict.pass) return `mod-builder: still at ${phaseLabel(record.phase)}. Not passed: ${step.verdict.reason}.`
+  if (!step.verdict.pass) {
+    const quoted = step.detail === undefined ? '' : `\nThe last lines of its output:\n${step.detail}`
+    return `mod-builder: still at ${phaseLabel(record.phase)}. Not passed: ${step.verdict.reason}.${quoted}`
+  }
   const next = nextPhase(record.phase) as Phase
   const evidence = { ...record.evidence, [record.phase]: step.evidence ?? '' }
   await $.store.set(buildKey(record.modDir), { ...record, ...step.change, phase: next, evidence })
