@@ -186,17 +186,18 @@ export type TestRun = { tests: number; failures: { name: string; body: string }[
 // after the last block are indented by one). Null when the last line holds no count.
 export function parseTestRun(output: string): TestRun | null {
   const lines = output.split('\n').map((line) => line.replace(/\r$/, ''))
+  const at = (index: number): string => lines[index] ?? ''
   let last = lines.length - 1
-  while (last >= 0 && lines[last].trim() === '') last--
-  const ran = last < 0 ? null : lines[last].match(/^Ran (\d+) tests? across \d+ files?\./)
+  while (last >= 0 && at(last).trim() === '') last--
+  const ran = last < 0 ? null : at(last).match(/^Ran (\d+) tests? across \d+ files?\./)
   if (ran === null) return null
   const failures: { name: string; body: string }[] = []
   for (let i = 0; i < lines.length; i++) {
-    if (!lines[i].startsWith('(fail) ')) continue
+    if (!at(i).startsWith('(fail) ')) continue
     const body: string[] = []
-    for (let j = i + 1; j < lines.length && (lines[j].startsWith('  ') || lines[j] === ''); j++) body.push(lines[j])
-    while (body.length > 0 && body[body.length - 1].trim() === '') body.pop()
-    failures.push({ name: nameOf(lines[i]), body: body.join('\n') })
+    for (let j = i + 1; j < lines.length && (at(j).startsWith('  ') || at(j) === ''); j++) body.push(at(j))
+    while (body.length > 0 && (body[body.length - 1] ?? '').trim() === '') body.pop()
+    failures.push({ name: nameOf(at(i)), body: body.join('\n') })
   }
   return { tests: Number(ran[1]), failures }
 }
@@ -268,7 +269,7 @@ export function scaffoldGate(validate: Run, test: Run): Verdict {
 // "AssertionError", as in "  AssertionError: expect(received).toBe()". A file that did not load opens with something
 // else, even when a source line it quotes further down holds "expect(".
 function opensWithAssertion(body: string): boolean {
-  return body.split('\n')[0].trimStart().startsWith('AssertionError')
+  return (body.split('\n')[0] ?? '').trimStart().startsWith('AssertionError')
 }
 
 // Recorded names are a list of texts. Anything else is no record, and a gate handed it refuses.
@@ -406,7 +407,7 @@ export function parseStamp(stamp: string): number | null {
   if (typeof stamp !== 'string') return null
   const match = stamp.trim().match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/)
   if (match === null) return null
-  const [year, month, day, hour, minute, second] = match.slice(1).map(Number)
+  const [year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0] = match.slice(1).map(Number)
   const time = Date.UTC(year, month - 1, day, hour, minute, second)
   const back = new Date(time)
   const real = back.getUTCFullYear() === year && back.getUTCMonth() === month - 1 && back.getUTCDate() === day
@@ -441,4 +442,175 @@ export function isCacheStale(state: CacheState): boolean {
   const knowsVersion = typeof state.version === 'string' && state.version !== ''
   if (knowsVersion && state.versionAtCheck !== state.version) return true
   return state.now - checked > days * DAY
+}
+
+// ------------------------------------------------------------------------------- what opens a build
+
+// The part of a `skill.prompt` input the mod reads (the build's types, 2.1.322): the skill's name, whose words it
+// is, the plugin it comes with, and the file it was loaded from.
+export type SkillPrompt = { skill: string; source: string; pluginName?: string; path?: string }
+
+export const BUILD_SKILL = 'build'
+
+// Whether a skill being expanded is this plugin's `build`: the plugin it comes with is this one, its name is
+// "build", alone or after the plugin's name and a colon, as a plugin's skill is listed ("mod-builder:build"), and
+// the file it was loaded from, when the event names one, is under this plugin's folder. So another plugin's skill
+// of that name, a project's, and the build skill of another plugin that shares this one's name open nothing.
+// `source` is not read: which word a plugin loaded with --plugin-dir carries there is not verified on 2.1.322.
+export function isBuildSkill(e: SkillPrompt, pluginName: string, pluginRoot: string): boolean {
+  if (typeof e !== 'object' || e === null || typeof pluginName !== 'string' || pluginName === '') return false
+  if (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/')) return false
+  if (e.pluginName !== pluginName) return false
+  if (e.path !== undefined && pathInMod(pluginRoot, e.path as string, '/') === null) return false
+  return e.skill === BUILD_SKILL || e.skill === `${pluginName}:${BUILD_SKILL}`
+}
+
+// ------------------------------------------------------------------------------------- the record
+
+// What `$.store` holds for a session that started a build: `modDir` is null while the build is pending (the
+// model has not yet named the mod's folder through the gate tool), and the mod's folder from then on.
+export type SessionEntry = { modDir: string | null }
+
+// One build, kept under its mod's folder and bound to the session that started it.
+export type BuildRecord = {
+  modDir: string
+  sessionId: string
+  phase: Phase
+  specApprovedAt: number | null // milliseconds since 1970
+  spec: SpecRecord | null // SPEC.md as it was at approval
+  testsAtScaffold: number | null
+  namesAtScaffold: string[] | null
+  testsAtRed: number | null
+  testHashes: Hashes | null // every file under tests/, when Red passed
+  evidence: Record<string, string> // phase -> what the gate that ended it saw
+}
+
+export function sessionKey(sessionId: string): string {
+  return `session:${sessionId}`
+}
+
+export function buildKey(modDir: string): string {
+  return `build:${modDir}`
+}
+
+// An absolute path with "." and ".." applied and no "/" at its end, or null when it is none: `path` may be
+// relative to `cwd`, which is absolute.
+export function absolutePath(path: string, cwd: string): string | null {
+  if (typeof path !== 'string' || typeof cwd !== 'string' || path === '' || !cwd.startsWith('/')) return null
+  const parts = segments(path.startsWith('/') ? path : `${cwd}/${path}`)
+  return parts === null ? null : `/${parts.join('/')}`
+}
+
+// A new build's record: at Knowledge, with nothing approved and nothing recorded.
+export function newRecord(modDir: string, sessionId: string): BuildRecord {
+  return {
+    modDir, sessionId, phase: 'knowledge', specApprovedAt: null, spec: null,
+    testsAtScaffold: null, namesAtScaffold: null, testsAtRed: null, testHashes: null, evidence: {},
+  }
+}
+
+export function isSessionEntry(value: unknown): value is SessionEntry {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const modDir = (value as { modDir?: unknown }).modDir
+  return modDir === null || (typeof modDir === 'string' && modDir.startsWith('/'))
+}
+
+// Whether a stored value is a build's record as far as the guard reads it: a folder, a session and a phase.
+export function isBuildRecord(value: unknown): value is BuildRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Partial<BuildRecord>
+  return typeof record.modDir === 'string' && record.modDir.startsWith('/') && typeof record.sessionId === 'string' && record.sessionId !== '' && isPhase(record.phase)
+}
+
+// ------------------------------------------------------------------------------------- the guard
+
+// The path a guarded tool writes: `notebook_path` for NotebookEdit, `file_path` for the others. The tool decides
+// which field is read, so a call can't show the guard one path and write another. Null when the call names none.
+export function toolPath(tool: string, e: { file_path?: unknown; notebook_path?: unknown }): string | null {
+  if (typeof e !== 'object' || e === null) return null
+  const path = tool === 'NotebookEdit' ? e.notebook_path : e.file_path
+  return typeof path === 'string' && path !== '' ? path : null
+}
+
+// Every folder above a path, nearest first, each absolute: where a `.claude-plugin/plugin.json` would make the
+// path part of a plugin. Empty when the path is none.
+export function foldersAbove(path: string, cwd: string): string[] {
+  const absolute = absolutePath(path, cwd)
+  if (absolute === null) return []
+  const parts = absolute.split('/').filter((part) => part !== '')
+  const found: string[] = []
+  for (let length = parts.length - 1; length >= 0; length--) found.push(`/${parts.slice(0, length).join('/')}`)
+  return found
+}
+
+// The folder a write is creating as a plugin: the one whose `.claude-plugin/plugin.json` the path is, or null.
+// Another file of a `.claude-plugin` folder (a marketplace's list) makes no plugin.
+export function pluginFolderBeingMade(path: string, cwd: string): string | null {
+  const absolute = absolutePath(path, cwd)
+  if (absolute === null) return null
+  const parts = absolute.split('/').filter((part) => part !== '')
+  const length = parts.length
+  if (length < 2 || parts[length - 1] !== 'plugin.json' || parts[length - 2] !== '.claude-plugin') return null
+  return `/${parts.slice(0, length - 2).join('/')}`
+}
+
+export type GuardInput = {
+  tool: string
+  path: string | null // toolPath's answer
+  cwd: string
+  sessionId: string
+  entry: unknown // what the store holds under sessionKey(sessionId)
+  record: unknown // what it holds under buildKey(entry.modDir), when the entry names a folder
+  pluginFolders: string[] // the folders above the path that hold a .claude-plugin/plugin.json
+}
+
+// The guard's answer for one tool call. A tool the guard does not look at, a call that names no path, and a session
+// with no build pass at once. In a session with a build, a path that can't be made absolute (it climbs above the
+// root, or the session's folder is not known) can't be judged, and is refused. While the build is pending, a write
+// inside any plugin's folder, or one that makes a folder a plugin, is refused until the gate tool has been told
+// the mod's folder; of `pluginFolders` only those above the path count. From then on only paths under the mod's
+// folder are judged, by the phase the build's record names; a record that is missing, damaged or another
+// session's judges nothing and so allows nothing under that folder.
+export function guardVerdict(input: GuardInput): WriteVerdict {
+  if (!isGuardedTool(input.tool) || input.path === null) return { allowed: true }
+  if (input.entry === undefined || input.entry === null) return { allowed: true }
+  if (!isSessionEntry(input.entry)) {
+    return { allowed: false, reason: `mod-builder: ${input.path} can't be written: this session's build record can't be read. Start the build again with /mod-builder.` }
+  }
+  if (absolutePath(input.path, input.cwd) === null) {
+    return { allowed: false, reason: `mod-builder: ${input.path} can't be written: the path can't be read as one under ${String(input.cwd)}, so the build's guard can't judge it. Give the path from the root.` }
+  }
+  if (input.entry.modDir === null) {
+    const above = foldersAbove(input.path, input.cwd)
+    const holding = Array.isArray(input.pluginFolders) ? above.find((folder) => input.pluginFolders.includes(folder)) : undefined
+    const folder = pluginFolderBeingMade(input.path, input.cwd) ?? holding
+    if (folder === undefined) return { allowed: true }
+    return {
+      allowed: false,
+      reason: `mod-builder: ${input.path} can't be written yet: it is in a plugin's folder (${folder}), and this build has not named its mod's folder. Call the ${GATE_TOOL} tool with mod_dir first.`,
+    }
+  }
+  const relPath = pathInMod(input.entry.modDir, input.path, input.cwd)
+  if (relPath === null) return { allowed: true }
+  if (!isBuildRecord(input.record) || input.record.modDir !== input.entry.modDir || input.record.sessionId !== input.sessionId) {
+    return { allowed: false, reason: `mod-builder: ${relPath === '' ? 'the mod folder' : relPath} can't be written: the build's record for ${input.entry.modDir} is missing or is not this session's. Call the ${GATE_TOOL} tool to see where the build stands.` }
+  }
+  return writeVerdict(input.record.phase, relPath)
+}
+
+// ------------------------------------------------------------------------------- the headless load
+
+// Whether a headless session's debug log shows a mod's hooks module loaded (SPEC.md 7.3): a line holds
+// "hooks module <name>@inline loaded", and no line says of that mod that it failed to load, did not load or was
+// not loaded. The lines are those of 2.1.322.
+export function loadShown(log: string, name: string): boolean {
+  if (typeof log !== 'string' || typeof name !== 'string' || name === '') return false
+  const lines = log.split('\n')
+  const module = `hooks module ${name}@inline`
+  // A line is this mod's when it names its module, or opens (after the log's own stamp) with its name and a colon.
+  const says = (line: string, text: string) => line.startsWith(text) || line.includes(` ${text}`)
+  const failed = (line: string) =>
+    says(line, `${module} failed to load`) || says(line, `${name}: hooks module did not load`) ||
+    ((says(line, `${module} `) || says(line, `${name}: `)) && line.includes('not loaded:'))
+  return lines.some((line) => says(line, `${module} loaded`)) && !lines.some(failed)
 }
