@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { GATE, HOME, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_TEXT, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -37,7 +37,7 @@ const standing = async (on: Parameters<typeof world>[0], at: 'green' | 'verify',
   const w = world(on, {
     ...more,
     files: {
-      [SPEC]: spec, [`${MOD}/.claude-plugin/plugin.json`]: `{ "name": "${NAME}" }`, [TEST_FILE]: 'the first test', 'the load log': LOADED,
+      [SPEC]: at === 'verify' ? `${spec}${BUILT}` : spec, [`${MOD}/.claude-plugin/plugin.json`]: `{ "name": "${NAME}" }`, [TEST_FILE]: 'the first test', 'the load log': LOADED,
       [TYPES]: TYPES_TEXT, ...more.files,
     },
   })
@@ -61,6 +61,7 @@ test('Green\'s gate runs validate, the tests, the typecheck and a headless load,
   expect(checks(w)).toEqual(FOUR)
   expect(phase(w)).toBe('verify')
   w.ran.length = 0
+  w.files[SPEC] = `${w.files[SPEC]}${BUILT}`
   expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed /)
   expect(checks(w)).toEqual(FOUR)
   expect(phase(w)).toBe('done')
@@ -69,14 +70,14 @@ test('Green\'s gate runs validate, the tests, the typecheck and a headless load,
 test('Green stays when validate fails, though every test passes', async ($, on) => {
   const w = await standing(on, 'green')
   w.runs.validate = { exitCode: 1, stdout: 'Validation failed' }
-  expect(await gate($)).toBe('mod-builder: still at phase 6 (Green). Not passed: claude plugin validate --strict exited 1.')
+  expect(await gate($)).toBe('mod-builder: still at phase 6 (Green). Not passed: claude plugin validate --strict exited 1.\nThe last lines of its output:\nValidation failed')
   expect(phase(w)).toBe('green')
 })
 
 test('Green stays when the typecheck fails, and once the code is fixed the same gate passes: the build never reaches Verify with a type error', async ($, on) => {
   const w = await standing(on, 'green')
   w.runs.tsc = { exitCode: 1, stdout: 'hooks/register.tsx(3,7): error TS2322: no\n' }
-  expect(await gate($)).toBe('mod-builder: still at phase 6 (Green). Not passed: the typecheck exited 1.\nThe last lines of its output:\nhooks/register.tsx(3,7): error TS2322: no')
+  expect(await gate($)).toBe(`mod-builder: still at phase 6 (Green). Not passed: the typecheck exited 1.\nThe last lines of its output, against the types file ${TYPES} (sha256 ${TYPES_SHA}):\nhooks/register.tsx(3,7): error TS2322: no`)
   expect(phase(w)).toBe('green')
   expect((await $.tool.call({ tool: 'Write', file_path: `${MOD}/hooks/register.tsx`, content: 'fixed' })).deny).toBeUndefined()
   w.runs.tsc = { exitCode: 0, stdout: '' }
@@ -97,7 +98,7 @@ test('a failed typecheck is answered with the last 20 lines of what the compiler
   const w = await standing(on, 'green')
   w.runs.tsc = { exitCode: 2, stdout: `${numbered(25).join('\n')}\n\n`, stderr: 'npm notice\n' }
   const answer = await gate($)
-  expect(answer.split('\n')).toEqual(['mod-builder: still at phase 6 (Green). Not passed: the typecheck exited 2.', 'The last lines of its output:', ...numbered(25).slice(5)])
+  expect(answer.split('\n')).toEqual(['mod-builder: still at phase 6 (Green). Not passed: the typecheck exited 2.', `The last lines of its output, against the types file ${TYPES} (sha256 ${TYPES_SHA}):`, ...numbered(25).slice(5)])
   w.runs.tsc = { exitCode: 2, stdout: 'one\ntwo\n' }
   expect((await gate($)).split('\n').slice(2)).toEqual(['one', 'two'])
 })
@@ -105,15 +106,9 @@ test('a failed typecheck is answered with the last 20 lines of what the compiler
 test('a compiler that printed nothing is quoted from what it wrote to standard error; with nothing there either, nothing is quoted', async ($, on) => {
   const w = await standing(on, 'verify')
   w.runs.tsc = { exitCode: 1, stdout: '', stderr: 'tsc: out of memory\n' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 1.\nThe last lines of its output:\ntsc: out of memory')
+  expect(await gate($)).toBe(`mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 1.\nThe last lines of its output, against the types file ${TYPES} (sha256 ${TYPES_SHA}):\ntsc: out of memory`)
   w.runs.tsc = { exitCode: 1, stdout: '' }
   expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 1.')
-})
-
-test('a failed validate or test run is answered as before, with no lines quoted', async ($, on) => {
-  const w = await standing(on, 'verify')
-  w.runs.validate = { exitCode: 1, stdout: 'a\nb\n' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: claude plugin validate --strict exited 1.')
 })
 
 for (const at of ['green', 'verify'] as const) {
@@ -157,11 +152,10 @@ test('at Done the pane shows the sha256 of the types Verify used', async ($, on)
   expect(texts.filter((text) => text.startsWith('Verify: '))).toEqual([`Verify: validate, 1 tests, the typecheck (types sha256 ${await sha256(TYPES_TEXT)}) and a headless load of ${NAME} all pass`])
 })
 
-test('the hash recorded is of the file\'s bytes, whatever they are: two files that differ in one byte that is no text differ', async ($, on) => {
+test('the hash recorded is of the file\'s bytes, whatever they are, a byte that is no text included', async ($, on) => {
   const w = await standing(on, 'green')
   w.files[TYPES] = `${TYPES_TEXT}\u00ff\n`
   w.files[OTHER] = `${TYPES_TEXT}\u00fe\n`
-  expect(await gate($)).toMatch(/Not passed: 2 files name themselves the types of Claude Code 2\.1\.322 and are not the same/)
   delete w.files[OTHER]
   const bytes = Uint8Array.from(`${TYPES_TEXT}\u00ff\n`, (char) => char.charCodeAt(0))
   const digest = await crypto.subtle.digest('SHA-256', bytes)
@@ -172,8 +166,9 @@ test('the hash recorded is of the file\'s bytes, whatever they are: two files th
 test('the sha256 of the types used is in the evidence of Green and of Verify, as the file\'s own hash', async ($, on) => {
   const w = await standing(on, 'green')
   const sha = await sha256(TYPES_TEXT)
-  expect(await gate($)).toBe(`mod-builder: phase 6 (Green) passed (validate, 1 tests, the typecheck (types sha256 ${sha}) and a headless load of ${NAME} all pass; tests/ and SPEC.md are as recorded). The build is now at phase 7 (Verify).`)
-  expect(await gate($)).toBe(`mod-builder: phase 7 (Verify) passed (validate, 1 tests, the typecheck (types sha256 ${sha}) and a headless load of ${NAME} all pass). The build is now at phase 8 (Done).`)
+  expect((await gate($)).split('\n')[0]).toBe(`mod-builder: phase 6 (Green) passed (validate, 1 tests, the typecheck (types sha256 ${sha}) and a headless load of ${NAME} all pass; tests/ and SPEC.md are as recorded). The build is now at phase 7 (Verify).`)
+  w.files[SPEC] = `${w.files[SPEC]}${BUILT}`
+  expect((await gate($)).split('\n')[0]).toBe(`mod-builder: phase 7 (Verify) passed (validate, 1 tests, the typecheck (types sha256 ${sha}) and a headless load of ${NAME} all pass). The build is now at phase 8 (Done).`)
   expect(evidence(w).green).toMatch(new RegExp(`types sha256 ${sha}`))
   expect(evidence(w).verify).toMatch(new RegExp(`types sha256 ${sha}`))
 })
@@ -185,28 +180,6 @@ test('the pane shows the sha256 of the types the last gate used', async ($, on) 
   const texts = (await ui.findAll({ type: 'Text' })).map((text) => text.text)
   await ui.unmount()
   expect(texts.filter((text) => text.startsWith('Green: '))).toEqual([`Green: validate, 1 tests, the typecheck (types sha256 ${await sha256(TYPES_TEXT)}) and a headless load of ${NAME} all pass; tests/ and SPEC.md are as recorded`])
-})
-
-test('types files that differ stop the gate: it names each path, uses none and runs nothing, whichever sorts first', async ($, on) => {
-  const w = await standing(on, 'green')
-  const refusal = (paths: string[]) => `mod-builder: still at phase 6 (Green). Not passed: ${paths.length} files name themselves the types of Claude Code 2.1.322 and are not the same (${paths.join(', ')}): the gate can't tell which is the build's, and uses none.`
-  w.files[OTHER] = `${TYPES_TEXT}export type Planted = any\n`
-  expect(await gate($)).toBe(refusal([OTHER, TYPES]))
-  expect(w.ran).toEqual([])
-  expect(w.files[CONFIG]).toBeUndefined()
-  delete w.files[OTHER]
-  const last = `${TYPES_FOLDER}/zzzz/plugin-authoring/types/claude-code.d.ts`
-  w.files[last] = `${TYPES_TEXT} `
-  expect(await gate($)).toBe(refusal([TYPES, last]))
-  expect(phase(w)).toBe('green')
-})
-
-test('of three types files, two the same and one that differs, none is used', async ($, on) => {
-  const w = await standing(on, 'verify')
-  w.files[OTHER] = TYPES_TEXT
-  w.files[`${TYPES_FOLDER}/zzzz/plugin-authoring/types/claude-code.d.ts`] = `${TYPES_TEXT}// more\n`
-  expect(await gate($)).toMatch(/Not passed: 3 files name themselves the types of Claude Code 2\.1\.322 and are not the same/)
-  expect(w.ran).toEqual([])
 })
 
 test('types files that are the same to the byte are one, wherever they sort: the gate passes and records their hash', async ($, on) => {

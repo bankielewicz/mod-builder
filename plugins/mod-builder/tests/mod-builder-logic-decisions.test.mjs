@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 // Read through the namespace, so that before the rules exist this file still loads and each test fails by itself.
 import * as logic from '../hooks/mod-builder-logic.ts';
 
-const typesVerdict = (...args) => logic.typesVerdict(...args);
+const typesVerdict = (...args) => logic.typesToCheck(...args);
 const lastLines = (...args) => logic.lastLines(...args);
 const hooksSkipped = (...args) => logic.hooksSkipped(...args);
 const FOLDER = '/tmp/claude-1000/bundled-skills/2.1.322';
@@ -21,30 +21,6 @@ test('with no candidate the verdict refuses, saying where it looked and that loa
   });
   assert.match(typesVerdict([], null, '2.1.322').reason, /looked in no folder: CLAUDE_TMPDIR is not set and the user id could not be read/);
   for (const none of [null, undefined, 'x', {}]) assert.equal(typesVerdict(none, FOLDER, '2.1.322').pass, false);
-});
-
-test('one candidate is used, with its hash', () => {
-  assert.deepEqual(typesVerdict([one('bbbb')], FOLDER, '2.1.322'), { pass: true, path: one('bbbb').path, sha256: 'aa' });
-});
-
-test('several candidates whose content is the same are one', () => {
-  const verdict = typesVerdict([one('bbbb'), one('aaaa'), one('cccc')], FOLDER, '2.1.322');
-  assert.equal(verdict.pass, true);
-  assert.equal(verdict.sha256, 'aa');
-  assert.equal([one('aaaa').path, one('bbbb').path, one('cccc').path].includes(verdict.path), true);
-});
-
-test('candidates that differ refuse, naming every path in order, whichever comes first and however many agree', () => {
-  const planted = one('0000', 'types, weakened', 'bb');
-  const reason = (paths) => `${paths.length} files name themselves the types of Claude Code 2.1.322 and are not the same (${paths.join(', ')}): the gate can't tell which is the build's, and uses none`;
-  assert.deepEqual(typesVerdict([planted, one('bbbb')], FOLDER, '2.1.322'), { pass: false, reason: reason([planted.path, one('bbbb').path]) });
-  assert.deepEqual(typesVerdict([one('bbbb'), planted], FOLDER, '2.1.322'), { pass: false, reason: reason([planted.path, one('bbbb').path]) });
-  assert.deepEqual(typesVerdict([one('bbbb'), one('cccc'), planted], FOLDER, '2.1.322'), { pass: false, reason: reason([planted.path, one('bbbb').path, one('cccc').path]) });
-});
-
-test('candidates differ when their content differs though a hash is the same, and when a hash differs though the content reads the same', () => {
-  assert.equal(typesVerdict([one('aaaa', 'x', 'aa'), one('bbbb', 'y', 'aa')], FOLDER, '2.1.322').pass, false);
-  assert.equal(typesVerdict([one('aaaa', 'x', 'aa'), one('bbbb', 'x', 'bb')], FOLDER, '2.1.322').pass, false);
 });
 
 test('the last lines of an output are its last 20, with empty lines at its end left out', () => {

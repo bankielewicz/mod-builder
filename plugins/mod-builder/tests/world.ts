@@ -16,6 +16,9 @@ export const TMP = '/tmp/claude-1000'
 export const TYPES_FOLDER = `${TMP}/bundled-skills/2.1.322`
 export const TYPES = `${TYPES_FOLDER}/5d3947d0/plugin-authoring/types/claude-code.d.ts`
 export const TYPES_TEXT = '// Written by Claude Code 2.1.322.\n// Claude Code function hooks.\n'
+// The hash of those types, and a "Built" block that holds it: what a SPEC.md gains at Verify.
+export const TYPES_SHA = '961c15e9ad38505611e6ab25090b7e935f949a2887922a177e6bd53fccd8c950'
+export const BUILT = `\n## Built\n\nBuilt on Claude Code 2.1.322, from the docs snapshot 2026-11-10T151216Z, against the types sha256 ${TYPES_SHA}.\n`
 export const INSTALLED = 'npx --no-install tsc'
 export const DOWNLOADED = 'npx -y -p typescript tsc'
 
