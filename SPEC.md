@@ -106,7 +106,7 @@ with the line to run). Eight phases, each ending in something the plugin can obs
 | 3 | Spec | the model writes `<mod>/SPEC.md`: what it does, each API use with its citation, what it reaches, its tests | the person approves, through the mod's own question |
 | 4 | Scaffold | the mod's files from one template (`pane`), checked against the build's types | `claude plugin validate` passes |
 | 5 | Red | tests only | a new test fails by assertion |
-| 6 | Green | code only; tests frozen | every test passes |
+| 6 | Green | code only; tests frozen | validate, every test, the typecheck and a headless load pass (7.7) |
 | 7 | Verify | validate, test, typecheck, a headless load with its debug-log lines | all pass |
 | 8 | Done | summary, "Built on", local commits | (end) |
 
@@ -678,7 +678,9 @@ What else the demonstration showed:
 - **The Scaffold refusal cost a guess.** The gate's answer was `claude plugin validate --strict exited 1` and
   no more; the model then rewrote `types/index.d.ts`, added a `README.md` and `"license": "MIT"` to the mod,
   and passed. It reported the last two as required by strict validation, which they are not (the plugin
-  directory's checks "do not change the result"); which change made validate pass was not established.
+  directory's checks "do not change the result"). The cause [ran: the session's writes replayed up to that
+  gate call, then validate]: `types: line 16: \`export\` at the top level is followed by \`type\` or
+  \`interface\`: a contract exports types and nothing else`, one line the gate had and did not pass on.
   **Open, for the owner:** whether a refused validate (and test) run should carry its last lines too, as the
   typecheck and the load now do. The README lists it as a limit.
 - **The scaffold's frozen test shaped the mod.** The spec said `/turns` prints nothing; the template's test
@@ -687,6 +689,20 @@ What else the demonstration showed:
 - **The manifest's author** came from git's global `user.name` on this machine (the scratch folder is no
   repository), which is not the owner's name in this repository.
 - **No commit was made** by the build: the mod's folder is not in a git repository, and the skill says so.
+- **The types.** Four folders under `/tmp/claude-1000/bundled-skills/2.1.322/` held a types file during the
+  demonstration, all the same to the byte; the gate reads each whole at Green and again at Verify. The hash
+  in the mod's "Built" block is the one the gates answered with.
+- **The hash in "Built on" is typed by the model and checked by nothing** (the tests' reader, and the owner's
+  side agent the same day): the gate's evidence and the pane are the mod's own writing, the "Built" block is
+  not, and Verify compares only the approved part of `SPEC.md`. **Open, for the owner:** whether Verify
+  should refuse a "Built" block that does not hold the hash it used. The README lists it as a limit.
+- **The skipped-hook rule in the real engine** [ran: a scaffolded mod whose `session.start` hook throws,
+  through the built Green gate, headless]: `Not passed: the headless load's debug log does not show the mod
+  loaded and admitted.` followed by `… [ERROR] thrower: session.start hook skipped: threw Error: boom at start`.
+- **Section 4's item 3 was shown with `Edit` at Scaffold**, not with the same `Write`; a `Write` of that path
+  passed at Green.
+- **3.3's new text holds more than 7.7's words**: the skipped-hook clause (the owner's finding), and the
+  sentence on the last 20 lines, which 7.7 gives under decision 1.
 
 **Also in step 5:** `README.md` (what it does, how to run it, "What it reaches" from validate's output, the
 limits of this section 7, "Built on"), with the typecheck command 7.3 asked for [ran: it exits 0 from the
