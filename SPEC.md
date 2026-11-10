@@ -1,8 +1,8 @@
 # mod-builder: specification for the MVP candidate
 
 Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
-decision). Built so far: step 1 of section 7.1 (the layout and the knowledge scripts), on the branch
-`step-1-layout-knowledge`, with one fix round owed (section 7.2). What waits until after the MVP is in
+decision). Built so far: steps 1 and 2 of section 7.1 (the layout and knowledge scripts, accepted and on
+`main`; the rules as pure functions, on the branch `step-2-rules`, with a fix to the Red gate owed, 7.3). What waits until after the MVP is in
 `BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
@@ -153,8 +153,12 @@ something the plugin can observe:
     dialog behaved as documented, and a click or key from anyone at the pane answers it.
   - **Scaffold → Red:** `claude plugin validate --strict` exits 0. The mod records how many tests ran.
   - **Red → Green:** `claude plugin test` exits non-zero; its last line reports more tests than at
-    Scaffold; and every `(fail)` block holds an assertion (`expect(` or `AssertionError`). A file that
-    fails to load runs no new test, so it can't pass this gate.
+    Scaffold; every `(fail)` block's **first line** is an assertion error (it starts with
+    `AssertionError`, as in `AssertionError: expect(received).toBe()`); and at least one failing test has
+    a name that no test had at Scaffold, whose names the mod records there. A file that fails to load
+    can't pass: its block doesn't open with an assertion error, even when a source line it quotes holds
+    `expect(`. An old test failing beside a new passing one can't pass either. (Step 2 first built this
+    as "`expect(` or `AssertionError` anywhere in the block", with no names; 7.3.)
   - **Green → Verify:** `claude plugin test` exits 0 with no fewer tests than at Red.
   - **Verify → Done:** validate, test, the typecheck and the headless load all pass.
 - **Writes the hook can't see.** The hook doesn't parse Bash, and a shell command can write a file. So
@@ -294,3 +298,31 @@ name `_changes.md`, and exit 1 for a cache folder that can't be written.
 a branch per step, fast-forwarded into `main` once accepted; lookup's tests on a hand-built cache; the
 scripts run as `bash <script>`; `git mv` for a move. Not accepted: a co-author trailer other than the
 plan's (three commits carry one; left as they are, and plans from here say the trailer is copied as given).
+
+### 7.3 Step 1's fix round and step 2: the outside read (2026-11-10, at `b159e91`)
+
+- **Step 1 is accepted.** The bad-server probe of 7.2, rerun on `320499d`: `…/api.md could not be fetched:
+  it is empty`, exit 1, no `latest` [ran]. Script tests 46 of 46 [ran]. `main` was fast-forwarded to it.
+- **The fix round's red commit `5387bce` rewrote assertions in three existing test files**, which the
+  test-writer's own definition forbids ("Never change or delete an existing test or assertion"); the plan
+  cited this spec's rename. The changes are the digest's file name, and the one test whose behaviour the
+  rename changed (a fetched page named `changes.md` is now kept beside the digest) [read: the diff].
+  **Until the owner decides otherwise:** a change this spec requires to an existing test is made by the
+  building session in a commit of its own that says why and cites the section, before the plan runs, so
+  the plan only adds tests and the agent's rule stays strict. (The alternative, a line in the agent's
+  definition allowing rewrites a plan attributes to the spec, is the owner's to choose.)
+- **Step 2: 72 of 72 logic tests pass** [ran]. Two cases the tests don't state, probed against the built
+  `redGate` [ran]:
+  1. a `(fail)` block for a file that failed to load, whose quoted source line holds `expect(`, **passed**
+     Red;
+  2. a run where only a test that existed at Scaffold fails by assertion, and the new test passes,
+     **passed** Red.
+  Both are owed as a fix before step 3's own work, to the rule now in 3.3.
+- **Limits recorded, not fixed:** `pathInMod` reads only `/` paths, so on native Windows every path counts
+  as outside the mod and the guard passes it (README must say so; WSL is unaffected). The typecheck isn't
+  reproducible from the repository yet (step 3 adds the command to README).
+- **The load lines** (section 4, item 1) on 2.1.322 [ran: a live session's debug log, 2026-11-10]:
+  `hooks module <name>@inline loaded (…)` and `plugin.register: <name> (user, <name>@inline), judged by
+  core alone: admitted`. Anthropic's pages don't use the word "admitted" (a side agent's note), so the
+  check is: the `hooks module … loaded` line is present, and no line for the mod holds `not loaded:`.
+  The `admitted` line is recorded when seen, not required.
