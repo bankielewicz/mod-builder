@@ -1,9 +1,9 @@
 # mod-builder: specification for the MVP candidate
 
 Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
-decision). Built so far: steps 1 and 2 of section 7.1 (the layout and knowledge scripts, accepted and on
-`main`; the rules as pure functions, on the branch `step-2-rules`, with a fix to the Red gate owed, 7.3). What waits until after the MVP is in
-`BACKLOG.md`.
+decision). Built so far: steps 1 and 2 of section 7.1 (accepted, on `main`, the Red gate's fix of 7.3
+included), and step 3, the hooks module, on the branch `step-3-hooks`, waiting for review (7.4). What waits
+until after the MVP is in `BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
 (mockups, not captures; wording and numbers in them are placeholders).
@@ -332,3 +332,51 @@ plan's (three commits carry one; left as they are, and plans from here say the t
   core alone: admitted`. Anthropic's pages don't use the word "admitted" (a side agent's note), so the
   check is: the `hooks module … loaded` line is present, and no line for the mod holds `not loaded:`.
   The `admitted` line is recorded when seen, not required.
+
+### 7.4 The Red gate's fix and step 3: what was built, probed and left open (2026-11-10, at `70c6213`)
+
+- **The Red gate** is to 3.3's rule (`f1ed140`, on `main`): both cases of 7.3 are refused with the runner's
+  real output [ran]. New in the rules: `testNames`, whose answer the mod records at Scaffold.
+- **Step 3 is built on `step-3-hooks`**, in four test-first changes, each with an independent read of its
+  tests before the red commit and a verifier's PASS with every mutant failing its test: the rules the
+  module asks (`5521611`), other plugins' folders closed until Done (`b5a5da0`), the module with the
+  guard and the gate (`85feae0`), the refresh trigger, `/mod-builder` and the pane (`70c6213`). 160 logic
+  tests under `node --test`, 95 module tests under `claude plugin test`, `claude plugin validate
+  --strict` and the typecheck against the build's types all pass [ran].
+- **`skill.prompt`** (3.3's open point) [read: the build's types, 2.1.322]: its input has `skill`,
+  `source`, `pluginName` ("an installed plugin's name, when the skill comes from one") and `path`. The
+  mod opens a build for a skill named `build` or `mod-builder:build` whose `pluginName` is its own and
+  whose `path`, when given, is under its own folder; so the installed `mod-builder@claudemod` opens
+  nothing here. [unverified on a live session: which of the two names, and what `source`, a
+  `--plugin-dir` plugin's skill carries; step 4 shows it when the skill exists.]
+- **P2 is done** [probe, 2026-11-10, 2.1.322, a throwaway mod's command run headless, no model call]:
+  `$.process.run` ran `tsc` (0.2 s) and a nested headless load (3.8 s, exit 0). Its time limit is a whole
+  number of milliseconds from 1 to 600000, 30 s when not given; a command that outruns it or can't start
+  rejects; one ended by a signal reads as exit 1. A headless load that costs no model call is
+  `claude --plugin-dir <mod> -p /cost --debug-file <log>`.
+- **The load lines** (correcting 7.3): a module that fails to load still exits 0, and the log says
+  `hooks module <name>@inline failed to load:` and `<name>: hooks module did not load:`; no `not loaded:`
+  line was seen. The check: the `hooks module <name>@inline loaded` line is present, and none of those
+  three is said of the mod.
+- **P4 is answered** [read: the plugin-authoring skill's reference, 2.1.322; ran: two headless loads laid
+  nothing]: a folder loaded under `claude -p` is never written in. Before an interactive load, the only
+  copy of the build's types is the one the `plugin-authoring` skill writes for its own process. **Open,
+  before step 4:** where the built mod's `tsconfig.json`, types and compiler come from, so that Verify's
+  typecheck (`npx --no-install tsc --noEmit -p <mod>`, this session's choice) can pass.
+- **The test runner** [ran]: `claude plugin test` writes its report to standard output and a test's own
+  printing to standard error, so the gate reads standard output only. A thrown text or an error renamed
+  `AssertionError` still opens a block with that word; 3.3's rule can't tell it from an assertion.
+- **Open, before step 4:** how `/mod-builder <what the mod should do>` (3.2) reaches the build skill. The
+  mod's command `mod-builder` takes `refresh` and no words; any other text gets one line of explanation
+  [ran: a live headless session]. Either the command hands the text to the skill, or 3.2 names
+  `/mod-builder:build`.
+- **Decided in the plans where this spec was silent, for the owner's review:** a guard that can't read
+  whether the session has a build passes the write and says so in the transcript, and refuses once a
+  build is known to be open; the gate's first call only names the folder, and each later call moves one
+  phase; a folder another session is building can't be named until it is Done; the tests are hashed
+  before and after Red's run, and compared before and after Green's and Verify's; the pane shows the
+  evidence of the gate before the current phase; a fetch skipped for a held lock records no version.
+- **Limits recorded, not fixed:** a session that ends mid-build leaves its folder bound to it, and no
+  other session can name the folder (BACKLOG 17); a SPEC.md changed after approval stops every later
+  gate with no way back to Spec (BACKLOG 18); a build taken to Done opens other plugins' folders again,
+  whatever folder it named; `hooks/` is not hashed, so a shell command can still change it at Verify.
