@@ -31,7 +31,7 @@ function writeSnapshot(cache, stamp, pages) {
   }
   writeFileSync(join(folder, 'manifest.tsv'), `${rows.join('\n')}\n`);
   writeFileSync(join(folder, 'docs-index.txt'), 'An index line about a tool and a call.\n');
-  writeFileSync(join(folder, 'changes.md'), '# Changes\n\nA tool call line that is not a page.\n');
+  writeFileSync(join(folder, '_changes.md'), '# Changes\n\nA tool call line that is not a page.\n');
 }
 
 function cacheWithTwoSnapshots() {
