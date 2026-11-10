@@ -2,8 +2,9 @@
 
 Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
 decision). Built so far: steps 1 and 2 of section 7.1 (accepted, on `main`, the Red gate's fix of 7.3
-included, and step 3, the hooks module, 7.5), and step 4, the `build` skill with what 7.5 settled, on the
-branch `step-4-skill`, waiting for review (7.6). What waits until after the MVP is in `BACKLOG.md`.
+included, and step 3, the hooks module, 7.5), step 4, the `build` skill with what 7.5 settled, on
+`main` (7.7); and 7.7's decisions 1 and 2 with step 5, the demonstration and the README, on the branch
+`step-5-demo`, waiting for review (7.8). What waits until after the MVP is in `BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
 (mockups, not captures; wording and numbers in them are placeholders).
@@ -166,8 +167,12 @@ with the line to run). Eight phases, each ending in something the plugin can obs
     can't pass: its block doesn't open with an assertion error, even when a source line it quotes holds
     `expect(`. An old test failing beside a new passing one can't pass either. (Step 2 first built this
     as "`expect(` or `AssertionError` anywhere in the block", with no names; 7.3.)
-  - **Green → Verify:** `claude plugin test` exits 0 with no fewer tests than at Red.
-  - **Verify → Done:** validate, test, the typecheck and the headless load all pass.
+  - **Green → Verify** (7.7, decision 1) passes only when all four pass, run by the mod in this order: `claude
+    plugin validate --strict` exits 0; `claude plugin test` exits 0 with no fewer tests than at Red; the
+    typecheck exits 0; the headless load exits 0 and its log shows the mod loaded (7.4's three lines, and no
+    `<mod>: <event> hook skipped:` line, 7.8). The tests' and `SPEC.md`'s hashes are compared as now.
+  - **Verify → Done** runs the same four again, after the documentation is written, and compares the same
+    hashes. A gate's answer for a failed typecheck or load carries the last 20 lines of that command's output.
 - **Writes the hook can't see.** The hook doesn't parse Bash, and a shell command can write a file. So
   the gates compare hashes: `SPEC.md` is hashed at approval, and every file under `tests/` when Red
   passes; each later gate refuses when one of them differs, naming the file. A test changed after Red,
@@ -602,3 +607,94 @@ routes, and do not build either.**
 mod-builder switched off, a README (what it does, how to run it, "What it reaches" from validate's
 output, the limits this section 7 records, "Built on"), and the reproducible typecheck command 7.3 asked
 for.
+
+### 7.8 Decisions 1 and 2 built, the owner's finding, and step 5: the demonstration (2026-11-10, at `fe32cd8`)
+
+- **7.7's decisions 1 and 2 are built** in one test-first change (`30d369f` red, `fe32cd8` green; verifier PASS,
+  eight mutants; the existing assertions the decisions change in a commit of their own first, `068b74e`).
+  3.3's "Green → Verify" now reads as 7.7 gives it. 160 module tests, 268 rules, validate and script tests,
+  `claude plugin validate --strict` and the typecheck pass [ran].
+- **The owner's finding, from the owner's own probe of step 4**, built in the same change: "the load check
+  passes a mod whose hook throws at load. Probe: scaffold.sh with the name clear lays a mod; loaded headless,
+  the debug log has 'hooks module clear@inline loaded' and also 'clear: session.start hook skipped: threw
+  clear: $.command.register: "/clear" refused: it is the built-in /clear'." The rule, as the owner gave it:
+  the headless load fails when any debug-log line of the form `<mod name>: <event> hook skipped:` is present
+  for the mod being built [read: troubleshoot.md:142-144], and the gate's answer quotes that line. Reproduced
+  by the building session before the fix [ran: the same scaffold, the same line], and every such line of the
+  mod is quoted. Also from the owner's probe, nothing to fix: the scaffold held for a folder path with a
+  space, an author holding a quote and a backslash, an existing `SPEC.md`, and a second run.
+- **Decided in the plan where 7.7 was silent, for the owner's review:** what the typecheck needs (the types, a
+  compiler) is still looked for before the four checks run, so with no types, types that differ or no
+  compiler none of the four runs (7.6's accepted order); "the same to the byte" is decided on one reading of
+  each file's bytes, and the hash recorded is of those bytes, as `sha256sum` prints it [ran: the real gate's
+  hash and `sha256sum` of the types file agree]; "shown in the pane" is the pane's evidence row, which carries
+  the hash from Green on; the lines quoted are what a command printed, or what it wrote to standard error
+  when it printed nothing, and for a load, beside that, the mod's "hook skipped" lines, else the log's lines
+  that name the mod; nothing is quoted for a failed validate or test run, which 7.7 does not ask for.
+- **The real Green gate** [ran: the built code with one added command, headless, no model call]: on a scaffolded
+  mod, `phase 6 (Green) passed (validate, 2 tests, the typecheck (types sha256 60ff86c1…ceca) and a headless
+  load of turn-counter all pass; …)`; with a type error added, `Not passed: the typecheck exited 1.` followed
+  by `The last lines of its output:` and the compiler's line naming the file, line and error.
+
+**Step 5, the demonstration of section 4** [ran, by the building session: 2.1.322, sonnet, auto mode, tmux at
+200 columns, an empty scratch folder, the plugin as committed at `fe32cd8` exported with `git archive` and
+loaded with `--plugin-dir`; `--settings` switched off `mod-builder@claudemod` and the seven other plugins of
+7.6's live check; the building session answered the dialogs in the owner's place]:
+
+1. **`/mod-builder:build a pane that counts the turns in this session` built `turn-counter` through all eight
+   phases** in one session, with these gate answers in order: folder named; Knowledge passed (snapshot
+   2026-11-10T194027Z); Describe passed; Spec "Not yet" (answered so on purpose, see 3 below), then "Approve";
+   Scaffold refused once (`claude plugin validate --strict exited 1`), then passed with 2 tests; Red passed at
+   its first call (10 tests, the new ones failing by assertion); Green passed at its first call (validate, 10
+   tests, the typecheck and a headless load); Verify passed at its first call; Done. Checked again by the
+   building session outside the session: `claude plugin validate --strict` passes, `claude plugin test` 10 of
+   10, the typecheck exits 0 with the tsconfig the rules write, and a headless load's log holds `hooks module
+   turn-counter@inline loaded (…); events: session.start,command.run,turn.start,turn.complete,ui.render` and
+   `plugin.register: turn-counter (user, turn-counter@inline), judged by core alone: admitted`, with no
+   skipped hook.
+2. **Its `SPEC.md` cites a snapshot page and line for each API it uses, and each resolves**: nine citations
+   of `api.md`, `interface.md` and `events.md` at snapshot 2026-11-10T194027Z, each line read and found to be
+   about what it is cited for (`events.md:290` is `turn.start`'s row, `interface.md:290` is "To open a pane,
+   call `$.ui.open`"), and two of the build's types (`TurnStartInput`, `TurnCompleteInput`). Its "Built" block:
+   `Built on Claude Code 2.1.322, from the docs snapshot 2026-11-10T194027Z, against the types sha256
+   60ff86c1215663578dcd96bb09c05aee8a36e0366862f011509460d51a03ceca.`
+3. **A `Write` under `hooks/` before approval was refused, and the same path was accepted at Scaffold.** The
+   model does not try such a write by itself, so the building session answered the first approval question
+   "Not yet" and asked for it: `Write(turn-counter/hooks/register.tsx)` answered `mod-builder:
+   hooks/register.tsx can't be written in phase 3 (Spec), which may write SPEC.md only. …`. After "Approve" and
+   the scaffold, `Edit` of `turn-counter/hooks/register.tsx` passed.
+4. **With `checked` set nine days back, a new interactive session refreshed the cache; with a fresh `checked`
+   it did not** [ran: `checked` 2026-11-01T213044Z, then a session whose debug log shows the mod running
+   `bash` with the fetcher (exit 0, 2.3 s) and `checked` 2026-11-10T213048Z; a second session, no command run
+   by the mod and `checked` unchanged].
+
+What else the demonstration showed:
+
+- **The folder.** The full skill loaded `plugin-authoring` at Describe and wrote every file under
+  `./turn-counter/`; `~/.claude/dev-mods/` holds no
+  file (7.6's open point).
+- **Red needed one try** (7.7, decision 3): the model wrote eight tests that drive the mod through its events,
+  and all failed by assertion. Nothing about the skill's wording had to change.
+- **The Scaffold refusal cost a guess.** The gate's answer was `claude plugin validate --strict exited 1` and
+  no more; the model then rewrote `types/index.d.ts`, added a `README.md` and `"license": "MIT"` to the mod,
+  and passed. It reported the last two as required by strict validation, which they are not (the plugin
+  directory's checks "do not change the result"); which change made validate pass was not established.
+  **Open, for the owner:** whether a refused validate (and test) run should carry its last lines too, as the
+  typecheck and the load now do. The README lists it as a limit.
+- **The scaffold's frozen test shaped the mod.** The spec said `/turns` prints nothing; the template's test
+  wants the command to answer with a text, so the mod answers "The pane is open." and its "Built" block says
+  so. The model had also edited `tests/pane.test.tsx` at Scaffold, as the skill allows.
+- **The manifest's author** came from git's global `user.name` on this machine (the scratch folder is no
+  repository), which is not the owner's name in this repository.
+- **No commit was made** by the build: the mod's folder is not in a git repository, and the skill says so.
+
+**Also in step 5:** `README.md` (what it does, how to run it, "What it reaches" from validate's output, the
+limits of this section 7, "Built on"), with the typecheck command 7.3 asked for [ran: it exits 0 from the
+repository's top folder with TypeScript 7.0.2]. With the README in place `claude plugin validate` no longer
+reports `README_MISSING`; `LICENSE_MISSING` stays, a license being the owner's to choose.
+
+**Not done, or swapped:** the first mockup frame still shows `/mod-builder <…>` (7.7 gives its correction to
+the driving session); the demonstration switched off seven plugins beyond the first mod-builder; the approval
+dialog was answered by the building session; the tests the reader of this change asked for, and the code as
+changed for its read (one reading of the bytes, the quoted lines decided by the rules), were not read a
+second time; macOS stays unverified.
