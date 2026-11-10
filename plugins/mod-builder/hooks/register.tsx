@@ -1,12 +1,14 @@
 // The phase guard (SPEC.md 3.3): a build is opened when this plugin's build skill is expanded, a tool.call hook
 // refuses the writes a phase may not make, and one tool, mod_builder_gate, runs each phase's check itself and
-// advances the build on what the check shows. The rules are in mod-builder-logic.ts; this file reads the world
-// for them through `$` and writes down what they answer.
+// advances the build on what the check shows. Beside it (SPEC.md 3.1, "When"): at the start of an interactive
+// session the documentation cache is refreshed when it is stale, `/mod-builder refresh` refreshes it now, and one
+// pane shows the phases, the evidence and the cache. The rules are in mod-builder-logic.ts; this file reads the
+// world for them through `$` and writes down what they answer.
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
-  APPROVE, GATE_TOOL, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
-  hashGate, isBuildRecord, isBuildSkill, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, redGate,
+  APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
+  hashGate, isBuildRecord, isBuildSkill, isCacheStale, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, redGate,
   scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, verifyGate,
 } from './mod-builder-logic'
 import type { BuildRecord, Hashes, Phase, Run, SpecNow, Verdict } from './mod-builder-logic'
@@ -19,7 +21,15 @@ const TEST_MS = 300000
 const TYPECHECK_MS = 300000
 const LOAD_MS = 120000
 
+const REFRESH_MS = 300000
+
 const NO_BUILD = 'mod-builder: no build is open in this session. /mod-builder <what the mod should do> starts one.'
+
+const PANE = 'mod-builder'
+// The store key that holds the Claude Code version the documentation was last fetched under.
+const FETCHED_UNDER = 'refresh:version'
+
+const cacheOf = (home: string) => `${home}/.claude/mod-builder-data/v2/docs`
 
 // ------------------------------------------------------------------------------------ reading the world
 
@@ -87,6 +97,84 @@ async function hashTests($: Engine, modDir: string): Promise<Hashes | null> {
     return true
   }
   return (await walk('tests')) ? hashes : null
+}
+
+// ------------------------------------------------------------------------------- the documentation cache
+
+// Runs the fetcher now and answers the line to show: what the script said, or why it did not run.
+async function refresh($: Engine): Promise<{ isDone: boolean; text: string }> {
+  const home = await $.env.get('HOME')
+  if (home === undefined) return { isDone: false, text: 'mod-builder: HOME is not set, so the documentation cache has no folder.' }
+  let ran
+  try {
+    ran = await $.process.run(['bash', `${$.plugin.root}/scripts/refresh-docs.sh`, cacheOf(home)], { timeoutMs: REFRESH_MS })
+  } catch (error) {
+    return { isDone: false, text: `mod-builder: the documentation fetch could not run: ${String(error)}` }
+  }
+  const last = (text: string) => text.trim().split('\n').pop() ?? ''
+  const said = last(ran.stdout) !== '' ? last(ran.stdout) : last(ran.stderr)
+  if (ran.exitCode !== 0) return { isDone: false, text: `mod-builder: the documentation fetch failed (exit ${ran.exitCode}): ${said}` }
+  // A run that found another fetch holding the lock fetched nothing: the version it would record is not this one's.
+  if (!said.includes('another fetch holds the lock')) await $.store.set(FETCHED_UNDER, (await $.session.version()).version)
+  $.ui.invalidate('ui.render')
+  return { isDone: true, text: `mod-builder: ${said}` }
+}
+
+// At the start of an interactive session: fetches when the cache is stale (SPEC.md 3.1, "When"). Nothing waits
+// for it, and a fetch that fails changes nothing: the next session tries again.
+async function refreshWhenStale($: Engine, refreshDays: unknown): Promise<void> {
+  try {
+    const home = await $.env.get('HOME')
+    if (home === undefined) return
+    const fetchedUnder = await $.store.get(FETCHED_UNDER)
+    const isStale = isCacheStale({
+      isInteractive: true,
+      refreshDays: refreshDays as number,
+      checked: await readText($, `${cacheOf(home)}/checked`),
+      now: await $.clock.now(),
+      version: (await $.session.version()).version,
+      versionAtCheck: typeof fetchedUnder === 'string' ? fetchedUnder : null,
+    })
+    if (!isStale) return
+    const done = await refresh($)
+    if (!done.isDone) $.ui.log(done.text, { to: 'debug' })
+  } catch (error) {
+    $.ui.log(`mod-builder: the documentation cache could not be checked: ${String(error)}`, { to: 'debug' })
+  }
+}
+
+// ------------------------------------------------------------------------------------------ the pane
+
+type PaneView = { title: string; phases: { text: string; isDim: boolean }[]; evidence: string; knowledge: string }
+
+// What the pane shows for this session: its build's phases, what the last gate saw, and the cache.
+async function paneView($: Engine): Promise<PaneView> {
+  const sessionId = await $.session.id()
+  const entry = await $.store.get(sessionKey(sessionId))
+  const kept = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
+  const record = isBuildRecord(kept) && kept.sessionId === sessionId ? kept : null
+  const at = record === null ? 0 : phaseNumber(record.phase)
+  const title = !isSessionEntry(entry)
+    ? 'No build in this session.'
+    : entry.modDir === null
+      ? 'A build is open. Its mod folder is not named yet.'
+      : record === null
+        ? `Building ${entry.modDir}, but its record is missing or another session's.`
+        : `Building ${entry.modDir}`
+  const phases = PHASES.map((phase) => {
+    const number = phaseNumber(phase)
+    const mark = at === 0 || number > at ? '[ ]' : number < at ? '[x]' : '[>]'
+    return { text: `${mark} ${number} ${phaseTitle(phase)}`, isDim: mark !== '[>]' }
+  })
+  const before = record === null || at < 2 ? undefined : PHASES[at - 2]
+  const seen = before === undefined || record === null ? undefined : record.evidence[before]
+  const evidence = before === undefined || seen === undefined || seen === '' ? '' : `${phaseTitle(before)}: ${seen}`
+  const home = await $.env.get('HOME')
+  const latest = home === undefined ? null : await readText($, `${cacheOf(home)}/latest`)
+  const checked = home === undefined ? null : await readText($, `${cacheOf(home)}/checked`)
+  const knowledge = `Docs: snapshot ${latest === null ? 'none' : latest.trim()}, checked ${checked === null ? 'never' : checked.trim()}`
+
+  return { title, phases, evidence, knowledge }
 }
 
 // ------------------------------------------------------------------------------------------ the gate
@@ -245,12 +333,13 @@ async function gate($: Engine, modDirArgument: unknown): Promise<string> {
   const next = nextPhase(record.phase) as Phase
   const evidence = { ...record.evidence, [record.phase]: step.evidence ?? '' }
   await $.store.set(buildKey(record.modDir), { ...record, ...step.change, phase: next, evidence })
+  $.ui.invalidate('ui.render')
   return `mod-builder: ${phaseLabel(record.phase)} passed (${step.evidence ?? ''}). The build is now at ${phaseLabel(next)}.`
 }
 
 // ---------------------------------------------------------------------------------------- the hooks
 
-export const register: Register = (on) => {
+export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.tool.register({
       name: GATE_TOOL,
@@ -259,6 +348,13 @@ export const register: Register = (on) => {
       inputSchema: { type: 'object', properties: { mod_dir: { type: 'string', description: 'The folder the mod is built in, absolute or from the working directory. Given on the first call only.' } } },
       isDeferred: false,
     })
+    await $.command.register({
+      name: 'mod-builder',
+      description: 'mod-builder: "refresh" fetches the mod documentation now; alone, shows where this session\'s build stands',
+      argumentHint: '[refresh]',
+    })
+    // Not awaited: the session starts while the fetch runs. A headless session never fetches.
+    if (e.isInteractive) void refreshWhenStale($, options.refreshDays)
 
     return next(e)
   })
@@ -271,6 +367,9 @@ export const register: Register = (on) => {
       const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
       // A build under way stays as it is when the skill is expanded again; a finished or lost one gives way.
       if (!(isBuildRecord(record) && record.phase !== 'done')) await $.store.set(key, { modDir: null })
+      // Unasked, so it is placed only where the terminal has the room; /mod-builder opens it at any width.
+      void $.ui.open({ id: PANE, title: 'mod-builder' })
+      $.ui.invalidate('ui.render')
     }
 
     return next(e)
@@ -317,5 +416,36 @@ export const register: Register = (on) => {
     } catch (error) {
       return { result: `mod-builder: the gate failed and the build did not move: ${String(error)}` }
     }
+  })
+
+  on('command.run', { command: 'mod-builder' }, async ($, e) => {
+    const word = e.args.trim()
+    if (word === 'refresh') return { text: (await refresh($)).text }
+    if (word !== '') {
+      return { text: 'mod-builder: "/mod-builder refresh" fetches the mod documentation now, and "/mod-builder" alone shows this session\'s build. A build is started by the build skill.' }
+    }
+    await $.ui.open({ id: PANE, title: 'mod-builder' })
+    const view = await paneView($)
+    const now = view.phases.find((phase) => !phase.isDim)
+
+    const title = view.title.endsWith('.') ? view.title : `${view.title}.`
+
+    return { text: `mod-builder: ${title}${now === undefined ? '' : ` It is at ${now.text.slice(4)}.`} ${view.knowledge}.` }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const view = await paneView($)
+
+    return (
+      <Box flexDirection="column">
+        <Text>{view.title}</Text>
+        {view.phases.map((phase) => (
+          <Text dimColor={phase.isDim}>{phase.text}</Text>
+        ))}
+        {view.evidence !== '' && <Text dimColor>{view.evidence}</Text>}
+        <Text dimColor>{view.knowledge}</Text>
+      </Box>
+    )
   })
 }
