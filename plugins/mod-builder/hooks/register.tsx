@@ -27,7 +27,11 @@ const REFRESH_MS = 300000
 // is not read, so it can't be recorded: Red refuses a tests/ that holds one.
 const NOT_A_FILE = 'not a file'
 
-const NO_BUILD = 'mod-builder: no build is open in this session. /mod-builder <what the mod should do> starts one.'
+// How a build is started (SPEC.md 7.5): the build skill's own command. `/mod-builder <words>` can't start one: it
+// runs this mod's command, and a submitted command's text can't be rewritten into another command.
+const START = '/mod-builder:build'
+
+const NO_BUILD = `mod-builder: no build is open in this session. ${START} <what the mod should do> starts one.`
 
 const PANE = 'mod-builder'
 // The store key that holds the Claude Code version the documentation was last fetched under.
@@ -330,7 +334,7 @@ async function gate($: Engine, modDirArgument: unknown): Promise<string> {
   }
   const record = await $.store.get(buildKey(entry.modDir))
   if (!isBuildRecord(record) || record.sessionId !== sessionId || record.modDir !== entry.modDir) {
-    return `mod-builder: the build's record for ${entry.modDir} is missing or is not this session's. Start the build again with /mod-builder.`
+    return `mod-builder: the build's record for ${entry.modDir} is missing or is not this session's. Start the build again with ${START}.`
   }
   if (typeof modDirArgument === 'string' && absolutePath(modDirArgument, await $.session.cwd()) !== record.modDir) {
     return `mod-builder: this session's build is in ${record.modDir}, and stays there. Call ${GATE_TOOL} without mod_dir.`
@@ -382,13 +386,13 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: GATE_TOOL,
       description:
-        'Asks mod-builder for the next phase of the mod build this session started with /mod-builder. The first call names the folder the mod is built in (mod_dir). Each later call runs the check that ends the current phase (the person approving the spec, validate, the tests, the typecheck, a load) and answers whether the build moved on, or what failed. Call it when a phase\'s work is done; it is the only way to the next phase.',
+        `Asks mod-builder for the next phase of the mod build this session started with ${START}. The first call names the folder the mod is built in (mod_dir). Each later call runs the check that ends the current phase (the person approving the spec, validate, the tests, the typecheck, a load) and answers whether the build moved on, or what failed. Call it when a phase's work is done; it is the only way to the next phase.`,
       inputSchema: { type: 'object', properties: { mod_dir: { type: 'string', description: 'The folder the mod is built in, absolute or from the working directory. Given on the first call only.' } } },
       isDeferred: false,
     })
     await $.command.register({
       name: 'mod-builder',
-      description: 'mod-builder: "refresh" fetches the mod documentation now; alone, shows where this session\'s build stands',
+      description: `mod-builder: "refresh" fetches the mod documentation now; alone, shows where this session's build stands. ${START} <what the mod should do> builds a mod`,
       argumentHint: '[refresh]',
     })
     // Not awaited: the session starts while the fetch runs. A headless session never fetches.
@@ -462,7 +466,7 @@ export const register: Register = (on, options) => {
     const word = e.args.trim()
     if (word === 'refresh') return { text: (await refresh($)).text }
     if (word !== '') {
-      return { text: 'mod-builder: "/mod-builder refresh" fetches the mod documentation now, and "/mod-builder" alone shows this session\'s build. A build is started by the build skill.' }
+      return { text: `mod-builder: "/mod-builder refresh" fetches the mod documentation now, and "/mod-builder" alone shows this session's build. To build a mod, run: ${START} ${word}` }
     }
     await $.ui.open({ id: PANE, title: 'mod-builder' })
     const view = await paneView($)
