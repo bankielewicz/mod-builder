@@ -541,3 +541,64 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
   nothing tests that no `prompt.submit` hook exists; a refused typecheck names the exit code and not the
   compiler's lines; a mod folder whose path holds `*`, `?` or `[` is read as a pattern in the tsconfig's
   `include`; `scaffold.sh` was run under bash 5 only.
+
+### 7.7 Step 4 accepted, and the four open points of 7.6 decided (2026-11-10, at `f723825`)
+
+The owner asked the driving session for "the best answer, as per anthropic's documentation" on the building
+session's questions, to be given "with zero ambiguity". Step 4 is accepted: [ran, by the driving session]
+139 of 139 module tests, 171 of 171 rules tests, 87 of 87 script tests, `claude plugin validate --strict`
+passes with no gating hook lacking a `.catch`.
+
+**Decision 0. A build is started with `/mod-builder:build <what to build>`. Do not probe the two other
+routes, and do not build either.**
+- `plugin:skill` is how a plugin's skill is named and run, and it is what the live check showed raising
+  `skill.prompt` for this plugin (7.6, live check 2).
+- `$.prompt.submit` is documented for one purpose: "When a background job finds something that needs
+  Claude's attention, it can start a turn by submitting a prompt" [read: api.md:255]. Submitting text
+  `asUser` to stand in for what the person typed is not that purpose, and the types say a rewrite of a
+  submission that runs a command "is then not applied, and the person is told" (7.6, live check 1).
+- `/mod-builder` stays the mod's own command: `refresh` fetches, any other words answer with the line to
+  run. 3.2 and section 4 already say so; the driving session corrects the first mockup frame.
+
+**Decision 1. Green's gate runs every check Verify runs. Change 3.3's "Green → Verify" to this, exactly:**
+- Green → Verify passes only when all four pass, run by the mod in this order: `claude plugin validate
+  --strict` exits 0; `claude plugin test` exits 0 with no fewer tests than at Red; the typecheck exits 0;
+  the headless load exits 0 and its log shows the mod loaded (7.4's three lines). The tests' and
+  `SPEC.md`'s hashes are compared as now.
+- Verify → Done runs the same four again, after the documentation is written, and compares the same
+  hashes. Nothing else about Verify changes.
+- Why: Anthropic's own loop for changing a mod is "Claude edits the hooks module, runs `claude plugin
+  validate`, and fixes what it reports" [read: create.md:254]. A check has to run while the code can still
+  be changed, and at Verify `hooks/` and `tests/` are closed. With this, a build can't reach Verify in a
+  state Verify refuses for the code.
+- A gate's answer for a failed typecheck or load carries the last 20 lines of that command's output, so
+  the model can fix what it names (7.6's limit, "names the exit code and not the compiler's lines").
+
+**Decision 2. The types file: every candidate must agree, or the gate refuses. Build exactly this:**
+- The candidates are every `plugin-authoring/types/claude-code.d.ts` under
+  `<CLAUDE_TMPDIR>/bundled-skills/<session's version>/*/` whose first line names the session's version.
+- No candidate: the gate refuses, saying where it looked and that loading the built-in `plugin-authoring`
+  skill writes one.
+- One candidate, or several whose content is byte-identical: that content is used.
+- Candidates that differ: the gate refuses, naming each path, and says it can't tell which is the
+  build's. It never picks by name order.
+- The sha256 of the types used is recorded in the gate's evidence and shown in the pane and in "Built on".
+- Why: "trust these files over any page" is said of the types Claude Code itself writes [read:
+  create.md:270]. The mod can't prove who wrote a file, but the skill loads `plugin-authoring` at
+  Describe, so a genuine copy exists, and a planted file that differs from it now stops the gate instead
+  of being used. A planted file identical to the genuine one changes nothing. README lists this beside
+  "not a sandbox".
+
+**Decision 3. Red's rule in 3.3 stays exactly as it is. No code change.**
+- A test "fires the events your hooks handle and checks what the hooks did" [read: create.md:308]. A test
+  written that way fails at an `expect` when the behaviour is missing, and the scaffold has already laid
+  the module, so nothing fails to load.
+- A test that fails with a `TypeError` is refused by Red, and the refusal names the test: the model
+  rewrites it to drive the mod through its events. Step 5 shows whether the skill's wording is enough; if
+  a build needs more than two tries at Red for this reason, that goes in the report and the skill's
+  wording is what changes, not the gate.
+
+**Step 5** then follows 7.1 and section 4: the demonstration on sonnet in a scratch folder with the first
+mod-builder switched off, a README (what it does, how to run it, "What it reaches" from validate's
+output, the limits this section 7 records, "Built on"), and the reproducible typecheck command 7.3 asked
+for.
