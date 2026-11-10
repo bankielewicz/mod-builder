@@ -11,7 +11,7 @@
 # whole, and SPEC.md and anything else there is left as it is. The four files are made in a temporary folder first
 # and moved in only when all of them, and the folders they go in, could be made.
 # Exit 0: the four files were written, each printed as "wrote <path>". Exit 2: wrong arguments. Exit 1: refused,
-# or a file could not be written; then none of the four is in the folder.
+# or a file could not be written; then none of the four is in the folder (a folder made for one may be, empty).
 set -u
 (($# == 2 || $# == 3)) || { echo "usage: scaffold.sh <mod folder> <mod name> [author]" >&2; exit 2; }
 mod=$1
@@ -66,8 +66,9 @@ done
 written=()
 for file in "${files[@]}"; do
   if ! cp -- "$staged/$file" "$mod/$file"; then
-    for done_file in "${written[@]+"${written[@]}"}"; do rm -f -- "$mod/$done_file"; done
-    echo "scaffold: $mod/$file could not be written; nothing was left behind" >&2
+    # What the failed copy left of this file goes too: nothing was at any of these paths when the script began.
+    for done_file in "${written[@]+"${written[@]}"}" "$file"; do rm -f -- "$mod/$done_file"; done
+    echo "scaffold: $mod/$file could not be written; none of the four files was left behind" >&2
     exit 1
   fi
   written+=("$file")
