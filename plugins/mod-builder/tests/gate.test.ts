@@ -227,11 +227,11 @@ test('the gate reads the runner\'s report from standard output only: a block a t
   expect(await gate($)).toMatch(/Not passed: no new test fails/)
 })
 
-test('Green to Verify passes when every test passes with the tests and SPEC.md as recorded', async ($, on) => {
+test('Green to Verify passes when validate, every test, the typecheck and a headless load pass, with the tests and SPEC.md as recorded', async ($, on) => {
   const w = fresh(on)
   await walk($, w, 'green')
   w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
-  expect(await gate($)).toBe('mod-builder: phase 6 (Green) passed (all 2 tests pass; tests/ and SPEC.md are as recorded). The build is now at phase 7 (Verify).')
+  expect(await gate($)).toMatch(/^mod-builder: phase 6 \(Green\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass; tests\/ and SPEC\.md are as recorded\)\. The build is now at phase 7 \(Verify\)\.$/)
 })
 
 test('a test changed after Red by any tool stops the build at the next gate, naming the file; so does one added or removed', async ($, on) => {
@@ -264,7 +264,7 @@ test('Verify to Done runs validate, the tests, the typecheck and a headless load
   await walk($, w, 'verify')
   w.ran.length = 0
   w.files[SPEC] = '# turn-counter\n\n## Built\non 2.1.322\n'
-  expect(await gate($)).toBe(`mod-builder: phase 7 (Verify) passed (validate, 2 tests, the typecheck and a headless load of ${NAME} all pass). The build is now at phase 8 (Done).`)
+  expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed \(validate, 2 tests, the typecheck \(types sha256 [0-9a-f]{64}\) and a headless load of turns all pass\)\. The build is now at phase 8 \(Done\)\.$/)
   const log = `${HOME}/.claude/mod-builder-data/v2/loads/s1.log`
   expect(w.ran).toEqual([
     ['npx', '--no-install', 'tsc', '-v'],
@@ -280,7 +280,7 @@ test('Verify stays when the typecheck fails, when the load\'s log shows the modu
   const w = fresh(on)
   await walk($, w, 'verify')
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2322' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.')
+  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.\nThe last lines of its output:\nerror TS2322')
   w.runs.tsc = { exitCode: 0, stdout: '' }
   w.files['the load log'] = `${OTHERS}[ERROR] hooks module ${NAME}@inline failed to load: ${NAME}: /work/turn-counter/hooks/register.tsx does not parse\n`
   expect(await gate($)).toMatch(/Not passed: the headless load's debug log does not show the mod loaded/)

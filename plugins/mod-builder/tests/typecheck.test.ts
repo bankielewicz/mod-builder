@@ -133,7 +133,7 @@ test('types written by another version of Claude Code are not this build\'s: in 
   expect(config(w)?.include[0]).toBe(`${TMP}/bundled-skills/2.1.321/aaaa/plugin-authoring/types/claude-code.d.ts`)
 })
 
-test('of several processes\' types for this build, the first by name that is this build\'s is used', async ($, on) => {
+test('several processes\' types for this build that are the same to the byte are one: that content is used', async ($, on) => {
   const w = await atVerify(on)
   delete w.files[TYPES]
   w.files[`${TYPES_FOLDER}/aaaa/plugin-authoring/types/claude-code.d.ts`] = '<html>not types</html>\n'
@@ -164,7 +164,7 @@ test('with no CLAUDE_TMPDIR and no user id, Verify refuses and says where it cou
 test('a typecheck that finds an error keeps the build at Verify, with the compiler\'s exit code', async ($, on) => {
   const w = await atVerify(on)
   w.runs.tsc = { exitCode: 2, stdout: 'hooks/register.tsx(3,7): error TS2322\n' }
-  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.')
+  expect(await gate($)).toBe('mod-builder: still at phase 7 (Verify). Not passed: the typecheck exited 2.\nThe last lines of its output:\nhooks/register.tsx(3,7): error TS2322')
   expect(phase(w)).toBe('verify')
 })
 

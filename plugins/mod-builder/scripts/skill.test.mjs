@@ -129,7 +129,7 @@ test('the table of what each phase may write agrees with the guard\'s own rule',
 test('the "Built" block the skill gives, appended to an approved spec, leaves the approved part as the Verify gate wants it', () => {
   const verify = section(7);
   const block = verify.match(/```markdown\n([\s\S]*?)```/)?.[1] ?? '';
-  assert.match(block, /^## Built\n\nBuilt on Claude Code <version>, from the docs snapshot <stamp>\.\n/);
+  assert.match(block, /^## Built\n\nBuilt on Claude Code <version>, from the docs snapshot <stamp>, against the types sha256 <hash>\.\n/);
   const hash = (text) => createHash('sha256').update(text).digest('hex');
   const approved = '# turn-counter\n\nWhat it does.\n';
   const now = `${approved}\n${block}`;
@@ -145,15 +145,17 @@ test('the answers to the approval question are quoted in the skill as the mod wo
   assert.equal(APPROVE, 'Approve');
 });
 
-test('Red says every failure must be a failed assertion and what does not count; Green has the model check what Verify checks before hooks/ closes', () => {
+test('Red says every failure must be a failed assertion and what does not count; Green says its gate runs Verify\'s four checks, and what to do with each refusal', () => {
   const red = section(5).replace(/\s+/g, ' ');
   assert.match(red, /more tests than at Scaffold, every failure opens with `AssertionError`/);
   assert.match(red, /at least one failing test has a new name/);
   assert.match(red, /neither does a test that throws before its `expect`/);
   const green = section(6).replace(/\s+/g, ' ');
-  assert.match(green, /Before calling the gate, check what phase 7 will check, because `hooks\/` closes when Green passes/);
-  assert.match(green, /claude plugin validate --strict <mod folder>/);
-  assert.match(green, /typecheck the mod/);
+  assert.match(green, /It runs the validator, the tests, a typecheck against this build's types and a headless load of the mod: the same four checks Verify ends on/);
+  assert.match(green, /its answer carries the last lines the command printed: fix what they name and call the gate again/);
+  assert.match(green, /files naming themselves the build's types are not the same, stop and tell the person/);
+  const table = body.split('\n').filter((line) => /^\| [67] \|/.test(line)).map((line) => line.split('|')[4].trim());
+  assert.deepEqual(table, ['validate, the tests, the typecheck and a headless load all pass', 'the same four pass again']);
 });
 
 test('the scaffold is given the folder the gate named, and a refusal is not worked around', () => {
