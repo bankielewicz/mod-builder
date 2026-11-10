@@ -1,0 +1,14 @@
+{
+  "name": "mod-builder",
+  "owner": {
+    "name": "Bryan Ankielewicz"
+  },
+  "plugins": [
+    {
+      "name": "mod-builder",
+      "source": "./plugins/mod-builder",
+      "description": "Builds Claude Code mods from a dated copy of Anthropic's mod documentation, test-first, through guarded phases."
+    }
+  ],
+  "description": "One plugin: mod-builder, which builds Claude Code mods from a dated copy of Anthropic's mod documentation."
+}
