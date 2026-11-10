@@ -704,6 +704,13 @@ What else the demonstration showed:
 - **3.3's new text holds more than 7.7's words**: the skipped-hook clause (the owner's finding), and the
   sentence on the last 20 lines, which 7.7 gives under decision 1.
 
+- **Codex's stop-time review** of this round (7.2) found one defect, fixed test-first in `a75925d` (verifier
+  PASS, three mutants; 166 module tests): the 20-line limit was applied after the "hook skipped" lines were
+  joined to what the load said, so with 25 skipped hooks only the last 20 were quoted, and they could push the
+  command's own lines out. The limit is now the command's alone, and every skipped-hook line follows it. Its
+  other note, the module runner answering "ended without a report" for every file in its own run, did not
+  reproduce here [ran: 166 of 166], as in 7.4 and 7.6.
+
 **Also in step 5:** `README.md` (what it does, how to run it, "What it reaches" from validate's output, the
 limits of this section 7, "Built on"), with the typecheck command 7.3 asked for [ran: it exits 0 from the
 repository's top folder with TypeScript 7.0.2]. With the README in place `claude plugin validate` no longer
