@@ -371,11 +371,20 @@ plan's (three commits carry one; left as they are, and plans from here say the t
   [ran: a live headless session]. Either the command hands the text to the skill, or 3.2 names
   `/mod-builder:build`.
 - **Decided in the plans where this spec was silent, for the owner's review:** a guard that can't read
-  whether the session has a build passes the write and says so in the transcript, and refuses once a
-  build is known to be open; the gate's first call only names the folder, and each later call moves one
+  whether the session has a build refuses a write that lies in a plugin's folder and passes any other
+  with a transcript line (the owner, asked after Codex's review: "Refuse inside plugins only"), and
+  refuses everything it can't judge once a build is known to be open; the gate's first call only names the folder, and each later call moves one
   phase; a folder another session is building can't be named until it is Done; the tests are hashed
   before and after Red's run, and compared before and after Green's and Verify's; the pane shows the
   evidence of the gate before the current phase; a fetch skipped for a held lock records no version.
+- **Codex's stop-time review** of step 3 (7.2) found three defects, fixed test-first in `9894c92`
+  (verifier PASS, six mutants; 120 module tests): the guard let every write pass when it could not read
+  the session's state, a mod's included; a session building a folder again after Done got the finished
+  record back; and a link under `tests/` was recorded as a constant, so its target could change unseen
+  (Red now refuses a `tests/` that holds a link or anything that is no file). Its fourth note, four test
+  files failing to load in its own run, did not reproduce here [ran: 120 of 120] and is unexplained.
+  What stays open under the owner's rule: a mod folder that has no manifest yet is not "a plugin's
+  folder", so with the session's state unreadable a write into it passes, with the line.
 - **Limits recorded, not fixed:** a session that ends mid-build leaves its folder bound to it, and no
   other session can name the folder (BACKLOG 17); a SPEC.md changed after approval stops every later
   gate with no way back to Spec (BACKLOG 18); a build taken to Done opens other plugins' folders again,
