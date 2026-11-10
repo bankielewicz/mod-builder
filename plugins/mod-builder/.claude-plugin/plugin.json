@@ -1,0 +1,17 @@
+{
+  "name": "mod-builder",
+  "version": "0.1.0",
+  "description": "Builds Claude Code mods from a dated copy of Anthropic's mod documentation, test-first, through guarded phases.",
+  "userConfig": {
+    "refreshDays": {
+      "type": "number",
+      "title": "Days between documentation refreshes",
+      "description": "How many days may pass before the mod documentation is fetched again at the start of a session. 0 turns the automatic fetch off.",
+      "default": 7,
+      "min": 0
+    }
+  },
+  "author": {
+    "name": "Bryan Ankielewicz"
+  }
+}
