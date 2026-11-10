@@ -240,3 +240,24 @@ Each needs the owner's OK where it costs model calls.
   and carries the build's types. The `build` skill and its trigger checks with `skill-creator`.
 - Test-first, local commits only: spec, then tests, then code. Nothing is pushed until the demonstration
   in section 4 passes and the owner says so.
+
+### 7.1 Build steps, in order
+
+Each step is built test-first through the three agents in `.claude/agents/` (a written plan per change,
+kept outside the repository; a red commit, a green commit, a verification), ends with local commits, and
+stops for review before the next step starts. Code and tests are changed with the Edit or Write tool,
+never through a shell command.
+
+1. **Layout and knowledge scripts.** The marketplace and plugin manifests (3.5); `refresh-docs.sh` moved
+   into the plugin, with the lock and the per-process incoming folder; `lookup.sh`; the `changes.md` line
+   diff; script tests for all three against a local file server. No hooks module yet.
+2. **The rules, as pure functions** (`hooks/mod-builder-logic.ts`) with logic tests: the phases, what each
+   may write, each gate's verdict from a command's exit code and output, the hash comparison, staleness of
+   the cache.
+3. **The hooks module** (`hooks/register.tsx`) with tests through `claude plugin test`: the build opened
+   on `skill.prompt`, the `tool.call` guard, the gate tool and its question, the store record bound to its
+   session, the refresh trigger at `session.start`, the pane. The first thing this step does is read the
+   build's types for the `skill.prompt` fields (3.3) and probe what section 5 still owes.
+4. **The `build` skill** and the `pane` template, with `skill-creator`, checked against the skill-writing
+   guidance it carries.
+5. **The demonstration** of section 4, a README, and a "Built on" line.
