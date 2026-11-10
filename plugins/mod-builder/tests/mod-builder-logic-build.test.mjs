@@ -286,10 +286,9 @@ test('a path is judged against the session\'s folder when it is relative, and wi
   assert.equal(guard({ path: 'elsewhere/../turn-counter/tests/a.test.ts', record: record('red') }).allowed, true);
 });
 
-test('a path outside the mod being built passes in every phase, another plugin\'s folder included', () => {
+test('a path outside the mod being built, in no plugin\'s folder, passes in every phase', () => {
   for (const phase of ['knowledge', 'spec', 'red', 'green', 'verify', 'done']) {
     assert.deepEqual(guard({ record: record(phase), path: '/work/notes.md', pluginFolders: [] }), { allowed: true }, phase);
-    assert.deepEqual(guard({ record: record(phase), path: '/work/turn-counter-2/hooks/register.tsx', pluginFolders: ['/work/turn-counter-2'] }), { allowed: true }, phase);
     assert.deepEqual(guard({ record: record(phase), path: '/work/turn-counter/../other/tests/a.test.ts', pluginFolders: [] }), { allowed: true }, phase);
   }
 });
