@@ -8,8 +8,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import {
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
-  hashGate, isBuildRecord, isBuildSkill, isCacheStale, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, pluginFolderBeingMade, redGate,
-  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, verifyGate,
+  hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, pluginFolderBeingMade, redGate,
+  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, isTypesOf, COMPILERS, verifyGate,
 } from './mod-builder-logic'
 import type { BuildRecord, Hashes, Phase, Run, SpecNow, Verdict } from './mod-builder-logic'
 
@@ -20,6 +20,8 @@ const VALIDATE_MS = 120000
 const TEST_MS = 300000
 const TYPECHECK_MS = 300000
 const LOAD_MS = 120000
+// Asking a compiler for its version: npx may download it first.
+const COMPILER_MS = 300000
 
 const REFRESH_MS = 300000
 
@@ -58,9 +60,9 @@ async function readText($: Engine, path: string): Promise<string | null> {
 // One command, as the gates read it: its exit code and what it wrote to standard output. A test's own printing
 // goes to standard error, so it is not read as the runner's report. A command that could not start, or outran its
 // time, has no exit code, and the gates refuse it.
-async function run($: Engine, argv: readonly string[], timeoutMs: number): Promise<Run> {
+async function run($: Engine, argv: readonly string[], timeoutMs: number, cwd?: string): Promise<Run> {
   try {
-    const ran = await $.process.run(argv, { timeoutMs })
+    const ran = await $.process.run(argv, cwd === undefined ? { timeoutMs } : { timeoutMs, cwd })
     // Output cut at the engine's limit has lost its end, where the runner's count is: it is no evidence.
     if (ran.isStdoutTruncated) return { exitCode: Number.NaN, output: '' }
     return { exitCode: ran.exitCode, output: ran.stdout }
@@ -105,6 +107,47 @@ async function hashTests($: Engine, modDir: string): Promise<Hashes | null> {
     return true
   }
   return (await walk('tests')) ? hashes : null
+}
+
+// ------------------------------------------------------------------------------------ Verify's typecheck
+
+// The command that typechecks the mod (SPEC.md 7.5), or, as a text, why there is none. The types are the ones this
+// build wrote when its plugin-authoring skill loaded, found here and never taken from the model; the tsconfig is
+// written under the plugin's data folder, outside the mod; the compiler is the first of COMPILERS that answers.
+async function typecheckCommand($: Engine, modDir: string): Promise<{ argv: readonly string[]; cwd: string } | string> {
+  const { version } = await $.session.version()
+  const tmpDir = await $.env.get('CLAUDE_TMPDIR')
+  // The user's id is asked for only when CLAUDE_TMPDIR places no folder: unset, empty, or no path from the root.
+  const folder = typesFolder(tmpDir, null, version) ?? typesFolder(null, (await run($, ['id', '-u'], VALIDATE_MS)).output, version)
+  let names: string[] = []
+  try {
+    names = folder === null ? [] : (await $.fs.list(folder)).map((entry) => entry.name).sort()
+  } catch {
+    names = []
+  }
+  let typesFile: string | null = null
+  for (const name of names) {
+    const file = typesFileIn(folder as string, name)
+    const text = await readText($, file)
+    if (text !== null && isTypesOf(text, version)) {
+      typesFile = file
+      break
+    }
+  }
+  if (typesFile === null) {
+    return `the types of Claude Code ${version} are not written yet (looked in ${folder ?? 'no folder: CLAUDE_TMPDIR is not set and the user id could not be read'}): load the plugin-authoring skill with the Skill tool, which writes them, then ask again`
+  }
+  const home = await $.env.get('HOME')
+  if (home === undefined) return 'HOME is not set, so the typecheck has no folder for its tsconfig.json'
+  const config = `${home}/.claude/mod-builder-data/v2/typecheck/${await $.session.id()}/tsconfig.json`
+  await $.fs.write(config, typecheckConfig(typesFile, modDir))
+  // Asked, and later run, in the tsconfig's folder: npx looks for a compiler from the folder it runs in, and a
+  // file the build put in the mod (node_modules/.bin/tsc) must not be taken for one.
+  const outside = config.slice(0, config.lastIndexOf('/'))
+  for (const compiler of COMPILERS) {
+    if (isCompiler(await run($, [...compiler, '-v'], COMPILER_MS, outside))) return { argv: [...compiler, '--noEmit', '-p', config], cwd: outside }
+  }
+  return 'no TypeScript compiler could be run ("npx --no-install tsc" found none, and "npx -y -p typescript tsc" could not download one): install one with "npm install -g typescript", then ask again'
 }
 
 // ------------------------------------------------------------------------------- the documentation cache
@@ -289,6 +332,9 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       } catch {
         return refuse(`${modDir}/.claude-plugin/plugin.json can't be read`)
       }
+      // What the typecheck needs is looked for first: without the build's types or a compiler, nothing is run.
+      const typecheck = await typecheckCommand($, modDir)
+      if (typeof typecheck === 'string') return refuse(typecheck)
       const home = await $.env.get('HOME')
       const log = `${home ?? ''}/.claude/mod-builder-data/v2/loads/${await $.session.id()}.log`
       // `claude --debug-file` adds to a file that is there, so the log starts empty.
@@ -296,7 +342,7 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       const runs = {
         validate: await validate($, modDir),
         test: await test($, modDir),
-        typecheck: await run($, ['npx', '--no-install', 'tsc', '--noEmit', '-p', modDir], TYPECHECK_MS),
+        typecheck: await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd),
         // `/cost` is answered by Claude Code itself: the session loads the mod and makes no model call.
         load: await run($, ['claude', '--plugin-dir', modDir, '-p', '/cost', '--debug-file', log], LOAD_MS),
         loadShown: false,

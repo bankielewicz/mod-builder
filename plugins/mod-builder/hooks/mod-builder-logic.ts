@@ -444,6 +444,53 @@ export function isCacheStale(state: CacheState): boolean {
   return state.now - checked > days * DAY
 }
 
+// ------------------------------------------------------------------------------- Verify's typecheck
+
+// The typecheck of the mod being built (SPEC.md 7.5): against the types of the build that runs the session, which
+// Claude Code writes when its plugin-authoring skill loads, with a tsconfig kept outside the mod. Nothing here is
+// fetched, and no path comes from the model.
+
+// The compilers tried, in order: one that is installed, else one npx downloads.
+export const COMPILERS: readonly (readonly string[])[] = [['npx', '--no-install', 'tsc'], ['npx', '-y', '-p', 'typescript', 'tsc']]
+
+// The folder that holds one folder per process that loaded the plugin-authoring skill on this build, each with
+// the build's types; null when it can't be placed. `tmpDir` is CLAUDE_TMPDIR; without it, /tmp/claude-<user id>.
+export function typesFolder(tmpDir: string | null | undefined, userId: string | null | undefined, version: string): string | null {
+  if (typeof version !== 'string' || !/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version)) return null
+  const given = typeof tmpDir === 'string' && tmpDir.startsWith('/') ? absolutePath(tmpDir, '/') : null
+  const id = typeof userId === 'string' ? userId.trim() : ''
+  const base = given !== null && given !== '/' ? given : /^[0-9]+$/.test(id) ? `/tmp/claude-${id}` : null
+  return base === null ? null : `${base}/bundled-skills/${version}`
+}
+
+// Where a process's types file is, under one of that folder's folders.
+export function typesFileIn(folder: string, name: string): string {
+  return `${folder}/${name}/plugin-authoring/types/claude-code.d.ts`
+}
+
+// Whether a types file is this build's: its first line names the version that wrote it.
+export function isTypesOf(text: string, version: string): boolean {
+  return typeof text === 'string' && typeof version === 'string' && version !== '' && text.split('\n')[0] === `// Written by Claude Code ${version}.`
+}
+
+// The tsconfig.json for the check, as the types file's own header gives it, naming the types file and the mod's
+// hooks/, tests/ and types/ by their full paths: it is kept outside the mod.
+export function typecheckConfig(typesFile: string, modDir: string): string {
+  const config = {
+    compilerOptions: {
+      target: 'es2023', lib: ['es2023'], types: [], module: 'esnext', moduleResolution: 'bundler', strict: true,
+      noUncheckedIndexedAccess: true, noEmit: true, skipLibCheck: true, jsx: 'react', jsxFactory: 'h', jsxFragmentFactory: 'Fragment',
+    },
+    include: [typesFile, `${modDir}/hooks`, `${modDir}/tests`, `${modDir}/types`],
+  }
+  return `${JSON.stringify(config, null, 2)}\n`
+}
+
+// Whether a compiler asked for its version answered as one: it ran, and said "Version <number>".
+export function isCompiler(run: Run): boolean {
+  return typeof run === 'object' && run !== null && run.exitCode === 0 && typeof run.output === 'string' && /^Version [0-9]/.test(run.output.trim())
+}
+
 // ------------------------------------------------------------------------------- what opens a build
 
 // The part of a `skill.prompt` input the mod reads (the build's types, 2.1.322): the skill's name, whose words it
