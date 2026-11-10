@@ -1,8 +1,9 @@
 # mod-builder: specification for the MVP candidate
 
 Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
-decision). Nothing below is built yet except `scripts/refresh-docs.sh`, which was written to probe the
-fetch. What waits until after the MVP is in `BACKLOG.md`.
+decision). Built so far: step 1 of section 7.1 (the layout and the knowledge scripts), on the branch
+`step-1-layout-knowledge`, with one fix round owed (section 7.2). What waits until after the MVP is in
+`BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
 (mockups, not captures; wording and numbers in them are placeholders).
@@ -64,6 +65,10 @@ and not built.
 - **Refresh.** `scripts/refresh-docs.sh <cache dir>` (written, item 1). The page list comes from the docs
   index, so a page Anthropic adds is picked up. Only `code.claude.com/docs/en/plugins/mods/[a-z-]*.md` is
   fetched. A snapshot is kept only when a hash differs from the last one.
+- **A page is kept only when it is one.** The index and every page must answer with status 200; a page
+  must be served as `text/markdown` and hold at least one byte. Anything else (a redirect, an error, an
+  empty body, an HTML page) fails the whole fetch: no snapshot is kept, and `latest` and `checked` stay
+  as they were. A cache folder that can't be written fails the same way, with exit 1, not as "skipped".
 - **When.** At `session.start` of an interactive session the mod reads `checked`; when it is older than
   `refreshDays` (a plugin option, default 7: one fetch of ten pages a week) or the Claude Code version
   changed, it starts the script without waiting for it. `/mod-builder refresh` runs it now and reports.
@@ -77,7 +82,9 @@ and not built.
 - **API types.** The types of the installed build are read from where Claude Code writes them (item 4),
   never fetched and never copied into this repository.
 - **What changed.** After a refresh that kept a snapshot: per page, a line diff against the previous
-  snapshot, written as `changes.md` (which pages, how many lines each way, the changed headings).
+  snapshot, written as `_changes.md` (an underscore can't be in a page's name, which is lowercase letters
+  and hyphens only, so no page Anthropic adds can take the digest's name; step 1 first built it as
+  `changes.md`) (which pages, how many lines each way, the changed headings).
   Mechanical, no model call.
 - **Lookup.** `scripts/lookup.sh <words>` prints matching lines from the newest snapshot as
   `page:line: text`, with the snapshot's stamp, so a spec can cite it. The skill uses this instead of
@@ -109,7 +116,7 @@ something the plugin can observe:
 ### 3.3 The phase guard (MVP): a mod, inside the same plugin
 
 - **What starts a build: an event the mod observes, not a call the model chooses to make.** The mod hooks
-  `skill.prompt`, which fires when "a skill's text is expanded for Claude" [read: reference.md:86, and
+  `skill.prompt`, which fires when "a skill's text is expanded for Claude" [read: reference.md:92, and
   :95 for the fields that name the skill]. When the skill is this plugin's `build`, the mod opens a
   **pending** build for the session. While a build is pending, an edit under any folder that holds a
   `.claude-plugin/plugin.json` or is being created as one is refused until the model has named the mod's
@@ -142,7 +149,8 @@ something the plugin can observe:
     place for a question [read: events.md:147-162]. Probe P1 (section 5) showed the dialog and returned
     the option chosen. **The first option is "Not yet"**, never "Approve", so a stray Enter can't approve:
     in P1's first run the dialog closed with its first option after 8.9 s with no key sent by the probe's
-    driver, which is unexplained (the pane was visible to the owner).
+    driver. The owner, afterwards: "i clicked approve - this explains the anomoly you reported." So the
+    dialog behaved as documented, and a click or key from anyone at the pane answers it.
   - **Scaffold → Red:** `claude plugin validate --strict` exits 0. The mod records how many tests ran.
   - **Red → Green:** `claude plugin test` exits non-zero; its last line reports more tests than at
     Scaffold; and every `(fail)` block holds an assertion (`expect(` or `AssertionError`). A file that
@@ -206,7 +214,8 @@ Each needs the owner's OK where it costs model calls.
   mode]: `$.ui.ask` from a registered tool's `tool.call` hook showed a dialog (`1. Approve 2. Refuse 3.
   Type something. 4. Chat about this`), and the tool call waited. Second run: the driver chose option 2 and
   the mod read `"Refuse"` after 1.3 s. First run: the mod read `"Approve"` after 8.9 s though the driver
-  sent no key after submitting the prompt; unexplained, so the design doesn't put approval first (3.3).
+  sent no key after submitting the prompt: the owner had clicked it in the pane. The design still doesn't
+  put approval first (3.3).
 - **P2** done for validate and test (3.3). Still owed: `$.process.run` of a headless `claude -p` load and
   of `tsc` from a mod, and the process time limit (a 600 s cap is a field note from the `claudemod`
   repository, unverified here). No model call.
@@ -261,3 +270,27 @@ never through a shell command.
 4. **The `build` skill** and the `pane` template, with `skill-creator`, checked against the skill-writing
    guidance it carries.
 5. **The demonstration** of section 4, a README, and a "Built on" line.
+
+### 7.2 What a verifier's PASS means, and what else a step needs
+
+A verifier checks a change against its plan. When the planner wrote the plan's tests and code, a PASS
+says "built as planned", not "the plan was right" (a side agent's note, 2026-11-10, after step 1's three
+PASS verdicts were followed by Codex's stop-time review finding three defects, and then by the outside
+read finding one more). So for every step:
+
+- the plan's tests are read by an agent that didn't write them (against this spec, looking for cases the
+  tests don't cover) before the red commit;
+- the step gets an outside read before it is accepted: Codex's stop-time review, and the driving
+  session's own read of the diff with at least one probe of behaviour the tests don't state.
+
+**Step 1's outside read** [ran, 2026-11-10, at `62d9565`]: 25 of 25 script tests pass, and
+`claude plugin validate --strict .` passes. A local server answering one page with a 301, one with an
+empty 200 and one as `text/html` got `new snapshot … (3 pages)`, exit 0, with a manifest of 0, 0 and 23
+bytes: a redirect, an empty page and an HTML page were kept as documentation and became `latest`. Owed
+as step 1's fix round, test-first: the rule in 3.1 ("A page is kept only when it is one"), the digest's
+name `_changes.md`, and exit 1 for a cache folder that can't be written.
+
+**Accepted as built in step 1:** the two test seams (`MOD_BUILDER_DOCS_ORIGIN`, `MOD_BUILDER_DOCS_CACHE`);
+a branch per step, fast-forwarded into `main` once accepted; lookup's tests on a hand-built cache; the
+scripts run as `bash <script>`; `git mv` for a move. Not accepted: a co-author trailer other than the
+plan's (three commits carry one; left as they are, and plans from here say the trailer is copied as given).
