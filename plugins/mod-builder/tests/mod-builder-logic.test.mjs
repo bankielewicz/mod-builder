@@ -292,7 +292,7 @@ test('parseTestRun ends a (fail) block at the next test line, so a passing test 
     'Ran 2 tests across 1 file. [0.10s]',
   );
   assert.deepEqual(parseTestRun(output).failures, [{ name: 'throws a plain error', body: '  Error: boom' }]);
-  assert.deepEqual(redGate(run(1, output), 0), { pass: false, reason: 'not failing by assertion: throws a plain error' });
+  assert.deepEqual(redGate(run(1, output), 0, []), { pass: false, reason: 'not failing by assertion: throws a plain error' });
 });
 
 test('parseTestRun answers null when the last line holds no count', () => {
@@ -344,51 +344,49 @@ test('the scaffold gate refuses when validate fails, or when the test run shows 
 // ----------------------------------------------------------------------------------------- Red to Green
 
 test('the red gate passes when the run fails, has more tests than at Scaffold, and every failure is an assertion', () => {
-  assert.deepEqual(redGate(run(1, ONE_ASSERTION_FAILS), 1), { pass: true, tests: 2 });
+  assert.deepEqual(redGate(run(1, ONE_ASSERTION_FAILS), 1, ['spec is followed by scaffold']), { pass: true, tests: 2 });
 });
 
-test('either mark of an assertion is enough, on any line under the test: expect( alone, AssertionError alone', () => {
+test('an AssertionError on the first line under the test is an assertion; a plain Error is not', () => {
   const failing = (...body) => lines('', 'tests/a.test.ts:', '(fail) a new test [0.30ms]', ...body, '', ' 0 pass', ' 1 fail', 'Ran 1 test across 1 file. [0.10s]');
-  assert.deepEqual(redGate(run(1, failing('  error: expect(received).toEqual(expected)')), 0), { pass: true, tests: 1 });
-  assert.deepEqual(redGate(run(1, failing('  AssertionError: values differ')), 0), { pass: true, tests: 1 });
-  assert.deepEqual(redGate(run(1, failing('  at tests/a.test.ts:4', '  ', '  AssertionError: values differ')), 0), { pass: true, tests: 1 });
-  assert.deepEqual(redGate(run(1, failing('  Error: expected more')), 0), { pass: false, reason: 'not failing by assertion: a new test' });
+  assert.deepEqual(redGate(run(1, failing('  AssertionError: values differ')), 0, []), { pass: true, tests: 1 });
+  assert.deepEqual(redGate(run(1, failing('  Error: expected more')), 0, []), { pass: false, reason: 'not failing by assertion: a new test' });
 });
 
 test('the red gate passes whatever non-zero code the run ends with', () => {
-  assert.deepEqual(redGate(run(2, ONE_ASSERTION_FAILS), 1), { pass: true, tests: 2 });
-  assert.deepEqual(redGate(run(137, ONE_ASSERTION_FAILS), 0), { pass: true, tests: 2 });
+  assert.deepEqual(redGate(run(2, ONE_ASSERTION_FAILS), 1, ['spec is followed by scaffold']), { pass: true, tests: 2 });
+  assert.deepEqual(redGate(run(137, ONE_ASSERTION_FAILS), 0, []), { pass: true, tests: 2 });
 });
 
 test('the red gate refuses a run that passes', () => {
-  assert.deepEqual(redGate(run(0, THREE_PASS), 1), { pass: false, reason: 'claude plugin test exited 0: no test fails yet' });
+  assert.deepEqual(redGate(run(0, THREE_PASS), 1, []), { pass: false, reason: 'claude plugin test exited 0: no test fails yet' });
 });
 
 test('the red gate refuses when there is no new test, even when one fails by assertion', () => {
-  assert.deepEqual(redGate(run(1, ONE_ASSERTION_FAILS), 2),
+  assert.deepEqual(redGate(run(1, ONE_ASSERTION_FAILS), 2, []),
     { pass: false, reason: 'the run has 2 tests, no more than the 2 at Scaffold: no new test' });
-  assert.deepEqual(redGate(run(1, A_FILE_DID_NOT_LOAD.replace('Ran 2 tests across 2 files', 'Ran 1 test across 2 files')), 1),
+  assert.deepEqual(redGate(run(1, A_FILE_DID_NOT_LOAD.replace('Ran 2 tests across 2 files', 'Ran 1 test across 2 files')), 1, []),
     { pass: false, reason: 'the run has 1 test, no more than the 1 at Scaffold: no new test' });
-  assert.equal(redGate(run(1, ONE_ASSERTION_FAILS), 3).pass, false);
+  assert.equal(redGate(run(1, ONE_ASSERTION_FAILS), 3, []).pass, false);
 });
 
 test('the red gate refuses a file that did not load, though the count went up', () => {
-  assert.deepEqual(redGate(run(1, A_FILE_DID_NOT_LOAD), 1), { pass: false, reason: 'not failing by assertion: the file did not load' });
+  assert.deepEqual(redGate(run(1, A_FILE_DID_NOT_LOAD), 1, []), { pass: false, reason: 'not failing by assertion: the file did not load' });
 });
 
 test('the red gate refuses when any failure is not an assertion, and names each', () => {
-  assert.deepEqual(redGate(run(1, MIXED_FAILURES), 1),
+  assert.deepEqual(redGate(run(1, MIXED_FAILURES), 1, []),
     { pass: false, reason: 'not failing by assertion: the file did not load; throws a plain error; reads undefined' });
 });
 
 test('the red gate reads the assertion from the lines under the test, not from the name of the test', () => {
   const named = '\ntests/a.test.ts:\n(fail) expect( in the name, AssertionError too [0.1ms]\n  Error: boom\n\n 0 pass\n 1 fail\nRan 1 test across 1 file. [0.1s]\n';
-  assert.deepEqual(redGate(run(1, named), 0), { pass: false, reason: 'not failing by assertion: expect( in the name, AssertionError too' });
+  assert.deepEqual(redGate(run(1, named), 0, []), { pass: false, reason: 'not failing by assertion: expect( in the name, AssertionError too' });
 });
 
 test('the red gate refuses a failed run with no count or with no (fail) block', () => {
-  assert.deepEqual(redGate(run(1, 'the test runner crashed\n'), 0), { pass: false, reason: "the test run's last line reports no test count" });
-  assert.deepEqual(redGate(run(1, THREE_PASS), 1), { pass: false, reason: 'claude plugin test failed, but its output holds no (fail) block' });
+  assert.deepEqual(redGate(run(1, 'the test runner crashed\n'), 0, []), { pass: false, reason: "the test run's last line reports no test count" });
+  assert.deepEqual(redGate(run(1, THREE_PASS), 1, []), { pass: false, reason: 'claude plugin test failed, but its output holds no (fail) block' });
 });
 
 // ---------------------------------------------------------------------------------- Green to Verify

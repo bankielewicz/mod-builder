@@ -20,10 +20,10 @@ const goodRuns = () => ({ validate: run(0), test: run(0, THREE_PASS), typecheck:
 
 test('the red gate refuses when the count recorded at Scaffold is no count, whatever the run shows', () => {
   for (const recorded of NOT_A_COUNT) {
-    assert.deepEqual(redGate(run(1, ONE_FAILS), recorded), { pass: false, reason: 'no test count is recorded from Scaffold' }, String(recorded));
+    assert.deepEqual(redGate(run(1, ONE_FAILS), recorded, []), { pass: false, reason: 'no test count is recorded from Scaffold' }, String(recorded));
   }
-  assert.deepEqual(redGate(run(1, ONE_FAILS), 0), { pass: true, tests: 2 });
-  assert.deepEqual(redGate(run(0, THREE_PASS), NaN), { pass: false, reason: 'no test count is recorded from Scaffold' });
+  assert.deepEqual(redGate(run(1, ONE_FAILS), 0, []), { pass: true, tests: 2 });
+  assert.deepEqual(redGate(run(0, THREE_PASS), NaN, []), { pass: false, reason: 'no test count is recorded from Scaffold' });
 });
 
 test('the green gate refuses when the count recorded at Red is no count, though every test passes', () => {
@@ -44,7 +44,7 @@ test('the verify gate refuses when the count recorded at Red is no count', () =>
 test('a command that ended with no exit code, as one killed by a signal does, passes no gate', () => {
   for (const code of NOT_A_CODE) {
     const label = String(code);
-    assert.deepEqual(redGate(run(code, ONE_FAILS), 1), { pass: false, reason: 'claude plugin test ended with no exit code' }, label);
+    assert.deepEqual(redGate(run(code, ONE_FAILS), 1, ['one']), { pass: false, reason: 'claude plugin test ended with no exit code' }, label);
     assert.deepEqual(greenGate(run(code, THREE_PASS), 3), { pass: false, reason: 'claude plugin test ended with no exit code' }, label);
     assert.deepEqual(scaffoldGate(run(code), run(0, THREE_PASS)), { pass: false, reason: 'claude plugin validate --strict ended with no exit code' }, label);
     assert.deepEqual(scaffoldGate(run(0), run(code, THREE_PASS)), { pass: false, reason: 'claude plugin test ended with no exit code' }, label);
@@ -58,7 +58,7 @@ test('a command that ended with no exit code, as one killed by a signal does, pa
 test('a run that is no run is refused, not thrown at and not passed', () => {
   for (const bad of NOT_A_RUN) {
     const label = JSON.stringify(bad) ?? String(bad);
-    assert.equal(redGate(bad, 1).pass, false, label);
+    assert.equal(redGate(bad, 1, ['one']).pass, false, label);
     assert.equal(greenGate(bad, 3).pass, false, label);
     assert.equal(scaffoldGate(bad, run(0, THREE_PASS)).pass, false, label);
     assert.equal(scaffoldGate(run(0), bad).pass, false, label);
@@ -67,7 +67,7 @@ test('a run that is no run is refused, not thrown at and not passed', () => {
     }
   }
   for (const runs of [null, undefined, {}, 'runs']) assert.equal(verifyGate(runs, 3).pass, false, String(runs));
-  assert.match(redGate(null, 1).reason, /ended with no exit code/);
+  assert.match(redGate(null, 1, ['one']).reason, /ended with no exit code/);
 });
 
 test('a hash record that is no record is refused, and so is a reading that is none', () => {
