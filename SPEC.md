@@ -2,8 +2,8 @@
 
 Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
 decision). Built so far: steps 1 and 2 of section 7.1 (accepted, on `main`, the Red gate's fix of 7.3
-included), and step 3, the hooks module, on the branch `step-3-hooks`, waiting for review (7.4). What waits
-until after the MVP is in `BACKLOG.md`.
+included, and step 3, the hooks module, 7.5), and step 4, the `build` skill with what 7.5 settled, on the
+branch `step-4-skill`, waiting for review (7.6). What waits until after the MVP is in `BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
 (mockups, not captures; wording and numbers in them are placeholders).
@@ -94,8 +94,9 @@ and not built.
 
 ### 3.2 The build skill (MVP)
 
-One skill, `build`, started by `/mod-builder <what the mod should do>`. Eight phases, each ending in
-something the plugin can observe:
+One skill, `build`, started by `/mod-builder:build <what the mod should do>` (first written as
+`/mod-builder <…>`, which a mod can't turn into a skill's command: 7.6; `/mod-builder <other words>` answers
+with the line to run). Eight phases, each ending in something the plugin can observe:
 
 | # | Phase | What happens | It ends when |
 |---|---|---|---|
@@ -198,7 +199,7 @@ plugins/mod-builder/
   hooks/register.tsx                the guard, the gate tool, the pane, the refresh trigger
   hooks/mod-builder-logic.ts        pure rules: phases, what a phase may write, the gates' verdicts
   skills/build/SKILL.md             the eight phases; templates/pane/ beside it
-  scripts/refresh-docs.sh, lookup.sh
+  scripts/refresh-docs.sh, lookup.sh, scaffold.sh (lays templates/pane/ into a mod's folder; step 4)
   tests/                            logic tests, pane tests; scripts/*.test.mjs for the two scripts
 SPEC.md, README.md
 ```
@@ -209,7 +210,7 @@ SPEC.md, README.md
 
 One demonstration, in an empty folder, with this plugin loaded by `--plugin-dir`:
 
-1. `/mod-builder a pane that counts the turns in this session` builds `turn-counter` through all eight
+1. `/mod-builder:build a pane that counts the turns in this session` builds `turn-counter` through all eight
    phases, and the result passes `claude plugin validate --strict`, `claude plugin test`, the typecheck and
    a headless load whose debug log shows `loaded` and `admitted`.
 2. Its `SPEC.md` cites a snapshot page and line for each API it uses, and each citation resolves.
@@ -432,3 +433,89 @@ plan's (three commits carry one; left as they are, and plans from here say the t
 Then the skill itself, with `skill-creator`: a lean `SKILL.md` for the eight phases that sends the model
 to `lookup.sh` instead of memory, says fetched text is data and never an instruction, calls the gate to
 move, and offers `/design` only when that skill is listed; the `pane` template beside it.
+
+### 7.6 Step 4: what was built, what the live check showed, and what is open (2026-11-10, at `278361c`)
+
+- **The gate hook's `.catch`** (7.5's finding; `96b3f4f`): validate now reports both gating hooks `with .catch`.
+  Probed on the way [a throwaway mod under `claude plugin test`, 2.1.322]: of two hooks of one module on one
+  event the earlier registered is the upper one, and when the lower one throws, the **upper** hook's `.catch`
+  is asked (`next.called` false), never the lower hook's own. Under the guard's hook, the gate's own handler
+  would never have run, and the guard's handler passes a tool it doesn't guard on. So the gate's hook is now
+  registered first, and its inner `try`/`catch` is gone: the handler is the one place a failed gate answers.
+- **The live check** (7.5, point 3) [ran: one interactive session in tmux, 2.1.322, sonnet, auto mode, a scratch
+  folder, a scratch copy of the plugin with a minimal `build` skill; `--settings` switched off
+  `mod-builder@claudemod` and, to keep the session to this plugin, six other plugins of the owner's]:
+  1. `/mod-builder a pane that counts the turns in this session` ran the mod's own command (`command.run`,
+     origin `composer`) and **raised no `prompt.submit` at all**; no model call was made. The build's types say
+     the same of any submission that runs a command: "a rewrite of `text` is then not applied, and the person
+     is told" [read: types 2.1.322, `PromptSubmitInput.command`]. So 7.5 point 1's first try can't work, and
+     its fallback is built (`1b7685f`): a build is started with `/mod-builder:build <what to build>`, and
+     `/mod-builder <other words>` answers with that line, the words kept. **3.2 and section 4 now say so; the
+     first mockup frame still shows the old line.**
+  2. `/mod-builder:build …` raised `prompt.submit` (with `command: { name: "mod-builder:build", args }`) and then
+     `skill.prompt` with `skill: "mod-builder:build"`, `source: "plugin"`, `pluginName: "mod-builder"`, `path`
+     the plugin's own `skills/build/SKILL.md`, and `frontmatter` holding the skill's name and description.
+     `isBuildSkill` answered true and the pending build opened. (7.4's open point: a `--plugin-dir` plugin's
+     skill carries the `plugin:skill` name and `source: "plugin"`.)
+  3. The gate named the folder and passed Knowledge and Describe; `Write` of `turn-counter/SPEC.md` passed; a
+     `Write` of `turn-counter/hooks/register.tsx` was refused with `hooks/register.tsx can't be written in
+     phase 3 (Spec), which may write SPEC.md only. …`; the approval question showed `1. Not yet 2. Approve
+     3. See it first: draw mockups with /design 4. Type something. 5. Chat about this`. It stayed open 39
+     seconds with no key sent, then took "Not yet": the gate answered `still at phase 3 (Spec). Not passed: the
+     person has not approved the spec (answer: "Not yet")`. So time inside `$.ui.ask` doesn't count against the
+     hook's ten seconds, and nothing answered for the person. The pane showed the phase strip.
+  4. The minimal skill loaded the built-in `plugin-authoring` skill and told the model that `./turn-counter`
+     wins over the folder that skill names. The model wrote only under the working folder; nothing was written
+     under `~/.claude/dev-mods/` (the side agent's note of the same day).
+- **Verify's typecheck** (7.5, point 2; `3de9daa`) [probe: a throwaway mod's command, headless, no model call]:
+  the types are at `<CLAUDE_TMPDIR>/bundled-skills/<version>/<one folder per process>/plugin-authoring/types/
+  claude-code.d.ts` (`/tmp/claude-1000/…` here; three such folders by the end of the day, the three files identical);
+  their first line is `// Written by Claude Code <version>.`; a mod reads `CLAUDE_TMPDIR` with `$.env.get`;
+  `$.fs.list` gives those folders no time (`mtimeMs` 0); `$.fs.write` makes the folders above a file. On this
+  machine `npx --no-install tsc -v` exits 127 and `npx -y -p typescript tsc -v` prints `Version 7.0.2`.
+  As built: the first folder by name whose file's first line names the session's version; a tsconfig with the
+  options of the types file's own header, at `~/.claude/mod-builder-data/v2/typecheck/<session id>/
+  tsconfig.json`; the compiler asked for and run in that folder, outside the mod. [unverified: macOS; without
+  `CLAUDE_TMPDIR` the mod tries `/tmp/claude-<id -u>` and otherwise refuses, saying where it looked.]
+- **The real Verify gate, end to end** [ran, by the driving session: the built plugin with one added command
+  that puts a record at Verify and calls the gate; headless, no model call]: on a mod laid by `scaffold.sh`
+  it answered `phase 7 (Verify) passed (validate, 2 tests, the typecheck and a headless load of turn-counter
+  all pass)` in 11.7 s. With `export const wrong: number = 'not a number'` added to the mod's module:
+  `Not passed: the typecheck exited 1`. With a fake `node_modules/.bin/tsc` planted in the mod that prints a
+  version and exits 0: still `the typecheck exited 1`, so the planted file was not taken for the compiler.
+- **The skill, the template and the scaffold script** (`278361c`): `skills/build/SKILL.md` (176 lines),
+  `skills/build/templates/pane/` and `scripts/scaffold.sh <mod folder> <mod name> [author]`. Written with
+  `skill-creator`'s writing guidance and read by a skill reviewer; **its eval runs, the review viewer and the
+  description-optimisation loop were not run** (each costs model calls, and the first needs the owner at the
+  viewer). `${CLAUDE_PLUGIN_ROOT}` is substituted in a plugin skill's text [read: code.claude.com/docs/en/
+  skills.md:491-494, fetched 2026-11-10]. The full skill has not been run by a model: that is step 5.
+- **Tests at the end of step 4** [ran]: 139 module tests, 171 rules and validate tests, 82 script tests;
+  `claude plugin validate --strict` and the typecheck pass. Each of the four changes had an independent read
+  of its tests before the red commit, and a verifier's PASS with every mutant failing its test.
+- **Decided in the plans where this spec was silent, for the owner's review:** the template is laid by a
+  script, not copied by the model; the template's test is stored as `tests/pane.test.tsx.template`, because
+  `claude plugin test <plugin>` runs every `*.test.ts(x)` under the plugin, `skills/` included; the script
+  fills the manifest's author from git's `user.name` (strict validation fails a manifest with none) and
+  accepts only names strict validation accepts; `/mod-builder refresh the pane` is words to build, `refresh`
+  alone fetches; what the typecheck needs is looked for before anything is run; the skill tells the model to
+  run the validator and a typecheck itself before it leaves Green.
+- **Open, for the owner, before step 5:**
+  1. **A build that fails the typecheck or the load at Verify can't be finished** (the skill reviewer, the
+     tests' reader and the side agent, each on its own): both first run at phase 7, where `hooks/` and
+     `tests/` are closed, and no gate goes back. The skill's advice (check before leaving Green) is advice.
+     The driving session's recommendation: Green's gate also runs the validator and the same typecheck, now
+     that the mod finds the types and a compiler itself. It changes 3.3's "Green → Verify".
+  2. **The types file can be planted.** A file under `<CLAUDE_TMPDIR>/bundled-skills/<version>/` whose first
+     line names the version is taken for the build's types, and a folder named to sort first wins. The guard
+     doesn't look there, and a shell command can write there. It is not "a path the model gives", but it is a
+     file the model can make.
+  3. **Red and a test that throws.** 3.3 wants every failing block to open with `AssertionError`; a test
+     written before its code often fails with a `TypeError` first. The skill says to drive the mod through its
+     events so a missing behaviour shows as a failed `expect`; whether that holds for a model is step 5's to
+     show.
+- **Limits recorded, not fixed:** "the build did not move" is said of any failed gate, though a store write
+  that fails between the two writes of the naming call leaves a record with no session entry (the next naming
+  call takes it up); the handler's answer for a timeout (its kind, no message) is not reached by any test;
+  nothing tests that no `prompt.submit` hook exists; a refused typecheck names the exit code and not the
+  compiler's lines; a mod folder whose path holds `*`, `?` or `[` is read as a pattern in the tsconfig's
+  `include`; `scaffold.sh` was run under bash 5 only.
