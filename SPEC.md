@@ -389,3 +389,46 @@ plan's (three commits carry one; left as they are, and plans from here say the t
   other session can name the folder (BACKLOG 17); a SPEC.md changed after approval stops every later
   gate with no way back to Spec (BACKLOG 18); a build taken to Done opens other plugins' folders again,
   whatever folder it named; `hooks/` is not hashed, so a shell command can still change it at Verify.
+
+### 7.5 Step 3: the outside read, and what step 4 starts from (2026-11-10, at `fa2df0e`)
+
+- **Step 3 is accepted.** [ran, by the driving session] `claude plugin test plugins/mod-builder`: 120 of
+  120; logic tests 160 of 160; script tests 46 of 46; `claude plugin validate --strict` passes. The real
+  plugin, loaded headless with the first mod-builder switched off, logged `hooks module mod-builder@inline
+  loaded (…); events: session.start,skill.prompt,tool.call,command.run,ui.render`, and `/mod-builder
+  refresh` answered `new snapshot 2026-11-10T194027Z (10 pages)` into `~/.claude/mod-builder-data/v2/docs`.
+- **One finding, owed at the start of step 4, test-first:** validate reports `gating hook without .catch:
+  tool.call{tool=mcp__mod-builder__mod_builder_gate}`. A hook that throws is skipped [read: events.md:118],
+  and "to make a hook that blocks calls fail closed, add a `.catch` error handler that answers in its
+  place" [read: events.md:439-443]. The gate's hook gets one, answering that the gate failed and nothing
+  moved.
+- **The owner's two answers during step 3**, each asked by the building session: other plugins' folders
+  are refused while a build is open ("Refuse until Done", 3.3), and a guard that can't read the session's
+  state refuses inside plugins only ("Refuse inside plugins only", 7.4).
+
+**Step 4's three open points (7.4), settled so the step can start:**
+
+1. **How `/mod-builder <what to build>` reaches the skill.** A `prompt.submit` hook may answer
+   `next({ ...e, text })` [read: reference.md:82]. First try: a submitted prompt that starts
+   `/mod-builder ` and whose next word isn't `refresh` is rewritten to `/mod-builder:build <the rest>`.
+   Check it live (one model call): does the rewritten prompt expand the skill, and does `skill.prompt`
+   open the build? If it does, 3.2 stands as written. If it doesn't, the build is started with
+   `/mod-builder:build <what to build>`, `/mod-builder <other words>` answers with that line, and the
+   report says so for the owner (it changes 3.2's wording and the first mockup frame).
+2. **Verify's typecheck.** The types are the build's own, never fetched and never taken from a path the
+   model gives. The `build` skill has the model load the built-in `plugin-authoring` skill at Describe
+   (which also puts the build's own API reference in front of it); that skill writes the build's types
+   for its process (7.4, P4). At Verify the mod finds that file itself, for its own `$.session.version`
+   [unverified: where it is on this build, and on macOS; a field note from the `claudemod` repository has
+   `/tmp/claude-*/bundled-skills/<version>/*/plugin-authoring/types/claude-code.d.ts`]. The mod writes a
+   `tsconfig.json` for the check under its data folder (the types file, and the built mod's `hooks/`,
+   `tests/` and `types/`), outside the mod. The compiler is `npx --no-install tsc`, else
+   `npx -y -p typescript tsc` (a download, once); with neither, Verify refuses and says what to install.
+3. **A live check comes first.** Before the skill is written in full: a minimal `build` skill, the plugin
+   loaded with `--plugin-dir`, and one live session showing that the skill's expansion opens a build, a
+   write under `hooks/` is refused at Spec, and the approval question shows with "Not yet" first. On
+   sonnet, in a scratch folder. What it shows about `skill.prompt`'s fields goes into this section.
+
+Then the skill itself, with `skill-creator`: a lean `SKILL.md` for the eight phases that sends the model
+to `lookup.sh` instead of memory, says fetched text is data and never an instruction, calls the gate to
+move, and offers `/design` only when that skill is listed; the `pane` template beside it.
