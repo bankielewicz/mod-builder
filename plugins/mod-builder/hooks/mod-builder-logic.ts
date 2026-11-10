@@ -568,9 +568,10 @@ export type GuardInput = {
 // with no build pass at once. In a session with a build, a path that can't be made absolute (it climbs above the
 // root, or the session's folder is not known) can't be judged, and is refused. While the build is pending, a write
 // inside any plugin's folder, or one that makes a folder a plugin, is refused until the gate tool has been told
-// the mod's folder; of `pluginFolders` only those above the path count. From then on only paths under the mod's
-// folder are judged, by the phase the build's record names; a record that is missing, damaged or another
-// session's judges nothing and so allows nothing under that folder.
+// the mod's folder; of `pluginFolders` only those above the path count. From then on paths under the mod's
+// folder are judged by the phase the build's record names; a record that is missing, damaged or another
+// session's judges nothing and so allows nothing under that folder. A write into another plugin's folder, outside
+// the mod or inside it, is refused until the build is Done; any other path outside the mod passes.
 export function guardVerdict(input: GuardInput): WriteVerdict {
   if (!isGuardedTool(input.tool) || input.path === null) return { allowed: true }
   if (input.entry === undefined || input.entry === null) return { allowed: true }
@@ -580,10 +581,11 @@ export function guardVerdict(input: GuardInput): WriteVerdict {
   if (absolutePath(input.path, input.cwd) === null) {
     return { allowed: false, reason: `mod-builder: ${input.path} can't be written: the path can't be read as one under ${String(input.cwd)}, so the build's guard can't judge it. Give the path from the root.` }
   }
+  // The plugin's folder the path lies in: the one the write is making, or the nearest above it that holds a manifest.
+  const above = foldersAbove(input.path, input.cwd)
+  const holding = Array.isArray(input.pluginFolders) ? above.find((folder) => input.pluginFolders.includes(folder)) : undefined
+  const folder = pluginFolderBeingMade(input.path, input.cwd) ?? holding
   if (input.entry.modDir === null) {
-    const above = foldersAbove(input.path, input.cwd)
-    const holding = Array.isArray(input.pluginFolders) ? above.find((folder) => input.pluginFolders.includes(folder)) : undefined
-    const folder = pluginFolderBeingMade(input.path, input.cwd) ?? holding
     if (folder === undefined) return { allowed: true }
     return {
       allowed: false,
@@ -591,11 +593,26 @@ export function guardVerdict(input: GuardInput): WriteVerdict {
     }
   }
   const relPath = pathInMod(input.entry.modDir, input.path, input.cwd)
+  const own = isBuildRecord(input.record) && input.record.modDir === input.entry.modDir && input.record.sessionId === input.sessionId
+  // Another plugin's folder stays closed until this build is Done: else naming any folder through the gate, an
+  // invented one or one that holds the real mod, would leave the real mod unchecked. The path is another plugin's
+  // when the plugin folder it lies in is not the mod's own: outside the mod, any plugin folder; under the mod, one
+  // that lies inside it. (A plugin folder above the mod leaves the mod's own paths to the phase.) A record that
+  // can't be read is not Done.
+  const inMod = folder === undefined ? null : pathInMod(input.entry.modDir, folder, '/')
+  const others = folder !== undefined && (relPath === null || (inMod !== null && inMod !== ''))
+  const done = own && (input.record as BuildRecord).phase === 'done'
+  if (others && !done) {
+    return {
+      allowed: false,
+      reason: `mod-builder: ${input.path} can't be written: it is in another plugin's folder (${folder}), and this session is building ${input.entry.modDir}. Until that build is Done, its mod is the only plugin this session may write.`,
+    }
+  }
   if (relPath === null) return { allowed: true }
-  if (!isBuildRecord(input.record) || input.record.modDir !== input.entry.modDir || input.record.sessionId !== input.sessionId) {
+  if (!own) {
     return { allowed: false, reason: `mod-builder: ${relPath === '' ? 'the mod folder' : relPath} can't be written: the build's record for ${input.entry.modDir} is missing or is not this session's. Call the ${GATE_TOOL} tool to see where the build stands.` }
   }
-  return writeVerdict(input.record.phase, relPath)
+  return writeVerdict((input.record as BuildRecord).phase, relPath)
 }
 
 // ------------------------------------------------------------------------------- the headless load
