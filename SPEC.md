@@ -1,7 +1,8 @@
 # mod-builder: specification for the MVP candidate
 
-Status: **draft, waiting for the owner's approval** (2026-11-10). Nothing below is built except
-`scripts/refresh-docs.sh`, which was written to probe the fetch.
+Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
+decision). Nothing below is built yet except `scripts/refresh-docs.sh`, which was written to probe the
+fetch. What waits until after the MVP is in `BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
 (mockups, not captures; wording and numbers in them are placeholders).
@@ -57,7 +58,7 @@ and not built.
 
 ### 3.1 Knowledge (MVP)
 
-- **Cache.** `~/.claude/mod-builder-data/docs/<UTC stamp>/` holds the fetched pages, the docs index and
+- **Cache.** `~/.claude/mod-builder-data/v2/docs/<UTC stamp>/` holds the fetched pages, the docs index and
   `manifest.tsv` (page, URL, sha256, Last-Modified, bytes). `latest` names the newest snapshot, `checked`
   the last time a fetch ran. Nothing is written inside the plugin's folder.
 - **Refresh.** `scripts/refresh-docs.sh <cache dir>` (written, item 1). The page list comes from the docs
@@ -136,10 +137,12 @@ something the plugin can observe:
   `$.process.run` and advances or answers what failed. A mod can do that: a throwaway mod ran
   `claude plugin validate --strict` (exit 0, 1.2 s) and `claude plugin test` (exit 0, `10 pass`, 0.9 s)
   on another mod and read both results [probe, 2026-11-10, 2.1.322, `gateprobe-p2`, no model call].
-  - **Spec → Scaffold:** the mod asks the person with `$.ui.ask` (item 6). If a question can't be asked
-    from a registered tool's handler (probe P1), the gate answers "ask for approval", and the question is
-    asked from the `tool.call` hook on the next write under the mod, which is the documented place for it
-    [read: events.md:147-162].
+  - **Spec → Scaffold:** the mod asks the person with `$.ui.ask` (item 6), from the gate tool's own
+    `tool.call` hook, which is how a registered tool is handled [read: api.md:40-62] and the documented
+    place for a question [read: events.md:147-162]. Probe P1 (section 5) showed the dialog and returned
+    the option chosen. **The first option is "Not yet"**, never "Approve", so a stray Enter can't approve:
+    in P1's first run the dialog closed with its first option after 8.9 s with no key sent by the probe's
+    driver, which is unexplained (the pane was visible to the owner).
   - **Scaffold → Red:** `claude plugin validate --strict` exits 0. The mod records how many tests ran.
   - **Red → Green:** `claude plugin test` exits non-zero; its last line reports more tests than at
     Scaffold; and every `(fail)` block holds an assertion (`expect(` or `AssertionError`). A file that
@@ -199,29 +202,35 @@ One demonstration, in an empty folder, with this plugin loaded by `--plugin-dir`
 
 Each needs the owner's OK where it costs model calls.
 
-- **P1** `$.ui.ask` from inside a registered tool's handler: does the question show, and does the tool
-  call wait? (No model call if driven by a command instead.)
+- **P1** done [probe, 2026-11-10, 2.1.322, sonnet, a throwaway mod `gateprobe-p13`, interactive, auto
+  mode]: `$.ui.ask` from a registered tool's `tool.call` hook showed a dialog (`1. Approve 2. Refuse 3.
+  Type something. 4. Chat about this`), and the tool call waited. Second run: the driver chose option 2 and
+  the mod read `"Refuse"` after 1.3 s. First run: the mod read `"Approve"` after 8.9 s though the driver
+  sent no key after submitting the prompt; unexplained, so the design doesn't put approval first (3.3).
 - **P2** done for validate and test (3.3). Still owed: `$.process.run` of a headless `claude -p` load and
   of `tsc` from a mod, and the process time limit (a 600 s cap is a field note from the `claudemod`
   repository, unverified here). No model call.
-- **P3** Item 11 on 2.1.322: the `tool.call` hook sees the main thread's `Write` and a model-started
-  subagent's `Write`. (One haiku subagent.)
+- **P3** done [same probe]: the mod's `tool.call` hook on `Write` logged the main thread's call
+  (`agentId=none`) and the call of a subagent the model started with the Agent tool
+  (`agentId=a3d0d8ba5b59fdb67`), each with its `file_path`.
 - **P4** Where the build's types are when no interactive `--plugin-dir` session has loaded the mod yet
   (item 4 covers only that case).
 
-## 6. Decisions for the owner
+## 6. The owner's decisions (2026-11-10)
 
-1. **The MVP slice** as in section 3, or smaller/larger.
-2. **The plugin's name and where it goes.** `mod-builder@claudemod` is installed and enabled on this
-   machine, and its build skill would compete with this one in the same session; `~/.claude/mod-builder-data/`
-   already exists and belongs to it [ran: it holds `logs`]; and GitHub's `bankielewicz/mod-builder` is the
-   first one's repository. A new name gets its own data folder and command; the same name means this
-   replaces the first, with a plan for its data folder and repository.
-3. **The TDD agents** (`tdd-test-writer`, `tdd-implementer`, `tdd-verifier`): used to build this plugin,
-   shipped inside it for the mods it builds, both, or neither.
-4. **Probes P1 and P3**, which each cost a model call (haiku).
-5. Defaults taken unless the owner says otherwise: no copy of Anthropic's pages is kept in the repository
-   (the cache fills on first run, and `.mod-builder-cache/` is ignored by git), and the weekly fetch is on
+1. **The MVP slice:** "Approve as written (Recommended)": sections 3.1 to 3.3 and 3.5.
+2. **The name:** "Keep `mod-builder`, replace the old one (Recommended)". `mod-builder@claudemod` is
+   installed and enabled on this machine and owns `~/.claude/mod-builder-data/` [ran: it holds `logs`], so
+   during development the old plugin is switched off in the building and testing sessions only
+   (`--settings` with `enabledPlugins`), and this plugin keeps its data in
+   `~/.claude/mod-builder-data/v2/`. Taking over the GitHub repository's name is in `BACKLOG.md`.
+3. **The TDD agents:** "option 1 for MVP. option 2 post mvp." They are copied into this repository's
+   `.claude/agents/` and used to build the plugin's own code; shipping them inside the plugin is
+   `BACKLOG.md` item 1.
+4. **The probes:** run on sonnet at the owner's suggestion ("sonnet would be a better choice"); results in
+   section 5.
+5. **Defaults taken, not yet challenged:** no copy of Anthropic's pages is kept in the repository (the
+   cache fills on first run, and `.mod-builder-cache/` is ignored by git), and the weekly fetch is on
    (`refreshDays: 7`).
 
 ## 7. How it gets built, once approved
