@@ -1,0 +1,26 @@
+// The tests the pane template comes with: the pane draws, and its command opens it.
+import { expect, test } from 'claude-code/testing'
+
+const PANE = {
+  plugin: 'pane-template',
+  component: 'Pane',
+  requestId: 'pane-template',
+  props: { title: 'Pane template', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+} as const
+
+test('the pane draws its line', async ($) => {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('Nothing to show yet.')
+  await ui.unmount()
+})
+
+test('the command opens the pane', async ($, on) => {
+  const opened: string[] = []
+  on('ui.open', (_, e) => {
+    opened.push((e as { id: string }).id)
+    return { value: { isPlaced: true } } as never
+  })
+  const said = await $.command.run({ command: 'pane-template', args: '' } as never)
+  expect(opened).toEqual(['pane-template'])
+  expect(said.text).toBe('The pane is open.')
+})

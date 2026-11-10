@@ -1,0 +1,8 @@
+{
+  "name": "pane-template",
+  "version": "0.1.0",
+  "description": "A pane beside the chat that shows one line.",
+  "author": {
+    "name": "pane-template-author"
+  }
+}
