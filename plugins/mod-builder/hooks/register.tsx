@@ -297,11 +297,12 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
       const detail = lastLines(said(typechecked))
       return detail === '' ? { verdict } : { verdict, detail }
     }
-    // The load: what the command said when it did not exit 0, and every line of its log that says a hook of the mod
-    // was skipped; with neither, the log's lines that name the mod.
+    // The load: the last lines of what the command said when it did not exit 0, and after them every line of its
+    // log that says a hook of the mod was skipped, however many (the limit is the command's alone); with neither,
+    // the last of the log's lines that name the mod.
     const skipped = hooksSkipped(logged, name)
-    const own = [...(loaded.exitCode === 0 ? [] : [said(loaded).trim()]), ...skipped].filter((part) => part !== '')
-    const detail = lastLines((own.length > 0 ? own : logged.split('\n').filter((line) => name !== '' && line.includes(name))).join('\n'))
+    const own = [...(loaded.exitCode === 0 ? [] : [lastLines(said(loaded))]), ...skipped].filter((part) => part !== '')
+    const detail = own.length > 0 ? own.join('\n') : lastLines(logged.split('\n').filter((line) => name !== '' && line.includes(name)).join('\n'))
     return detail === '' ? { verdict } : { verdict, detail }
   }
   const still = await unchanged($, record, true)
