@@ -10,6 +10,14 @@ export const HOME = '/home/u'
 export const ROOT = new URL('..', (import.meta as unknown as { url: string }).url).pathname.replace(/\/$/, '')
 // The mod being built is named otherwise than its folder, as a mod may be.
 export const NAME = 'turns'
+// Where Claude Code keeps what it writes for a session's processes, and the build's types under it: one folder
+// per process that loaded the plugin-authoring skill.
+export const TMP = '/tmp/claude-1000'
+export const TYPES_FOLDER = `${TMP}/bundled-skills/2.1.322`
+export const TYPES = `${TYPES_FOLDER}/5d3947d0/plugin-authoring/types/claude-code.d.ts`
+export const TYPES_TEXT = '// Written by Claude Code 2.1.322.\n// Claude Code function hooks.\n'
+export const INSTALLED = 'npx --no-install tsc'
+export const DOWNLOADED = 'npx -y -p typescript tsc'
 
 export type Ran = { exitCode: number; stdout: string; stderr?: string; isTruncated?: boolean } | 'never starts'
 
@@ -26,6 +34,12 @@ export type World = {
   // 'refresh' for the docs fetcher, which is known by its file's name.
   runs: Record<string, Ran>
   commands: string[]
+  // What each compiler answers when asked for its version (`-v`), by its command: INSTALLED and DOWNLOADED.
+  compilers: Record<string, Ran>
+  // The session's environment, by name. HOME and CLAUDE_TMPDIR are set unless a test takes one away.
+  env: Record<string, string | undefined>
+  // The folder each command ran in; undefined when the plugin named none.
+  ranIn: (string | undefined)[]
   now: number
   // The Claude Code version the session says it is.
   version: string
@@ -35,6 +49,8 @@ export type World = {
   links: string[]
   // How a path is listed when it is neither a plain file nor a plain folder: by its kind and whether it is a link.
   listedAs: Record<string, { kind: 'file' | 'dir' | 'other'; isLink: boolean }>
+  // Paths that can't be written, each with everything under it.
+  unwritable: string[]
   // When true, nothing can be looked for: every `fs.exists` fails.
   existsFails: boolean
   // Lines the plugin wrote to the transcript.
@@ -83,6 +99,9 @@ export function world(on: On, start: Partial<World> = {}): World {
     answer: 'Approve',
     runs: { validate: ok('Validation passed'), test: ok(passing(1)), tsc: ok(), '--plugin-dir': ok() },
     commands: ['help', 'cost'],
+    compilers: { [INSTALLED]: ok('Version 5.9.3\n'), [DOWNLOADED]: ok('Version 5.9.3\n') },
+    env: { HOME, CLAUDE_TMPDIR: TMP },
+    ranIn: [],
     now: 1000,
     version: '2.1.322',
     commandsRegistered: [],
@@ -91,6 +110,7 @@ export function world(on: On, start: Partial<World> = {}): World {
     unreadable: [],
     links: [],
     listedAs: {},
+    unwritable: [],
     existsFails: false,
     logged: [],
     asked: [],
@@ -103,6 +123,8 @@ export function world(on: On, start: Partial<World> = {}): World {
     fetchHeld: null,
     ...start,
   }
+  // The build's types are written, as after the plugin-authoring skill loaded, unless the test's files say otherwise.
+  if (!Object.keys(w.files).some((file) => file.startsWith(`${TMP}/`))) w.files[TYPES] = TYPES_TEXT
   const value = <T>(answer: T) => ({ value: answer }) as never
   const deny = (reason: string) => ({ deny: reason }) as never
 
@@ -115,7 +137,7 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))
   on('skill.prompt', (_, e) => ({ text: e.text }))
   on('clock.now', () => value(w.now))
-  on('env.get', (_, e) => value((e as { name: string }).name === 'HOME' ? HOME : undefined))
+  on('env.get', (_, e) => value(w.env[(e as { name: string }).name]))
   on('command.list', () => value(w.commands.map((name) => ({ name }))))
   on('command.register', (_, e) => {
     w.commandsRegistered.push((e as { name: string }).name)
@@ -157,6 +179,7 @@ export function world(on: On, start: Partial<World> = {}): World {
   })
   on('fs.write', (_, e) => {
     const { path, text } = e as { path: string; text: string }
+    if (w.unwritable.some((one) => path === one || path.startsWith(`${one}/`))) return deny(`EACCES: ${path}`)
     w.files[path] = text
     return value(undefined)
   })
@@ -178,12 +201,16 @@ export function world(on: On, start: Partial<World> = {}): World {
   })
 
   on('process.run', async (_, e) => {
-    const { argv, init } = e as { argv: string[]; init?: { timeoutMs?: number } }
+    const { argv, init } = e as { argv: string[]; init?: { timeoutMs?: number; cwd?: string } }
     w.ran.push([...argv])
     w.timeouts.push(init?.timeoutMs)
+    w.ranIn.push(init?.cwd)
+    if (argv[0] === 'id') return w.runs.id === undefined || w.runs.id === 'never starts' ? deny('failed to start') : value({ exitCode: w.runs.id.exitCode, stdout: w.runs.id.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
     const fetcher = argv.some((one) => one.endsWith('/refresh-docs.sh'))
     const word = fetcher ? 'refresh' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
-    const ran = word === undefined ? undefined : w.runs[word]
+    // A compiler asked for its version answers by its own command; any other run, by the word it holds.
+    const asked = argv.at(-1) === '-v' ? w.compilers[argv.slice(0, -1).join(' ')] : undefined
+    const ran = asked !== undefined ? asked : word === undefined ? undefined : w.runs[word]
     if (ran === undefined || ran === 'never starts') return deny('failed to start')
     w.whileRunning([...argv])
     if (fetcher && w.fetchHeld !== null) await w.fetchHeld
