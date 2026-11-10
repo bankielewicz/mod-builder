@@ -267,9 +267,10 @@ test('Verify to Done runs validate, the tests, the typecheck and a headless load
   expect(await gate($)).toBe(`mod-builder: phase 7 (Verify) passed (validate, 2 tests, the typecheck and a headless load of ${NAME} all pass). The build is now at phase 8 (Done).`)
   const log = `${HOME}/.claude/mod-builder-data/v2/loads/s1.log`
   expect(w.ran).toEqual([
+    ['npx', '--no-install', 'tsc', '-v'],
     ['claude', 'plugin', 'validate', '--strict', MOD],
     ['claude', 'plugin', 'test', MOD],
-    ['npx', '--no-install', 'tsc', '--noEmit', '-p', MOD],
+    ['npx', '--no-install', 'tsc', '--noEmit', '-p', `${HOME}/.claude/mod-builder-data/v2/typecheck/s1/tsconfig.json`],
     ['claude', '--plugin-dir', MOD, '-p', '/cost', '--debug-file', log],
   ])
   expect(Object.keys(kept(w).evidence as object)).toEqual(['knowledge', 'describe', 'spec', 'scaffold', 'red', 'green', 'verify'])
