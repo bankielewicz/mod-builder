@@ -196,9 +196,24 @@ export function parseTestRun(output: string): TestRun | null {
     const body: string[] = []
     for (let j = i + 1; j < lines.length && (lines[j].startsWith('  ') || lines[j] === ''); j++) body.push(lines[j])
     while (body.length > 0 && body[body.length - 1].trim() === '') body.pop()
-    failures.push({ name: lines[i].slice('(fail) '.length).replace(/ \[[^\]]*\]$/, ''), body: body.join('\n') })
+    failures.push({ name: nameOf(lines[i]), body: body.join('\n') })
   }
   return { tests: Number(ran[1]), failures }
+}
+
+// The name on a "(pass) <name> [1.38ms]" or "(fail) <name> [0.48ms]" line: what follows the mark, without the time
+// at its end. A file that did not load has no time, and a name may hold brackets of its own.
+function nameOf(line: string): string {
+  return line.slice('(fail) '.length).replace(/ \[[^\]]*\]$/, '')
+}
+
+// The name of every test a run shows, passed or failed, in the order printed. The mod records these at Scaffold,
+// so the Red gate can tell a new test from one that was there. Null when the output is no text or its last line
+// holds no count: such a run names nothing.
+export function testNames(output: string): string[] | null {
+  if (typeof output !== 'string' || parseTestRun(output) === null) return null
+  const lines = output.split('\n').map((line) => line.replace(/\r$/, ''))
+  return lines.filter((line) => line.startsWith('(pass) ') || line.startsWith('(fail) ')).map(nameOf)
 }
 
 const NO_COUNT = "the test run's last line reports no test count"
@@ -239,7 +254,8 @@ export function specGate(answer: string | null | undefined): Verdict {
   return { pass: false, reason: `the person has not approved the spec (answer: ${answer == null ? 'none' : JSON.stringify(answer)})` }
 }
 
-// Scaffold to Red: `claude plugin validate --strict` exits 0. The test run only gives the count to record.
+// Scaffold to Red: `claude plugin validate --strict` exits 0. The test run only gives the count to record; its
+// names, which the mod records too, come from testNames.
 export function scaffoldGate(validate: Run, test: Run): Verdict {
   for (const check of [ended(validate, VALIDATE), ended(test, TEST)]) if (!check.pass) return check
   if (validate.exitCode !== 0) return { pass: false, reason: `claude plugin validate --strict exited ${validate.exitCode}` }
@@ -248,14 +264,25 @@ export function scaffoldGate(validate: Run, test: Run): Verdict {
   return { pass: true, tests: run.tests }
 }
 
-function holdsAssertion(body: string): boolean {
-  return body.includes('expect(') || body.includes('AssertionError')
+// Whether a "(fail)" block opens with an assertion error: the first line under the test starts with
+// "AssertionError", as in "  AssertionError: expect(received).toBe()". A file that did not load opens with something
+// else, even when a source line it quotes further down holds "expect(".
+function opensWithAssertion(body: string): boolean {
+  return body.split('\n')[0].trimStart().startsWith('AssertionError')
 }
 
-// Red to Green: the tests fail, there are more of them than at Scaffold, and every failure is an assertion.
-// A file that did not load is a "(fail)" block with no assertion in it, so it can't pass this gate.
-export function redGate(test: Run, testsAtScaffold: number): Verdict {
+// Recorded names are a list of texts. Anything else is no record, and a gate handed it refuses.
+function isNames(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((name) => typeof name === 'string')
+}
+
+// Red to Green: the tests fail, there are more of them than at Scaffold, every failure opens with an assertion
+// error, and at least one failing test has a name that no test had at Scaffold (`namesAtScaffold`, as testNames
+// gave them there). So a file that did not load can't pass, and neither can an old test failing beside a new one
+// that passes.
+export function redGate(test: Run, testsAtScaffold: number, namesAtScaffold: string[]): Verdict {
   if (!isCount(testsAtScaffold)) return { pass: false, reason: 'no test count is recorded from Scaffold' }
+  if (!isNames(namesAtScaffold)) return { pass: false, reason: 'no test names are recorded from Scaffold' }
   const check = ended(test, TEST)
   if (!check.pass) return check
   if (test.exitCode === 0) return { pass: false, reason: 'claude plugin test exited 0: no test fails yet' }
@@ -265,9 +292,13 @@ export function redGate(test: Run, testsAtScaffold: number): Verdict {
     return { pass: false, reason: `the run has ${count(run.tests)}, no more than the ${testsAtScaffold} at Scaffold: no new test` }
   }
   if (run.failures.length === 0) return { pass: false, reason: 'claude plugin test failed, but its output holds no (fail) block' }
-  const other = run.failures.filter((failure) => !holdsAssertion(failure.body))
+  const other = run.failures.filter((failure) => !opensWithAssertion(failure.body))
   if (other.length > 0) {
     return { pass: false, reason: `not failing by assertion: ${other.map((failure) => failure.name).join('; ')}` }
+  }
+  if (run.failures.every((failure) => namesAtScaffold.includes(failure.name))) {
+    const old = run.failures.map((failure) => failure.name).join('; ')
+    return { pass: false, reason: `no new test fails: every failing test had its name at Scaffold (${old})` }
   }
   return { pass: true, tests: run.tests }
 }
