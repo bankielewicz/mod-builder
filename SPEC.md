@@ -63,9 +63,16 @@ and not built.
 - **Refresh.** `scripts/refresh-docs.sh <cache dir>` (written, item 1). The page list comes from the docs
   index, so a page Anthropic adds is picked up. Only `code.claude.com/docs/en/plugins/mods/[a-z-]*.md` is
   fetched. A snapshot is kept only when a hash differs from the last one.
-- **When.** At `session.start` the mod reads `checked`; when it is older than `refreshDays` (a plugin
-  option, default 7) or the Claude Code version changed, it starts the script without waiting for it.
-  `/mod-builder refresh` runs it now and reports. `refreshDays: 0` turns the automatic fetch off.
+- **When.** At `session.start` of an interactive session the mod reads `checked`; when it is older than
+  `refreshDays` (a plugin option, default 7: one fetch of ten pages a week) or the Claude Code version
+  changed, it starts the script without waiting for it. `/mod-builder refresh` runs it now and reports.
+  `refreshDays: 0` turns the automatic fetch off. Headless sessions (`claude -p`) never fetch.
+- **One fetch at a time.** Many sessions run on one machine, so the script takes a lock (`mkdir` of
+  `<cache>/.lock`, removed on exit, ignored when older than ten minutes) and names its incoming folder
+  with its process id; a session that finds the lock held skips the fetch.
+- **Tests.** The fetcher gets a script test in the build (a local file server stands in for the site):
+  first run keeps a snapshot, second reports unchanged, a changed page keeps a new one, a failed page
+  keeps nothing, a held lock skips.
 - **API types.** The types of the installed build are read from where Claude Code writes them (item 4),
   never fetched and never copied into this repository.
 - **What changed.** After a refresh that kept a snapshot: per page, a line diff against the previous
@@ -100,23 +107,58 @@ something the plugin can observe:
 
 ### 3.3 The phase guard (MVP): a mod, inside the same plugin
 
-- **State.** One record per build in `$.store`, keyed by the mod's folder: its phase, when the spec was
-  approved, and the evidence each gate saw.
+- **What starts a build: an event the mod observes, not a call the model chooses to make.** The mod hooks
+  `skill.prompt`, which fires when "a skill's text is expanded for Claude" [read: reference.md:86, and
+  :95 for the fields that name the skill]. When the skill is this plugin's `build`, the mod opens a
+  **pending** build for the session. While a build is pending, an edit under any folder that holds a
+  `.claude-plugin/plugin.json` or is being created as one is refused until the model has named the mod's
+  folder through the gate tool; from then the record is that folder's. So a model that never calls the
+  gate can write nothing into a mod. [unverified: which `skill.prompt` field names the plugin's skill on
+  2.1.322; read from the build's types in the first build step.]
+- **State.** One record per build in `$.store`, keyed by the mod's folder, and bound to the session that
+  started it (`$.session.id`): its phase, when the spec was approved, the evidence each gate saw, and the
+  hashes below. `$.store` is one file shared by every session, so other sessions' calls pass untouched.
 - **Refusing.** A `tool.call` hook (item 5) looks at `Edit`, `MultiEdit`, `Write` and `NotebookEdit`
-  only, and only at paths under the mod being built: phase 3 may write `SPEC.md`; 4 everything; 5
-  `tests/`; 6 `hooks/`; 7 `README.md` and `SPEC.md`. Anything else under that folder is refused with the
-  phase, what opens next and how. With no build active the hook passes at once.
+  only, and only at paths under the mod being built:
+
+  | Phase | May write |
+  |---|---|
+  | 3 Spec | `SPEC.md` |
+  | 4 Scaffold | everything |
+  | 5 Red | `tests/` |
+  | 6 Green | anything but `tests/` and `SPEC.md` |
+  | 7 Verify | anything but `tests/`, `hooks/` and `SPEC.md`'s approved part (it appends a "Built" block) |
+
+  Anything else under that folder is refused with the phase, what opens next and how. With no build for
+  this session the hook passes at once.
 - **Advancing on evidence, never on the model's word.** The mod registers one tool, `mod_builder_gate`
-  (item 7). The skill calls it to ask for the next phase; the mod then **runs the check itself**
-  (`$.process.run`: validate, the tests, the typecheck, the headless load) and advances or answers what
-  failed. For phase 3 it asks the person with `$.ui.ask` (item 6).
-- **What it is not.** It reads a tool name and a path prefix. It doesn't parse Bash, so a shell command
-  can still write a file out of phase; README says so. It catches a skipped step and is not a sandbox.
+  (item 7). The skill calls it to ask for the next phase; the mod then **runs the check itself** with
+  `$.process.run` and advances or answers what failed. A mod can do that: a throwaway mod ran
+  `claude plugin validate --strict` (exit 0, 1.2 s) and `claude plugin test` (exit 0, `10 pass`, 0.9 s)
+  on another mod and read both results [probe, 2026-11-10, 2.1.322, `gateprobe-p2`, no model call].
+  - **Spec → Scaffold:** the mod asks the person with `$.ui.ask` (item 6). If a question can't be asked
+    from a registered tool's handler (probe P1), the gate answers "ask for approval", and the question is
+    asked from the `tool.call` hook on the next write under the mod, which is the documented place for it
+    [read: events.md:147-162].
+  - **Scaffold → Red:** `claude plugin validate --strict` exits 0. The mod records how many tests ran.
+  - **Red → Green:** `claude plugin test` exits non-zero; its last line reports more tests than at
+    Scaffold; and every `(fail)` block holds an assertion (`expect(` or `AssertionError`). A file that
+    fails to load runs no new test, so it can't pass this gate.
+  - **Green → Verify:** `claude plugin test` exits 0 with no fewer tests than at Red.
+  - **Verify → Done:** validate, test, the typecheck and the headless load all pass.
+- **Writes the hook can't see.** The hook doesn't parse Bash, and a shell command can write a file. So
+  the gates compare hashes: `SPEC.md` is hashed at approval, and every file under `tests/` when Red
+  passes; each later gate refuses when one of them differs, naming the file. A test changed after Red,
+  by any tool, stops the build at the next gate.
+- **What it is not.** It reads a tool name and a path prefix, and compares hashes at gates. It catches a
+  skipped step and a changed test; it is not a sandbox, and README says so.
 - **Pane.** One pane with the phase strip, the current phase's evidence, and the knowledge row, as in the
   mockups.
 
 ### 3.4 Later, designed for and not built
 
+- The "what changed" digest put into a session's context, only when the session touches a mod.
+- A template canary: each template scaffolded, validated, tested and typechecked on the installed build.
 - A scheduled job on this repository that refetches the pages and opens a pull request with what changed.
 - A summary of prose changes written by a model, and a diff of the API types between two builds.
 - Field notes as probes: each finding a small probe mod with the log line it expects, rerun on a new build.
@@ -124,6 +166,23 @@ something the plugin can observe:
 - More templates than `pane`; an `edit` skill for an existing mod.
 - A lookup tool the model calls (an MCP tool or a mod tool) in place of the script.
 - The refresh through `$.http.fetch` instead of `curl` (item 8), for machines without `curl`.
+
+### 3.5 Layout of the repository
+
+```text
+.claude-plugin/marketplace.json     one entry, source ./plugins/mod-builder
+plugins/mod-builder/
+  .claude-plugin/plugin.json        name, version, userConfig (refreshDays)
+  hooks/hooks.json                  "modules": ["./register.tsx"]
+  hooks/register.tsx                the guard, the gate tool, the pane, the refresh trigger
+  hooks/mod-builder-logic.ts        pure rules: phases, what a phase may write, the gates' verdicts
+  skills/build/SKILL.md             the eight phases; templates/pane/ beside it
+  scripts/refresh-docs.sh, lookup.sh
+  tests/                            logic tests, pane tests; scripts/*.test.mjs for the two scripts
+SPEC.md, README.md
+```
+
+`scripts/refresh-docs.sh` moves from the repository's top folder into the plugin in the first build step.
 
 ## 4. What "it works" means
 
@@ -142,9 +201,9 @@ Each needs the owner's OK where it costs model calls.
 
 - **P1** `$.ui.ask` from inside a registered tool's handler: does the question show, and does the tool
   call wait? (No model call if driven by a command instead.)
-- **P2** `$.process.run` of `claude plugin test` and of a headless `claude -p` from a mod: allowed, and
-  within the process time limit? [read: reference.md Limits; the 600 s cap is a field note from the
-  `claudemod` repository, unverified here.]
+- **P2** done for validate and test (3.3). Still owed: `$.process.run` of a headless `claude -p` load and
+  of `tsc` from a mod, and the process time limit (a 600 s cap is a field note from the `claudemod`
+  repository, unverified here). No model call.
 - **P3** Item 11 on 2.1.322: the `tool.call` hook sees the main thread's `Write` and a model-started
   subagent's `Write`. (One haiku subagent.)
 - **P4** Where the build's types are when no interactive `--plugin-dir` session has loaded the mod yet
@@ -153,14 +212,17 @@ Each needs the owner's OK where it costs model calls.
 ## 6. Decisions for the owner
 
 1. **The MVP slice** as in section 3, or smaller/larger.
-2. **The plugin's name.** `mod-builder@claudemod` is installed and enabled on this machine, and its build
-   skill would compete with this one in the same session.
+2. **The plugin's name and where it goes.** `mod-builder@claudemod` is installed and enabled on this
+   machine, and its build skill would compete with this one in the same session; `~/.claude/mod-builder-data/`
+   already exists and belongs to it [ran: it holds `logs`]; and GitHub's `bankielewicz/mod-builder` is the
+   first one's repository. A new name gets its own data folder and command; the same name means this
+   replaces the first, with a plan for its data folder and repository.
 3. **The TDD agents** (`tdd-test-writer`, `tdd-implementer`, `tdd-verifier`): used to build this plugin,
    shipped inside it for the mods it builds, both, or neither.
-4. **A baseline copy of Anthropic's pages inside the repository** (works offline on first run, but
-   republishes their text when the repository goes public), or an empty cache that fills on first run.
-   Until decided, `.mod-builder-cache/` is ignored by git and only this spec's hashes are recorded.
-5. **Network fetches on by default** (`refreshDays: 7`), or off until the person turns them on.
+4. **Probes P1 and P3**, which each cost a model call (haiku).
+5. Defaults taken unless the owner says otherwise: no copy of Anthropic's pages is kept in the repository
+   (the cache fills on first run, and `.mod-builder-cache/` is ignored by git), and the weekly fetch is on
+   (`refreshDays: 7`).
 
 ## 7. How it gets built, once approved
 
