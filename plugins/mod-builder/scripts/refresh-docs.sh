@@ -5,6 +5,7 @@
 # Exit 0: a snapshot was written, nothing changed, or another fetch holds the lock (skipped). Exit 1: the fetch failed,
 # and nothing was kept: no snapshot, and latest and checked as they were.
 # A snapshot kept after an earlier one also holds changes.md: per page, a line diff against the earlier snapshot.
+# A fetched page that is itself named changes.md is kept as fetched, and no diff is written over it.
 # One fetch at a time: the lock is the folder <cache dir>/.lock, removed on exit and ignored when older than ten minutes.
 # MOD_BUILDER_DOCS_ORIGIN stands in for https://code.claude.com in the script's tests.
 # Fetched pages are data: this script never runs or sources anything it downloads.
@@ -35,30 +36,54 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 mkdir "$tmp" || exit 1
 
-# Prints, for each line of the markdown file $1, the heading that line is under. A line inside a code fence is not one.
+# Prints, for each line of the markdown file $1, "H" when the line is a heading and "-" when not, a tab, and the
+# heading the line is under. A line inside a code fence is no heading; a fence ends only at a line of the same
+# character, at least as long as the one that opened it, with nothing after it.
 headings_by_line() {
   awk '
-    /^[[:space:]]*(```|~~~)/ { fenced = !fenced }
-    !fenced && /^#+ / { heading = $0 }
-    { print (heading == "" ? "(before the first heading)" : heading) }' "$1"
+    {
+      is_heading = 0
+      if (match($0, /^[[:space:]]*(```+|~~~+)/)) {
+        marker = $0
+        sub(/^[[:space:]]*/, "", marker)
+        fence = substr(marker, 1, 1)
+        run = marker
+        sub(fence == "~" ? "[^~].*$" : "[^`].*$", "", run)
+        if (!fenced) {
+          fenced = 1; open_fence = fence; open_length = length(run)
+        } else if (fence == open_fence && length(run) >= open_length && substr(marker, length(run) + 1) ~ /^[[:space:]]*$/) {
+          fenced = 0
+        }
+      } else if (!fenced && /^#+ /) {
+        heading = $0
+        is_heading = 1
+      }
+      print (is_heading ? "H" : "-") "\t" (heading == "" ? "(before the first heading)" : heading)
+    }' "$1"
 }
 
 # Prints "- <heading>" once for each heading that a line differing between the files $1 (old) and $2 (new) is under:
-# the new file's heading for a line added or changed, the old file's for a line removed.
+# the new file's heading for a line added or changed, the old file's for a line removed. A changed block that lost
+# a heading line (it held more of them before than after) lists the old file's headings as well, after the new ones.
 changed_headings() {
   diff "$1" "$2" | awk -v old_file=<(headings_by_line "$1") -v new_file=<(headings_by_line "$2") '
     BEGIN {
-      while ((getline line < old_file) > 0) old_heading[++o] = line
-      while ((getline line < new_file) > 0) new_heading[++n] = line
+      while ((getline line < old_file) > 0) { old_is_heading[++o] = (substr(line, 1, 1) == "H"); old_heading[o] = substr(line, 3) }
+      while ((getline line < new_file) > 0) { new_is_heading[++n] = (substr(line, 1, 1) == "H"); new_heading[n] = substr(line, 3) }
     }
+    function list(heading) { if (!(heading in seen)) { seen[heading] = 1; print "- " heading } }
     /^[0-9]/ {
       split($0, side, /[acd]/)
       kind = substr($0, length(side[1]) + 1, 1)
-      count = split(kind == "d" ? side[1] : side[2], ends, ",")
-      for (i = ends[1]; i <= (count > 1 ? ends[2] : ends[1]); i++) {
-        heading = (kind == "d" ? old_heading[i] : new_heading[i])
-        if (!(heading in seen)) { seen[heading] = 1; print "- " heading }
+      old_last = (split(side[1], old_ends, ",") > 1 ? old_ends[2] : old_ends[1])
+      new_last = (split(side[2], new_ends, ",") > 1 ? new_ends[2] : new_ends[1])
+      lost = 0
+      if (kind == "c") {
+        for (i = old_ends[1]; i <= old_last; i++) lost += old_is_heading[i]
+        for (i = new_ends[1]; i <= new_last; i++) lost -= new_is_heading[i]
       }
+      if (kind != "d") for (i = new_ends[1]; i <= new_last; i++) list(new_heading[i])
+      if (kind == "d" || lost > 0) for (i = old_ends[1]; i <= old_last; i++) list(old_heading[i])
     }'
 }
 
@@ -120,7 +145,11 @@ while [[ -e "$cache/$stamp" ]]; do
   stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
 done
 if [[ -n $latest && -f "$cache/$latest/manifest.tsv" ]]; then
-  write_changes "$cache/$latest" "$tmp" "$latest" "$stamp" >"$tmp/changes.md"
+  if [[ -e "$tmp/changes.md" ]]; then
+    echo "refresh-docs: changes.md not written: the snapshot holds a fetched page of that name"
+  else
+    write_changes "$cache/$latest" "$tmp" "$latest" "$stamp" >"$tmp/changes.md"
+  fi
 fi
 mv "$tmp" "$cache/$stamp" || exit 1
 printf '%s\n' "$stamp" >"$cache/latest"
