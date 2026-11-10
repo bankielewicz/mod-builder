@@ -576,7 +576,7 @@ export function guardVerdict(input: GuardInput): WriteVerdict {
   if (!isGuardedTool(input.tool) || input.path === null) return { allowed: true }
   if (input.entry === undefined || input.entry === null) return { allowed: true }
   if (!isSessionEntry(input.entry)) {
-    return { allowed: false, reason: `mod-builder: ${input.path} can't be written: this session's build record can't be read. Start the build again with /mod-builder.` }
+    return { allowed: false, reason: `mod-builder: ${input.path} can't be written: this session's build record can't be read. Start the build again with /mod-builder:build.` }
   }
   if (absolutePath(input.path, input.cwd) === null) {
     return { allowed: false, reason: `mod-builder: ${input.path} can't be written: the path can't be read as one under ${String(input.cwd)}, so the build's guard can't judge it. Give the path from the root.` }
