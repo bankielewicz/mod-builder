@@ -370,6 +370,11 @@ async function liesInPlugin($: Engine, path: string): Promise<boolean> {
   }
 }
 
+// What the gate tool answers when its hook failed: why, and that the build is where it was.
+const gateFailed = (_: Engine, __: unknown, next: { error: { kind: string; message?: string } }) => ({
+  result: `mod-builder: the gate failed and the build did not move: ${next.error.message ?? next.error.kind}`,
+})
+
 // ---------------------------------------------------------------------------------------- the hooks
 
 export const register: Register = (on, options) => {
@@ -408,6 +413,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The gate tool's own hook. It answers for itself and never calls `next`. When it throws, outruns its time or
+  // answers in the wrong shape, its handler answers in its place (SPEC.md 7.5): a gate that failed moved nothing.
+  // It is registered before the guard's hook, so that it is the first to see its tool's call: on 2.1.322 a failure
+  // in a hook beneath another hook of the same module is handed to the upper hook's handler, never to its own.
+  on('tool.call', { tool: 'mcp__mod-builder__mod_builder_gate' }, async ($, e) => ({
+    result: await gate($, (e as { mod_dir?: unknown }).mod_dir),
+  })).catch(gateFailed)
+
   // Every tool call passes here; only a write by a tool the guard looks at is judged. No matcher, so that a tool
   // this build lacks (MultiEdit on 2.1.322) is still judged on a build that has it.
   on('tool.call', async ($, e, next) => {
@@ -444,14 +457,6 @@ export const register: Register = (on, options) => {
       ? next(e)
       : { deny: 'mod-builder: a build is open in this session and the phase guard failed before it could judge this write, so the write is refused. Run with claude --debug to see why.' },
   )
-
-  on('tool.call', { tool: 'mcp__mod-builder__mod_builder_gate' }, async ($, e) => {
-    try {
-      return { result: await gate($, (e as { mod_dir?: unknown }).mod_dir) }
-    } catch (error) {
-      return { result: `mod-builder: the gate failed and the build did not move: ${String(error)}` }
-    }
-  })
 
   on('command.run', { command: 'mod-builder' }, async ($, e) => {
     const word = e.args.trim()
