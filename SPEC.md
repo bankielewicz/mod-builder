@@ -493,7 +493,8 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
   description-optimisation loop were not run** (each costs model calls, and the first needs the owner at the
   viewer). `${CLAUDE_PLUGIN_ROOT}` is substituted in a plugin skill's text [read: code.claude.com/docs/en/
   skills.md:491-494, fetched 2026-11-10]. The full skill has not been run by a model: that is step 5.
-- **Tests at the end of step 4** [ran]: 139 module tests, 171 rules and validate tests, 82 script tests;
+- **Tests at the end of step 4** [ran]: 139 module tests, 171 rules and validate tests, 82 script tests (87
+  after the fix round below);
   `claude plugin validate --strict` and the typecheck pass. The committed plugin, loaded headless, logged
   `hooks module mod-builder@inline loaded (…); events: session.start,skill.prompt,tool.call,command.run,
   ui.render` and `Loaded 1 skills`, and answered `/mod-builder a pane that counts turns` with the line to run.
@@ -524,6 +525,16 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
      written before its code often fails with a `TypeError` first. The skill says to drive the mod through its
      events so a missing behaviour shows as a failed `expect`; whether that holds for a model is step 5's to
      show.
+- **Codex's stop-time review** of step 4 (7.2) found two defects in the scaffold, fixed test-first in `3e75d4e`
+  (verifier PASS, five mutants; 87 script tests): the template's own tests required the placeholder lines
+  (`Nothing to show yet.`, `The pane is open.`), so a mod that says its own words could never pass Green with
+  the scaffold's tests kept; and a copy that failed partway left the half-written file, which the next run then
+  refused as already there. The template's tests now check that the pane draws a line and that the command
+  opens the pane and answers; the script removes what the failed copy wrote, and nothing that was in the mod's
+  folders before (the tests' reader's case). Its other note, seven module test files failing to load and the
+  validator's test failing in its own run, did not reproduce here [ran: 139 of 139, 171 of 171], as in 7.4.
+- **The `/design` option** showed in the live check's approval question. The owner, the same day: "/design is
+  not switched off. the other claude session was able to use /design". So the option was rightly offered.
 - **Limits recorded, not fixed:** "the build did not move" is said of any failed gate, though a store write
   that fails between the two writes of the naming call leaves a record with no session entry (the next naming
   call takes it up); the handler's answer for a timeout (its kind, no message) is not reached by any test;
