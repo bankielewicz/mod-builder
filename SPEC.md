@@ -139,6 +139,12 @@ something the plugin can observe:
 
   Anything else under that folder is refused with the phase, what opens next and how. With no build for
   this session the hook passes at once.
+- **Other plugins' folders, until Done.** While this session's build is open and not yet Done, a write
+  into any *other* folder that holds a `.claude-plugin/plugin.json`, or is being created as one, is
+  refused, as it is while the build is pending. Without this, one gate call naming an empty or invented
+  folder would end the pending block and leave the real mod unchecked in every phase (the second
+  independent read of step 3's tests, 2026-11-10). The owner, asked: "Refuse until Done (Recommended)".
+  The cost: another plugin can't be edited in the session that is building a mod.
 - **Advancing on evidence, never on the model's word.** The mod registers one tool, `mod_builder_gate`
   (item 7). The skill calls it to ask for the next phase; the mod then **runs the check itself** with
   `$.process.run` and advances or answers what failed. A mod can do that: a throwaway mod ran
