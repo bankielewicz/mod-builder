@@ -65,8 +65,8 @@ stands.
 | 3 | Spec | `SPEC.md` | the person approves the spec |
 | 4 | Scaffold | everything (`SPEC.md` stays as approved) | `claude plugin validate --strict` passes and the tests run |
 | 5 | Red | `tests/` | more tests than at Scaffold, a new one failing on an assertion |
-| 6 | Green | anything but `tests/` and `SPEC.md` | every test passes |
-| 7 | Verify | anything but `tests/`, `hooks/` and the approved part of `SPEC.md` | validate, the tests, the typecheck and a headless load all pass |
+| 6 | Green | anything but `tests/` and `SPEC.md` | validate, the tests, the typecheck and a headless load all pass |
+| 7 | Verify | anything but `tests/`, `hooks/` and the approved part of `SPEC.md` | the same four pass again |
 | 8 | Done | anything but `tests/` and `hooks/` | (no gate) |
 
 ### 1. Knowledge
@@ -140,11 +140,13 @@ the next gate, whatever tool changed it.
 Write the code, under `hooks/` (and `types/` when needed), until every test passes. Tests are frozen: if one
 turns out wrong, stop and say so to the person instead of changing it; the build can't go back to Red.
 
-Before calling the gate, check what phase 7 will check, because `hooks/` closes when Green passes and there is
-no way back: run `claude plugin validate --strict <mod folder>`, and typecheck the mod the way the
-`plugin-authoring` skill describes for a mod that has not been loaded (the `tsconfig.json` from its types
-file's header, kept outside the mod's folder, naming that file and the mod's `hooks`, `tests` and `types`).
-Fix what they report now. Then call the gate.
+Then call the gate. It runs the validator, the tests, a typecheck against this build's types and a headless
+load of the mod: the same four checks Verify ends on, run here because `hooks/` closes when Green passes and
+anything they find has to be found while the code can still be changed. When it refuses for the typecheck or
+the load, its answer carries the last lines the command printed: fix what they name and call the gate again.
+If it says the types are not written yet, load `plugin-authoring` again and ask again. If it says that files
+naming themselves the build's types are not the same, stop and tell the person which files it named: one of
+them is not the build's, and the gate uses none.
 
 ### 7. Verify
 
@@ -153,15 +155,14 @@ Append a block to `SPEC.md`, after the approved text and without touching it:
 ```markdown
 ## Built
 
-Built on Claude Code <version>, from the docs snapshot <stamp>.
+Built on Claude Code <version>, from the docs snapshot <stamp>, against the types sha256 <hash>.
 <one line per thing that differs from the spec, or "As specified.">
 ```
 
-Then call the gate. It runs the validator, the tests, a typecheck against this build's types and a headless
-load of the mod, and reads the load's log. If it says the types are not written yet, load `plugin-authoring`
-again and ask again. Fixes at this phase can't touch `tests/` or `hooks/`; if the typecheck or the load needs
-a change there, the build stops here: tell the person what failed and that this build can't be finished as it
-stands, rather than working around it.
+The hash is the one Green's gate answered with (`types sha256 ...`). Then call the gate. It runs the same four
+checks again and compares the same hashes. Green's gate passed them on this code, so a refusal here is about
+what changed since: `tests/` and `hooks/` are closed now, and if one of them is what has to change, the build
+stops here. Tell the person what failed rather than working around it.
 
 ### 8. Done
 

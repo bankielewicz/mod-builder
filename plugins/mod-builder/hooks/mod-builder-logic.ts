@@ -486,6 +486,41 @@ export function typecheckConfig(typesFile: string, modDir: string): string {
   return `${JSON.stringify(config, null, 2)}\n`
 }
 
+// One candidate for the build's types: a file whose first line names the session's version, and what it holds.
+// `content` is compared whole (the file's bytes, as the caller read them); `sha256` is the file's own hash.
+export type TypesCandidate = { path: string; content: string; sha256: string }
+
+export type TypesVerdict = { pass: true; path: string; sha256: string } | { pass: false; reason: string }
+
+// Which types the typecheck uses (SPEC.md 7.7, decision 2). Every candidate must agree: one, or several whose
+// content is the same to the byte, is used; none, or candidates that differ, refuses. It never picks among files
+// that differ: a file planted beside the build's own stops the gate instead of being used.
+export function typesVerdict(candidates: readonly TypesCandidate[], folder: string | null, version: string): TypesVerdict {
+  const found = Array.isArray(candidates) ? candidates : []
+  const first = found[0]
+  if (first === undefined) {
+    return {
+      pass: false,
+      reason: `the types of Claude Code ${version} are not written yet (looked in ${folder ?? 'no folder: CLAUDE_TMPDIR is not set and the user id could not be read'}): load the plugin-authoring skill with the Skill tool, which writes them, then ask again`,
+    }
+  }
+  if (found.every((one) => one.content === first.content && one.sha256 === first.sha256)) return { pass: true, path: first.path, sha256: first.sha256 }
+  const paths = found.map((one) => one.path).sort()
+  return {
+    pass: false,
+    reason: `${paths.length} files name themselves the types of Claude Code ${version} and are not the same (${paths.join(', ')}): the gate can't tell which is the build's, and uses none`,
+  }
+}
+
+// The last lines of a command's output, for a refusal to carry (SPEC.md 7.7, decision 1): at most `count` lines,
+// empty lines at the end left out; '' when there is nothing to show.
+export function lastLines(output: string, count = 20): string {
+  if (typeof output !== 'string' || !(Number.isInteger(count) && count > 0)) return ''
+  const lines = output.replace(/\r\n/g, '\n').split('\n')
+  while (lines.length > 0 && (lines.at(-1) as string).trim() === '') lines.pop()
+  return lines.slice(-count).join('\n')
+}
+
 // Whether a compiler asked for its version answered as one: it ran, and said "Version <number>".
 export function isCompiler(run: Run): boolean {
   return typeof run === 'object' && run !== null && run.exitCode === 0 && typeof run.output === 'string' && /^Version [0-9]/.test(run.output.trim())
@@ -664,9 +699,22 @@ export function guardVerdict(input: GuardInput): WriteVerdict {
 
 // ------------------------------------------------------------------------------- the headless load
 
+// The debug-log lines that say a hook of the mod was skipped: "<name>: <event> hook skipped: <why>", after the
+// log's own stamp. A mod whose hook throws when the session starts is loaded and does nothing (the owner's probe,
+// 2026-11-10: a mod named `clear`, whose command the build refuses), so such a line fails the load.
+export function hooksSkipped(log: string, name: string): string[] {
+  if (typeof log !== 'string' || typeof name !== 'string' || name === '') return []
+  const opens = `${name}: `
+  return log.split('\n').map((line) => line.replace(/\r$/, '')).filter((line) => {
+    const at = line.startsWith(opens) ? 0 : line.indexOf(` ${opens}`) + 1
+    if (at === 0 && !line.startsWith(opens)) return false
+    return /^[A-Za-z][A-Za-z0-9._:-]* hook skipped:/.test(line.slice(at + opens.length))
+  })
+}
+
 // Whether a headless session's debug log shows a mod's hooks module loaded (SPEC.md 7.3): a line holds
-// "hooks module <name>@inline loaded", and no line says of that mod that it failed to load, did not load or was
-// not loaded. The lines are those of 2.1.322.
+// "hooks module <name>@inline loaded", no line says of that mod that it failed to load, did not load or was
+// not loaded, and no line says a hook of it was skipped. The lines are those of 2.1.322.
 export function loadShown(log: string, name: string): boolean {
   if (typeof log !== 'string' || typeof name !== 'string' || name === '') return false
   const lines = log.split('\n')
@@ -676,5 +724,5 @@ export function loadShown(log: string, name: string): boolean {
   const failed = (line: string) =>
     says(line, `${module} failed to load`) || says(line, `${name}: hooks module did not load`) ||
     ((says(line, `${module} `) || says(line, `${name}: `)) && line.includes('not loaded:'))
-  return lines.some((line) => says(line, `${module} loaded`)) && !lines.some(failed)
+  return lines.some((line) => says(line, `${module} loaded`)) && !lines.some(failed) && hooksSkipped(log, name).length === 0
 }
