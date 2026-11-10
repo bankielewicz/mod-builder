@@ -16,7 +16,8 @@ export type Ran = { exitCode: number; stdout: string; stderr?: string; isTruncat
 export type World = {
   // The session's id; null makes the session unable to say it.
   sessionId: string | null
-  cwd: string
+  // The session's working folder; null makes the session unable to say it.
+  cwd: string | null
   store: Record<string, unknown>
   files: Record<string, string>
   // The person's answer to the next question; null dismisses it.
@@ -30,6 +31,12 @@ export type World = {
   version: string
   // Store keys that can't be read.
   unreadable: string[]
+  // Paths that are links: listed as no file and no folder, as the engine lists one.
+  links: string[]
+  // How a path is listed when it is neither a plain file nor a plain folder: by its kind and whether it is a link.
+  listedAs: Record<string, { kind: 'file' | 'dir' | 'other'; isLink: boolean }>
+  // When true, nothing can be looked for: every `fs.exists` fails.
+  existsFails: boolean
   // Lines the plugin wrote to the transcript.
   logged: string[]
   // What the plugin did.
@@ -79,6 +86,9 @@ export function world(on: On, start: Partial<World> = {}): World {
     commandsRegistered: [],
     opened: [],
     unreadable: [],
+    links: [],
+    listedAs: {},
+    existsFails: false,
     logged: [],
     asked: [],
     ran: [],
@@ -99,7 +109,7 @@ export function world(on: On, start: Partial<World> = {}): World {
     w.logged.push((e as { text: string }).text)
     return value(undefined)
   })
-  on('session.cwd', () => value(w.cwd))
+  on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))
   on('skill.prompt', (_, e) => ({ text: e.text }))
   on('clock.now', () => value(w.now))
   on('env.get', (_, e) => value((e as { name: string }).name === 'HOME' ? HOME : undefined))
@@ -132,6 +142,7 @@ export function world(on: On, start: Partial<World> = {}): World {
 
   on('fs.exists', (_, e) => {
     const { path } = e as { path: string }
+    if (w.existsFails) return deny(`EIO: ${path}`)
     return value(path in w.files || Object.keys(w.files).some((file) => file.startsWith(`${path}/`)))
   })
   on('fs.read', (_, e) => {
@@ -154,7 +165,12 @@ export function world(on: On, start: Partial<World> = {}): World {
       names.set(rest[0] ?? '', rest.length === 1 ? 'file' : 'dir')
     }
     if (names.size === 0) return deny(`ENOENT: ${path}`)
-    return value([...names].map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })))
+    return value([...names].map(([name, kind]) => {
+      const as = w.listedAs[`${path}/${name}`]
+      if (as !== undefined) return { name, kind: as.kind, size: 0, mtimeMs: 0, isLink: as.isLink }
+      const isLink = w.links.includes(`${path}/${name}`)
+      return { name, kind: isLink ? 'other' : kind, size: 0, mtimeMs: 0, isLink }
+    }))
   })
 
   on('process.run', async (_, e) => {
