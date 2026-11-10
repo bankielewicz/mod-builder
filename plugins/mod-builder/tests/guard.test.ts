@@ -125,7 +125,7 @@ test('every refusal names the phase, what it may write, and how the next one ope
   }
   expect(await refusal('knowledge', 'SPEC.md')).toMatch(/in phase 1 \(Knowledge\), which may write nothing in the mod\. Phase 2 \(Describe\) opens when .* calling the mod_builder_gate tool\.$/)
   expect(await refusal('describe', 'SPEC.md')).toMatch(/in phase 2 \(Describe\), which may write nothing in the mod\. Phase 3 \(Spec\) opens when /)
-  expect(await refusal('red', 'hooks/x.ts')).toMatch(/^mod-builder: hooks\/x\.ts can't be written in phase 5 \(Red\), which may write tests\/ only\. Phase 6 \(Green\) opens when a new test fails by assertion: /)
+  expect(await refusal('red', 'hooks/x.ts')).toMatch(/^mod-builder: hooks\/x\.ts can't be written in phase 5 \(Red\), which may write tests\/ only\. Phase 6 \(Green\) opens when a new test fails by assertion and the mod, its tests included, typechecks: /)
   expect(await refusal('green', 'tests/a.test.ts')).toMatch(/in phase 6 \(Green\), which may write anything but tests\/ and SPEC\.md\. Phase 7 \(Verify\) opens when every test passes: /)
   expect(await refusal('verify', 'hooks/x.ts')).toMatch(/in phase 7 \(Verify\), which may write anything but tests\/ and hooks\/\. Phase 8 \(Done\) opens when /)
   expect(await refusal('done', 'tests/a.test.ts')).toMatch(/in phase 8 \(Done\), which may write anything but tests\/ and hooks\/\.$/)

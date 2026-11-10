@@ -183,11 +183,12 @@ test('a dismissed question, a missing SPEC.md, and a SPEC.md changed while the p
 })
 
 test('Scaffold to Red runs validate --strict and the tests itself, and records the count and the names', async ($, on) => {
-  const w = fresh(on, { runs: { validate: { exitCode: 0, stdout: 'Validation passed' }, test: { exitCode: 0, stdout: passing(2, ['draws the pane', 'opens on command']) } } })
+  const w = fresh(on, { runs: { validate: { exitCode: 0, stdout: 'Validation passed' }, test: { exitCode: 0, stdout: passing(2, ['draws the pane', 'opens on command']) }, tsc: { exitCode: 0, stdout: '' } } })
   await walk($, w, 'scaffold')
   w.ran.length = 0
-  expect(await gate($)).toBe('mod-builder: phase 4 (Scaffold) passed (claude plugin validate --strict exited 0; 2 tests ran). The build is now at phase 5 (Red).')
-  expect(w.ran).toEqual([['claude', 'plugin', 'validate', '--strict', MOD], ['claude', 'plugin', 'test', MOD]])
+  // The typecheck that follows them (SPEC.md 7.10) has its tests in early-typecheck.test.ts.
+  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Scaffold\) passed \(claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes \(types sha256 [0-9a-f]{64}\)\)\. The build is now at phase 5 \(Red\)\.$/)
+  expect(w.ran.slice(0, 2)).toEqual([['claude', 'plugin', 'validate', '--strict', MOD], ['claude', 'plugin', 'test', MOD]])
   expect(kept(w).testsAtScaffold).toBe(2)
   expect(kept(w).namesAtScaffold).toEqual(['draws the pane', 'opens on command'])
 })
@@ -208,7 +209,7 @@ test('Red to Green passes when a test new since Scaffold fails by assertion, and
   w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test'
   w.files[`${MOD}/tests/deep/more.test.tsx`] = 'another'
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(2 tests ran, the new ones failing by assertion; 3 files under tests\/ hashed\)/)
+  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed\)\. The build is now at phase 6 \(Green\)\.$/)
   expect(kept(w).testsAtRed).toBe(2)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['tests/counts.test.tsx', 'tests/deep/more.test.tsx', 'tests/pane.test.tsx'])
 })

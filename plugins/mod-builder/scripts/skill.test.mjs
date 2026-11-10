@@ -72,7 +72,7 @@ test('the skill says which folder the mod is built in, and that it wins over the
 test('the skill has the model load the plugin-authoring skill at Describe, which writes the types Verify checks against', () => {
   const describe = body.slice(body.indexOf('### 2. Describe'), body.indexOf('### 3. Spec'));
   assert.match(describe.replace(/\s+/g, ' '), /Load the built-in `plugin-authoring` skill with the Skill tool\./);
-  assert.match(describe.replace(/\s+/g, ' '), /phase 7's typecheck needs that file to exist/);
+  assert.match(describe.replace(/\s+/g, ' '), /the typecheck that ends phases 4 to 7 needs that file to exist/);
 });
 
 test('the skill offers /design only when that skill is listed', () => {
