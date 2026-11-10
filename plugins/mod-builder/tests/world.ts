@@ -46,6 +46,8 @@ export type World = {
   timeouts: (number | undefined)[]
   registered: { name: string; isDeferred?: unknown }[]
   commandsRegistered: string[]
+  // What each registered command says of itself, by its name.
+  described: Record<string, string>
   opened: { id: string; title?: string }[]
   reachedTheTool: { tool: string; path: string }[]
   // Runs when the person is asked, before the answer: a change made while the question is open.
@@ -84,6 +86,7 @@ export function world(on: On, start: Partial<World> = {}): World {
     now: 1000,
     version: '2.1.322',
     commandsRegistered: [],
+    described: {},
     opened: [],
     unreadable: [],
     links: [],
@@ -116,6 +119,7 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('command.list', () => value(w.commands.map((name) => ({ name }))))
   on('command.register', (_, e) => {
     w.commandsRegistered.push((e as { name: string }).name)
+    w.described[(e as { name: string }).name] = (e as { description: string }).description
     return value({ command: (e as { name: string }).name })
   })
   on('session.version', () => value({ version: w.version, base: w.version, builtAt: '' }))
