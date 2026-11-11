@@ -64,5 +64,7 @@ The full list is in [Limits](docs/limits/README.md).
 - [Reference](docs/reference/README.md): what it reaches (hooks, API calls, files, commands, network), "Built on"
 - [Limits](docs/limits/README.md): the full list
 - [Development](docs/development/README.md): the plugin's own tests and typecheck
-- [Design record](docs/mod-builder/SPEC.md) and [backlog](docs/mod-builder/BACKLOG.md)
-- [Contributing](CONTRIBUTING.md), [security](SECURITY.md), [changelog](CHANGELOG.md)
+- [Design record](docs/mod-builder/SPEC.md): what was decided, by whom, and what was run to check it
+- [Roadmap](docs/mod-builder/BACKLOG.md): what is not built yet. Everything else here describes what exists.
+- [Contributing](CONTRIBUTING.md), [code of conduct](CODE_OF_CONDUCT.md), [security](SECURITY.md),
+  [changelog](CHANGELOG.md), [licence](LICENSE) (MIT)

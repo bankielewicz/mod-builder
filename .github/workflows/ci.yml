@@ -1,0 +1,32 @@
+# Validates the marketplace and the plugin and runs the plugin's own tests, on a pinned Claude Code version
+# (docs/mod-builder/BACKLOG.md item 21). The typecheck is not run here: it needs the types Claude Code writes
+# when its plugin-authoring skill loads in a session (docs/development/README.md).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Claude Code 2.1.322
+        run: npm install -g @anthropic-ai/claude-code@2.1.322
+      - name: Validate the marketplace
+        run: claude plugin validate --strict .
+      - name: Validate the plugin
+        run: claude plugin validate --strict plugins/mod-builder
+      - name: Module tests
+        run: claude plugin test plugins/mod-builder
+      - name: Rules, validate and script tests
+        run: node --test --test-timeout=120000 plugins/mod-builder/tests/*.test.mjs plugins/mod-builder/scripts/*.test.mjs
