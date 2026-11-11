@@ -126,7 +126,8 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
   unverified for where the build's types are and for `scaffold.sh`.
 - **No edit skill and no sharing step yet.** A change to a finished mod is made by hand, or by a new build
   in a fresh folder.
-- **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold.
+- **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold, where every test has to
+  pass before Red opens: a scaffold whose tests fail, or whose module throws as it loads, is refused there.
 - **The "Built on" line is checked for its types hashes only.** The gate prints the exact line at Green and
   at Verify, and Verify refuses a "Built" block that lacks any hash; the rest of the line (the version, the
   snapshot) is the model's copy, and a hash found anywhere after the approved text of `SPEC.md` counts.
@@ -145,4 +146,5 @@ What waits until after the MVP is in `BACKLOG.md`; how each of these was found i
 
 Built on Claude Code 2.1.322, from the docs snapshot 2026-11-10T194027Z, against the types sha256
 60ff86c1215663578dcd96bb09c05aee8a36e0366862f011509460d51a03ceca. The demonstration of `SPEC.md` section 4
-(a `turn-counter` mod built through all eight phases on that build) is recorded in `SPEC.md` 7.8.
+(a `turn-counter` mod built through all eight phases on that build) is recorded in `SPEC.md` 7.8, and a second
+one by another session, of another mod, in `SPEC.md` 7.11.
