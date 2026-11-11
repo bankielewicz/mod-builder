@@ -4,16 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { run, scriptsDir } from './test-helpers.mjs';
+import { run, scriptsDir, tempDir } from './test-helpers.mjs';
 
 const SCRIPT = join(scriptsDir, 'scaffold.sh');
 const HOOKS = ['hooks/hooks.json', 'hooks/register.tsx'];
 const HOOKS_AS_LAID = `as laid: ${HOOKS.join(' ')}\n`;
 const scaffold = (...args) => run('scaffold.sh', args);
-const fresh = () => mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-hooks-'));
+const fresh = () => tempDir('mod-builder-scaffold-hooks-');
 const laid = async (name = 'turn-counter') => {
   const mod = join(fresh(), 'mod');
   const ran = await scaffold(mod, name, 'Ada');

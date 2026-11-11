@@ -69,8 +69,13 @@ export async function startSite(pages, extraIndexLines = []) {
   return site;
 }
 
+// Every temporary folder a test makes is made here: a new folder whose name starts with `prefix`.
+export function tempDir(prefix) {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
 export function newCache() {
-  return mkdtempSync(join(tmpdir(), 'mod-builder-test-'));
+  return tempDir('mod-builder-test-');
 }
 
 // Starts `bash <script> <args>` without waiting. `done` resolves to { code, stdout, stderr }.

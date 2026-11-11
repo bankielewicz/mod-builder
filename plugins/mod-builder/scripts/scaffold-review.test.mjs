@@ -4,13 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { run, scriptsDir } from './test-helpers.mjs';
+import { run, scriptsDir, tempDir } from './test-helpers.mjs';
 
 const FILES = ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'tests/pane.test.tsx'];
-const newMod = () => join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-')), 'turn-counter');
+const newMod = () => join(tempDir('mod-builder-scaffold-'), 'turn-counter');
 const claude = (...args) => new Promise((resolve) => {
   execFile('claude', args, { timeout: 60000 }, (error, stdout) => resolve({ code: error === null ? 0 : error.code, stdout: String(stdout) }));
 });
@@ -20,7 +19,7 @@ const listed = (folder, under = '') => (existsSync(join(folder, under)) ? readdi
 // The script run with a stand-in for `cp` first on its PATH: for the file named it writes half a file and fails,
 // as a disk that fills would; for any other it copies.
 const scaffoldWithCopyFailingAt = (failing, ...args) => new Promise((resolve) => {
-  const bin = mkdtempSync(join(tmpdir(), 'mod-builder-bin-'));
+  const bin = tempDir('mod-builder-bin-');
   writeFileSync(join(bin, 'cp'), [
     '#!/bin/sh',
     'for last; do :; done',

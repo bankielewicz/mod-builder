@@ -4,11 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { run, scriptsDir } from './test-helpers.mjs';
+import { run, scriptsDir, tempDir } from './test-helpers.mjs';
 // Read off the module as a whole, so that this file loads before the rules are built.
 import * as rules from '../hooks/mod-builder-logic.ts';
 
@@ -22,7 +21,7 @@ const check = (mod, name = 'turn-counter') => scaffold('--check', mod, name);
 const again = (mod, name = 'turn-counter') => scaffold('--again', mod, name);
 // A mod the script has just laid, in a folder of its own.
 const laid = async (name = 'turn-counter') => {
-  const mod = join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-check-')), 'mod');
+  const mod = join(tempDir('mod-builder-scaffold-check-'), 'mod');
   const ran = await scaffold(mod, name, 'Ada');
   assert.equal(ran.code, 0, ran.stderr);
   return mod;
@@ -85,7 +84,7 @@ test('a file that is gone is named as missing, and a mod with no hooks/ or tests
   const mod = await laid();
   rmSync(join(mod, 'tests/pane.test.tsx'));
   assert.equal((await check(mod)).stdout, 'missing: tests/pane.test.tsx\n');
-  const empty = join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-check-')), 'mod');
+  const empty = join(tempDir('mod-builder-scaffold-check-'), 'mod');
   const ran = await check(empty);
   assert.equal(ran.code, 1);
   assert.equal(ran.stdout, LAID.map((file) => `missing: ${file}\n`).join(''));
@@ -169,7 +168,7 @@ test('a folder under hooks/ that can\'t be read through is never passed over: th
 
 test('--check and --again ask for no author: one that git gives with a line break in it does not stop them', async () => {
   const mod = await laid();
-  const home = mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-check-'));
+  const home = tempDir('mod-builder-scaffold-check-');
   writeFileSync(join(home, '.gitconfig'), '[user]\n\tname = "Ada\\nLovelace"\n');
   for (const mode of ['--check', '--again']) {
     const ran = await new Promise((resolve) => {
@@ -256,7 +255,7 @@ test('--again deletes nothing: an extra file stays, is printed as extra, and --c
 });
 
 test('--again lays the three files in a mod that has no hooks/ or tests/ yet, and no manifest', async () => {
-  const mod = join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-check-')), 'mod');
+  const mod = join(tempDir('mod-builder-scaffold-check-'), 'mod');
   mkdirSync(mod);
   const ran = await again(mod);
   assert.equal(ran.code, 0, ran.stderr);

@@ -3,17 +3,16 @@
 // mod does not own is not looked into.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { run } from './test-helpers.mjs';
+import { run, tempDir } from './test-helpers.mjs';
 import * as rules from '../hooks/mod-builder-logic.ts';
 
 const AS_LAID = 'as laid: hooks/hooks.json hooks/register.tsx tests/pane.test.tsx\n';
 const HOOKS_AS_LAID = 'as laid: hooks/hooks.json hooks/register.tsx\n';
 const scaffold = (...args) => run('scaffold.sh', args);
 const laid = async () => {
-  const mod = join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-source-')), 'mod');
+  const mod = join(tempDir('mod-builder-scaffold-source-'), 'mod');
   const ran = await scaffold(mod, 'turn-counter', 'Ada');
   assert.equal(ran.code, 0, ran.stderr);
   return mod;
@@ -117,7 +116,7 @@ test('the source lines come after the others, and the gate\'s rules read both', 
 
 test('a mod whose own path holds a character a pattern gives meaning to is checked like any other', async () => {
   for (const name of ['br[a]ck', 'back\\slash', 'st*r', 'q?mark', 'sp ace', '-dash']) {
-    const mod = join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-source-')), name, 'mod');
+    const mod = join(tempDir('mod-builder-scaffold-source-'), name, 'mod');
     assert.equal((await scaffold(mod, 'turn-counter', 'Ada')).code, 0, name);
     assert.equal((await check(mod)).stdout, AS_LAID, name);
     assert.equal((await checkHooks(mod)).stdout, HOOKS_AS_LAID, name);
