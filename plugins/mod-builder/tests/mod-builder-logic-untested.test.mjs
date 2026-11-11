@@ -128,21 +128,25 @@ test('the question names at most 20 files, then how many more', () => {
   assert.equal(untestedQuestion(ask({ files: many.slice(0, 20) })).includes(' more file'), false);
 });
 
-test('what the mod hooks, answers and calls is said, before and now, only when it differs and only when the baseline kept it', () => {
+test('what the mod hooks, answers and calls is said only where it differs, and only when the baseline kept it', () => {
   const now = [REGISTERS[0], './register.tsx calls: $.command.register, $.fs.write, $.ui.open, $.ui.resolve'];
   const lines = untestedQuestion(ask({ registersNow: now })).split('\n');
-  assert.deepEqual(lines.slice(2, 8), [
+  // The line that is the same is not shown; the command the mod no longer answers is a line gone as a whole;
+  // on the line of calls only the call that was added is named.
+  assert.deepEqual(lines.slice(2, 5), [
     'What the mod hooks, answers and calls is not as before this edit:',
-    `    before: ${REGISTERS[0]}`, `    before: ${REGISTERS[1]}`, `    before: ${REGISTERS[2]}`,
-    `    now: ${now[0]}`, `    now: ${now[1]}`,
+    '    ./register.tsx answers its own command: gone, it was command.run{command=hi-probe}',
+    '    ./register.tsx calls: added $.fs.write',
   ]);
+  assert.equal(lines[5], 'The 3 tests the mod had before this edit are held unchanged and pass: they are the only check of behaviour.');
   const said = (more) => untestedQuestion(ask(more)).includes('What the mod hooks');
   assert.equal(said({}), false);
   assert.equal(said({ registersBefore: null, registersNow: now }), false);
   assert.equal(said({ registersBefore: undefined, registersNow: now }), false);
-  assert.equal(said({ registersNow: [...REGISTERS].reverse() }), true);
-  assert.deepEqual(untestedQuestion(ask({ registersBefore: [], registersNow: [REGISTERS[0]] })).split('\n').slice(3, 5), ['    before: nothing', `    now: ${REGISTERS[0]}`]);
-  assert.deepEqual(untestedQuestion(ask({ registersNow: [] })).split('\n')[6], '    now: nothing');
+  // The same lines in another order are no difference.
+  assert.equal(said({ registersNow: [...REGISTERS].reverse() }), false);
+  assert.deepEqual(untestedQuestion(ask({ registersBefore: [], registersNow: [REGISTERS[2]] })).split('\n')[3], '    ./register.tsx calls: new, $.command.register, $.ui.open, $.ui.resolve');
+  assert.equal(said({ registersNow: [] }), true);
 });
 
 test('a question built from damaged values still asks, and never throws', () => {

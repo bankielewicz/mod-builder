@@ -180,8 +180,10 @@ test('when validate reports that the mod hooks or calls something it did not bef
   w.runs.validate = { exitCode: 0, stdout: validated(HOOKS, more) }
   w.answer = GO_ON
   expect(first(await gate($))).toMatch(/^mod-builder: phase 5 \(Green\) passed /)
-  expect(asks(w)[0]?.question.split('\n').slice(4, 9)).toEqual([
-    'What the mod hooks, answers and calls is not as before this edit:', `    before: ${HOOKS}`, `    before: ${CALLS}`, `    now: ${HOOKS}`, `    now: ${more}`,
+  // Only what differs is said: the line of calls, and on it only the call that was added.
+  expect(asks(w)[0]?.question.split('\n').slice(4, 7)).toEqual([
+    'What the mod hooks, answers and calls is not as before this edit:', '    ./register.tsx calls: added $.fs.write',
+    'The 2 tests the mod had before this edit are held unchanged and pass: they are the only check of behaviour.',
   ])
 })
 
