@@ -1583,3 +1583,151 @@ and then narrower, the pane placed above the prompt (`placement: 'inline'`)]:
   the row is wider than the pane, so each cell is cut with `wrap: 'truncate-end'` and not left to wrap.
   **Not probed:** the pane beside the transcript (`placement: 'dock'`), which needs a wide fullscreen
   terminal; its width is at most 45% of the terminal's [read: interface.md:311].
+
+### 8.19 Step 2, the hooks module of an edit, as built (2026-11-11, at `e09e04d`)
+
+Built by the building session through the three agents, each plan read first by an agent that did not write
+its tests (7.2). Local commits on `edit-skill`; nothing is pushed.
+
+| Plan | What | Commits | Verifier |
+|---|---|---|---|
+| 27 | The rules the hooks module asks: what opens an edit, its record and restore point, the refactor route (8.15), the stop, 8.4's question quoting a line that opens a test | `aa78f38` (two existing tests), `bb2305b` red, `b87206d` green | PASS, 17 mutants; 444 node tests |
+| 28 | `scripts/restore-point.sh` and `scripts/put-back.sh`, tested on real folders | `4576109` red, `0e3fe0c` green | PASS, 18 mutants; 467 node tests |
+| 29 | `hooks/register.tsx`: the edit skill opening a pending edit, the baseline and restore point, each gate of an edit, the refactor route, 8.4's question, `/mod-builder stop` | `25d3b8c` (existing module tests), `dcc7066` red, `e09e04d` green | PASS, 23 mutants; 285 module tests, 467 node tests |
+
+**Decided in the plans where section 8 is silent** (the building session; for the owner's review):
+- "No behaviour change" is read in the appended section's first line of text after its heading, at the line's
+  start, in any letter case. A section that holds only a heading passes Spec's check that one was added.
+- The refactor route needs a baseline test file by name, a count above 0 and at least one name. On it each
+  name runs as often as the baseline had it. Green on a skipped Red refuses a record that does not say why Red
+  was skipped.
+- The gate tool takes a second input, `no_behaviour_change`; only `true` is a claim, and a claim on a mod the
+  route is not offered for is refused before anybody is asked.
+- A mod that one of its own baseline checks writes into opens no edit: the baseline is what the restore point
+  holds. The baseline's answer quotes each failing check's last lines.
+- At an edit's Red the order is: SPEC.md as approved, the test files hashed, the test run (in a repair, the
+  typechecks alone), the typecheck, 8.4's question, the test files hashed again, SPEC.md again. A repair that
+  entered Red records no test count: Green holds its test files by their hashes.
+- The version is judged at Green and again at Verify.
+- `/mod-builder stop` marks the record stopped before it unbinds the session; it leaves a record that is Done,
+  already stopped, missing or another session's as it is; for a build it asks nothing. The stopped folder is
+  stamped with the time of the stop. Left out of the baseline's hashes and the restore point: `.git` and
+  `node_modules` at the mod's top only.
+- The restore point is complete only when a `.complete` marker stands beside its folder; `put-back.sh` refuses
+  one without it, compares folders with `-ef` and not by spelling, and takes a stopped folder only when it is
+  `<mod>.stopped-*` beside the mod. Modes are kept both ways.
+
+**What the independent readers found, and what was done:** in the scripts, a half-made restore point could be
+put back, and a link could stand in for the mod's folder (the marker and the `-ef` checks answer both). In the
+hooks module's draft: stop acted on an edit that was Done, stop's two writes were in the order that could leave
+a record open, the wording at Done was a build's, and the baseline was hashed again by comparing texts; each
+was fixed before the red commit, with 28 tests added.
+
+**Probed** [ran, 2.1.322, an interactive session in a terminal, a real mod in a scratch folder, the installed
+copy of mod-builder switched off]:
+- The whole edit: the edit skill opened a pending edit; the gate took the baseline (four checks) and made the
+  restore point before any write; Spec's dialog; Red with a new failing test; 8.4's question when a baseline
+  test file was changed; Green; then `/mod-builder stop` with "Put it back", which renamed the folder and
+  restored the mod.
+- A `command.run` hook can ask with `$.ui.ask`: `/mod-builder stop`'s question appeared and its answer was read.
+
+### 8.20 Step 2, the pane rebuilt to the mockup, as built (2026-11-11, at `1735192`)
+
+| Plan | What | Commits | Verifier |
+|---|---|---|---|
+| 30 | The pane's rules in `hooks/mod-builder-logic.ts`: `paneModel` and what it reads | `080e055` red, `31b8e6e` green | PASS, 31 mutants; 78 logic tests, 545 node tests |
+| 31 | `hooks/register.tsx` draws the pane, sets the status line and the toasts, and writes what the pane reads | `ac2bfd2` (existing tests), `d2f5127` red, `1735192` green | PASS, 38 mutants; 330 module tests, 545 node tests |
+
+**How it is built.** `paneModel` is a pure rule: from the session's entry, its record, two store values and
+the cache's files it answers the header, the rail, the blocks of rows and the status line. The hooks module
+draws that with `Box`, `Text` and `Markdown`, and calls `$.ui.status`, `$.ui.toast` and `$.ui.log`. What the
+pane newly needs is written by the guard and the gate, and read by no verdict (point 3):
+- `refusals:<folder>` in the store: the guard's count of refused writes for each phase, the last one, and
+  the phases that had their toast. The guard never writes the record.
+- `checks:<folder>`: each of the four checks' state (waiting, running, passed, failed) while Green's or
+  Verify's gate runs them.
+- `record.attempt`: the last refused gate's reason, the failing tests' names and how many passed.
+- `record.finished`: at Verify's pass, the version, the files and tests counted, the command the mod answers,
+  and the gate's own "Built on" line.
+
+**Differs from 8.18's list, or adds to it** (the building session; listed for the driving session):
+- After a refused write a build's header says `<name> · 1 edit refused · phase Spec`: the frame's words with
+  the mod's name kept before them (the first reader: without it the header no longer said which mod). In an
+  edit, where "edit" names the work itself, it says `1 write refused`.
+- The refusals and the check states carry the session's id and are read only when it matches, and both are
+  emptied when a record opens; every gate starts by emptying the check states. This stands in place of the
+  start time the first reader asked for: a build's record has none.
+- The Guard table has a row for Knowledge, Describe or Done only while that is the current phase. From
+  Knowledge, Spec's row says the snapshot comes first.
+- At Red the status line says how many tests fail; at Scaffold and Green how many pass.
+- A check that failed turns Verify's header and status line to say which did not pass; beside a refused write
+  both are kept.
+- A refused approval is drawn above the spec, not beneath it: on 2.1.322 a spec longer than the pane cut the
+  row off.
+- The Verify frame shows the four checks and not Green's evidence, which stays in the record; Done shows
+  Verify's. Two existing tests that read Green's evidence from the pane at Verify now read it from the record.
+- Done's "built on" row is the gate's own "Built on" line, which names the types the typecheck ran against;
+  a record without it (0.1.0's) gets a shorter line. An edit's shorter line says "checked on".
+- Two toasts beyond the refusal's, both in the frames: "mod docs refreshed, N pages changed" after a fetch
+  that made a new snapshot, and "<mod> is built · 4 of 4 checks passed" at Done ("is edited" for an edit).
+- The approval question of a build gains the frame's hint: "Nothing under hooks/ or tests/ can be written
+  until you approve." An edit's question already said what may be written; the rule's wording for an edit
+  (`approvalHint('edit')`) is built and not used.
+- The transcript's line when a build or an edit opens comes once, not again while it waits for its folder.
+- `/mod-builder` alone answers with the header's words and the rail's current phase, then the cache as before.
+- `changesIn` reads `_changes.md` as `refresh-docs.sh` writes it, a heading being a list item that keeps its
+  `#` marks; the test's fixture is that script's output on two folders made for it.
+- Text shown has its control characters, the zero-width marks and the direction overrides replaced by a
+  space; a refused path over 120 characters is cut, its end kept. A fetch stamped ahead of the clock is said
+  with its stamp.
+- **Not built, as 8.18 said:** the band; "3 local commits"; the built mod's own pane; a row for a command's
+  answer at Verify.
+
+**A defect of the gate found while building the pane, and fixed in plan 31.** A gate wrote the record it had
+read before its checks, so a build or edit stopped while its gate ran (the approval question can stay open
+for minutes) was moved on and made open again, and an edit that had been put back was marked on. The second
+reader found it because the Done toast would have announced it. A gate now moves the record only while it is
+still this session's open record at the same phase, and otherwise answers that nothing was moved.
+
+**What the independent readers found.** The first read the rules' first draft: 92 of 239 mutants survived, and
+the draft threw on damaged stored values, counted for every session of a folder, and did not read the real
+`_changes.md`. The second read the revision: 51 of 335 survived (about 15 equivalent), with control characters
+reaching the check rows and a doubled slash. The third read the hooks module's draft: 70 of 167 survived, with
+writes refused side by side each toasted and under-counted, check states of an earlier gate shown after a gate
+that refused early, and the stop above. Each defect was fixed and each gap that a test can reach was tested
+before its red commit.
+
+**Probed** [ran, 2.1.322, two interactive sessions in a terminal of 150 columns, the hooks module loaded with
+`--plugin-dir` (the second with the file plan 31 committed, by its sha256), each a real build of a small pane
+mod in a scratch folder]:
+- Main: the header with the state at the right, the rail with the current phase as a chip, the rule, the
+  Knowledge block, and the status line `⚠ mod-builder: build · waiting for the mod's folder`.
+- Spec: the approval dialog with the hint in its text; after "Not yet", the spec drawn as markdown.
+- Guard: after a refused `Write`, the header `hello-probe · 1 edit refused · phase Spec`, the table with
+  `now` on Spec's row, and the status line `spec · 1 edit refused · waiting for your approval`.
+- Build: `hi-probe · approved 08:52 UTC · building`, `3 Spec passed` with its row, `4 Scaffold working…`.
+- Verify, while its gate ran: `passed validate`, `running test`, the other two waiting, and the status line
+  `verify · 1 of 4 checks passed · test running`.
+- Done: `hi-probe 0.1.0 · built and checked`, "6 files · 3 tests", the gate's "Built on" line, "Try it" with
+  `/hi-probe`, and the status line cleared.
+- **Not seen:** the toasts (gone before a capture of the screen); an edit's frames, a repair and a stopped
+  record, which are held by module tests alone.
+
+**Known and left** (limits; `docs/limits/README.md` is step 5's to update):
+- A gate call the engine cuts off leaves its check "running" until the next gate starts.
+- Between a gate's last look at the record and its write there is no lock: a stop that lands in between is
+  still written over.
+- A long folder path fills its row: the table's heading, Done's rows and the check commands are cut at the
+  pane's width, and "then" before the command at Done was squeezed to "th…" in the probe.
+
+### 8.21 Open after step 2, for the owner
+
+- **A claim of "no behaviour change" with the plain "Approve".** The edit then goes through Red with that
+  sentence in its section. Leave it, refuse the plain answer on such a call, or have the gate ask for the
+  section to be rewritten first.
+- **A build names no test file to the typecheck** (8.14 is an edit's rule), so `tests/.x.test.ts`, and
+  `a.test.tsx` beside `a.test.ts`, go unchecked in a build. Leave it, or give builds the same rule.
+- **8.11's open points still stand:** a test file that typechecks but does not load at a repair's Red; the
+  plugin's own source edited from an installed copy.
+- **The header's wording after a refused write** (above) changes an approved frame's text by adding the mod's
+  name, and uses another noun in an edit.
