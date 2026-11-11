@@ -124,6 +124,8 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
   refused, and the test has to be rewritten to drive the mod through its events.
 - **Native Windows paths are not judged**: the guard reads `/` paths only (WSL is unaffected). macOS is
   unverified for where the build's types are and for `scaffold.sh`.
+- **No edit skill and no sharing step yet.** A change to a finished mod is made by hand, or by a new build
+  in a fresh folder.
 - **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold.
 - **The "Built on" line is checked for its types hashes only.** The gate prints the exact line at Green and
   at Verify, and Verify refuses a "Built" block that lacks any hash; the rest of the line (the version, the

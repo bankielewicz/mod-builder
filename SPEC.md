@@ -104,7 +104,7 @@ with the line to run). Eight phases, each ending in something the plugin can obs
 | 1 | Knowledge | refresh if stale; show snapshot date, build, what changed | a snapshot exists |
 | 2 | Describe | the model reads the index and the pages that bear on the request, through the lookup | (no gate) |
 | 3 | Spec | the model writes `<mod>/SPEC.md`: what it does, each API use with its citation, what it reaches, its tests | the person approves, through the mod's own question |
-| 4 | Scaffold | the mod's files from one template (`pane`), checked against the build's types | `claude plugin validate` passes, the tests run, the typecheck passes (7.10) |
+| 4 | Scaffold | the mod's files from one template (`pane`), checked against the build's types | `claude plugin validate` passes, every test passes, the typecheck passes (7.10, 7.11) |
 | 5 | Red | tests only | a new test fails by assertion; the typecheck passes (7.10) |
 | 6 | Green | code only; tests frozen | validate, every test, the typecheck and a headless load pass (7.7) |
 | 7 | Verify | validate, test, typecheck, a headless load with its debug-log lines | all pass |
@@ -159,7 +159,9 @@ with the line to run). Eight phases, each ending in something the plugin can obs
     in P1's first run the dialog closed with its first option after 8.9 s with no key sent by the probe's
     driver. The owner, afterwards: "i clicked approve - this explains the anomoly you reported." So the
     dialog behaved as documented, and a click or key from anyone at the pane answers it.
-  - **Scaffold → Red:** `claude plugin validate --strict` exits 0. The mod records how many tests ran.
+  - **Scaffold → Red:** `claude plugin validate --strict` exits 0. Then `claude plugin test` exits 0 (7.11):
+    a scaffold whose tests fail, or whose module throws as it loads, can't leave Scaffold; a refusal quotes
+    the run's last 20 lines. The mod records how many tests ran, and their names.
     Then the typecheck exits 0 (7.10): the same one Green runs, against every distinct types file, because
     `hooks/` and `types/` close when Scaffold passes and Red ends on a typecheck that judges them too.
   - **Red → Green:** `claude plugin test` exits non-zero; its last line reports more tests than at
@@ -888,7 +890,8 @@ owner to decide:
    validate and the typecheck included [ran: the built code with one added command, headless, a `throw` put
    at the top of the scaffold's `register`]. Red then requires every failure to open with `AssertionError`:
    the old tests' failures do not, and `hooks/` is closed at Red. That is Red's rule first judging `hooks/`
-   after it closed. The remedy would be for Scaffold to require the test run to exit 0.
+   after it closed. The remedy would be for Scaffold to require the test run to exit 0. (Decided and built:
+   7.11.)
 6. **What is no dead end:** a test at Red that needs a hook the scaffold does not register fails by
    assertion when it drives the mod through its events, and the hook is written at Green.
 
@@ -908,3 +911,68 @@ order is the hashes', not the paths') were not read a second time, and the four 
 surviving before them are not among the plan's eight; the reader's note that two tests pin when the types and
 the compiler are looked for (after the earlier checks, where Green looks first) was kept as the plan's
 decision; neither demonstration was run again on this code; macOS stays unverified.
+
+### 7.11 The driving session's demonstration reaches Done, and two last changes (2026-11-10, at `adb72d1`)
+
+**The driving session's demonstration** [ran, by the driving session, 2026-11-10]. Three runs, each on an
+export of this branch, on sonnet, of a mod other than 7.8's (`tool-log`: a pane listing the last five tools
+used):
+
+1. **On an export of `ae7cad8`: stranded at Green.** Green's gate refused with "types differ". Genuine types
+   files differ between sessions of one build (7.9 gives the two hashes and the diff), and 7.7's decision 2
+   refused when they did. Corrected in 7.9: the typecheck runs against every distinct types file.
+2. **On an export of `762465b`: stranded at Green again, for a new reason.** The types correction worked and
+   the typecheck ran; every test passed and `hooks/` typechecked, but the typecheck failed on 10 errors in a
+   test file, and `tests/` had been closed since Red. Corrected in 7.10: Red, and Scaffold, end on the
+   typecheck, so that a check runs while the files it judges can still be changed.
+3. **On an export of `342f571`: reached Done in one session** (auto mode, the folder
+   `scratch/mydemo3/tool-log` under the ClaudeMod folder). Spec approved on option 2, then Scaffold, Red,
+   Green and Verify, the pane showing `Verify: validate, 11 tests, the typecheck (types sha256 60ff86c1…,
+   a33c3b25…) and a headless load of tool-log all pass`. Checked by the driving session outside that session:
+   `claude plugin validate --strict` passes; `claude plugin test` passes 11 of 11; a headless load logs `hooks
+   module tool-log@inline loaded (…); events: session.start,command.run,tool.call,ui.render` with no skipped
+   hook; the mod's `SPEC.md` carries both hashes in its "Built on" line; and its six citations (`api.md:37`,
+   `events.md:98`, `gallery.md:68`, `interface.md:89`, `:290`, `:337`) each resolve in snapshot
+   `2026-11-10T194027Z` to a line about what it is cited for.
+
+With 7.8's demonstration by the building session, section 4's four items have now been shown on two mods by
+two sessions.
+
+**Two last changes, decided by the owner after the third run** ("Two last changes, test-first, then stop"),
+built as one test-first change (`3dc014d` red, `adb72d1` green; the two existing tests it changes in commits
+of their own first, `920cd12` and `ea25f4e`):
+
+- **(1) 7.10's item 5.** "Scaffold -> Red also requires the test run to exit 0, after validate and before
+  the typecheck, quoted like any refused test run, so a scaffold whose tests fail or whose module throws at
+  load cannot leave Scaffold." 3.3 says so now. The refusal reads `claude plugin test exited 1: not every
+  test of the scaffold passes`.
+- **(2) What Done offers.** After Done the model of the third run offered `/mod-builder:edit` and to "set
+  it up for sharing as a GitHub repository"; neither exists in this plugin. The skill's Done phase now says:
+  offer nothing else; this plugin has no edit skill and no sharing step yet; a change to a finished mod is
+  made by hand, or by a new build in a fresh folder. It names the `plugin-authoring` skill's offer to share
+  as the one not made here, because that skill, which phase 2 loads, is where the offer comes from [read:
+  the skill's "SHARING IT" paragraph on 2.1.322].
+
+**As built** [ran]: 216 module tests, 302 rules, validate and script tests, `claude plugin
+validate --strict` and the typecheck pass; the verifier's PASS with three mutants, each failing its test.
+In the real engine [ran: the built rules with one added command, headless, no model call]: the scaffold of
+7.10's item 5, whose `register` throws as it loads, now answers `still at phase 4 (Scaffold). Not passed:
+claude plugin test exited 1: not every test of the scaffold passes.`, then `The last lines of its output:`
+and the run's own lines, among them `HooksError: turn-counter: hooks module did not load: boom at load`; the
+unchanged scaffold still passes Scaffold.
+
+**Decided in the plan where the owner's words were silent, for review:** the exit code is judged before the
+count is read, so a run that fails and shows no count is refused for its exit code; the skill's Scaffold
+section says every test has to pass there (it said "keeping at least one passing test").
+
+**Not done, or swapped:** the four tests the reader of this change asked for (Done makes no other offer; the
+skill's table says Scaffold's tests pass, which the reader found still saying "run"; a refused test run is
+quoted from standard output when it printed a report, and is not cut at validate's section heading) were not
+read a second time, and the mutants the reader showed surviving before them are not among the plan's three;
+the last two of those tests cover code this change does not touch; the Done wording names `/mod-builder:edit`
+and the `plugin-authoring` skill's sharing offer, which is more than the owner's words; no demonstration was
+run on this code; macOS stays unverified.
+
+**Step 5 is accepted** by the owner's words ("When both are verified, step 5 is accepted: fast-forward main to
+the branch and stop. Do not push."): `main` is fast-forwarded to this branch at the commit that holds this
+section. 7.10's items 1 to 4 stay open, with `BACKLOG.md`.
