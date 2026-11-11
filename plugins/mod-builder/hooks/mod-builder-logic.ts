@@ -616,11 +616,23 @@ export function isBuildSkill(e: SkillPrompt, pluginName: string, pluginRoot: str
   return e.skill === BUILD_SKILL || e.skill === `${pluginName}:${BUILD_SKILL}`
 }
 
+export const EDIT_SKILL = 'edit'
+
+// Whether a skill being expanded is this plugin's `edit` (SPEC.md 8.3): judged as isBuildSkill judges `build`.
+export function isEditSkill(e: SkillPrompt, pluginName: string, pluginRoot: string): boolean {
+  if (typeof e !== 'object' || e === null || typeof pluginName !== 'string' || pluginName === '') return false
+  if (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/')) return false
+  if (e.pluginName !== pluginName) return false
+  if (e.path !== undefined && pathInMod(pluginRoot, e.path as string, '/') === null) return false
+  return e.skill === EDIT_SKILL || e.skill === `${pluginName}:${EDIT_SKILL}`
+}
+
 // ------------------------------------------------------------------------------------- the record
 
 // What `$.store` holds for a session that started a build: `modDir` is null while the build is pending (the
 // model has not yet named the mod's folder through the gate tool), and the mod's folder from then on.
-export type SessionEntry = { modDir: string | null }
+// `kind` says what the session opened (SPEC.md 8.3); an entry without it opened a build, as 0.1.0 stored it.
+export type SessionEntry = { modDir: string | null; kind?: Kind }
 
 // One build, kept under its mod's folder and bound to the session that started it.
 export type BuildRecord = {
@@ -637,6 +649,8 @@ export type BuildRecord = {
   kind?: Kind // SPEC.md 8: a record without it is a build
   red?: RedMode // an edit's: how its Red ends, or that it is skipped
   stopped?: boolean // SPEC.md 8.5: ended by /mod-builder stop
+  baseline?: Baseline // an edit's: the mod as it stood when the edit opened
+  skipped?: SkipReason // an edit's: why its Red is skipped
 }
 
 export function sessionKey(sessionId: string): string {
@@ -666,7 +680,14 @@ export function newRecord(modDir: string, sessionId: string): BuildRecord {
 export function isSessionEntry(value: unknown): value is SessionEntry {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const modDir = (value as { modDir?: unknown }).modDir
-  return modDir === null || (typeof modDir === 'string' && modDir.startsWith('/'))
+  if (!(modDir === null || (typeof modDir === 'string' && modDir.startsWith('/')))) return false
+  const kind = (value as { kind?: unknown }).kind
+  return kind === undefined || (typeof kind === 'string' && (KINDS as readonly string[]).includes(kind))
+}
+
+// What a session's entry opened: an edit when it says so, else a build.
+export function entryKind(entry: unknown): Kind {
+  return isSessionEntry(entry) && entry.kind === 'edit' ? 'edit' : 'build'
 }
 
 // Whether a stored value is a build's record as far as the guard reads it: a folder, a session and a phase.
@@ -1185,6 +1206,13 @@ export function lineChanges(before: string, after: string): { added: number; rem
   return { added: b.length - kept, removed }
 }
 
+// Whether a line opens a test: `test(`, `it(` or `describe(`, alone or with a word after a dot (`test.skip(`).
+// Such a line removed is quoted in 8.4's question as one that holds "expect" is (SPEC.md 8.18): a test turned off
+// or taken away loses no line that holds it.
+function opensTest(line: string): boolean {
+  return /^\s*(test|it|describe)(\.[A-Za-z]+)*\s*\(/.test(line)
+}
+
 // A test file the person is asked about: as it was in the restore point, and as it is now (null when it is gone).
 export type AskedFile = { path: string; before: string; after: string | null }
 
@@ -1196,8 +1224,8 @@ export function testChangeOptions(): string[] {
 }
 
 // 8.4's question, or null when no earlier test file changed or is gone: each file with the lines added and
-// removed against its baseline copy; under it every removed line that holds "expect", at most QUOTED_LINES in
-// all, then how many more; then the test names that are gone.
+// removed against its baseline copy; under it every removed line that holds "expect" or opens a test, at most
+// QUOTED_LINES in all, then how many more; then the test names that are gone.
 export function testChangeQuestion(files: readonly AskedFile[], gone: readonly string[]): string | null {
   const asked = Array.isArray(files) ? files.filter((file) => typeof file === 'object' && file !== null && typeof file.path === 'string') : []
   if (asked.length === 0) return null
@@ -1208,7 +1236,7 @@ export function testChangeQuestion(files: readonly AskedFile[], gone: readonly s
   for (const file of [...asked].sort((one, other) => (one.path < other.path ? -1 : one.path > other.path ? 1 : 0))) {
     const changes = lineChanges(file.before, file.after === null ? '' : file.after)
     text.push(file.after === null ? `- ${file.path}: gone (${said(changes.removed.length)} removed)` : `- ${file.path}: ${said(changes.added)} added, ${said(changes.removed.length)} removed`)
-    for (const line of changes.removed.filter((removed) => removed.includes('expect'))) {
+    for (const line of changes.removed.filter((removed) => removed.includes('expect') || opensTest(removed))) {
       if (quoted < QUOTED_LINES) {
         text.push(`    removed: ${line.trim()}`)
         quoted++
@@ -1217,7 +1245,7 @@ export function testChangeQuestion(files: readonly AskedFile[], gone: readonly s
       }
     }
   }
-  if (more > 0) text.push(`and ${more} more removed ${more === 1 ? 'line that holds' : 'lines that hold'} "expect"`)
+  if (more > 0) text.push(`and ${more} more removed ${more === 1 ? 'line that holds "expect" or opens a test' : 'lines that hold "expect" or open a test'}`)
   const names = Array.isArray(gone) ? gone.filter((name) => typeof name === 'string') : []
   if (names.length > 0) text.push(`These tests no longer exist: ${names.join('; ')}`)
   text.push('Go on with these changes?')
@@ -1261,4 +1289,191 @@ export function versionGate(atBaseline: unknown, now: unknown): Verdict {
     if ((next[part] as bigint) < (before[part] as bigint)) break
   }
   return { pass: false, reason: `plugin.json's version is ${now}, not greater than the ${atBaseline} it had before the edit` }
+}
+
+// ------------------------------------------------------------------------------- an edit's record (SPEC.md 8.3)
+
+// The mod as it stood when the edit opened: what its four checks showed, and what the edit is held to.
+export type Baseline = {
+  version: string | null // plugin.json's version, or null when it had none
+  tests: number | null // the count its test run showed, or null
+  names: string[] // its tests' names
+  hashes: Hashes // every file in the folder but those under .git and node_modules
+  spec: SpecRecord | null // SPEC.md, or null when there was none
+  failed: Check[] // the checks it did not pass
+  restore: string // the folder the restore point is in (SPEC.md 8.5)
+  at: number // milliseconds since 1970
+}
+
+// Why an edit's Red is skipped (SPEC.md 8.6, 8.15): the mod fails and its test files fit the build, or the person
+// approved the change as one that changes no behaviour.
+export const SKIP_REASONS = ['fit', 'no behaviour change'] as const
+export type SkipReason = (typeof SKIP_REASONS)[number]
+
+// Whether a path from the mod's folder is left out of the baseline's hashes and of the restore point: the mod's
+// .git and node_modules folders, at its top (SPEC.md 8.5).
+export function isKeptOut(relPath: string): boolean {
+  const first = (segments(typeof relPath === 'string' ? relPath : '') ?? [])[0] ?? ''
+  return first === '.git' || first === 'node_modules'
+}
+
+// A new edit's record: at Knowledge, with the baseline it is held to and how its Red ends. A Red the baseline
+// skips is skipped because the test files fit.
+export function newEditRecord(modDir: string, sessionId: string, baseline: Baseline, red: RedMode): BuildRecord {
+  const record: BuildRecord = { ...newRecord(modDir, sessionId), kind: 'edit', red, baseline }
+  return red === 'skipped' ? { ...record, skipped: 'fit' } : record
+}
+
+// A stamp for a folder's name, from a time in milliseconds: "2026-11-11T012345Z", as the docs snapshots are
+// named. Null for what is no time.
+export function stampOf(time: number): string | null {
+  if (typeof time !== 'number' || !Number.isFinite(time)) return null
+  const at = new Date(time)
+  // From 1970 to the year 9999: a time before or after has no stamp of this shape.
+  if (Number.isNaN(at.getTime()) || time < 0 || at.getUTCFullYear() > 9999) return null
+  return at.toISOString().replace(/\.\d+Z$/, 'Z').replace(/:/g, '')
+}
+
+// Where an edit's restore point is kept (SPEC.md 8.5), or null when it can't be placed: HOME is no path from the
+// root, the session's id holds anything but letters, digits, "_" and "-", or the time is none.
+export function restoreFolder(home: string | null | undefined, sessionId: string, time: number): string | null {
+  const stamp = stampOf(time)
+  const root = typeof home === 'string' && home.startsWith('/') ? absolutePath(home, '/') : null
+  if (stamp === null || root === null || root === '/' || typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sessionId)) return null
+  return `${root}/.claude/mod-builder-data/v2/restore/${sessionId}/${stamp}`
+}
+
+// The name a stopped edit's folder is given when the mod is put back: beside the mod, never inside it.
+export function stoppedFolder(modDir: string, time: number): string | null {
+  const stamp = stampOf(time)
+  const mod = typeof modDir === 'string' && modDir.startsWith('/') ? absolutePath(modDir, '/') : null
+  return stamp === null || mod === null || mod === '/' ? null : `${mod}.stopped-${stamp}`
+}
+
+// ------------------------------------------------------------------------------- an edit's approval (SPEC.md 8.15)
+
+export const APPROVE_NO_CHANGE = 'Approve: no behaviour change'
+
+// Whether the refactor route may be offered at all: the mod passed its baseline, it has a test file, and its test
+// run showed a count. A mod that does not is never offered it, whatever the gate's call says.
+export function mayRefactor(baseline: Baseline | null | undefined, red: RedMode | undefined): boolean {
+  if (typeof baseline !== 'object' || baseline === null || red !== 'edit') return false
+  const hasTestFile = isHashes(baseline.hashes) && Object.keys(baseline.hashes).some((path) => namedTest(path, false))
+  return Array.isArray(baseline.failed) && baseline.failed.length === 0 && hasTestFile && isCount(baseline.tests) && baseline.tests > 0 && isNames(baseline.names) && baseline.names.length > 0
+}
+
+// The record of an edit the person approved as one with no behaviour change: its Red is skipped, and it says why.
+export function refactorRecord<T>(record: T): T {
+  return isBuildRecord(record) && recordKind(record) === 'edit' ? { ...record, red: 'skipped', skipped: 'no behaviour change' } : record
+}
+
+// The options of an edit's approval question. "Not yet" is first; the third, which approves the change as one
+// with no behaviour change, is there only when the gate's call said so and the route may be offered.
+export function editApprovalOptions(claimsNoChange: boolean, isOffered: boolean): string[] {
+  return claimsNoChange === true && isOffered === true ? [NOT_YET, APPROVE, APPROVE_NO_CHANGE] : [NOT_YET, APPROVE]
+}
+
+// The question itself: it says so when the change is put forward as one with no behaviour change.
+export function editApprovalQuestion(modDir: string, options: readonly string[]): string {
+  const asked = `Approve this change to the mod? Its section is at the end of ${modDir}/SPEC.md. Nothing but SPEC.md can be written until you approve.`
+  if (!(Array.isArray(options) && options.includes(APPROVE_NO_CHANGE))) return asked
+  return `${asked} It is put forward as a change with NO BEHAVIOUR CHANGE: "${APPROVE_NO_CHANGE}" skips Red, keeps every test as it is and requires each to pass; "${APPROVE}" sends it through Red as any other change.`
+}
+
+// What the person's answer does. Only an option that was offered passes: the usual approving answer sends the edit
+// to Red as normal, and only the third takes the refactor route.
+export type EditApproval = { pass: true; route: 'red' | 'refactor' } | { pass: false; reason: string }
+
+export function editSpecGate(answer: string | null | undefined, options: readonly string[]): EditApproval {
+  const offered = Array.isArray(options) ? options : []
+  if (answer === APPROVE && offered.includes(APPROVE)) return { pass: true, route: 'red' }
+  if (answer === APPROVE_NO_CHANGE && offered.includes(APPROVE_NO_CHANGE)) return { pass: true, route: 'refactor' }
+  return { pass: false, reason: `the person has not approved the change (answer: ${typeof answer === 'string' ? JSON.stringify(answer) : 'none'})` }
+}
+
+// The section an edit appended to SPEC.md: what follows the baseline's length. '' when the file is shorter.
+export function changeSection(spec: string, baselineLength: number): string {
+  return typeof spec === 'string' && isCount(baselineLength) && spec.length >= baselineLength ? spec.slice(baselineLength) : ''
+}
+
+// Whether the appended section says "No behaviour change" in its first line that holds text after its heading
+// (SPEC.md 8.15): the record of which route the edit took. A heading is a line that opens with "#".
+export function saysNoChange(section: string): boolean {
+  const lines = (typeof section === 'string' ? section : '').split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'))
+  return (lines[0] ?? '').toLowerCase().startsWith('no behaviour change')
+}
+
+// Spec's gate for an edit, before the person is asked: SPEC.md still begins with its baseline bytes, the edit
+// added a section, and on the refactor route that section says so.
+export function editSpecKept(baseline: SpecRecord | null, now: SpecNow | null, spec: string, claimsNoChange: boolean): Verdict {
+  if (typeof now !== 'object' || now === null || typeof spec !== 'string') return { pass: false, reason: 'SPEC.md does not exist yet' }
+  // A baseline that had no SPEC.md is null. Anything else must be a length and a hash: a damaged one keeps nothing.
+  if (baseline !== null && (typeof baseline !== 'object' || !isCount(baseline.length) || !isHash(baseline.hash))) {
+    return { pass: false, reason: 'the baseline of SPEC.md is not recorded, so what the edit may not change can\'t be told' }
+  }
+  const length = baseline === null ? 0 : baseline.length
+  if (baseline !== null && !(isCount(now.length) && now.length >= baseline.length && now.approvedPartHash === baseline.hash)) {
+    return { pass: false, reason: 'SPEC.md no longer begins as it did before this edit: the change is written as a new section at its end, and nothing above it may change' }
+  }
+  const section = changeSection(spec, length)
+  if (section.trim() === '') return { pass: false, reason: 'SPEC.md holds no new section for this change yet: write it at the end of the file' }
+  if (claimsNoChange === true && !saysNoChange(section)) {
+    return { pass: false, reason: 'the change is put forward as one with no behaviour change, but its section of SPEC.md does not say "No behaviour change" in its first line' }
+  }
+  return { pass: true }
+}
+
+// ------------------------------------------------------------------------- Green when Red was skipped (SPEC.md 8.15)
+
+// The name `claude plugin test` gives a test file that did not load. It is no test of the mod's: a repair that
+// mends the file makes it go, so it is not among the names a run is held to.
+const DID_NOT_LOAD = 'the file did not load'
+
+// What Green holds the test run to when no Red recorded a count: it exits 0 and shows no failing block, and
+// then, by why Red was skipped. 'no behaviour change' (the refactor route): the baseline's names, each as often
+// as the baseline had it, and so the baseline's count. 'fit' (a repair): every name the baseline's run showed
+// still runs, and no fewer tests than it counted; a baseline whose run showed no count holds the run to its
+// names alone. Any other reason is a damaged record, and refuses.
+export function keptTestsGate(test: Run, baseline: Baseline | null | undefined, reason: SkipReason | undefined): Verdict {
+  if (typeof baseline !== 'object' || baseline === null || !isNames(baseline.names)) return { pass: false, reason: 'no baseline is recorded for this edit' }
+  if (reason !== 'fit' && reason !== 'no behaviour change') return { pass: false, reason: 'the edit\'s record does not say why its Red was skipped' }
+  const check = ended(test, TEST)
+  if (!check.pass) return check
+  if (test.exitCode !== 0) return { pass: false, reason: `claude plugin test exited ${test.exitCode}: not every test passes` }
+  const run = parseTestRun(test.output)
+  const names = testNames(test.output)
+  if (run === null || names === null) return { pass: false, reason: NO_COUNT }
+  if (run.failures.length > 0) return { pass: false, reason: `not every test passes: ${run.failures.map((failure) => failure.name).join('; ')}` }
+  const before = baseline.names.filter((name) => reason !== 'fit' || name !== DID_NOT_LOAD)
+  const gone = namesGone(before, names)
+  if (gone.length > 0) return { pass: false, reason: `tests the mod had before this edit no longer run: ${gone.join('; ')}` }
+  if (reason === 'no behaviour change') {
+    const added = namesGone(names, before)
+    if (added.length > 0) return { pass: false, reason: `tests run that the mod did not have before this edit, which changes no behaviour: ${added.join('; ')}` }
+    const same = [...names].sort().join('\n') === [...before].sort().join('\n')
+    if (run.tests !== baseline.tests || !same) return { pass: false, reason: `the run has ${count(run.tests)} (${[...names].sort().join('; ')}), not the ${baseline.tests} the mod had before this edit (${[...before].sort().join('; ')})` }
+  } else if (isCount(baseline.tests) && run.tests < baseline.tests - (baseline.names.length - before.length)) {
+    return { pass: false, reason: `the run has ${count(run.tests)}, fewer than the ${baseline.tests} the mod had before this edit` }
+  }
+  return { pass: true, tests: run.tests }
+}
+
+// ------------------------------------------------------------------------------------- the stop (SPEC.md 8.5)
+
+export const KEEP_AS_IS = 'Keep the mod as it is now'
+export const PUT_BACK = 'Put it back as it was before this edit'
+
+// What a stopped edit asks: to keep is first, so a stray Enter moves no folder.
+export function stopOptions(): string[] {
+  return [KEEP_AS_IS, PUT_BACK]
+}
+
+// Whether the mod is put back: only on the person's own answer.
+export function putsBack(answer: string | null | undefined): boolean {
+  return answer === PUT_BACK
+}
+
+// The record of a stopped build or edit: as it was, marked stopped. What is no record stays what it was.
+export function stoppedRecord<T>(record: T): T {
+  return isBuildRecord(record) ? { ...record, stopped: true } : record
 }
