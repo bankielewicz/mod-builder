@@ -7,7 +7,8 @@ Everything mod-builder is known not to do, or to do in a way worth knowing first
 - **It is not a sandbox.** The guard reads a tool's name and a path prefix, and the gates compare hashes. It
   catches a skipped step and a changed test or spec. A shell command can still write any file; what it changed
   under `tests/` or in `SPEC.md` stops the next gate, and `hooks/` is not hashed.
-- **While a build is open, no other plugin's folder can be written** in that session, until the build is Done.
+- **While a build or an edit is open, no other plugin's folder can be written** in that session, until it is
+  Done or ended with `/mod-builder stop`.
 - **A session that ends mid-build leaves its folder bound to it**: no other session can name that folder.
 - **A build taken to Done opens other plugins' folders again**, whatever folder it named.
 - **When the session's state can't be read**, a write into a plugin's folder is refused, but a write into a mod

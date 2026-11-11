@@ -1975,8 +1975,9 @@ already agreed difference is not shown again."
 Plan 35: `dd055b9` (two existing tests follow the fix), `e0f530d` red, `1d74844` green; 373 module tests,
 599 node tests, validate passes. The verifier's first verdict was FAIL for one reason only: the worktree
 was found on `main` partway through its run (the reflog has "checkout: moving from edit-skill to main" at
-15:09 UTC; neither the verifier nor the building session ran it, and no session's transcript on the machine
-shows who did). Everything else was reproduced in a disposable worktree. With `edit-skill` checked out
+15:09 UTC; neither the verifier nor the building session ran it, and a search of this machine's Claude Code
+and Codex transcripts for a `git checkout` or `git switch` at that minute found none, so who did is not
+known). Everything else was reproduced in a disposable worktree. With `edit-skill` checked out
 again, clean at `1d74844`, the six commands and the end check passed: PASS, 6 mutants.
 
 As built (`registerChanges` in the rules):
@@ -2037,8 +2038,9 @@ gates only, not again outside. [ran]
    typecheck. This edit is a repair. Red is entered, tests only". The test was corrected at Red, Red passed
    on "the test files typecheck", 8.4's question listed `tests/hi.test.tsx: 1 line added, 1 line removed`,
    and nothing under `hooks/` needed a change.
-3. **A mod with no test file** (its `tests/` taken away). It is an edit, not a repair: Red wrote the first
-   test file, two tests. Red's gate first refused ("still at phase 4 (Red). Not passed: the typecheck
+3. **A mod with no test file** (its `tests/` taken away). The gate's first answer: "As it stands it does
+   not pass: test. It has no test file, and nothing else fails: Red is entered, and ends as in any edit."
+   Red wrote the first test file, two tests. Red's gate first refused ("still at phase 4 (Red). Not passed: the typecheck
    exited 1", with the output's last lines); the test was corrected and Red passed. Done: 2 tests.
 4. **An edit through Red that changes an existing test** ("make the pane line read hello instead of hi").
    8.4's question: "These test files are not as they were before this edit: - tests/hi.test.tsx: 3 lines
