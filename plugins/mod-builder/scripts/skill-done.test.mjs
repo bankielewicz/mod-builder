@@ -1,5 +1,6 @@
 // Tests for what the build skill says of SPEC.md 7.11: at Scaffold every test has to pass, and at Done the model
-// offers nothing this plugin does not have (no edit skill, no sharing step).
+// offers nothing this plugin does not have (no sharing step). Since 0.2.0 (SPEC.md 8.9, step 3) Done names the
+// edit skill as how a finished mod is changed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -15,10 +16,10 @@ const section = (number) => {
   return (from < 0 ? '' : body.slice(from, next < 0 ? undefined : from + 4 + next)).replace(/\s+/g, ' ');
 };
 
-test('Done says to offer nothing else: no edit skill, no sharing step, and how a finished mod is changed', () => {
+test('Done says how a finished mod is changed, with the edit skill, and to offer nothing else: no sharing step', () => {
   const done = section(8);
-  assert.match(done, /Offer nothing else\. This plugin has no edit skill and no sharing step yet: there is no `\/mod-builder:edit`, and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here\./);
-  assert.match(done, /A change to a finished mod is made by hand, or by a new build in a fresh folder\./);
+  assert.match(done, /Tell them that a change to the finished mod, or a repair after a Claude Code update, is made with `\/mod-builder:edit <mod folder> <what to change>`\./);
+  assert.match(done, /Offer nothing else: this plugin has no sharing step yet, and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here\./);
 });
 
 test('Done still says what to tell the person, and never to push', () => {
@@ -41,10 +42,10 @@ test('the skill is still under 200 lines, with no line over 115 characters outsi
 
 // ------------------------------------------------------------------- what the tests' reader asked for
 
-test('Done makes no offer but the one that says there is none', () => {
+test('Done makes no offer but the one that says there is none, and names the edit skill once', () => {
   const rest = section(8)
-    .replace(/Offer nothing else\. This plugin has no edit skill and no sharing step yet: there is no `\/mod-builder:edit`, and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here\./, '')
-    .replace(/A change to a finished mod is made by hand, or by a new build in a fresh folder\./, '');
+    .replace(/Tell them that a change to the finished mod, or a repair after a Claude Code update, is made with `\/mod-builder:edit <mod folder> <what to change>`\./, '')
+    .replace(/Offer nothing else: this plugin has no sharing step yet, and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here\./, '');
   assert.doesNotMatch(rest, /\boffer|\bsuggest|\bshar|GitHub|\bedit\b/i);
 });
 
