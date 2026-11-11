@@ -2257,6 +2257,8 @@ are the record that tests came first.
 - This section as written: "Approve as written (Recommended)".
 - A build's typecheck names its test files as an edit's does (8.12 to 8.14), in this change: "Yes, in 0.3.0
   (Recommended)". It is built with step 2 of 9.8.
+- A way back from Green to Red, for every build and edit: "Back to Red, with my approval (Recommended)"
+  (9.11).
 
 ### 9.8 How it gets built
 
@@ -2271,10 +2273,13 @@ hand, 8.26), and no model is named in a shipped agent without the owner's say. S
 2. **The closed Scaffold** (9.4): the rules, the script, the gate.
 3. **The reader** (9.3): the rules that read its answer and count rounds; the hooks module's two-call gate,
    the `turn.complete` hook, the question; the pane's rows.
-4. **The opt-in agents** (9.5): registration and offer, the guard's rule by agent, both skills' wording
+4. **The way back to Red** (9.11): the rules (when it is offered, how that Red ends, the count), the
+   hooks module's `back_to_red` call and question, the pane's row. Added by the owner on 2026-11-11.
+5. **The opt-in agents** (9.5): registration and offer, the guard's rule by agent, both skills' wording
    with `skill-creator`.
-5. **The demonstration**, by the building session and then the driving session (9.9).
-6. **The documents**, both manifests at 0.3.0, `BACKLOG.md` item 1 struck.
+6. **The demonstration**, by the building session and then the driving session (9.9).
+7. **The documents**, both manifests at 0.3.0, `BACKLOG.md` item 1 struck and item 18 cut to its retry
+   count (9.11 takes "going back one phase").
 
 ### 9.9 What "it works" means for 0.3.0
 
@@ -2293,6 +2298,10 @@ With the plugin loaded by `--plugin-dir`, on sonnet:
    the implementer's `Write` to a test file at Green is refused; the build reaches Done.
 6. A build and an edit without `--agents` run to Done as in 0.2.0, with one reader per Red.
 7. A record stored by 0.2.0 still reads and runs.
+8. A build at Green whose test run fails twice is told of `back_to_red`; called with it, the mod asks; "Not
+   yet" keeps it at Green; the approving answer puts it at Red with tests open and code closed; a changed
+   test is asked about, read by the reader and hashed again; the build reaches Done, and the pane shows the
+   return (9.11).
 
 ### 9.10 Step 1, the probes (2026-11-11, the building session)
 
@@ -2359,4 +2368,32 @@ hooks that log). Five sessions; each line below was read in a session's debug lo
    otherwise, and `claude plugin validate` says so); a tool's arguments are top-level keys of the
    `tool.call` event, beside `tool` [types: `ToolCallReserved`]; `$.store` kept the probe's values from one
    session to the next in the same folder.
+
+### 9.11 A way back to Red, with the person's approval (added 2026-11-11; not built before its step)
+
+From the driving session's file to the building session. A side agent's note: a test frozen at Red that is
+itself wrong stalls Green, and stop-and-restart is the only exit (dearer with `--agents`). The owner, asked
+whether 0.3.0 adds a way back: "Back to Red, with my approval (Recommended)", for every build and edit, not
+only with `--agents`. It takes the "going back one phase" half of `BACKLOG.md` item 18, and it is the one
+exception to "no phase goes back" (3.3, 8.3).
+
+- **When it is offered.** Green's gate, refused twice in a row because the test run fails (not for
+  validate, the typecheck, the load or the version alone), says in its answer that the gate can be called
+  with `back_to_red: true`. It is never taken without that call and the person's answer.
+- **The question**, asked by the mod: "Go back to Red to change the tests?", naming the tests that fail,
+  with "Not yet" first and one approving label. Any other answer keeps the build at Green.
+- **What going back does.** The record's phase is Red again: test files open, everything else closes,
+  exactly Red's table. Nothing is deleted or reverted; the code written at Green stays as it is and is
+  closed. With `--agents`, only the test-writer may write, as at any Red.
+- **How that Red ends.** The test files typecheck; at least one test file differs from the hashes taken
+  when Red first passed; and the tests need not fail anew by assertion alone, because the code exists.
+  The rule that fits is the plan's to propose and say why (at least: the test run is not "every failing
+  test fails for a reason other than assertion"). Any test file that existed at the first Red and is
+  changed or gone is asked about as in 8.4, against a copy kept from the first Red. Then the reader reads
+  the changed tests (9.3), and the hashes are taken again.
+- **7.10 holds:** every check of that Red judges test files, which are open.
+- **A bound:** going back is counted in the record and shown in the pane; after two returns in one build
+  the gate's answer says so and still asks, so the person sees it.
+- **A build whose Red was skipped** (the refactor route, a repair whose tests fit) may go back too: Red is
+  then entered for the first time, tests only, and ends as a repair's entered Red does.
 
