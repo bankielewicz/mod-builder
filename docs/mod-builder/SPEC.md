@@ -2985,3 +2985,32 @@ a denied spawn; tests changed after the answer (Red's other checks run on them b
 asked of the engine; the turn-end hook's guards (another session's record, an id the session did not
 start, a turn that ended with no answer, a teammate's turn); a record stopped, moved or taken while the
 gate ran; a registration that fails. Not provoked in the test world: the hook rethrowing.
+
+### 9.23 The tests leave nothing, as built; and a test file ends whatever its tests left open (2026-11-11)
+
+**Plan 40** (9.21, note 1): `35e0303` (existing tests: every temporary folder through `tempDir`), `0bea55a`
+red, `74ceafd` green; verifier PASS, every check reproduced and 11 mutants each failing its named test; 412
+module tests, 696 node tests and validate pass [ran, by the implementer and the verifier]. A whole run of
+the node tests with `TMPDIR` set to an empty folder now leaves one name there, `claude-<user id>`, which
+Claude Code's `plugin validate` makes [ran, twice: by the implementer and by the verifier]; before, 377.
+As built it is 9.21's reading: one folder `mod-builder-run-*` for each test process, removed when the
+process ends, on a signal too; a process killed outright leaves that one folder, and a test holds that
+limit.
+
+**A test file that never ended** (a side agent's note, passed on by the owner, 2026-11-11: "Twice this
+session a test run sat for 15 to 25 minutes and had to be stopped by hand ... That limit ends a test, not
+the process around it ... Consider asking for a fix or a listed limit"). The building session had set it
+aside as out of scope; that was wrong, since every agent is now told to set `TMPDIR`. **Reproduced**
+[ran, at `74ceafd`, `TMPDIR` naming a folder that does not exist, each file under `timeout 40`]:
+`changes`, `changes-integrity`, `page-rules` and `refresh-docs` did not end; `lookup` ended at once. The
+cause: each of the four opens its stand-in site and then asks for a temporary folder outside its `try`;
+when that throws, the site is never closed, and its server keeps the process alive. **The fix** [ran, in
+a copy]: the helper's server no longer counts as a reason for its process to stay alive
+(`server.unref()`); the four files then fail within a second, and all 700 node tests pass. Built as a
+plan of its own, with a test that starts such a file and gives it 20 seconds. Read by an agent that did
+not write the tests (12 mutants, 3 survived without effect on the fix); the one gap it found, a test
+leaning on the order of lines in another file, is corrected.
+
+**Left as it is:** the tests that open a site before their `try`; an overall time limit on a test run in
+CI (the repository's workflow is not changed in 0.3.0; `docs/development` will say to set `TMPDIR` and to
+give a run a limit, at the documents step).
