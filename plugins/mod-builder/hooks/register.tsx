@@ -7,7 +7,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
-  approvalHint, changesIn, checksKey, commandOf, countRefusal, doneToast, newChecks, openedLine, pagesIn, paneModel, parseTestRun, refreshedToast, refusalsKey, settledChecks, stoppedKey, testResult, typecheckResult, withCheck, withResult,
+  approvalHint, changesIn, checksKey, commandOf, countRefusal, doneToast, newChecks, openedLine, pagesIn, paneModel, parseTestRun, agreedHashes, registersOf, untestedChanges, untestedEvidence, untestedGate, untestedQuestion, refreshedToast, refusalsKey, settledChecks, stoppedKey, testResult, typecheckResult, withCheck, withResult,
   APPROVE_NO_CHANGE, baselineVerdict, editApprovalOptions, editApprovalQuestion, editFolderVerdict, editRedGate, editSpecGate, editSpecKept, entryKind,
   isEditSkill, isOpenRecord, isTestPath, isKeptOut, keptTestsGate, mayRefactor, namesGone, newEditRecord, nextPhaseOf, phaseLabelOf, putsBack, recordKind, refactorRecord, repairRedGate,
   restoreFolder, stopOptions, stoppedFolder, stoppedRecord, testChangeEvidence, testChangeGate, testChangeOptions, testChangeQuestion, testFilesChanged, testFilesToAsk, testHashesOf, versionGate,
@@ -15,7 +15,7 @@ import {
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, pluginFolderBeingMade, redGate,
   scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
-import type { AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
+import type { UntestedFile, AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
 
 type Engine = EngineInterface
 
@@ -391,7 +391,9 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   const kept = isEdit ? await editUnchanged($, record) : await unchanged($, record, true)
   if (!kept.pass) return { verdict: kept }
   // An edit's test files are named to the typecheck, wherever they sit (SPEC.md 8.14).
-  const testFiles = isEdit ? Object.keys(testHashesOf((await hashMod($, modDir)) ?? {})) : []
+  // The mod as the four checks find it: what the person is asked about later must be what was checked.
+  const checked = isEdit ? await hashMod($, modDir) : null
+  const testFiles = isEdit ? Object.keys(testHashesOf(checked ?? {})) : []
   // What the test run is held to: the count Red recorded, else (a skipped Red) the baseline's, else none.
   const testsBefore = record.testsAtRed ?? record.baseline?.tests ?? 0
   const manifest = await readText($, `${modDir}/.claude-plugin/plugin.json`)
@@ -488,7 +490,48 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   // The version is greater than before the edit (SPEC.md 8.3); judged again at Verify, where plugin.json is open.
   const greater = versionGate(record.baseline?.version ?? null, version)
   if (!greater.pass) return { verdict: greater }
-  return { verdict, evidence: `${evidence}; version ${String(version)}${record.baseline?.version == null ? '' : `, after ${record.baseline.version}`}`, note: copy, change }
+  const versioned = `${evidence}; version ${String(version)}${record.baseline?.version == null ? '' : `, after ${record.baseline.version}`}`
+  // With Red skipped no new test covers the change: the person is asked, with the list of what changed (SPEC.md
+  // 8.23), here where every file it names can still be changed.
+  if (record.red !== 'skipped' || record.baseline === undefined) return { verdict, evidence: versioned, note: copy, change }
+  const asked = await askOfUntested($, record, record.baseline, registersOf(said(validated)), checked)
+  if ('verdict' in asked) return asked
+  return { verdict, evidence: asked.evidence === '' ? versioned : `${versioned}; ${asked.evidence}`, note: copy, change: { ...change, agreed: asked.agreed } }
+}
+
+// The question of an edit whose Red was skipped (SPEC.md 8.23). At Green it is always asked; at Verify, only when
+// a file is not as the person agreed at Green. Answers the refusal, or what the gate's evidence says of the
+// answer (nothing when nothing was asked) with the hashes the answer covered.
+async function askOfUntested($: Engine, record: BuildRecord, baseline: Baseline, registersNow: string[], checked: Hashes | null): Promise<Step | { evidence: string; agreed: Hashes }> {
+  const { modDir } = record
+  const tsconfig = () => readText($, `${modDir}/tsconfig.json`)
+  const now = await hashMod($, modDir)
+  if (now === null) return refuse('the mod\'s files could not be read')
+  const covered = agreedHashes(now, await tsconfig(), baseline.hashes)
+  // A file written while the four checks ran was not checked: nobody is asked to agree to it.
+  const asChecked = checked === null ? null : hashGate(agreedHashes(checked, await tsconfig(), baseline.hashes), covered)
+  if (asChecked === null || !asChecked.pass) return refuse(`the mod changed while its checks ran${asChecked === null ? '' : ` (${asChecked.reason})`}: ask again`)
+  const isAgain = record.phase === 'verify' && record.agreed !== undefined
+  const changed = isAgain ? untestedChanges(record.agreed as Hashes, now, await tsconfig(), baseline.hashes) : untestedChanges(baseline.hashes, now, await tsconfig())
+  if (isAgain && changed.length === 0) return { evidence: '', agreed: covered }
+  const files: UntestedFile[] = []
+  for (const file of changed) {
+    files.push({ ...file, before: file.how === 'added' ? null : await readText($, `${baseline.restore}/${file.path}`), after: file.how === 'missing' ? null : await readText($, `${modDir}/${file.path}`) })
+  }
+  const question = untestedQuestion({ files, tests: baseline.tests, restore: baseline.restore, registersBefore: baseline.registers ?? null, registersNow, isAgain })
+  let answer: string | null = null
+  try {
+    answer = await $.ui.ask(question, { options: testChangeOptions(), header: 'Changes' })
+  } catch {
+    return refuse('the person could not be asked about the changes made with Red skipped (the question was dismissed, or nobody is at this session)')
+  }
+  const verdict = untestedGate(answer)
+  if (!verdict.pass) return { verdict }
+  // What the answer covers is what was listed: a file changed while the question was open is not agreed to.
+  const after = await hashMod($, modDir)
+  const same = after === null ? null : hashGate(covered, agreedHashes(after, await tsconfig(), baseline.hashes))
+  if (same === null || !same.pass) return refuse(`the mod changed while the person was being asked${same === null ? '' : ` (${same.reason})`}: ask again`)
+  return { evidence: untestedEvidence(changed, answer as string), agreed: covered }
 }
 
 // ------------------------------------------------------------------------------------------ an edit (SPEC.md 8)
@@ -555,6 +598,7 @@ async function takeBaseline($: Engine, modDir: string, sessionId: string): Promi
   const baseline: Baseline = {
     version, tests: verdict.tests, names: testNames(tested.output) ?? [], hashes,
     spec: spec === null ? null : { length: spec.now.length, hash: spec.now.hash }, failed: verdict.failed, restore, at,
+    registers: registersOf(said(validated)),
   }
   const failing = typechecked.find((one) => one.ran.exitCode !== 0)
   const quoted: Record<Check, string> = {

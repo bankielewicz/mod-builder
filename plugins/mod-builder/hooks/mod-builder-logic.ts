@@ -653,6 +653,7 @@ export type BuildRecord = {
   skipped?: SkipReason // an edit's: why its Red is skipped
   attempt?: Attempt // the pane's: what the last refused gate of the current phase said (SPEC.md 8.18)
   finished?: Finished // the pane's: what the gate that ended Verify counted
+  agreed?: Hashes // an edit whose Red was skipped: the files the person's answer at Green covered (SPEC.md 8.23)
   stop?: Stop // the pane's: what the person answered when an edit was stopped, and the folder kept beside the mod
 }
 
@@ -1305,6 +1306,7 @@ export type Baseline = {
   spec: SpecRecord | null // SPEC.md, or null when there was none
   failed: Check[] // the checks it did not pass
   restore: string // the folder the restore point is in (SPEC.md 8.5)
+  registers?: string[] // what validate said each module hooks, answers and calls (SPEC.md 8.23); none before 8.23
   at: number // milliseconds since 1970
 }
 
@@ -1479,6 +1481,140 @@ export function putsBack(answer: string | null | undefined): boolean {
 // The record of a stopped build or edit: as it was, marked stopped. What is no record stays what it was.
 export function stoppedRecord<T>(record: T): T {
   return isBuildRecord(record) ? { ...record, stopped: true } : record
+}
+
+// ------------------------------------------------------------ an edit whose Red was skipped asks (SPEC.md 8.23)
+
+// With Red skipped no new test covers what the edit changed: the old tests passing is all Green can show. So
+// Green's gate asks the person, with the list of what changed. This is their judgement of a list, not proof
+// that behaviour is unchanged.
+
+// What `claude plugin validate` said of each hooks module: what it hooks, which command it answers, what it
+// calls, what of the environment it reads and writes. Its lines that name a module's file ("./register.tsx
+// calls: ..."), without their mark, in the order printed. Validate adds to a call the functions it is made
+// through ("$.fs.read (via readText)"): those are left out, since moving a call between functions changes
+// nothing the mod reaches.
+export function registersOf(validated: string | null | undefined): string[] {
+  if (typeof validated !== 'string') return []
+  const found: string[] = []
+  for (const line of validated.split('\n').map((text) => text.replace(/\r$/, ''))) {
+    const said = line.match(/^\s*\S+\s+(\.\/\S+ [a-z][a-z .]*: \S.*)$/)
+    if (said !== null) found.push((said[1] as string).replace(/ \(via [^)]*\)/g, '').trim())
+  }
+  return found
+}
+
+// A path the engine writes into a mod it loads in an interactive session (probed, SPEC.md 8.23): under
+// `.claude-plugin/types/`, its `tsconfig.json`, its `.gitignore`, and one `index.d.ts` in a folder for each set of
+// types. Only those: any other file there is the mod's own and is listed, since code can be put anywhere. A
+// declaration file holds no behaviour.
+export function isEngineWritten(relPath: string): boolean {
+  const parts = typeof relPath === 'string' ? relPath.split('/').filter((part) => part !== '' && part !== '.') : []
+  if (parts.length < 3 || parts[0] !== '.claude-plugin' || parts[1] !== 'types') return false
+  if (parts.length === 3) return parts[2] === 'tsconfig.json' || parts[2] === '.gitignore'
+  return parts.length === 4 && parts[3] === 'index.d.ts'
+}
+
+// Whether a `tsconfig.json` is the one the engine lays at the top of a mod it loads: it holds only the line
+// that extends the types' own.
+export function isEngineTsconfig(text: string | null | undefined): boolean {
+  if (typeof text !== 'string') return false
+  try {
+    const read = JSON.parse(text) as unknown
+    return typeof read === 'object' && read !== null && !Array.isArray(read) && Object.keys(read).length === 1 && (read as { extends?: unknown }).extends === './.claude-plugin/types/tsconfig.json'
+  } catch {
+    return false
+  }
+}
+
+// The files the person's answer covers, by hash: every file of the mod but `SPEC.md` (approved at Spec), the
+// test files (held to the baseline's hashes) and what the engine wrote. `tsconfig` is the text of the mod's
+// top-level tsconfig.json as it is now, or null.
+export function agreedHashes(now: Hashes, tsconfig: string | null, baseline: Hashes | null = null): Hashes {
+  const kept: Hashes = {}
+  if (!isHashes(now)) return kept
+  const hadTsconfig = isHashes(baseline) && Object.prototype.hasOwnProperty.call(baseline, 'tsconfig.json')
+  for (const path of Object.keys(now)) {
+    if (path === 'SPEC.md' || isTestPath(path) || isEngineWritten(path)) continue
+    if (path === 'tsconfig.json' && !hadTsconfig && isEngineTsconfig(tsconfig)) continue
+    kept[path] = now[path] as string
+  }
+  return kept
+}
+
+// The files that are not as recorded, among those an answer covers: against the baseline at Green, and at
+// Verify against what the person agreed to at Green.
+export function untestedChanges(recorded: Hashes, now: Hashes, tsconfig: string | null, baseline: Hashes | null = recorded): { path: string; how: 'changed' | 'missing' | 'added' }[] {
+  if (!isHashes(recorded) || !isHashes(now)) return []
+  return changedFiles(agreedHashes(recorded, null, null), agreedHashes(now, tsconfig, baseline))
+}
+
+// One file of the question: what it held before the edit, from the restore point, and what it holds now. Null
+// where there is no such file, or it can't be read as text.
+export type UntestedFile = { path: string; how: 'changed' | 'missing' | 'added'; before: string | null; after: string | null }
+
+export const LISTED_FILES = 20
+
+export type UntestedAsk = {
+  files: readonly UntestedFile[]
+  tests: number | null // how many tests the baseline had
+  restore: string // the restore point's folder
+  registersBefore: readonly string[] | null // registersOf at the baseline; null when it kept none
+  registersNow: readonly string[]
+  isAgain: boolean // asked at Verify, for what changed since the answer at Green
+}
+
+// What the person is asked (SPEC.md 8.23): each file with its lines added and removed against the restore
+// point's copy, at most 20 of them; what the mod registers and calls when that differs; how many tests are held
+// unchanged; and where the mod as it was is kept.
+export function untestedQuestion(ask: UntestedAsk): string {
+  const files = (Array.isArray(ask?.files) ? ask.files : []).filter((file) => typeof file === 'object' && file !== null && typeof file.path === 'string')
+  const said = (count: number) => (count === 1 ? '1 line' : `${count} lines`)
+  const text = ['Red was skipped for this edit, so no new test covers what it changed.']
+  if (files.length === 0) text.push(ask?.isAgain === true ? 'No file is changed since you agreed at Green.' : 'No file but SPEC.md is changed.')
+  else text.push(ask?.isAgain === true ? 'These files are not as they were when you agreed at Green (lines are counted against the mod before this edit):' : 'These files are not as they were before this edit:')
+  const sorted = [...files].sort((one, other) => (one.path < other.path ? -1 : one.path > other.path ? 1 : 0))
+  for (const file of sorted.slice(0, LISTED_FILES)) {
+    const before = typeof file.before === 'string' ? file.before : null
+    const after = typeof file.after === 'string' ? file.after : null
+    if (file.how === 'added') text.push(`- ${file.path}: added${after === null ? '' : ` (${said(lineChanges('', after).added)})`}`)
+    else if (file.how === 'missing') text.push(`- ${file.path}: gone${before === null ? '' : ` (${said(lineChanges(before, '').removed.length)} removed)`}`)
+    else if (before === null || after === null) text.push(`- ${file.path}: changed (its lines can't be compared)`)
+    else {
+      const changes = lineChanges(before, after)
+      text.push(`- ${file.path}: ${said(changes.added)} added, ${said(changes.removed.length)} removed`)
+    }
+  }
+  if (sorted.length > LISTED_FILES) text.push(`and ${sorted.length - LISTED_FILES} more ${sorted.length - LISTED_FILES === 1 ? 'file' : 'files'}`)
+  const before = Array.isArray(ask?.registersBefore) ? ask.registersBefore.filter((line) => typeof line === 'string') : null
+  const now = Array.isArray(ask?.registersNow) ? ask.registersNow.filter((line) => typeof line === 'string') : []
+  if (before !== null && (before.length !== now.length || before.some((line, index) => line !== now[index]))) {
+    text.push('What the mod hooks, answers and calls is not as before this edit:')
+    for (const line of before) text.push(`    before: ${line}`)
+    if (before.length === 0) text.push('    before: nothing')
+    for (const line of now) text.push(`    now: ${line}`)
+    if (now.length === 0) text.push('    now: nothing')
+  }
+  const isOne = isCount(ask?.tests) && ask.tests === 1
+  const tests = isOne ? 'The 1 test' : isCount(ask?.tests) ? `The ${ask.tests} tests` : 'The tests'
+  text.push(`${tests} the mod had before this edit ${isOne ? 'is held unchanged and passes: it is' : 'are held unchanged and pass: they are'} the only check of behaviour.`)
+  text.push(`The mod as it was before this edit is kept in ${typeof ask?.restore === 'string' ? ask.restore : 'its restore point'}.`)
+  text.push('Go on with these changes?')
+  return text.join('\n')
+}
+
+// Only the person's own approving answer passes; "Not yet" is first among the options (testChangeOptions).
+export function untestedGate(answer: string | null | undefined): Verdict {
+  if (answer === GO_ON) return { pass: true }
+  return { pass: false, reason: `the person has not agreed to the changes made with Red skipped (answer: ${answer == null ? 'none' : JSON.stringify(answer)})` }
+}
+
+// What the gate's evidence says of the answer: the answer and the files it covered, at most 20 named.
+export function untestedEvidence(files: readonly { path: string; how: 'changed' | 'missing' | 'added' }[], answer: string): string {
+  const asked = (Array.isArray(files) ? files : []).filter((file) => typeof file === 'object' && file !== null && typeof file.path === 'string')
+  const covered = asked.slice(0, LISTED_FILES).map((file) => `${file.path} (${file.how === 'missing' ? 'gone' : file.how})`)
+  const more = asked.length > LISTED_FILES ? ` and ${asked.length - LISTED_FILES} more` : ''
+  return `the person answered ${JSON.stringify(answer)} for what changed with Red skipped: ${covered.length === 0 ? 'no file' : covered.join(', ')}${more}`
 }
 
 // ------------------------------------------------------------------------------------- the pane (SPEC.md 8.18)
@@ -1956,6 +2092,10 @@ export function paneModel(input: PaneInput): PaneModel {
   // Each phase that passed before the current one, with what its gate saw. Knowledge and Describe have no rows:
   // the Knowledge block is theirs.
   const passedBlocks = (): PaneBlock[] => phases.slice(0, at).filter((one) => one !== 'knowledge' && one !== 'describe' && seen(one) !== '').map((one) => evidenceBlock(kind, one, seen(one)))
+  // What the person agreed to at a gate about files (8.4's question at Red, 8.23's at Green), as rows: the parts
+  // of those gates' evidence that say an answer and what it covered. Verify and Done show them, since neither
+  // frame shows Red's or Green's evidence whole.
+  const agreedRows = (...from: Phase[]): Cell[][] => from.flatMap((one) => evidenceRows(seen(one)).filter((cells) => /^ {2}the person answered .+ for[ :]/.test((cells[0] as Cell).text)))
   if (own.stopped === true) {
     // What became of the folder: for an edit, the person's answer and the two folders' names.
     const stop: Record<string, unknown> | null = isPlainObject(own.stop) ? own.stop : null
@@ -1978,8 +2118,9 @@ export function paneModel(input: PaneInput): PaneModel {
     }
   }
   const blocks: PaneBlock[] = []
-  // After a refusal, until the next gate passes: what each phase may write (the Guard frame).
-  if (refused !== null) blocks.push(writeTable(kind, phase, red, modDir))
+  // After a refusal, until the next gate passes: what each phase may write (the Guard frame). At Done it comes
+  // last: what was built and checked, which counts the refusals, must not be pushed out of view by it.
+  if (refused !== null && phase !== 'done') blocks.push(writeTable(kind, phase, red, modDir))
   let state = base
   let tone: Tone = 'dim'
   // What did not pass at Verify, which a refusal's header keeps.
@@ -2025,6 +2166,7 @@ export function paneModel(input: PaneInput): PaneModel {
       if (failed.length > 0) tone = 'error'
       blocks.push(...checkBlocks(checks, modDir, knowledge.version))
       blocks.push({ heading: heading('Unchanged since their gates'), rows: [row(`  SPEC.md since approval \u00b7 the test files since ${isSkipped ? 'the baseline' : 'Red'}`, { text: 'compared by hash', tone: 'dim' })] })
+      blocks.push({ heading: agreedRows('red', 'green').length === 0 ? [] : heading('What the person agreed to'), rows: agreedRows('red', 'green') })
       blocks.push({ heading: [], rows: attemptRows() })
       status = `verify \u00b7 ${passed} of 4 checks passed${running === undefined ? '' : ` \u00b7 ${CHECK_LABELS[running]} running`}${notPassed === '' ? '' : ` \u00b7 ${notPassed}`}`
       break
@@ -2047,9 +2189,10 @@ export function paneModel(input: PaneInput): PaneModel {
       const where = phases.filter((one) => (refusals.counts[one] ?? 0) > 0).map((one) => TITLES[one])
       blocks.push({
         heading: heading('What was checked'),
-        rows: [row(`  ${seen('verify') === '' ? 'validate, the tests, the typecheck and a headless load' : shortHashes(shown(seen('verify')), true)}`), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
+        rows: [...(seen('verify') === '' ? [row('  validate, the tests, the typecheck and a headless load')] : evidenceRows(seen('verify'))), ...agreedRows('red', 'green'), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
       })
       blocks.push({ heading: heading('Try it'), rows: [row(`  claude --plugin-dir ${modDir}`, ...(finished.command === null ? [] : [{ text: 'then', tone: 'dim' as Tone }, `/${finished.command}`]))] })
+      if (refused !== null) blocks.push(writeTable(kind, phase, red, modDir))
       status = null
       break
     }
