@@ -140,10 +140,13 @@ and look at the failures: the gate passes only when the run holds more tests tha
 opens with `AssertionError` (a failed `expect(...)`), and at least one failing test has a new name. A file
 that fails to load does not count, and neither does a test that throws before its `expect` (a `TypeError` from
 code that is not written yet): drive the mod through its events, as the template's tests do, so that a missing
-behaviour shows as a failed `expect`. Then call the gate. After the test run it typechecks the mod, tests
-included, against this build's types: `tests/` closes for good when Red passes, so a test that does not
-typecheck is refused here, with the compiler's last lines, while you can still change it. Then it hashes every
-file under `tests/`; from here a changed test stops the build at the next gate, whatever tool changed it.
+behaviour shows as a failed `expect`. Then call the gate. It first checks that `hooks/` is still as the
+scaffold laid it, and again before it passes: if it names a file there, lay `hooks/` alone again with
+`scaffold.sh --again-hooks <mod folder> <mod-name>` (the script of phase 4) and remove each file it lists as
+extra. After the test run it typechecks the mod, tests included, against this build's types: `tests/` closes
+for good when Red passes, so a test that does not typecheck is refused here, with the compiler's last lines,
+while you can still change it. Then it hashes every file under `tests/`; from here a changed test stops the
+build at the next gate, whatever tool changed it.
 
 ### 6. Green
 

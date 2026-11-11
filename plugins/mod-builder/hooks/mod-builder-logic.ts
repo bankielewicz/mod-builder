@@ -283,8 +283,10 @@ export const SCAFFOLD_NAMED = 10
 // name in the mod's manifest, exited 0 and said "as laid". With differences it exits 1 and names them, and the
 // refusal says how the files are put back: they are open at Scaffold, so nothing strands (SPEC.md 7.10). Any
 // other end (a name that is no mod name, a script that could not run) is no evidence and refuses too.
-// `again` is the command that lays the three files again, as the model is to run it.
-export function scaffoldKeptGate(check: Run, again: string): Verdict {
+// `again` is the command that lays the files again, as the model is to run it. At Red (SPEC.md 9.17) the check
+// is of hooks/ alone, which closed when Scaffold passed: a shell command is the only thing that can have changed
+// it, and a shell command, the one given, puts it back, so nothing strands there either.
+export function scaffoldKeptGate(check: Run, again: string, at: 'scaffold' | 'red' = 'scaffold'): Verdict {
   const ran = ended(check, 'the scaffold check')
   if (!ran.pass) return ran
   const differs = scaffoldDiffers(check.output)
@@ -293,6 +295,12 @@ export function scaffoldKeptGate(check: Run, again: string): Verdict {
     const named = differs.slice(0, SCAFFOLD_NAMED).join('; ')
     const more = differs.length > SCAFFOLD_NAMED ? `; and ${differs.length - SCAFFOLD_NAMED} more` : ''
     const extra = differs.some((line) => line.startsWith('extra: ')) ? ', and remove each file named as extra' : ''
+    if (at === 'red') {
+      return {
+        pass: false,
+        reason: `hooks/ is not as the scaffold laid it (${named}${more}): it closed when Scaffold passed, and the mod's code is written at Green, after its tests. Put it back with: ${again}${extra}. When that command refuses, a link or a folder stands where a file goes: remove it with a shell command first`,
+      }
+    }
     return {
       pass: false,
       reason: `hooks/ and tests/ are not as the scaffold laid them (${named}${more}): at Scaffold they hold the template and nothing else, and the mod's behaviour is written at Red (tests) and Green (code). Put them back with: ${again}${extra}`,

@@ -367,7 +367,8 @@ async function typecheckAll($: Engine, typecheck: Typecheck, modDir: string, tes
 // Whether hooks/ and tests/ are as the scaffold laid them (SPEC.md 9.15): the scaffold script's own check, run
 // here for the name in the mod's manifest. The model's word is not asked. A manifest that can't be read gives
 // no name, which the script refuses.
-async function scaffoldKept($: Engine, modDir: string): Promise<{ verdict: Verdict; said: string }> {
+// At Red it is asked of hooks/ alone (SPEC.md 9.17): the tests are Red's to change.
+async function scaffoldKept($: Engine, modDir: string, at: 'scaffold' | 'red' = 'scaffold'): Promise<{ verdict: Verdict; said: string }> {
   let name = ''
   try {
     const found = (JSON.parse((await readText($, `${modDir}/.claude-plugin/plugin.json`)) ?? '') as { name?: unknown }).name
@@ -376,8 +377,9 @@ async function scaffoldKept($: Engine, modDir: string): Promise<{ verdict: Verdi
     // No name then.
   }
   const script = `${$.plugin.root}/scripts/scaffold.sh`
-  const checked = await run($, ['bash', script, '--check', modDir, name], SCAFFOLD_MS)
-  return { verdict: scaffoldKeptGate(checked, `bash "${script}" --again "${modDir}" ${name}`), said: said(checked) }
+  const only = at === 'red' ? '-hooks' : ''
+  const checked = await run($, ['bash', script, `--check${only}`, modDir, name], SCAFFOLD_MS)
+  return { verdict: scaffoldKeptGate(checked, `bash "${script}" --again${only} "${modDir}" ${name}`, at), said: said(checked) }
 }
 
 // What a refused typecheck quotes: the compiler's last lines, and always the types file it failed against, though
@@ -917,6 +919,9 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
     case 'red': {
       const kept = await unchanged($, record, false)
       if (!kept.pass) return { verdict: kept }
+      // hooks/ is still the template (SPEC.md 9.17): asked before the tests are run against it.
+      const laid = await scaffoldKept($, modDir, 'red')
+      if (!laid.verdict.pass) return quoting(laid.verdict, lastLines(laid.said))
       // The tests are hashed before the run and after it: what is recorded must be what ran.
       const before = await hashTests($, modDir)
       const linked = before === null ? undefined : Object.keys(before).find((path) => before[path] === NOT_A_FILE)
@@ -937,9 +942,12 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       if (!same.pass) return refuse(`tests/ changed while the tests ran (${same.reason}): ask again`)
       const still = await unchanged($, record, false)
       if (!still.pass) return { verdict: still }
+      // And once more: the tests failed against the template, not against code written while they ran.
+      const stillLaid = await scaffoldKept($, modDir, 'red')
+      if (!stillLaid.verdict.pass) return quoting(stillLaid.verdict, lastLines(stillLaid.said))
       return {
         verdict,
-        evidence: `${verdict.tests} tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${types.join(', ')}); ${Object.keys(testHashes).length} files under tests/ hashed`,
+        evidence: `hooks/ is as the scaffold laid it; ${verdict.tests} tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${types.join(', ')}); ${Object.keys(testHashes).length} files under tests/ hashed`,
         change: { testsAtRed: verdict.tests as number, testHashes },
       }
     }
