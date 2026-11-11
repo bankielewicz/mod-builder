@@ -2118,7 +2118,7 @@ From the driving session's file to the building session:
   probe of an edit that changes an existing test (8.27, point 4, on a copy of `hi-probe`) stands for it.
 - The switch of the worktree to `main` at 15:09 UTC (8.26) is still unexplained.
 
-## 9. Change 0.3.0: a test reader, a closed Scaffold, and the plugin's own agents (design for the owner's approval, 2026-11-11)
+## 9. Change 0.3.0: a test reader, a closed Scaffold, and the plugin's own agents (approved by the owner, 2026-11-11)
 
 The owner, asked what is next after 0.2.0: "approved" (the plugin's own subagents, `BACKLOG.md` item 1, with
 the two gaps 0.2.0's runs showed). Nothing in this section is built. Tags: [ran] this session ran it, [types]
@@ -2244,7 +2244,7 @@ are the record that tests came first.
 - A reader for the code (a review agent at Green); coverage as a gate (item 13); logging (item 2).
 - The two points still open from 0.2.0 that the owner has not decided: "no behaviour change" claimed under
   the plain "Approve"; a build naming no test files to the typecheck. The second is small and is built here
-  if the owner says so (9.7).
+  now part of this change (9.7); the first stays open.
 
 ### 9.7 The owner's decisions (2026-11-11)
 
@@ -2253,8 +2253,9 @@ are the record that tests came first.
 - A reader's finding: "Hold Red, then ask me (Recommended)".
 - Scaffold: "Template only (Recommended)".
 - When agents run: "Reader always, others opt-in (Recommended)".
-- Open: approval of this section as written; whether a build's typecheck names its test files as an edit's
-  does (8.14) in this change.
+- This section as written: "Approve as written (Recommended)".
+- A build's typecheck names its test files as an edit's does (8.12 to 8.14), in this change: "Yes, in 0.3.0
+  (Recommended)". It is built with step 2 of 9.8.
 
 ### 9.8 How it gets built
 
