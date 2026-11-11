@@ -133,9 +133,8 @@ test('more than ten differences are named as ten and a count of the rest', async
   expect(first).not.toContain('hooks/f11.ts')
 })
 
-test('only Scaffold asks: Red does not run the scaffold check', async ($, on) => {
+test('only Scaffold asks of hooks/ and tests/ together: Red never runs --check, whose answer would hold its own tests against it', async ($, on) => {
   const w = await standing(on, 'red')
-  w.runs.scaffold = { exitCode: 1, stdout: 'changed: hooks/register.tsx\n' }
   await gate($)
   expect(checks(w)).toEqual([])
 })

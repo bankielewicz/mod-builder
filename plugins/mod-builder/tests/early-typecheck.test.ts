@@ -75,7 +75,7 @@ test('a build refused at Red for the typecheck can still change its tests, and p
   expect(await write($, NEW_TEST)).toBeUndefined()
   expect(await write($, `${MOD}/hooks/register.tsx`)).toMatch(/phase 5 \(Red\)/)
   w.runs.tsc = { exitCode: 0, stdout: '' }
-  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${TYPES_SHA}); 2 files under tests/ hashed). The build is now at phase 6 (Green).`)
+  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${TYPES_SHA}); 2 files under tests/ hashed). The build is now at phase 6 (Green).`)
   expect(kept(w).testsAtRed).toBe(2)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['tests/counts.test.tsx', 'tests/pane.test.tsx'])
 })
@@ -83,14 +83,15 @@ test('a build refused at Red for the typecheck can still change its tests, and p
 test('at Red the typecheck runs after the test run, in the tsconfig\'s folder, and not at all when the test run is refused', async ($, on) => {
   const w = await standing(on, 'red')
   await gate($)
-  expect(w.ran.map(word)).toEqual(['test', 'compiler?', 'typecheck'])
-  expect(w.ranIn.at(-1)).toBe(CONFIG.slice(0, CONFIG.lastIndexOf('/')))
+  expect(w.ran.map(word)).toEqual(['--check-hooks', 'test', 'compiler?', 'typecheck', '--check-hooks'])
+  // The run before the last: Red's second check of hooks/ follows the typecheck (SPEC.md 9.17).
+  expect(w.ranIn.at(-2)).toBe(CONFIG.slice(0, CONFIG.lastIndexOf('/')))
   w.ran.length = 0
   w.store[`build:${MOD}`] = { ...kept(w), phase: 'red', testsAtRed: null, testHashes: null }
   w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2769\n' }
   expect((await gate($)).split('\n')[0]).toBe('mod-builder: still at phase 5 (Red). Not passed: claude plugin test exited 0: no test fails yet.')
-  expect(w.ran.map(word)).toEqual(['test'])
+  expect(w.ran.map(word)).toEqual(['--check-hooks', 'test'])
 })
 
 test('a refused typecheck at Red is quoted by the compiler\'s last 20 lines, and no more', async ($, on) => {
@@ -104,7 +105,7 @@ test('at Red the typecheck runs once against each distinct types file, in the or
   const against = watched(w)
   const other = await sha256(SANDBOXED_TEXT)
   const order = [[TYPES_SHA, TYPES], [other, SANDBOXED]].sort((one, two) => ((one[0] as string) < (two[0] as string) ? -1 : 1))
-  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${order.map((one) => one[0]).join(', ')}); 2 files under tests/ hashed). The build is now at phase 6 (Green).`)
+  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${order.map((one) => one[0]).join(', ')}); 2 files under tests/ hashed). The build is now at phase 6 (Green).`)
   expect(typechecks(w).length).toBe(2)
   expect(against).toEqual(order.map((one) => one[1]))
 })
@@ -272,6 +273,6 @@ test('at Red the typecheck is not run for any refusal of the test run', async ($
     const answer = await gate($)
     expect(answer).toMatch(/^mod-builder: still at phase 5 \(Red\)\. Not passed: /)
     expect(answer).not.toMatch(/typecheck/)
-    expect(w.ran.map(word)).toEqual(['test'])
+    expect(w.ran.map(word)).toEqual(['--check-hooks', 'test'])
   }
 })

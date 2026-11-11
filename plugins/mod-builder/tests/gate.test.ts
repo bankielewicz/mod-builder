@@ -209,7 +209,7 @@ test('Red to Green passes when a test new since Scaffold fails by assertion, and
   w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test'
   w.files[`${MOD}/tests/deep/more.test.tsx`] = 'another'
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed\)\. The build is now at phase 6 \(Green\)\.$/)
+  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(hooks\/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed\)\. The build is now at phase 6 \(Green\)\.$/)
   expect(kept(w).testsAtRed).toBe(2)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['tests/counts.test.tsx', 'tests/deep/more.test.tsx', 'tests/pane.test.tsx'])
 })
@@ -396,8 +396,9 @@ test('a test file changed while the tests ran is not recorded as what ran: Red s
   await walk($, w, 'red')
   w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test'
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  w.whileRunning = () => {
-    w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test, swapped while it ran'
+  // While the test run is under way, not while Red's check of hooks/ before it is (SPEC.md 9.17).
+  w.whileRunning = (argv) => {
+    if (argv.includes('test')) w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test, swapped while it ran'
   }
   expect(await gate($)).toMatch(/Not passed: tests\/ changed while the tests ran \(not as recorded: tests\/counts\.test\.tsx \(changed\)\): ask again/)
   expect(phase(w)).toBe('red')

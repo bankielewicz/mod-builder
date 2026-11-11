@@ -302,6 +302,8 @@ test('Red ends on a new test failing by assertion and the typecheck; the test fi
   expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Red\) passed \(3 tests ran, a new or changed one failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 test files hashed, not as at the baseline: lib\/y\.test\.tsx, tests\/width\.test\.ts\)\. The edit is now at phase 5 \(Green\)\.$/)
   expect(w.asked.length).toBe(1)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['lib/y.test.tsx', 'tests/pane.test.tsx', 'tests/width.test.ts'])
+  // An edit has no template: its Red never asks the scaffold script about hooks/ (SPEC.md 9.17).
+  expect(w.ran.filter((argv) => argv.some((one) => one.endsWith('/scaffold.sh')))).toEqual([])
   expect((JSON.parse(w.files[CONFIG] ?? '{}') as { files: string[] }).files).toEqual([`${MOD}/lib/y.test.tsx`, `${MOD}/tests/pane.test.tsx`, `${MOD}/tests/width.test.ts`])
 })
 
