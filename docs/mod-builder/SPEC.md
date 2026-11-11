@@ -2117,3 +2117,177 @@ From the driving session's file to the building session:
 - **8.7 item 2** (`prompt-count` through Red) was not run by the driving session: the building session's
   probe of an edit that changes an existing test (8.27, point 4, on a copy of `hi-probe`) stands for it.
 - The switch of the worktree to `main` at 15:09 UTC (8.26) is still unexplained.
+
+## 9. Change 0.3.0: a test reader, a closed Scaffold, and the plugin's own agents (design for the owner's approval, 2026-11-11)
+
+The owner, asked what is next after 0.2.0: "approved" (the plugin's own subagents, `BACKLOG.md` item 1, with
+the two gaps 0.2.0's runs showed). Nothing in this section is built. Tags: [ran] this session ran it, [types]
+read in the build's types file, [docs] read in the cached pages, [design] not yet shown.
+
+### 9.1 Why
+
+- **Tests that can't catch much pass every gate.** The driving session's edit of `tool-log` (8.29) reached
+  Done with a width table for wide characters whose three new tests use one character, `漢`; the emoji
+  ranges the table leaves out are named in no test [ran: `scratch/mydemo7/tool-log/tests/width.test.tsx`].
+  Red checks that a test fails by assertion, not that the tests are worth having.
+- **A build's Scaffold may write everything** (3.3's table), so a model can write the whole mod there and
+  Red has nothing left to fail (8.21's open point, deferred by the owner to this change).
+- **The three TDD agents exist only in this repository's `.claude/agents/`.** A mod built elsewhere has the
+  main model write the tests and the code. The owner, 2026-11-10: "option 1 for MVP. option 2 post mvp."
+
+### 9.2 Facts this rests on
+
+- A mod can list an agent of its own with `$.agent.register({ name, description, prompt, tools,
+  omitClaudeMd })`, hide it from the model with an `agent.offer` hook that answers `{ isOffered: false }`,
+  and start it with `$.agent.spawn({ subagentType: '<plugin>:<name>', prompt, description })`, which
+  resolves with `{ agentId }` once the agent has started; the agent's answer is its own `turn.complete`,
+  which carries that `agentId` [types: the example at `tool.register`/`agent.register`, and
+  `AgentSpawnResult`].
+- [ran, 2.1.322, a probe mod `rp`]: `$.agent.register (rp): rp:reader listed`; a spawn from the tool's
+  `tool.call` hook started it (`agent.spawn` saw `subagentType` `rp:reader`); the agent's `Glob`, `Read` and
+  `Write` calls reached the mod's own `tool.call` hook with `e.agentId` set; a `{ deny }` from that hook
+  refused the agent's `Write`, and the file was not made.
+- [ran, the same probe]: a `tool.call` hook that waits for the agent's answer is skipped after 10 seconds
+  ("tool.call hook skipped: ran past its 10s budget") and the tool call fails. **So a gate can't wait for
+  an agent inside one call.** The agent's finish also reaches the main model as a notice of its own.
+- Whether `turn.complete`'s `e.answer` holds the agent's whole final text, and whether a session's
+  `turn.complete` hook still runs for an agent that finishes after the gate call returned: [design]; the
+  building session probes both before the plan (9.8).
+- Anthropic's page on plugin agents is not in the mod-documentation cache. Where a shipped agent is a file
+  under the plugin's `agents/`, the building session reads Anthropic's plugin pages for it and cites them.
+
+### 9.3 The test reader (every build and edit)
+
+An agent the mod itself starts and judges, so the evidence is what the mod observed and not what the main
+model says. The owner: "Reader always, others opt-in (Recommended)" and "Hold Red, then ask me
+(Recommended)".
+
+- **Registered by the mod** at `session.start` as `mod-builder:test-reader`, withheld from the model
+  (`agent.offer`), with the tools `Read`, `Grep` and `Glob` only. It writes nothing; the guard refuses any
+  write by it as it refuses any other.
+- **When.** At Red's gate of a build, an edit or a repair's entered Red, after every other check of that
+  gate has passed (so the reader never reads tests the gate would refuse anyway). Not when Red is skipped.
+- **Two calls, because of the 10-second budget.** The gate's call starts the reader, records its
+  `agentId` and the hashes of the test files it was started on, and answers "the test reader is reading;
+  call the gate again when it has reported". A `turn.complete` hook for that `agentId` writes the reader's
+  answer into the record. The next gate call reads it. A gate call while the reader still runs answers
+  "still reading" and starts nothing. If the test files' hashes differ from those the reader was started
+  on, the answer is discarded and a new reader is started.
+- **What it is asked**, in a prompt the mod builds and the main model never sees or edits: the mod's
+  `SPEC.md` (for an edit, the change's section), the test files that are new or changed, and the question
+  "for each behaviour the spec lists, which test would fail if that behaviour were wrong, and which
+  behaviours have none". It is told to answer in a fixed form: one line `VERDICT: PASS` or
+  `VERDICT: FINDINGS`, then one line for each finding (`- <test file>: <what no test would catch>`), at most
+  10. It is told what never counts as a finding: style, naming, a missing test for something the spec
+  does not list.
+- **Read by a rule, not by a model:** `VERDICT: PASS` on its first line passes. `VERDICT: FINDINGS` with
+  at least one finding line holds Red and the gate's answer quotes the findings. Anything else (no verdict
+  line, an empty answer, a denied spawn, no answer after 10 minutes) is "the reader gave no verdict" and
+  counts as a round with no result.
+- **The exit, so nothing strands (7.10):** `tests/` is open at Red, so findings can be mended and the gate
+  asked again; each such call with changed tests is a round. After **two** rounds that did not pass, the
+  gate asks the person: the findings of the last round (or "the reader gave no verdict"), with "Not yet"
+  first and "Go on with these tests" second. Only the approving label passes. The answer is evidence and
+  is shown in the pane.
+- **Cost:** one agent per round, reading only; at most two rounds before the person is asked.
+- **Limit:** the reader is a model's judgement of tests before the code exists. It can pass tests that
+  catch little and flag tests that are fine; the person's answer after two rounds is the last word.
+
+### 9.4 Scaffold is the template and nothing else
+
+The owner: "Template only (Recommended)".
+
+- `scaffold.sh` records, in the build's record, the hash of every file it laid under `hooks/` and `tests/`.
+- **Scaffold's gate requires those files to hash as laid, and no other file to exist under `hooks/` or
+  `tests/`.** A refusal names the files that differ. The files are open at Scaffold, so a build that wrote
+  ahead can put them back (the gate's answer says how: run the scaffold again) and nothing strands.
+- What Scaffold may still change: `.claude-plugin/plugin.json`, `types/*.d.ts`, `README.md`, and the
+  placeholders the template names. The building session lists, before the plan, exactly which bytes of the
+  `pane` template a build must be able to change at Scaffold (its title, its command's name) and how the
+  hash allows for them: either the scaffold script writes them from its arguments before hashing, or they
+  move out of `hooks/`.
+- From there all behaviour is written test-first: tests at Red, code at Green.
+- An edit has no Scaffold and is not changed by this.
+
+### 9.5 The plugin's own test-writer and implementer (opt-in)
+
+The owner: "Reader always, others opt-in" and, on what stands as evidence, "The gates' hashes
+(Recommended)". So the shipped agents make no commits and need no repository; the mod's hashes at each gate
+are the record that tests came first.
+
+- **Asked for** with a word in the command: `/mod-builder:build --agents <what the mod should do>` and
+  `/mod-builder:edit --agents <folder> <change>`. The record keeps that the build uses agents. Without the
+  word, the main model writes tests and code as in 0.2.0.
+- **Two agents, registered by the mod** and offered to the model only while a record that uses agents is
+  open: `mod-builder:test-writer` (tools `Read`, `Grep`, `Glob`, `Write`, `Edit`) and
+  `mod-builder:implementer` (the same tools). Neither has `Bash`: the gates run every check, and without a
+  shell every write an agent makes goes through the guard.
+- **Each writes only what its phase allows, by the guard that already exists**, and one thing more, for a
+  record that uses agents: at Red the guard refuses a write to a test file unless the call's `e.agentId` is
+  an agent started as `mod-builder:test-writer` (the mod keeps the ids from its `agent.spawn` hook); at
+  Green it refuses a write under `hooks/` unless it is an `mod-builder:implementer`. So the main model
+  cannot write the tests or the code of such a build itself, and neither agent can write the other's
+  files.
+- **The plan is the spec.** The test-writer is given the approved `SPEC.md` section and the gate's last
+  refusal, if any; the implementer is given the same and the failing tests. Neither sees the other's
+  transcript. The skill says how the main model starts each and what it passes.
+- The verifier of this repository's three is not shipped as an agent: its work (rerunning every check
+  from a clean state, comparing changed paths with what is allowed, hashes) is what Verify's gate already
+  does. Its mutants are 9.6.
+- If an agent is refused or fails, the skill tells the person; `/mod-builder stop` is the way out, as now.
+
+### 9.6 Not in 0.3.0
+
+- **Mutants as a gate.** A mutant run needs the code, and the code exists only after the tests are closed,
+  so a gate on it would judge files that can no longer be changed (7.10). A mutant report after Green, for
+  information only, goes to `BACKLOG.md`.
+- A reader for the code (a review agent at Green); coverage as a gate (item 13); logging (item 2).
+- The two points still open from 0.2.0 that the owner has not decided: "no behaviour change" claimed under
+  the plain "Approve"; a build naming no test files to the typecheck. The second is small and is built here
+  if the owner says so (9.7).
+
+### 9.7 The owner's decisions (2026-11-11)
+
+- 0.3.0 is the plugin's own subagents: "approved".
+- Evidence that tests came first: "The gates' hashes (Recommended)".
+- A reader's finding: "Hold Red, then ask me (Recommended)".
+- Scaffold: "Template only (Recommended)".
+- When agents run: "Reader always, others opt-in (Recommended)".
+- Open: approval of this section as written; whether a build's typecheck names its test files as an edit's
+  does (8.14) in this change.
+
+### 9.8 How it gets built
+
+As 7.1, 7.2 and 8.9, with two changes after 0.2.0's run: the building session works in a worktree of its
+own (the repository's folder is shared with other sessions, and its branch was switched once by an unknown
+hand, 8.26), and no model is named in a shipped agent without the owner's say. Steps:
+
+1. **Probes**, written into this section before any plan: `turn.complete`'s `e.answer` for an agent the mod
+   started, whole and after the gate call returned; a spawn denied by another plugin's hook; the guard
+   seeing `e.agentId` for a write by an agent the main model started with the Agent tool, with agent teams
+   on and off; what a registered agent inherits (CLAUDE.md, skills, other plugins' hooks).
+2. **The closed Scaffold** (9.4): the rules, the script, the gate.
+3. **The reader** (9.3): the rules that read its answer and count rounds; the hooks module's two-call gate,
+   the `turn.complete` hook, the question; the pane's rows.
+4. **The opt-in agents** (9.5): registration and offer, the guard's rule by agent, both skills' wording
+   with `skill-creator`.
+5. **The demonstration**, by the building session and then the driving session (9.9).
+6. **The documents**, both manifests at 0.3.0, `BACKLOG.md` item 1 struck.
+
+### 9.9 What "it works" means for 0.3.0
+
+With the plugin loaded by `--plugin-dir`, on sonnet:
+
+1. An edit of a copy of `tool-log` asking for display-width cutting, whose Red holds only tests for one
+   wide character: the reader answers with findings that name the untested ranges, Red is held, and the
+   gate's answer quotes them.
+2. Two rounds without a pass raise the question; "Not yet" keeps the edit at Red; "Go on with these tests"
+   passes and is shown as evidence.
+3. A reader that gives no verdict line is "no verdict", never a pass. Test files changed while the reader
+   reads cause a new read.
+4. A new build that writes its hook's behaviour at Scaffold is refused by Scaffold's gate, which names the
+   file; after the scaffold is laid again it passes, and the build reaches Done.
+5. With `--agents`: the main model's own `Write` to a test file at Red is refused; the test-writer's passes;
+   the implementer's `Write` to a test file at Green is refused; the build reaches Done.
+6. A build and an edit without `--agents` run to Done as in 0.2.0, with one reader per Red.
+7. A record stored by 0.2.0 still reads and runs.
