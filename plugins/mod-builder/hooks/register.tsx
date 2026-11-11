@@ -13,7 +13,7 @@ import {
   restoreFolder, stopOptions, stoppedFolder, stoppedRecord, testChangeEvidence, testChangeGate, testChangeOptions, testChangeQuestion, testFilesChanged, testFilesToAsk, testHashesOf, versionGate,
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, pluginFolderBeingMade, redGate,
-  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
+  scaffoldGate, scaffoldKeptGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
 import type { UntestedFile, AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
 
@@ -21,6 +21,7 @@ type Engine = EngineInterface
 
 // How long each check may run, in milliseconds. `$.process.run` allows ten minutes at most (the build's types).
 const VALIDATE_MS = 120000
+const SCAFFOLD_MS = 60000
 const TEST_MS = 300000
 const TYPECHECK_MS = 300000
 const LOAD_MS = 120000
@@ -361,6 +362,22 @@ async function typecheckAll($: Engine, typecheck: Typecheck, modDir: string, tes
     all.push({ ran: await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd), against: types })
   }
   return all
+}
+
+// Whether hooks/ and tests/ are as the scaffold laid them (SPEC.md 9.15): the scaffold script's own check, run
+// here for the name in the mod's manifest. The model's word is not asked. A manifest that can't be read gives
+// no name, which the script refuses.
+async function scaffoldKept($: Engine, modDir: string): Promise<{ verdict: Verdict; said: string }> {
+  let name = ''
+  try {
+    const found = (JSON.parse((await readText($, `${modDir}/.claude-plugin/plugin.json`)) ?? '') as { name?: unknown }).name
+    if (typeof found === 'string') name = found
+  } catch {
+    // No name then.
+  }
+  const script = `${$.plugin.root}/scripts/scaffold.sh`
+  const checked = await run($, ['bash', script, '--check', modDir, name], SCAFFOLD_MS)
+  return { verdict: scaffoldKeptGate(checked, `bash "${script}" --again "${modDir}" ${name}`), said: said(checked) }
 }
 
 // What a refused typecheck quotes: the compiler's last lines, and always the types file it failed against, though
@@ -856,6 +873,10 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
     case 'scaffold': {
       const kept = await unchanged($, record, false)
       if (!kept.pass) return { verdict: kept }
+      // hooks/ and tests/ hold the template and nothing else (SPEC.md 9.4, 9.15). Asked first, so that a build
+      // that wrote ahead is told so before a failing test tells it something else.
+      const laid = await scaffoldKept($, modDir)
+      if (!laid.verdict.pass) return quoting(laid.verdict, lastLines(laid.said))
       const validated = await validate($, modDir)
       const tests = await test($, modDir)
       const verdict = scaffoldGate(validated, tests)
@@ -865,9 +886,12 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       // The typecheck too (SPEC.md 7.10): hooks/ and types/ close when Scaffold passes, and Red ends on a typecheck.
       const types = await typecheckNow($, modDir)
       if (!Array.isArray(types)) return types
+      // And once more, after the checks: what they judged is what closes when Scaffold passes.
+      const still = await scaffoldKept($, modDir)
+      if (!still.verdict.pass) return quoting(still.verdict, lastLines(still.said))
       return {
         verdict,
-        evidence: `claude plugin validate --strict exited 0; ${verdict.tests} tests ran; the typecheck passes (types sha256 ${types.join(', ')})`,
+        evidence: `hooks/ and tests/ are as the scaffold laid them; claude plugin validate --strict exited 0; ${verdict.tests} tests ran; the typecheck passes (types sha256 ${types.join(', ')})`,
         change: { testsAtScaffold: verdict.tests as number, namesAtScaffold: testNames(tests.output) },
       }
     }

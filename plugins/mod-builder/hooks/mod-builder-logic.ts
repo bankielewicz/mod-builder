@@ -268,6 +268,39 @@ export function scaffoldGate(validate: Run, test: Run): Verdict {
   return { pass: true, tests: run.tests }
 }
 
+// What `scaffold.sh --check` printed, as the differences it names: its lines that open with "changed: ",
+// "missing: " or "extra: ", in its order, each once.
+export function scaffoldDiffers(output: string): string[] {
+  if (typeof output !== 'string') return []
+  const lines = output.replace(/\r\n/g, '\n').split('\n').filter((line) => /^(changed|missing|extra): ./.test(line))
+  return [...new Set(lines)]
+}
+
+// How many differences a refusal names; the rest are counted.
+export const SCAFFOLD_NAMED = 10
+
+// Scaffold holds the template and nothing else (SPEC.md 9.4, 9.15): `scaffold.sh --check`, run by the gate for the
+// name in the mod's manifest, exited 0 and said "as laid". With differences it exits 1 and names them, and the
+// refusal says how the files are put back: they are open at Scaffold, so nothing strands (SPEC.md 7.10). Any
+// other end (a name that is no mod name, a script that could not run) is no evidence and refuses too.
+// `again` is the command that lays the three files again, as the model is to run it.
+export function scaffoldKeptGate(check: Run, again: string): Verdict {
+  const ran = ended(check, 'the scaffold check')
+  if (!ran.pass) return ran
+  const differs = scaffoldDiffers(check.output)
+  if (check.exitCode === 0 && differs.length === 0 && check.output.replace(/\r\n/g, '\n').split('\n').some((line) => line.startsWith('as laid: '))) return { pass: true }
+  if (check.exitCode === 1 && differs.length > 0) {
+    const named = differs.slice(0, SCAFFOLD_NAMED).join('; ')
+    const more = differs.length > SCAFFOLD_NAMED ? `; and ${differs.length - SCAFFOLD_NAMED} more` : ''
+    const extra = differs.some((line) => line.startsWith('extra: ')) ? ', and remove each file named as extra' : ''
+    return {
+      pass: false,
+      reason: `hooks/ and tests/ are not as the scaffold laid them (${named}${more}): at Scaffold they hold the template and nothing else, and the mod's behaviour is written at Red (tests) and Green (code). Put them back with: ${again}${extra}`,
+    }
+  }
+  return { pass: false, reason: `the scaffold check gave no answer to read (it exited ${check.exitCode})` }
+}
+
 // The typecheck alone, as Scaffold and Red end on it (SPEC.md 7.10): it ran to an exit code, and that code is 0.
 // Green and Verify judge theirs among the four checks, in verifyGate.
 export function typecheckGate(typecheck: Run): Verdict {

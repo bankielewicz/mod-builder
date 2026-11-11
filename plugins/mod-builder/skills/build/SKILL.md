@@ -117,30 +117,33 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.sh" <mod folder> <mod-name>
 Give the folder as the same absolute path the gate answered with in phase 1. It lays the `pane` template:
 `.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/register.tsx` and `tests/pane.test.tsx`, under the
 mod's name, and refuses to write over a file that is there: if it refuses, read its message and move nothing
-aside without asking the person. Set the manifest's `description` to the mod's own. Make only the changes the
-scaffold needs to be the right shape (a contract in `types/` if the mod keeps `$.state`, for example), checked
-against the build's types; behaviour comes in phases 5 and 6. The template is a pane with a command; when the
-mod is another shape (a band, a status line), reshape `hooks/register.tsx` and `tests/pane.test.tsx` here,
-with every test passing. Then call the gate, which runs the validator and the tests, records the tests that
-exist now, and typechecks the mod against this build's types. Every test has to pass here: a test that fails at
-Scaffold, or a module that throws as it loads, is refused with the test run's last lines. Everything but
-`tests/` closes when Scaffold passes and opens again only at Green, and Red ends on the same typecheck: declare
-here whatever the tests of phase 5 will name (a type in the contract, a value the module exports), because a
-test can't typecheck against what is not there.
+aside without asking the person. Set the manifest's `description` to the mod's own, and add what only declares:
+a contract in `types/` if the mod keeps `$.state`, checked against the build's types. Leave `hooks/` and
+`tests/` exactly as the script laid them: at Scaffold they hold the template and nothing else, and the gate
+refuses a file there that is changed, missing or extra, and names it. The mod's behaviour comes in phases 5 and
+6, tests first. That holds for a mod of another shape than a pane with a command too (a band, a status line):
+its tests replace the template's at Red and its code the template's at Green. When the gate names a file, lay
+the three again with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.sh" --again <mod folder> <mod-name>`, which
+writes over them and deletes nothing, and remove each file it lists as extra. Then call the gate, which runs the
+validator and the tests, records the tests that exist now, and typechecks the mod against this build's types.
+Every test has to pass here: a test that fails at Scaffold, or a module that throws as it loads, is refused with
+the test run's last lines. Everything but `tests/` closes when Scaffold passes and opens again only at Green,
+and Red ends on the same typecheck: a test of phase 5 can name only what is there then, the template's module
+and what `types/` declares. So declare here a type the tests will name, and drive the mod through its events.
 
 ### 5. Red
 
 Write tests only, under `tests/`, for the behaviours the spec lists. Model them on `tests/pane.test.tsx` and
-the `plugin-authoring` skill's example test. Add tests to the scaffold's; leave the ones recorded at Scaffold
-as they are. Run `claude plugin test <mod folder>` yourself and look at the failures: the gate passes only
-when the run holds more tests than at Scaffold, every failure opens with `AssertionError` (a failed
-`expect(...)`), and at least one failing test has a new name. A file that fails to load does not count, and
-neither does a test that throws before its `expect` (a `TypeError` from code that is not written yet): drive
-the mod through its events, as the template's tests do, so that a missing behaviour shows as a failed
-`expect`. Then call the gate. After the test run it typechecks the mod, tests included, against this build's
-types: `tests/` closes for good when Red passes, so a test that does not typecheck is refused here, with the
-compiler's last lines, while you can still change it. Then it hashes every file under `tests/`; from here a
-changed test stops the build at the next gate, whatever tool changed it.
+the `plugin-authoring` skill's example test. Add tests to the scaffold's; when the mod is no pane with a
+command, replace the template's two tests with the mod's own. Run `claude plugin test <mod folder>` yourself
+and look at the failures: the gate passes only when the run holds more tests than at Scaffold, every failure
+opens with `AssertionError` (a failed `expect(...)`), and at least one failing test has a new name. A file
+that fails to load does not count, and neither does a test that throws before its `expect` (a `TypeError` from
+code that is not written yet): drive the mod through its events, as the template's tests do, so that a missing
+behaviour shows as a failed `expect`. Then call the gate. After the test run it typechecks the mod, tests
+included, against this build's types: `tests/` closes for good when Red passes, so a test that does not
+typecheck is refused here, with the compiler's last lines, while you can still change it. Then it hashes every
+file under `tests/`; from here a changed test stops the build at the next gate, whatever tool changed it.
 
 ### 6. Green
 
