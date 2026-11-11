@@ -17,7 +17,7 @@ const section = (number) => {
 const row = (number) => (body.split('\n').find((line) => line.startsWith(`| ${number} |`)) ?? '').split('|').map((cell) => cell.trim());
 
 test('the table of phases says Scaffold and Red each pass only when the typecheck passes', () => {
-  assert.equal(row(4)[4], 'validate passes, the tests run, the typecheck passes');
+  assert.equal(row(4)[4], 'validate passes, the tests pass, the typecheck passes');
   assert.equal(row(5)[4], 'more tests than at Scaffold, a new one failing on an assertion; the typecheck passes');
 });
 
