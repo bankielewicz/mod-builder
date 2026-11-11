@@ -2150,9 +2150,10 @@ read in the build's types file, [docs] read in the cached pages, [design] not ye
 - [ran, the same probe]: a `tool.call` hook that waits for the agent's answer is skipped after 10 seconds
   ("tool.call hook skipped: ran past its 10s budget") and the tool call fails. **So a gate can't wait for
   an agent inside one call.** The agent's finish also reaches the main model as a notice of its own.
+  (Not so when the tool call returns before the agent ends: 9.10, point 5.)
 - Whether `turn.complete`'s `e.answer` holds the agent's whole final text, and whether a session's
-  `turn.complete` hook still runs for an agent that finishes after the gate call returned: [design]; the
-  building session probes both before the plan (9.8).
+  `turn.complete` hook still runs for an agent that finishes after the gate call returned: both yes
+  [ran: 9.10, point 1].
 - Anthropic's page on plugin agents is not in the mod-documentation cache. Where a shipped agent is a file
   under the plugin's `agents/`, the building session reads Anthropic's plugin pages for it and cites them.
 
@@ -2292,3 +2293,70 @@ With the plugin loaded by `--plugin-dir`, on sonnet:
    the implementer's `Write` to a test file at Green is refused; the build reaches Done.
 6. A build and an edit without `--agents` run to Done as in 0.2.0, with one reader per Red.
 7. A record stored by 0.2.0 still reads and runs.
+
+### 9.10 Step 1, the probes (2026-11-11, the building session)
+
+[ran] on Claude Code 2.1.322, sonnet, interactive sessions in a terminal, the installed mod-builder switched
+off. Two probe mods in the building session's scratch folder: `ap` (registers `ap:reader`, with
+`omitClaudeMd`, and `ap:reader2`, without; both with the tools `Read`, `Grep`, `Glob`; both withheld by
+`agent.offer`; two tools that each spawn one and return at once; hooks on `agent.spawn`, `tool.call` and
+`turn.complete` that log) and `dn` (another plugin: an `agent.spawn` hook that denies `ap:reader2`, and
+hooks that log). Five sessions; each line below was read in a session's debug log or an agent's transcript.
+
+1. **`turn.complete` carries the agent's whole answer, after the tool call returned.** The spawning tool
+   call answered `{"model":"claude-sonnet-5-5","agentId":"a9fef595f11fafccc"}` at once. The mod's
+   `turn.complete` hook then ran with that `agentId`, `reason` `answer` and an `answer` of 4,987
+   characters, 12.8 s after the tool call had returned (in the other runs 15.3, 15.5, 20.1 and 22.2 s).
+   The answer began `VERDICT: PASS` and ended `END-OF-ANSWER`, and the final text in the agent's own
+   transcript is the same 4,987 characters. The event's keys: `answer`, `durationMs`, `isAborted`,
+   `turnId`, `agentId`, `reason`, `usage`. Two readers running at once were each heard, under their own
+   ids. The other plugin's `turn.complete` hook heard them too.
+2. **A spawn denied by another plugin's hook** resolves, it does not throw: `$.agent.spawn` answered
+   `{"deny":"Subagent spawn denied by a plugin: dn: no reader2 today"}`, with no `agentId`. The spawning
+   mod's own `agent.spawn` hook hears its own `$.agent.spawn` (its `next` resolved to the deny, or to the
+   started agent's `{ model, agentId }`). Tried in one load order only (`dn` loaded after `ap`; `dn`'s hook
+   ran first).
+3. **A write by an agent the main model started with the Agent tool reaches the mod's `tool.call` hook
+   with `e.agentId` set, with agent teams on and off** (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, and
+   unset). In both, the mod's `agent.spawn` hook saw `subagentType` `general-purpose`, no
+   `parentAgentId`, and `next` resolved to the same `agentId` the `Write` then carried: so an id kept
+   from the `agent.spawn` hook names the agent's type at its writes, as 9.5 needs. The engine ran the
+   agent in the background both times though the model asked for the foreground. **Not probed:** a
+   teammate in a terminal pane of its own. The types say such a teammate "runs no loop here", so its
+   writes would not reach this session's hooks [types: `AgentInfo.id`]; 9.5's rule could not see them.
+4. **What a registered agent has.**
+   - Tools: it listed `Read`, `Grep`, `Glob` and `advisor`, and answered "no such tool" for `Write`. So
+     `tools` keeps `Write` out, and one tool the mod did not name was there (`advisor`, which sessions on
+     this machine carry). The reader's prompt can't count on the list being exactly what was registered.
+   - CLAUDE.md: with `omitClaudeMd` the agent found no marker word from the project's `CLAUDE.md`;
+     without it, it quoted the marker. So `omitClaudeMd` works and is needed.
+   - Skills: none listed in its context, in either agent.
+   - Its first user turn is the spawn's `prompt`, word for word.
+   - Other plugins' hooks: the other plugin's `tool.call` hook heard each of the agent's `Glob` and `Read`
+     calls with its `agentId`, so another plugin can refuse or rewrite the reader's reads, and can deny
+     its spawn (point 2). The mod can't prevent either; a denied spawn is "the reader gave no verdict".
+   - Model: `claude-sonnet-5-5` in every spawn, the session's model; this machine also sets
+     `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, so what an agent inherits where that is unset was not shown.
+   - Not probed: the permission mode an agent runs under, and a `maxTurns`.
+5. **Contradicts 9.2 and 9.3: the main model is not told when a mod-started agent finishes.** In five of
+   five runs where the spawning tool call had returned before the agent ended, no notice reached the main
+   model: the log has `[enqueueAgentNotification] skipped taskId=<the agent> status=completed
+   taskPresent=true reason=already-notified`, the main conversation's transcript never names the agent
+   again, and the session sat at "Waiting for 1 background agent to finish" with no new turn. The agents
+   the model started with the Agent tool in the same sessions did bring a notice ("Agent ... finished").
+   So after 9.3's first gate call ("call the gate again when it has reported") nothing tells the model
+   the reader has reported.
+   **What does reach it** [ran]: from the mod's `turn.complete` hook,
+   `$.prompt.submit({ text })` resolved to `{ text, origin: { kind: 'plugin', name: 'ap' } }`; the
+   session showed "Prompt from the ap plugin" with the text, a main turn began, and the model did what
+   the text said (it called the mod's tool). The types say such a prompt is "a turn of its own, once the
+   session is idle" and passes through every other plugin's `prompt.submit` hook [types]. Not tried:
+   the same while the main model is in the middle of a turn; `$.session.append`; `$.ui.notify`.
+   **The design is not changed here**: this is for the driving session and the owner (9.8, the
+   instruction to stop on a contradiction).
+6. **Learned while writing the probes** [ran]: a hook given to `on` must be a function literal, and `$`
+   may be passed only to a function declared at the top of the module's file (the module does not load
+   otherwise, and `claude plugin validate` says so); a tool's arguments are top-level keys of the
+   `tool.call` event, beside `tool` [types: `ToolCallReserved`]; `$.store` kept the probe's values from one
+   session to the next in the same folder.
+
