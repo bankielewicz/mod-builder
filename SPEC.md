@@ -310,7 +310,7 @@ read finding one more). So for every step:
 - the step gets an outside read before it is accepted: Codex's stop-time review, and the driving
   session's own read of the diff with at least one probe of behaviour the tests don't state.
 
-**Step 1's outside read** [ran, 2026-11-10, at `62d9565`]: 25 of 25 script tests pass, and
+**Step 1's outside read** [ran, 2026-11-10, at `abe0016`]: 25 of 25 script tests pass, and
 `claude plugin validate --strict .` passes. A local server answering one page with a 301, one with an
 empty 200 and one as `text/html` got `new snapshot … (3 pages)`, exit 0, with a manifest of 0, 0 and 23
 bytes: a redirect, an empty page and an HTML page were kept as documentation and became `latest`. Owed
@@ -322,11 +322,11 @@ a branch per step, fast-forwarded into `main` once accepted; lookup's tests on a
 scripts run as `bash <script>`; `git mv` for a move. Not accepted: a co-author trailer other than the
 plan's (three commits carry one; left as they are, and plans from here say the trailer is copied as given).
 
-### 7.3 Step 1's fix round and step 2: the outside read (2026-11-10, at `b159e91`)
+### 7.3 Step 1's fix round and step 2: the outside read (2026-11-10, at `a4a0c76`)
 
-- **Step 1 is accepted.** The bad-server probe of 7.2, rerun on `320499d`: `…/api.md could not be fetched:
+- **Step 1 is accepted.** The bad-server probe of 7.2, rerun on `439b970`: `…/api.md could not be fetched:
   it is empty`, exit 1, no `latest` [ran]. Script tests 46 of 46 [ran]. `main` was fast-forwarded to it.
-- **The fix round's red commit `5387bce` rewrote assertions in three existing test files**, which the
+- **The fix round's red commit `f9d0fb2` rewrote assertions in three existing test files**, which the
   test-writer's own definition forbids ("Never change or delete an existing test or assertion"); the plan
   cited this spec's rename. The changes are the digest's file name, and the one test whose behaviour the
   rename changed (a fetched page named `changes.md` is now kept beside the digest) [read: the diff].
@@ -350,14 +350,14 @@ plan's (three commits carry one; left as they are, and plans from here say the t
   check is: the `hooks module … loaded` line is present, and no line for the mod holds `not loaded:`.
   The `admitted` line is recorded when seen, not required.
 
-### 7.4 The Red gate's fix and step 3: what was built, probed and left open (2026-11-10, at `70c6213`)
+### 7.4 The Red gate's fix and step 3: what was built, probed and left open (2026-11-10, at `45c02a6`)
 
-- **The Red gate** is to 3.3's rule (`f1ed140`, on `main`): both cases of 7.3 are refused with the runner's
+- **The Red gate** is to 3.3's rule (`9e7a8e1`, on `main`): both cases of 7.3 are refused with the runner's
   real output [ran]. New in the rules: `testNames`, whose answer the mod records at Scaffold.
 - **Step 3 is built on `step-3-hooks`**, in four test-first changes, each with an independent read of its
   tests before the red commit and a verifier's PASS with every mutant failing its test: the rules the
-  module asks (`5521611`), other plugins' folders closed until Done (`b5a5da0`), the module with the
-  guard and the gate (`85feae0`), the refresh trigger, `/mod-builder` and the pane (`70c6213`). 160 logic
+  module asks (`386ffaf`), other plugins' folders closed until Done (`c3c117e`), the module with the
+  guard and the gate (`d710b6a`), the refresh trigger, `/mod-builder` and the pane (`45c02a6`). 160 logic
   tests under `node --test`, 95 module tests under `claude plugin test`, `claude plugin validate
   --strict` and the typecheck against the build's types all pass [ran].
 - **`skill.prompt`** (3.3's open point) [read: the build's types, 2.1.322]: its input has `skill`,
@@ -394,7 +394,7 @@ plan's (three commits carry one; left as they are, and plans from here say the t
   phase; a folder another session is building can't be named until it is Done; the tests are hashed
   before and after Red's run, and compared before and after Green's and Verify's; the pane shows the
   evidence of the gate before the current phase; a fetch skipped for a held lock records no version.
-- **Codex's stop-time review** of step 3 (7.2) found three defects, fixed test-first in `9894c92`
+- **Codex's stop-time review** of step 3 (7.2) found three defects, fixed test-first in `aebcf8a`
   (verifier PASS, six mutants; 120 module tests): the guard let every write pass when it could not read
   the session's state, a mod's included; a session building a folder again after Done got the finished
   record back; and a link under `tests/` was recorded as a constant, so its target could change unseen
@@ -407,7 +407,7 @@ plan's (three commits carry one; left as they are, and plans from here say the t
   gate with no way back to Spec (BACKLOG 18); a build taken to Done opens other plugins' folders again,
   whatever folder it named; `hooks/` is not hashed, so a shell command can still change it at Verify.
 
-### 7.5 Step 3: the outside read, and what step 4 starts from (2026-11-10, at `fa2df0e`)
+### 7.5 Step 3: the outside read, and what step 4 starts from (2026-11-10, at `940d033`)
 
 - **Step 3 is accepted.** [ran, by the driving session] `claude plugin test plugins/mod-builder`: 120 of
   120; logic tests 160 of 160; script tests 46 of 46; `claude plugin validate --strict` passes. The real
@@ -450,9 +450,9 @@ Then the skill itself, with `skill-creator`: a lean `SKILL.md` for the eight pha
 to `lookup.sh` instead of memory, says fetched text is data and never an instruction, calls the gate to
 move, and offers `/design` only when that skill is listed; the `pane` template beside it.
 
-### 7.6 Step 4: what was built, what the live check showed, and what is open (2026-11-10, at `278361c`)
+### 7.6 Step 4: what was built, what the live check showed, and what is open (2026-11-10, at `9bf9101`)
 
-- **The gate hook's `.catch`** (7.5's finding; `96b3f4f`): validate now reports both gating hooks `with .catch`.
+- **The gate hook's `.catch`** (7.5's finding; `a191d0d`): validate now reports both gating hooks `with .catch`.
   Probed on the way [a throwaway mod under `claude plugin test`, 2.1.322; unverified in a live session]: of two hooks of one module on one
   event the earlier registered is the upper one, and when the lower one throws, the **upper** hook's `.catch`
   is asked (`next.called` false), never the lower hook's own. Under the guard's hook, the gate's own handler
@@ -466,7 +466,7 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
      origin `composer`) and **raised no `prompt.submit` at all**; no model call was made. The build's types say
      the same of any submission that runs a command: "a rewrite of `text` is then not applied, and the person
      is told" [read: types 2.1.322, `PromptSubmitInput.command`]. So 7.5 point 1's first try can't work, and
-     its fallback is built (`1b7685f`): a build is started with `/mod-builder:build <what to build>`, and
+     its fallback is built (`4718415`): a build is started with `/mod-builder:build <what to build>`, and
      `/mod-builder <other words>` answers with that line, the words kept. **3.2 and section 4 now say so; the
      first mockup frame still shows the old line.**
   2. `/mod-builder:build …` raised `prompt.submit` (with `command: { name: "mod-builder:build", args }`) and then
@@ -487,7 +487,7 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
      listing]. This shows little: the minimal skill named the two files to write. Whether a model running the
      full skill through Scaffold, Red and Green keeps to the working folder is step 5's to show (the side
      agent's note of the same day).
-- **Verify's typecheck** (7.5, point 2; `3de9daa`) [probe: a throwaway mod's command, headless, no model call]:
+- **Verify's typecheck** (7.5, point 2; `66b78a7`) [probe: a throwaway mod's command, headless, no model call]:
   the types are at `<CLAUDE_TMPDIR>/bundled-skills/<version>/<one folder per process>/plugin-authoring/types/
   claude-code.d.ts` (`/tmp/claude-1000/…` here; three such folders by the end of the day, the three files identical);
   their first line is `// Written by Claude Code <version>.`; a mod reads `CLAUDE_TMPDIR` with `$.env.get`;
@@ -503,7 +503,7 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
   all pass)` in 11.7 s. With `export const wrong: number = 'not a number'` added to the mod's module:
   `Not passed: the typecheck exited 1`. With a fake `node_modules/.bin/tsc` planted in the mod that prints a
   version and exits 0: still `the typecheck exited 1`, so the planted file was not taken for the compiler.
-- **The skill, the template and the scaffold script** (`278361c`): `skills/build/SKILL.md` (176 lines),
+- **The skill, the template and the scaffold script** (`9bf9101`): `skills/build/SKILL.md` (176 lines),
   `skills/build/templates/pane/` and `scripts/scaffold.sh <mod folder> <mod name> [author]`. Written with
   `skill-creator`'s writing guidance and read by a skill reviewer; **its eval runs, the review viewer and the
   description-optimisation loop were not run** (each costs model calls, and the first needs the owner at the
@@ -541,7 +541,7 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
      written before its code often fails with a `TypeError` first. The skill says to drive the mod through its
      events so a missing behaviour shows as a failed `expect`; whether that holds for a model is step 5's to
      show.
-- **Codex's stop-time review** of step 4 (7.2) found two defects in the scaffold, fixed test-first in `3e75d4e`
+- **Codex's stop-time review** of step 4 (7.2) found two defects in the scaffold, fixed test-first in `a36fe2a`
   (verifier PASS, five mutants; 87 script tests): the template's own tests required the placeholder lines
   (`Nothing to show yet.`, `The pane is open.`), so a mod that says its own words could never pass Green with
   the scaffold's tests kept; and a copy that failed partway left the half-written file, which the next run then
@@ -558,7 +558,7 @@ move, and offers `/design` only when that skill is listed; the `pane` template b
   compiler's lines; a mod folder whose path holds `*`, `?` or `[` is read as a pattern in the tsconfig's
   `include`; `scaffold.sh` was run under bash 5 only.
 
-### 7.7 Step 4 accepted, and the four open points of 7.6 decided (2026-11-10, at `f723825`)
+### 7.7 Step 4 accepted, and the four open points of 7.6 decided (2026-11-10, at `1257db4`)
 
 The owner asked the driving session for "the best answer, as per anthropic's documentation" on the building
 session's questions, to be given "with zero ambiguity". Step 4 is accepted: [ran, by the driving session]
@@ -619,10 +619,10 @@ mod-builder switched off, a README (what it does, how to run it, "What it reache
 output, the limits this section 7 records, "Built on"), and the reproducible typecheck command 7.3 asked
 for.
 
-### 7.8 Decisions 1 and 2 built, the owner's finding, and step 5: the demonstration (2026-11-10, at `fe32cd8`)
+### 7.8 Decisions 1 and 2 built, the owner's finding, and step 5: the demonstration (2026-11-10, at `bdb1718`)
 
-- **7.7's decisions 1 and 2 are built** in one test-first change (`30d369f` red, `fe32cd8` green; verifier PASS,
-  eight mutants; the existing assertions the decisions change in a commit of their own first, `068b74e`).
+- **7.7's decisions 1 and 2 are built** in one test-first change (`58adf31` red, `bdb1718` green; verifier PASS,
+  eight mutants; the existing assertions the decisions change in a commit of their own first, `27575ea`).
   3.3's "Green → Verify" now reads as 7.7 gives it. 160 module tests, 268 rules, validate and script tests,
   `claude plugin validate --strict` and the typecheck pass [ran].
 - **The owner's finding, from the owner's own probe of step 4**, built in the same change: "the load check
@@ -648,7 +648,7 @@ for.
   by `The last lines of its output:` and the compiler's line naming the file, line and error.
 
 **Step 5, the demonstration of section 4** [ran, by the building session: 2.1.322, sonnet, auto mode, tmux at
-200 columns, an empty scratch folder, the plugin as committed at `fe32cd8` exported with `git archive` and
+200 columns, an empty scratch folder, the plugin as committed at `bdb1718` exported with `git archive` and
 loaded with `--plugin-dir`; `--settings` switched off `mod-builder@claudemod` and the seven other plugins of
 7.6's live check; the building session answered the dialogs in the owner's place]:
 
@@ -715,7 +715,7 @@ What else the demonstration showed:
 - **3.3's new text holds more than 7.7's words**: the skipped-hook clause (the owner's finding), and the
   sentence on the last 20 lines, which 7.7 gives under decision 1.
 
-- **Codex's stop-time review** of this round (7.2) found one defect, fixed test-first in `a75925d` (verifier
+- **Codex's stop-time review** of this round (7.2) found one defect, fixed test-first in `3e7f728` (verifier
   PASS, three mutants; 166 module tests): the 20-line limit was applied after the "hook skipped" lines were
   joined to what the load said, so with 25 skipped hooks only the last 20 were quoted, and they could push the
   command's own lines out. The limit is now the command's alone, and every skipped-hook line follows it. Its
@@ -733,12 +733,12 @@ dialog was answered by the building session; the tests the reader of this change
 changed for its read (one reading of the bytes, the quoted lines decided by the rules), were not read a
 second time; macOS stays unverified.
 
-### 7.9 The two decisions of 7.8, and a correction of 7.7's decision 2 (2026-11-10, at `f56d397`)
+### 7.9 The two decisions of 7.8, and a correction of 7.7's decision 2 (2026-11-10, at `77e278d`)
 
 The owner decided the two points 7.8 left open ("Both open decisions are yes; build them test-first in one
 change"), and then, from the driving session's own demonstration, corrected 7.7's decision 2. All of it is one
-test-first change (`2dc9d9c` red, `f56d397` green; the existing tests it changes in two commits of their own
-first, `4855cb3` and `88df6cd`).
+test-first change (`1ddfe0b` red, `77e278d` green; the existing tests it changes in two commits of their own
+first, `2dd0103` and `50542a2`).
 
 **Decision A. A refused validate or test run carries the last 20 lines of what that command printed**, as a
 refused typecheck does. The owner: "the model can only fix what it is shown, and your demonstration lost a
@@ -797,12 +797,12 @@ standard error; one file stands for each distinct content, the first by path.
 **Not done, or swapped:** the tests the reader of this change asked for (seven module tests, three rules
 tests) and the code as changed for its read (`refusedAt`, the whole-hash check, the file always named) were
 not read a second time; 7.8's demonstration was not run again on this code (the driving session ran its own
-from `ae7cad8`); the README's "Built on" line still names one hash, the one of 7.8's demonstration.
+from `cd3a6be`); the README's "Built on" line still names one hash, the one of 7.8's demonstration.
 
-### 7.10 A check runs while its files are open: the typecheck ends Scaffold and Red (2026-11-10, at `91d86ef`)
+### 7.10 A check runs while its files are open: the typecheck ends Scaffold and Red (2026-11-10, at `73f91ff`)
 
 **The driving session's finding** [ran, by the driving session, 2026-11-10]: its second demonstration, on an
-export of `762465b` (sonnet, another mod: a pane listing the last five tools used), stuck at Green again, for
+export of `c0389b0` (sonnet, another mod: a pane listing the last five tools used), stuck at Green again, for
 a new reason. 7.9's correction worked, and the typecheck ran. Red passed (10 tests, the new ones failing by
 assertion), the model wrote the code, all 10 tests passed and `hooks/register.tsx` typechecked; Green refused
 on the typecheck with 10 errors, every one in `tests/tool-log.test.tsx` (a helper typed with a wrong alias,
@@ -825,8 +825,8 @@ dialog was "Yes, Scaffold too". **Who answered is not known to the building sess
 say, and the driving session has answered one by keystroke before (7.9). So: Scaffold -> Red also requires the
 typecheck to exit 0, after validate and the test run, answered the same way.
 
-**As built** (`58899a3` red, `91d86ef` green; the four existing tests it changes in a commit of their own
-first, `4ed4c7e`) [ran]: 208 module tests, 292 rules, validate and script tests, `claude plugin
+**As built** (`b09211e` red, `73f91ff` green; the four existing tests it changes in a commit of their own
+first, `32153bc`) [ran]: 208 module tests, 292 rules, validate and script tests, `claude plugin
 validate --strict` and the typecheck pass; the verifier's PASS with eight mutants, each failing its test.
 In the real engine [ran: the built code with one added command, headless, no model call, the five real types
 files]: Scaffold on a scaffolded mod answered `phase 4 (Scaffold) passed (claude plugin validate --strict
@@ -895,12 +895,12 @@ owner to decide:
 6. **What is no dead end:** a test at Red that needs a hook the scaffold does not register fails by
    assertion when it drives the mod through its events, and the hook is written at Green.
 
-**The tightening of `4855cb3`** (`2117929`, a commit of its own): that commit made the shared helper of
+**The tightening of `2dd0103`** (`9084963`, a commit of its own): that commit made the shared helper of
 `gate.test.ts` answer the first line of the gate's answer, which loosened every exact comparison in the file.
 The helper answers the whole text again; the twelve exact comparisons whose answer is one line now say that
 nothing follows it, and the ten whose answer goes on (quoted lines, the "Built on" line) take its first line
 by name, with what follows tested in `decisions.test.ts` and `built.test.ts`. The file's unanchored pattern
-matches are as they were before `4855cb3`. Read again in that commit's diff [read]: its other loosenings
+matches are as they were before `2dd0103`. Read again in that commit's diff [read]: its other loosenings
 are two comparisons of `decisions.test.ts` (a passed Green and a passed Verify, now by their first line
 because the "Built on" line follows; `built.test.ts` compares that line) and one of `gate.test.ts` (a refused
 typecheck at Verify, by its first line; `typecheck.test.ts` compares its quoted lines whole). They are left.
@@ -912,20 +912,20 @@ surviving before them are not among the plan's eight; the reader's note that two
 the compiler are looked for (after the earlier checks, where Green looks first) was kept as the plan's
 decision; neither demonstration was run again on this code; macOS stays unverified.
 
-### 7.11 The driving session's demonstration reaches Done, and two last changes (2026-11-10, at `adb72d1`)
+### 7.11 The driving session's demonstration reaches Done, and two last changes (2026-11-10, at `01ba9df`)
 
 **The driving session's demonstration** [ran, by the driving session, 2026-11-10]. Three runs, each on an
 export of this branch, on sonnet, of a mod other than 7.8's (`tool-log`: a pane listing the last five tools
 used):
 
-1. **On an export of `ae7cad8`: stranded at Green.** Green's gate refused with "types differ". Genuine types
+1. **On an export of `cd3a6be`: stranded at Green.** Green's gate refused with "types differ". Genuine types
    files differ between sessions of one build (7.9 gives the two hashes and the diff), and 7.7's decision 2
    refused when they did. Corrected in 7.9: the typecheck runs against every distinct types file.
-2. **On an export of `762465b`: stranded at Green again, for a new reason.** The types correction worked and
+2. **On an export of `c0389b0`: stranded at Green again, for a new reason.** The types correction worked and
    the typecheck ran; every test passed and `hooks/` typechecked, but the typecheck failed on 10 errors in a
    test file, and `tests/` had been closed since Red. Corrected in 7.10: Red, and Scaffold, end on the
    typecheck, so that a check runs while the files it judges can still be changed.
-3. **On an export of `342f571`: reached Done in one session** (auto mode, the folder
+3. **On an export of `99ac05a`: reached Done in one session** (auto mode, the folder
    `scratch/mydemo3/tool-log` under the ClaudeMod folder). Spec approved on option 2, then Scaffold, Red,
    Green and Verify, the pane showing `Verify: validate, 11 tests, the typecheck (types sha256 60ff86c1…,
    a33c3b25…) and a headless load of tool-log all pass`. Checked by the driving session outside that session:
@@ -939,8 +939,8 @@ With 7.8's demonstration by the building session, section 4's four items have no
 two sessions.
 
 **Two last changes, decided by the owner after the third run** ("Two last changes, test-first, then stop"),
-built as one test-first change (`3dc014d` red, `adb72d1` green; the two existing tests it changes in commits
-of their own first, `920cd12` and `ea25f4e`):
+built as one test-first change (`6e3a354` red, `01ba9df` green; the two existing tests it changes in commits
+of their own first, `cdff6de` and `517b91e`):
 
 - **(1) 7.10's item 5.** "Scaffold -> Red also requires the test run to exit 0, after validate and before
   the typecheck, quoted like any refused test run, so a scaffold whose tests fail or whose module throws at
@@ -977,13 +977,13 @@ run on this code; macOS stays unverified.
 the branch and stop. Do not push."): `main` is fast-forwarded to this branch at the commit that holds this
 section. 7.10's items 1 to 4 stay open, with `BACKLOG.md`.
 
-### 7.12 The final code, demonstrated by the driving session (2026-11-10, at `bf31f81`)
+### 7.12 The final code, demonstrated by the driving session (2026-11-10, at `52e39e1`)
 
 [ran, by the driving session: 2.1.322, sonnet, auto mode, an interactive session in a terminal pane, the
-plugin exported from `bf31f81` with `git archive` and loaded with `--plugin-dir`, `mod-builder@claudemod`
+plugin exported from `52e39e1` with `git archive` and loaded with `--plugin-dir`, `mod-builder@claudemod`
 switched off by `--settings`; a watch script chose option 2, "Approve", once, and touched no other dialog]
 
-- **At `bf31f81`:** `claude plugin test plugins/mod-builder` 216 of 216; rules and script tests 302 of 302;
+- **At `52e39e1`:** `claude plugin test plugins/mod-builder` 216 of 216; rules and script tests 302 of 302;
   `claude plugin validate --strict` passes for the marketplace and the plugin.
 - **`/mod-builder:build a status pane that shows how many prompts I have sent in this session and when the
   last one was`**, a request no earlier run used, built `prompt-count` through all eight phases in one
@@ -1002,3 +1002,24 @@ switched off by `--settings`; a watch script chose option 2, "Approve", once, an
   the gates until `BACKLOG.md` item 15 (an `edit` skill) is built.
 - **Section 4's four points hold on the final code:** point 1 and 2 here and in 7.11; point 3 in 7.8 and by
   the refusal above; point 4 in 7.8. The MVP candidate works as section 4 defines it. Nothing is pushed.
+
+### 7.13 The history's author address, and the repository on GitHub (2026-11-10)
+
+The owner named `https://github.com/bankielewicz/mod-builder` as this repository's GitHub repository
+(empty and public then [ran: `gh repo view`]) and asked for the work to be pushed "via pr". Before anything was
+pushed the owner chose a GitHub noreply address for the history ("use the github noreply address"), because
+every commit carried a personal address as author and committer.
+
+- **Every commit was rewritten** [ran]: 79 commits, on every branch, the same trees, parents, names, dates and
+  messages, with `121247296+bankielewicz@users.noreply.github.com` as author and committer. A commit hash named
+  in a commit message was changed to the rewritten commit's.
+- **Every hash changed.** The commit hashes this file cites were changed to the new ones in the commit that
+  adds this section (50 citations of 37 commits; each was checked to be in the history). Earlier versions of
+  this file, in earlier commits, still cite the old hashes. Hashes of anything else (types files, test files)
+  are as they were.
+- **The history as it was** is kept by the owner outside the repository, as a git bundle
+  (`mod-builder-before-email-rewrite.bundle`, beside the repository's folder). It holds the personal address
+  and is not pushed.
+- **Pushed:** `main` as rewritten, to give the pull request a branch to target; this section, the README's
+  two corrections and `CLAUDE.md` go in a pull request, which the building session does not merge.
+
