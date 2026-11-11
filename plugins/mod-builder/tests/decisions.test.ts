@@ -22,7 +22,7 @@ const PANE = {
 const FOUR = [
   ['claude', 'plugin', 'validate', '--strict', MOD],
   ['claude', 'plugin', 'test', MOD],
-  ['npx', '--no-install', 'tsc', '--noEmit', '-p', CONFIG],
+  ['npx', '--no-install', 'tsc', '--noEmit', '--pretty', 'false', '-p', CONFIG],
   ['claude', '--plugin-dir', MOD, '-p', '/cost', '--debug-file', LOG],
 ]
 

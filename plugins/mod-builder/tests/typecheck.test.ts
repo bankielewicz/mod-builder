@@ -50,7 +50,7 @@ test('Verify typechecks against the build\'s own types, with a tsconfig it write
   const w = await atVerify(on)
   expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed /)
   expect(config(w)).toEqual({ compilerOptions: OPTIONS, include: [TYPES, `${MOD}/hooks`, `${MOD}/tests`, `${MOD}/types`] })
-  expect(typechecks(w)).toEqual([['npx', '--no-install', 'tsc', '--noEmit', '-p', CONFIG]])
+  expect(typechecks(w)).toEqual([['npx', '--no-install', 'tsc', '--noEmit', '--pretty', 'false', '-p', CONFIG]])
   expect(Object.keys(w.files).filter((file) => file.startsWith(`${MOD}/`)).sort()).toEqual([`${MOD}/.claude-plugin/plugin.json`, SPEC, TEST_FILE].sort())
 })
 
@@ -88,7 +88,7 @@ test('with no compiler installed, the one npx downloads is asked for and used', 
   w.compilers[INSTALLED] = NOT_FOUND
   expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed /)
   expect(w.ran.filter((argv) => argv.at(-1) === '-v')).toEqual([['npx', '--no-install', 'tsc', '-v'], ['npx', '-y', '-p', 'typescript', 'tsc', '-v']])
-  expect(typechecks(w)).toEqual([['npx', '-y', '-p', 'typescript', 'tsc', '--noEmit', '-p', CONFIG]])
+  expect(typechecks(w)).toEqual([['npx', '-y', '-p', 'typescript', 'tsc', '--noEmit', '--pretty', 'false', '-p', CONFIG]])
 })
 
 test('an installed compiler that answers is used, and none is downloaded', async ($, on) => {
