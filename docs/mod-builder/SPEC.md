@@ -2704,3 +2704,47 @@ step that builds the way back (9.8, step 4) owes the exception, and a test for i
    `.claude-plugin/types/`). Scaffold's gate and Red's both refuse on it; such a file was written by a
    guarded tool at Scaffold or by a shell command, and a shell command removes it. Not built before its
    plan.
+
+### 9.18 Red's gate holds `hooks/` to the template, and the script does not depend on its reader, as built (2026-11-11, at `5152ce7`)
+
+Plan 38 (9.17, points 1 and 2): `f6ef34a` (existing tests: Red's evidence and order of commands, and an
+edit's Red never asking the script), `2f452c0` red, `5152ce7` green; verifier PASS with 8 mutants; 407
+module tests, 659 node tests, validate and the typecheck pass [ran, by the agents and the verifier].
+
+- **The script** works everything out before it prints, runs nothing beside itself, removes its temporary
+  folder before its first line, and prints through a function that says nothing when the write fails. Two
+  more modes, `--check-hooks` and `--again-hooks`, are `--check` and `--again` for `hooks/hooks.json` and
+  `hooks/register.tsx`; nothing under `tests/` is compared, listed or written.
+  [ran, by the building session, the script at `5152ce7`]: 200 runs with the reader closing after one or
+  two lines (`--again ... | head -2`, `--check ... | head -1`), no line on standard error and no temporary
+  folder left; at `7cb6c9f` the same trial gave the stray error in 57 of 60 `--again` runs (9.17).
+- **Red's gate of a build** asks `scaffold.sh --check-hooks` first, before anything else, and once more
+  just before it passes; its evidence opens "hooks/ is as the scaffold laid it;". A refusal: "hooks/ is
+  not as the scaffold laid it (...): it closed when Scaffold passed, and the mod's code is written at
+  Green, after its tests. Put it back with: bash ".../scaffold.sh" --again-hooks "<mod>" <name>[, and
+  remove each file named as extra]. When that command refuses, a link or a folder stands where a file
+  goes: remove it with a shell command first". An edit's Red is not asked.
+- **The build skill's Red section** says the gate checks `hooks/` first and again, and gives
+  `--again-hooks`. The skill is at 197 lines of its 200.
+
+**What the independent reader found** (56 mutants, 4 real gaps), corrected before the red commit: with the
+broken pipe ignored by the caller the script still printed a write error; the refusal did not say what to
+do when its own command refuses; no test held that an edit's Red never asks, the order of Red's first
+check, or a plain run's empty standard error.
+
+**Two departures to record.** The test-writer stopped before the red commit: the plan said the new module
+tests "fail on an assertion", and three fail on a `TypeError` in the test's own helper, which reads the
+arguments of a script call the gate does not make yet. The building session, as the plan's author, counted
+that as the required red (the failing names and both counts were the plan's); the verifier reports it as a
+stated departure. And the verifier's first run could not start: the temporary volume was full (58,882
+folders the test runs had left in `/tmp`, and a reader running mutant copies four at a time). The owner
+freed it; readers and verifiers are now told to keep their temporary files under their own scratch
+folder and to run mutants one at a time.
+
+**A returned Red** (9.11 against 9.17): 9.11 has a return counted in the record. The building session's
+answer, for the driving session to confirm at step 4: Red's check of `hooks/`, and the check of 9.17's
+point 4, run only when that count is zero.
+
+**Known and left:** a build opened before this change that is at Red with a reshaped `hooks/` is refused,
+and `--again-hooks` writes over it without keeping a copy; the second check stands after the last look at
+`SPEC.md`, and no test pins that order; a process killed outright leaves its temporary folder.
