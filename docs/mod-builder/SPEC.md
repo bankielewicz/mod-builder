@@ -1765,3 +1765,49 @@ mod in a scratch folder]:
 - **A gate has a new answer** (8.20): "was stopped or moved while this gate ran, so nothing was moved". It was
   decided by the building session while fixing the stop defect, without the driving session.
 - **The stopped frame** (8.20): leave it unreachable by `/mod-builder stop`, or keep what was stopped in view.
+
+### 8.22 The driving session's review of step 2: five fixes to the pane (2026-11-11, at `e3dae77`)
+
+The driving session reviewed step 2 at `979021f` on its own runs (543 node tests passing and 2 skipped for
+want of a compiler, 330 of 330 module tests, validate; the two scripts on a real git folder; a live build to
+Done with the pane captured every 20 seconds). "Your six decisions stand, the gate's new answer for a record
+stopped while its gate ran included." It asked for five fixes, built as plan 32: `245afbe` (existing tests),
+`8b2882c` red, `e3dae77` green; verifier PASS with 22 mutants; 347 module tests, 558 node tests.
+
+1. **Hashes no longer swamp a row.** In the pane only, a whole sha256 is shown by its first 12 characters,
+   and "types sha256" followed by two or more is said as "2 types files" in a gate's evidence, the baseline's
+   rows, a refused gate's reason and "What was checked". The "Built on" row keeps each hash, cut to 12. The
+   record, the gate's answer and the mod's `SPEC.md` keep them whole.
+2. **Verify's rows carry a result**: "2 of 2" beside the test row (passed of ran, from the run's own count)
+   and "0 errors" beside the typecheck row (the lines the compiler printed that hold `error TS<n>:`), once
+   each has ended. A compiler that failed and printed no such line shows no count.
+3. **The load's rows name the mod from the start**, from its `plugin.json`, read when the pane is drawn.
+   The three rows are one reading: the gate reads the load's debug log once, after the run, so they turn
+   together, and they show "found" only between the load's end and the gate's answer, after which Done's
+   frame replaces Verify's.
+4. **A write refused at Done is counted and toasted**, and Done's "What was checked" counts it.
+5. **What `/mod-builder stop` stopped stays in view** until the session opens another build or edit: the
+   header says stopped, the rail is dim, and a "Stopped" block says, for an edit, which answer was given and
+   names the two folders. The session stays unbound: only the folder's name is kept, under
+   `stopped:<session>`, which the guard and the gate never read. The answer is written into the stopped
+   record once the person has given it, and only while that record is still the one this stop stopped.
+
+"Put it back"'s answer now adds, when the script moved `.git` back: "The mod's git history is as it is now,
+commits made during the edit included: git shows the restored files as changes against them."
+
+**"Unchanged since their gates"** (the driving session did not see it in its captures): the row is built, and
+is the last block of the Verify frame at every state of the checks; in a pane of few rows it is below the
+load's block and can be cut off.
+
+**The independent reader** (77 mutants of the draft, 13 surviving, 5 of them equivalent) found three defects,
+fixed before the red commit: the pane said "nobody answered" while the person was still being asked; the
+answer was written from the record read before the question, over a record another session had made since;
+and "0 errors" stood beside a typecheck that failed without printing an error line.
+
+**Probed** [ran, 2.1.322, an interactive session, the hooks module of `e3dae77` with the `edit` skill's draft,
+an edit of a real mod from baseline to Done]: the baseline's block, Red's evidence with "2 types files", 8.4's
+question for a changed test, Done with "Built on ... 60ff86c12156, a33c3b254b7c."; then an `Edit` of
+`hooks/register.tsx` at Done was refused and **the toast was seen**, at the right under the prompt:
+`mod-builder: refused: hooks/register.tsx, at Done`. **Found in that probe:** the table of what each phase
+may write is drawn first, and at Done it pushed "What was checked", which holds the count, out of the pane's
+visible rows (a side agent's note said the same). Fixed in the next plan: at Done the table comes last.
