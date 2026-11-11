@@ -1492,3 +1492,12 @@ toast): "In 0.2.0 (Recommended)".
   nearest thing is built; nothing is dropped in silence.
 - Before the plan, the building session lists each element of each frame with the surface and the call it
   will use for it, and the driving session reviews that list against the pictures.
+
+### 8.17 Putting a mod back keeps its git history: a correction to 8.5 (2026-11-11)
+
+8.5's restore point leaves out `.git` and `node_modules`, so a mod put back would come back without them,
+its history left in the `.stopped-` folder (8.10's audit, and a side agent's note). The driving session's
+correction, inside the owner's "Backup copy (Recommended)": when a stopped edit is put back, after the
+rename and the copy, the mod moves `.git` and `node_modules`, when present, from `<mod>.stopped-<stamp>`
+into the restored `<mod>`. Nothing is deleted; the answer names what was moved. It is tested with a real
+folder that holds both.
