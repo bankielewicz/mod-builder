@@ -7,7 +7,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
-  approvalHint, changesIn, checksKey, commandOf, countRefusal, doneToast, newChecks, openedLine, pagesIn, paneModel, parseTestRun, refreshedToast, refusalsKey, settledChecks, withCheck,
+  approvalHint, changesIn, checksKey, commandOf, countRefusal, doneToast, newChecks, openedLine, pagesIn, paneModel, parseTestRun, refreshedToast, refusalsKey, settledChecks, stoppedKey, testResult, typecheckResult, withCheck, withResult,
   APPROVE_NO_CHANGE, baselineVerdict, editApprovalOptions, editApprovalQuestion, editFolderVerdict, editRedGate, editSpecGate, editSpecKept, entryKind,
   isEditSkill, isOpenRecord, isTestPath, isKeptOut, keptTestsGate, mayRefactor, namesGone, newEditRecord, nextPhaseOf, phaseLabelOf, putsBack, recordKind, refactorRecord, repairRedGate,
   restoreFolder, stopOptions, stoppedFolder, stoppedRecord, testChangeEvidence, testChangeGate, testChangeOptions, testChangeQuestion, testFilesChanged, testFilesToAsk, testHashesOf, versionGate,
@@ -15,7 +15,7 @@ import {
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, pluginFolderBeingMade, redGate,
   scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
-import type { AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
+import type { AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
 
 type Engine = EngineInterface
 
@@ -255,8 +255,20 @@ async function paneInput($: Engine): Promise<PaneInput> {
   const latest = await word('latest')
   const inLatest = async (name: string) => (latest === null || home === undefined ? null : readText($, `${cacheOf(home)}/${latest}/${name}`))
   const spec = isBuildRecord(record) && record.phase === 'spec' ? await readText($, `${record.modDir}/SPEC.md`) : null
+  // The mod's own name, as its manifest has it: the load's rows say it before the gate has run.
+  let name: string | null = null
+  try {
+    const manifest = modDir === null ? null : await readText($, `${modDir}/.claude-plugin/plugin.json`)
+    const named = manifest === null ? undefined : (JSON.parse(manifest) as { name?: unknown }).name
+    name = typeof named === 'string' ? named : null
+  } catch {
+    name = null
+  }
+  // With nothing open, what this session stopped last stays in view (SPEC.md 8.18, "Stopped").
+  const last = isSessionEntry(entry) ? undefined : await $.store.get(stoppedKey(sessionId))
+  const stopped = typeof last === 'string' ? await $.store.get(buildKey(last)) : undefined
   return {
-    sessionId, entry, record, refusals, checks, spec,
+    sessionId, entry, record, refusals, checks, spec, name, stopped,
     knowledge: {
       latest, checked: await word('checked'), pages: pagesIn(await inLatest('manifest.tsv')), changes: changesIn(await inLatest('_changes.md')),
       isRefreshing: fetching > 0, version: (await $.session.version()).version, now: await $.clock.now(),
@@ -425,9 +437,11 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   await mark('validate', validated.exitCode === 0 ? 'passed' : 'failed')
   await mark('test', 'running')
   const tested = await test($, modDir)
+  checks = withResult(checks, 'test', testResult(tested.output))
   await mark('test', tested.exitCode === 0 ? 'passed' : 'failed')
   await mark('typecheck', 'running')
   const { ran: typechecked, against } = await typecheckEach($, typecheck, modDir, testFiles)
+  checks = withResult(checks, 'typecheck', typecheckResult(typechecked))
   await mark('typecheck', typecheckGate(typechecked).pass ? 'passed' : 'failed')
   await mark('load', 'running')
   // `/cost` is answered by Claude Code itself: the session loads the mod and makes no model call.
@@ -718,22 +732,43 @@ async function stop($: Engine): Promise<string> {
   // The record first, then the session: a record marked stopped holds nothing even if the second write fails.
   await $.store.set(buildKey(record.modDir), stoppedRecord(record))
   await $.store.set(key, null)
+  // What was stopped stays in the pane until this session opens another build or edit; it binds nothing.
+  await $.store.set(stoppedKey(sessionId), record.modDir)
   await redraw($)
   const stopped = `mod-builder: the ${kind} of ${record.modDir} is stopped at ${phaseLabelOf(kind, record.phase)}. Other plugins' folders can be written again.`
   if (kind !== 'edit' || record.baseline === undefined) return `${stopped} The folder is left as it is.`
+  // The person's answer and the folder kept beside the mod, for the pane alone.
+  // Written into the record as it is now, and only while that is still the one this stop stopped: the question
+  // can stay open for minutes, and a record another session has made in the folder since is not written over.
+  const keep = async (stop: Stop): Promise<void> => {
+    try {
+      const now = await $.store.get(buildKey(record.modDir))
+      if (isBuildRecord(now) && now.stopped === true && now.sessionId === sessionId) await $.store.set(buildKey(record.modDir), { ...now, stop })
+      await redraw($)
+    } catch {
+      // The pane then shows the stopped record without them.
+    }
+  }
   let answer: string | null = null
   try {
     answer = await $.ui.ask(`The edit of ${record.modDir} is stopped. What becomes of the mod?`, { options: stopOptions(), header: 'Stop' })
   } catch {
     answer = null
   }
-  if (!putsBack(answer)) return `${stopped} The mod is kept as it is now. Its restore point stays at ${record.baseline.restore}.`
+  if (!putsBack(answer)) {
+    await keep({ answer, beside: null })
+    return `${stopped} The mod is kept as it is now. Its restore point stays at ${record.baseline.restore}.`
+  }
   const beside = stoppedFolder(record.modDir, await $.clock.now())
+  await keep({ answer, beside: null })
   if (beside === null) return `${stopped} It could not be put back: no name could be made for the stopped folder. The mod is as it is now, and its restore point is ${record.baseline.restore}.`
   const put = await run($, ['bash', `${$.plugin.root}/scripts/put-back.sh`, record.modDir, record.baseline.restore, beside], RESTORE_MS)
   if (put.exitCode !== 0) return `${stopped} It could not be put back: ${lastLines(said(put), 3).replace(/\n/g, ' ') || 'put-back.sh ended with no exit code'}`
+  await keep({ answer, beside })
   const moved = put.output.split('\n').find((line) => line.startsWith('moved: ')) ?? 'moved: nothing'
-  return `${stopped} The mod is put back as it was before this edit, in ${record.modDir}; the folder as it was when stopped is kept beside it as ${beside}. ${moved === 'moved: nothing' ? 'Nothing was moved between them.' : `Moved into the restored mod: ${moved.slice('moved: '.length)}.`} Nothing was deleted.`
+  // With the mod's .git moved back, its history is the one it had when stopped (SPEC.md 8.17).
+  const history = moved.slice('moved: '.length).split(', ').includes('.git') ? " The mod's git history is as it is now, commits made during the edit included: git shows the restored files as changes against them." : ''
+  return `${stopped} The mod is put back as it was before this edit, in ${record.modDir}; the folder as it was when stopped is kept beside it as ${beside}. ${moved === 'moved: nothing' ? 'Nothing was moved between them.' : `Moved into the restored mod: ${moved.slice('moved: '.length)}.`} Nothing was deleted.${history}`
 }
 
 // The check that ends the record's phase, run now.
@@ -1066,6 +1101,7 @@ export const register: Register = (on, options) => {
         // The transcript's line comes once: not again while the build it opened still waits for its folder.
         const waits = isSessionEntry(entry) && entry.modDir === null && entryKind(entry) === 'build'
         await $.store.set(key, { modDir: null })
+        await emptyBeside($, '', [stoppedKey(await $.session.id())])
         if (!waits) $.ui.log(openedLine('build'))
       }
       // Unasked, so it is placed only where the terminal has the room; /mod-builder opens it at any width.
@@ -1081,6 +1117,7 @@ export const register: Register = (on, options) => {
       if (!isOpenRecord(record)) {
         const waits = isSessionEntry(entry) && entry.modDir === null && entryKind(entry) === 'edit'
         await $.store.set(key, { modDir: null, kind: 'edit' })
+        await emptyBeside($, '', [stoppedKey(await $.session.id())])
         if (!waits) $.ui.log(openedLine('edit'))
       }
       void $.ui.open({ id: PANE, title: 'mod-builder' })
@@ -1132,8 +1169,9 @@ export const register: Register = (on, options) => {
     // once for each phase. A count that can't be kept changes nothing about the refusal.
     // Refusals are counted one after another: writes refused side by side would each read the count before the
     // others wrote theirs, and each show the phase's toast.
-    if (isOpenRecord(record) && (record as BuildRecord).sessionId === sessionId) {
-      const { modDir, phase } = record as BuildRecord
+    // Done included: a write refused there is one of the build's refusals, and Done's frame counts them.
+    if (isBuildRecord(record) && record.stopped !== true && record.sessionId === sessionId) {
+      const { modDir, phase } = record
       counting = counting.then(async () => {
         const whole = absolutePath(path, cwd) ?? path
         const counted = countRefusal(await $.store.get(refusalsKey(modDir)), sessionId, phase, whole.startsWith(`${modDir}/`) ? whole.slice(modDir.length + 1) : whole)

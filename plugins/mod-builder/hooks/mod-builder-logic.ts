@@ -653,6 +653,7 @@ export type BuildRecord = {
   skipped?: SkipReason // an edit's: why its Red is skipped
   attempt?: Attempt // the pane's: what the last refused gate of the current phase said (SPEC.md 8.18)
   finished?: Finished // the pane's: what the gate that ended Verify counted
+  stop?: Stop // the pane's: what the person answered when an edit was stopped, and the folder kept beside the mod
 }
 
 export function sessionKey(sessionId: string): string {
@@ -1545,7 +1546,9 @@ export function refusalsKey(modDir: string): string {
 // The state of each of the four checks while a gate runs them, kept under its own key, with whose they are and
 // the mod's own name.
 export type CheckState = 'waiting' | 'running' | 'passed' | 'failed'
-export type Checks = { sessionId: string; phase: Phase; name: string; states: Record<Check, CheckState> }
+// `results` is what a check that ended showed, where the gate has it: "6 of 6" for the tests, "0 errors" for the
+// typecheck.
+export type Checks = { sessionId: string; phase: Phase; name: string; states: Record<Check, CheckState>; results: Partial<Record<Check, string>> }
 
 export function checksKey(modDir: string): string {
   return `checks:${modDir}`
@@ -1594,18 +1597,56 @@ export function readChecks(value: unknown, sessionId: string, phase: Phase): Che
     const state = value.states[check]
     states[check] = state === 'running' || state === 'passed' || state === 'failed' ? state : 'waiting'
   }
-  return { sessionId, phase, name: shown(value.name), states }
+  const results: Partial<Record<Check, string>> = {}
+  for (const check of CHECKS) {
+    const result = isPlainObject(value.results) ? shown(value.results[check]) : ''
+    if (result !== '') results[check] = result
+  }
+  return { sessionId, phase, name: shown(value.name), states, results }
 }
 
 // The checks' states as a gate starts them, with one moved on, and as a gate that ended leaves them: a check
 // still "running" then was not finished (the gate refused before it, or failed), so it waits again.
 export function newChecks(sessionId: string, phase: Phase, name: string): Checks {
-  return { sessionId, phase, name, states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'waiting' } }
+  return { sessionId, phase, name, states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'waiting' }, results: {} }
 }
 
 export function withCheck(checks: Checks, check: Check, state: CheckState): Checks {
   if (!isPlainObject(checks) || !isPlainObject(checks.states) || !CHECKS.includes(check) || !CHECK_STATES.includes(state)) return checks
   return { ...checks, states: { ...checks.states, [check]: state } }
+}
+
+// What a check showed, beside its row (the Verify frame): nothing is kept for what is no text.
+export function withResult(checks: Checks, check: Check, result: string): Checks {
+  if (!isPlainObject(checks) || !CHECKS.includes(check) || shown(result) === '') return checks
+  return { ...checks, results: { ...(isPlainObject(checks.results) ? checks.results : {}), [check]: shown(result) } }
+}
+
+// The test run's result as its row says it: how many passed of how many ran. Nothing when the run has no count.
+export function testResult(output: string): string {
+  const run = typeof output === 'string' ? parseTestRun(output) : null
+  return run === null || run.failures.length > run.tests ? '' : `${run.tests - run.failures.length} of ${run.tests}`
+}
+
+// The typecheck's result as its row says it: how many lines of what the compiler printed hold an error. A
+// compiler that ended with another exit code than 0 and printed no such line showed no count: nothing is said,
+// since "0 errors" beside a failed check would be false. One that never ended has no result either.
+export function typecheckResult(run: Run & { errors?: string }): string {
+  if (typeof run !== 'object' || run === null || !Number.isInteger(run.exitCode) || typeof run.output !== 'string') return ''
+  const printed = run.output.trim() !== '' ? run.output : typeof run.errors === 'string' ? run.errors : ''
+  const errors = printed.split('\n').filter((line) => /(^|: )error TS\d+:/.test(line)).length
+  if (errors === 0) return run.exitCode === 0 ? '0 errors' : ''
+  return errors === 1 ? '1 error' : `${errors} errors`
+}
+
+// What `/mod-builder stop` left for the pane: the person's answer for an edit (null when nobody answered), and
+// the folder the mod as it was when stopped is kept in, when it was put back.
+export type Stop = { answer: string | null; beside: string | null }
+
+// The key under which a session keeps the folder of what it stopped last, so that the pane goes on showing it
+// (SPEC.md 8.18, "Stopped"). It binds nothing: the guard and the gate never read it.
+export function stoppedKey(sessionId: string): string {
+  return `stopped:${sessionId}`
 }
 
 export function settledChecks(checks: Checks): Checks {
@@ -1717,6 +1758,8 @@ export type PaneInput = {
   checks: unknown // the store's value under checksKey(entry.modDir)
   knowledge: PaneKnowledge
   spec: string | null // the mod's SPEC.md, read at Spec
+  name?: string | null // the mod's own name, from its plugin.json
+  stopped?: unknown // the store's value under buildKey of the folder kept under stoppedKey(sessionId)
 }
 
 const heading = (text: string): Cell[] => [{ text }]
@@ -1803,9 +1846,21 @@ function writeTable(kind: Kind, phase: Phase, red: RedMode | undefined, modDir: 
 }
 
 // A passed phase with what its gate saw, one row for each part of the evidence.
+// A sha256 as the pane shows it: its first 12 characters. Where a row only says which types a check ran
+// against, two or more are said as their count. The record, the gate's answer and SPEC.md keep them whole.
+function shortHashes(text: string, isCounted: boolean): string {
+  const short = text.replace(/(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/g, (hash) => hash.slice(0, 12))
+  return isCounted ? short.replace(/types sha256 ([0-9a-f]{12}(?:, [0-9a-f]{12})+)/g, (_all, list: string) => `${list.split(', ').length} types files`) : short
+}
+
+// What a gate saw, as rows: one for each part of its evidence.
+function evidenceRows(evidence: string): Cell[][] {
+  return evidence.split('; ').map((part) => shortHashes(shown(part), true)).filter((part) => part !== '').map((part) => row(`  ${part}`))
+}
+
 function evidenceBlock(kind: Kind, phase: Phase, evidence: string): PaneBlock {
-  const parts = evidence.split('; ').map(shown).filter((part) => part !== '')
-  return { heading: [{ text: `${phaseNumberOf(kind, phase)} ${TITLES[phase]}` }, { text: 'passed', tone: 'success' }], rows: parts.map((part) => row(`  ${part}`)) }
+  const parts = evidenceRows(evidence)
+  return { heading: [{ text: `${phaseNumberOf(kind, phase)} ${TITLES[phase]}` }, { text: 'passed', tone: 'success' }], rows: parts }
 }
 
 const CHECK_LABELS: Record<Check, string> = { validate: 'validate', test: 'test', typecheck: 'typecheck', load: 'headless load' }
@@ -1824,7 +1879,14 @@ function checkBlocks(checks: Checks, modDir: string, version: string): PaneBlock
   const name = checks.name === '' ? 'the mod' : checks.name
   const must = [`hooks module ${name}@inline loaded`, 'no line that says it failed to load, did not load or was not loaded', 'no hook skipped']
   return [
-    { heading: heading('Each check is a command mod-builder ran itself'), rows: CHECKS.map((check) => row({ text: `  ${checks.states[check]}`, tone: STATE_TONE[checks.states[check]], width: 10 }, { text: CHECK_LABELS[check], width: 14 }, commands[check])) },
+    {
+      heading: heading('Each check is a command mod-builder ran itself'),
+      rows: CHECKS.map((check) => row(
+        { text: `  ${checks.states[check]}`, tone: STATE_TONE[checks.states[check]], width: 10 }, { text: CHECK_LABELS[check], width: 14 }, commands[check],
+        // What the check showed once it ended, kept at its width so that a long command does not push it out.
+        ...(checks.results[check] === undefined || checks.states[check] === 'waiting' || checks.states[check] === 'running' ? [] : [{ text: checks.results[check] as string, tone: 'dim' as Tone, width: 10 }]),
+      )),
+    },
     { heading: heading('Headless load: what the debug log must show'), rows: must.map((line) => row({ text: `  ${said}`, tone: STATE_TONE[load], width: 12 }, line)) },
   ]
 }
@@ -1835,8 +1897,12 @@ export function paneModel(input: PaneInput): PaneModel {
   const given: Partial<PaneInput> = isPlainObject(input) ? input : {}
   const knowledge = readKnowledge(given.knowledge)
   const sessionId = typeof given.sessionId === 'string' ? given.sessionId : ''
-  const entry = isSessionEntry(given.entry) ? given.entry : null
-  const record = given.record
+  const bound = isSessionEntry(given.entry) ? given.entry : null
+  // What this session stopped last stays in view until it opens another build or edit (SPEC.md 8.18, "Stopped").
+  // The session is bound to nothing then: this is drawn from the record alone.
+  const stoppedThen = bound === null && isBuildRecord(given.stopped) && given.stopped.sessionId === sessionId && given.stopped.stopped === true ? given.stopped : null
+  const entry: SessionEntry | null = bound ?? (stoppedThen === null ? null : { modDir: stoppedThen.modDir, kind: recordKind(stoppedThen) as Kind })
+  const record = stoppedThen ?? given.record
   const own = entry !== null && entry.modDir !== null && isBuildRecord(record) && record.modDir === entry.modDir && record.sessionId === sessionId ? record : null
   const kind: Kind = own !== null ? (recordKind(own) as Kind) : entryKind(entry)
   const phases = phasesOf(kind)
@@ -1884,17 +1950,31 @@ export function paneModel(input: PaneInput): PaneModel {
     if (kind !== 'edit' || seen('baseline') === '') return []
     return [{
       heading: [{ text: 'Baseline' }, failedThen.length === 0 ? { text: 'the mod as it stood', tone: 'dim' } : { text: `fails ${failedThen.map((check) => CHECK_LABELS[check]).join(', ')}: this edit is a repair`, tone: 'error' }],
-      rows: seen('baseline').split('; ').map(shown).filter((part) => part !== '').map((part) => row(`  ${part}`)),
+      rows: evidenceRows(seen('baseline')),
     }]
   }
   // Each phase that passed before the current one, with what its gate saw. Knowledge and Describe have no rows:
   // the Knowledge block is theirs.
   const passedBlocks = (): PaneBlock[] => phases.slice(0, at).filter((one) => one !== 'knowledge' && one !== 'describe' && seen(one) !== '').map((one) => evidenceBlock(kind, one, seen(one)))
   if (own.stopped === true) {
+    // What became of the folder: for an edit, the person's answer and the two folders' names.
+    const stop: Record<string, unknown> | null = isPlainObject(own.stop) ? own.stop : null
+    const beside = stop === null ? '' : shown(stop.beside)
+    const answer = stop === null ? '' : shown(stop.answer)
+    const restore = stood === null ? '' : shown(stood.restore)
+    // Until the stop has written what the person answered (they may still be being asked), no answer is said.
+    const left: Cell[][] = kind !== 'edit'
+      ? [row('  the folder is left as it is', { text: modDir, tone: 'dim' })]
+      : [
+        ...(stop === null ? [] : [row(answer === '' ? '  nobody answered: the mod is kept as it is now' : `  the person answered "${answer}"`)]),
+        ...(beside === ''
+          ? [row({ text: '  the mod, as it is now', width: 30 }, { text: modDir, tone: 'dim' }), ...(restore === '' ? [] : [row({ text: '  its restore point', width: 30 }, { text: restore, tone: 'dim' })])]
+          : [row({ text: '  the mod, as before the edit', width: 30 }, { text: modDir, tone: 'dim' }), row({ text: '  as it was when stopped', width: 30 }, { text: beside, tone: 'dim' })]),
+      ]
     return {
       header: { title, state: `${base} \u00b7 stopped at ${TITLES[phase]}`, tone: 'warning' },
       rail: rail.map((item) => (item.state === 'current' ? { ...item, state: 'later' as const } : item)), isRailDim: true,
-      blocks: [...baselineBlock(), ...passedBlocks()], status: null,
+      blocks: [{ heading: heading('Stopped'), rows: left }, ...baselineBlock(), ...passedBlocks()], status: null,
     }
   }
   const blocks: PaneBlock[] = []
@@ -1908,7 +1988,7 @@ export function paneModel(input: PaneInput): PaneModel {
   const attempt = readAttempt(own.attempt, phase)
   const attemptRows = (): Cell[][] => {
     if (attempt === null) return []
-    return [row({ text: attempt.reason === '' ? '  not passed' : `  not passed: ${attempt.reason}`, tone: 'warning' }), ...attempt.failing.map((failing) => row({ text: '  fails', tone: 'error', width: 9 }, failing))]
+    return [row({ text: attempt.reason === '' ? '  not passed' : `  not passed: ${shortHashes(attempt.reason, false)}`, tone: 'warning' }), ...attempt.failing.map((failing) => row({ text: '  fails', tone: 'error', width: 9 }, failing))]
   }
   switch (phase) {
     case 'knowledge':
@@ -1934,7 +2014,9 @@ export function paneModel(input: PaneInput): PaneModel {
       break
     }
     case 'verify': {
-      const checks = readChecks(given.checks, sessionId, phase) ?? newChecks(sessionId, phase, '')
+      const read = readChecks(given.checks, sessionId, phase) ?? newChecks(sessionId, phase, '')
+      // The mod's own name from the start: the gate writes it only once it runs.
+      const checks = read.name !== '' ? read : { ...read, name: shown(given.name) }
       const failed = CHECKS.filter((check) => checks.states[check] === 'failed')
       const passed = CHECKS.filter((check) => checks.states[check] === 'passed').length
       const running = CHECKS.find((check) => checks.states[check] === 'running')
@@ -1958,14 +2040,14 @@ export function paneModel(input: PaneInput): PaneModel {
         rows: [
           row(`  ${modDir}/`, ...(counted.length === 0 ? [] : [{ text: counted.join(' \u00b7 '), tone: 'dim' as Tone }])),
           // The gate's own "Built on" line when it stored one: it names the types the typecheck ran against.
-          row(`  ${finished.builtOn ?? `${kind === 'edit' ? 'checked' : 'built'} on Claude Code ${knowledge.version}, from the documents of ${snapshot}`}`),
+          row(`  ${finished.builtOn === null ? `${kind === 'edit' ? 'checked' : 'built'} on Claude Code ${knowledge.version}, from the documents of ${snapshot}` : shortHashes(finished.builtOn, false)}`),
         ],
       })
       const total = phases.reduce((sum, one) => sum + (refusals.counts[one] ?? 0), 0)
       const where = phases.filter((one) => (refusals.counts[one] ?? 0) > 0).map((one) => TITLES[one])
       blocks.push({
         heading: heading('What was checked'),
-        rows: [row(`  ${seen('verify') === '' ? 'validate, the tests, the typecheck and a headless load' : shown(seen('verify'))}`), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
+        rows: [row(`  ${seen('verify') === '' ? 'validate, the tests, the typecheck and a headless load' : shortHashes(shown(seen('verify')), true)}`), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
       })
       blocks.push({ heading: heading('Try it'), rows: [row(`  claude --plugin-dir ${modDir}`, ...(finished.command === null ? [] : [{ text: 'then', tone: 'dim' as Tone }, `/${finished.command}`]))] })
       status = null
