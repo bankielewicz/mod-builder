@@ -143,7 +143,7 @@ test('Describe has no gate: the next call opens Spec', async ($, on) => {
 test('Spec to Scaffold asks the person, with "Not yet" first, and only "Approve" moves the build', async ($, on) => {
   const w = await at(on, 'spec', { answer: 'Not yet', now: 1731250000000 })
   expect(await gate($)).toBe('mod-builder: still at phase 3 (Spec). Not passed: the person has not approved the spec (answer: "Not yet").')
-  expect(w.asked).toEqual([{ question: `Approve the spec of this mod? (${SPEC})`, options: ['Not yet', 'Approve'] }])
+  expect(w.asked).toEqual([{ question: `Approve the spec of this mod? (${SPEC}) Nothing under hooks/ or tests/ can be written until you approve.`, options: ['Not yet', 'Approve'] }])
   expect(phase(w)).toBe('spec')
   for (const typed of ['looks fine to me', 'approve', 'Approved', 'Approve ', 'do not Approve', 'Approve, Not yet', 'See it first: draw mockups with /design', '']) {
     w.answer = typed

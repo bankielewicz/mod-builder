@@ -43,6 +43,6 @@ test('a build whose record is gone is sent back to /mod-builder:build, by the ga
 test('"/mod-builder refresh" and "/mod-builder" alone are as they were: neither is taken for words to build', async ($, on) => {
   const w = world(on, { runs: { refresh: { exitCode: 0, stdout: 'refresh-docs: unchanged since 2026-11-10T151216Z\n' } } })
   expect(await said($, ' refresh ')).toBe('mod-builder: refresh-docs: unchanged since 2026-11-10T151216Z')
-  expect(await said($, '')).toMatch(/^mod-builder: No build in this session\. /)
+  expect(await said($, '')).toMatch(/^mod-builder: no build or edit in this session\. /)
   expect(w.ran.length).toBe(1)
 })

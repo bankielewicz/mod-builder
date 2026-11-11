@@ -60,6 +60,10 @@ export type World = {
   existsFails: boolean
   // Lines the plugin wrote to the transcript.
   logged: string[]
+  // What the plugin set the status line to, in order; undefined is the line cleared.
+  statuses: (string | undefined)[]
+  // The toasts the plugin showed.
+  toasts: string[]
   // What the plugin did.
   asked: { question: string; options: string[] }[]
   ran: string[][]
@@ -119,6 +123,8 @@ export function world(on: On, start: Partial<World> = {}): World {
     unwritable: [],
     existsFails: false,
     logged: [],
+    statuses: [],
+    toasts: [],
     asked: [],
     ran: [],
     timeouts: [],
@@ -138,6 +144,14 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('session.id', () => (w.sessionId === null ? deny('the session has no id') : value(w.sessionId)))
   on('ui.log', (_, e) => {
     w.logged.push((e as { text: string }).text)
+    return value(undefined)
+  })
+  on('ui.status', (_, e) => {
+    w.statuses.push((e as { text: string | undefined }).text)
+    return value(undefined)
+  })
+  on('ui.toast', (_, e) => {
+    w.toasts.push((e as { text: string }).text)
     return value(undefined)
   })
   on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))

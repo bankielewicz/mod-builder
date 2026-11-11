@@ -309,11 +309,11 @@ test('Spec: a spec not written yet, or one that is no text, is said so', () => {
   }
 });
 
-test('Spec: a refused approval is beneath the spec, with its reason', () => {
+test('Spec: a refused approval is above the spec, with its reason', () => {
   const attempt = { phase: 'spec', reason: 'the person answered "Not yet"', failing: [], passed: null, tests: null };
   const model = paneModel(input({ record: record('spec', { attempt }), spec: '# x\n' }));
-  assert.deepEqual(headings(model), ['The spec, as SPEC.md has it', '']);
-  assert.deepEqual(model.blocks[1].rows, [[{ text: '  not passed: the person answered "Not yet"', tone: 'warning' }]]);
+  assert.deepEqual(headings(model), ['', 'The spec, as SPEC.md has it']);
+  assert.deepEqual(model.blocks[0].rows, [[{ text: '  not passed: the person answered "Not yet"', tone: 'warning' }]]);
 });
 
 test('Guard: after a refusal the header and the status line carry the count beside the mod\'s name, and the table says what each phase may write', () => {

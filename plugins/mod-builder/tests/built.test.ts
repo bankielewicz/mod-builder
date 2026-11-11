@@ -301,14 +301,15 @@ test('a test run that printed nothing is quoted from standard error, at Scaffold
   expect((await gate($)).split('\n').slice(1)).toEqual(['The last lines of its output:', 'the runner could not start'])
 })
 
-test('the pane carries every types hash, sorted, once Green has passed against two types files', async ($, on) => {
-  await standing(on, 'green', { [SANDBOXED]: SANDBOXED_TEXT })
+test('the record carries every types hash, sorted, once Green has passed against two types files, and the pane at Verify shows the typecheck to run again', async ($, on) => {
+  const w = await standing(on, 'green', { [SANDBOXED]: SANDBOXED_TEXT })
   await gate($)
   const ui = await $.ui.mount({ plugin: 'mod-builder', component: 'Pane', requestId: 'mod-builder', surface: 'terminal', props: { title: 'mod-builder', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
   const texts = (await ui.findAll({ type: 'Text' })).map((text) => text.text)
   await ui.unmount()
   const hashes = [TYPES_SHA, await sha256(SANDBOXED_TEXT)].sort()
-  expect(texts.filter((text) => text.startsWith('Green: ')).join('')).toMatch(new RegExp(`types sha256 ${hashes.join(', ')}\\)`))
+  expect(texts).toContain('tsc against the 2.1.322 types')
+  expect((w.store[`build:${MOD}`] as { evidence: Record<string, string> }).evidence.green).toMatch(new RegExp(`types sha256 ${hashes.join(', ')}\\)`))
 })
 
 test('a "Built" block does not hold a hash that is only part of a longer number', async ($, on) => {
