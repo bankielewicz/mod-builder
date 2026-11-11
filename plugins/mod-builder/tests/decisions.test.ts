@@ -149,7 +149,7 @@ test('at Done the pane shows the sha256 of the types Verify used', async ($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const texts = (await ui.findAll({ type: 'Text' })).map((text) => text.text)
   await ui.unmount()
-  expect(texts.filter((text) => text.startsWith('  validate, '))).toEqual([`  validate, 1 tests, the typecheck (types sha256 ${await sha256(TYPES_TEXT)}) and a headless load of ${NAME} all pass`])
+  expect(texts.filter((text) => text.startsWith('  validate, '))).toEqual([`  validate, 1 tests, the typecheck (types sha256 ${(await sha256(TYPES_TEXT)).slice(0, 12)}) and a headless load of ${NAME} all pass`])
 })
 
 test('the hash recorded is of the file\'s bytes, whatever they are, a byte that is no text included', async ($, on) => {

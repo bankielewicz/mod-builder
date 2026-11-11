@@ -167,7 +167,7 @@ test('the pane shows Red\'s evidence with the types hash once Red has passed', a
   const ui = await $.ui.mount({ plugin: 'mod-builder', component: 'Pane', requestId: 'mod-builder', surface: 'terminal', props: { title: 'mod-builder', isFocused: false, bodyColumns: 40, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
   const texts = (await ui.findAll({ type: 'Text' })).map((text) => text.text)
   await ui.unmount()
-  expect(texts).toContain(`  the typecheck passes (types sha256 ${TYPES_SHA})`)
+  expect(texts).toContain(`  the typecheck passes (types sha256 ${TYPES_SHA.slice(0, 12)})`)
 })
 
 // ------------------------------------------------------------------------------------------- Scaffold

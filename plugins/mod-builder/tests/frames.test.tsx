@@ -214,7 +214,7 @@ test('Verify: each check is drawn running while its command runs and passed afte
     `verify ${DOT} 0 of 4 checks passed ${DOT} validate running`, `verify ${DOT} 1 of 4 checks passed ${DOT} test running`,
     `verify ${DOT} 2 of 4 checks passed ${DOT} typecheck running`, `verify ${DOT} 3 of 4 checks passed ${DOT} headless load running`,
   ])
-  expect(w.store[CHECKS]).toEqual({ sessionId: 's1', phase: 'verify', name: NAME, states: { validate: 'passed', test: 'passed', typecheck: 'passed', load: 'passed' } })
+  expect(w.store[CHECKS]).toEqual({ sessionId: 's1', phase: 'verify', name: NAME, states: { validate: 'passed', test: 'passed', typecheck: 'passed', load: 'passed' }, results: { test: '1 of 1', typecheck: '0 errors' } })
 })
 
 test('Verify: the frame shows the four checks with their commands and what the load\'s log must show', async ($, on) => {
@@ -267,7 +267,7 @@ test('Done: Verify\'s gate keeps what Done shows, the toast says the mod is buil
   expect(pane.rail.at(-1)).toEqual({ text: ' 8 Done ', props: { bold: true, backgroundColor: 'success' } })
   expect(pane.of('What was built')?.props.bold).toBe(true)
   const from = pane.texts.indexOf('What was built')
-  expect(pane.texts.slice(from + 1, from + 4)).toEqual([`  ${MOD}/`, `3 files ${DOT} 1 test`, `  ${builtOn}`])
+  expect(pane.texts.slice(from + 1, from + 4)).toEqual([`  ${MOD}/`, `3 files ${DOT} 1 test`, `  ${builtOn.replace(TYPES_SHA, TYPES_SHA.slice(0, 12))}`])
   expect(pane.texts.slice(pane.texts.indexOf('Try it') + 1)).toEqual([`  claude --plugin-dir ${MOD}`, 'then', '/turn-counter'])
 })
 

@@ -100,9 +100,9 @@ test('refusals another session left under the same folder are not this session\'
 
 test('the four checks start waiting and move one at a time, the stored ones keeping whose they are and the mod\'s name', () => {
   const started = newChecks('s1', 'verify', 'turns');
-  assert.deepEqual(started, { sessionId: 's1', phase: 'verify', name: 'turns', states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'waiting' } });
+  assert.deepEqual(started, { sessionId: 's1', phase: 'verify', name: 'turns', states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'waiting' }, results: {} });
   const some = withCheck(withCheck(started, 'validate', 'passed'), 'test', 'running');
-  assert.deepEqual(some, { sessionId: 's1', phase: 'verify', name: 'turns', states: { validate: 'passed', test: 'running', typecheck: 'waiting', load: 'waiting' } });
+  assert.deepEqual(some, { sessionId: 's1', phase: 'verify', name: 'turns', states: { validate: 'passed', test: 'running', typecheck: 'waiting', load: 'waiting' }, results: {} });
   assert.equal(started.states.validate, 'waiting');
   assert.deepEqual(readChecks(some, 's1', 'verify'), some);
   assert.deepEqual(readChecks(withCheck(some, 'load', 'failed'), 's1', 'verify').states, { validate: 'passed', test: 'running', typecheck: 'waiting', load: 'failed' });
@@ -114,7 +114,7 @@ test('stored checks of another phase or another session are not these, and damag
   assert.equal(readChecks(some, 's2', 'verify'), null);
   assert.equal(readChecks({ ...some, sessionId: '' }, '', 'verify'), null);
   for (const none of [...WEIRD, { sessionId: 's1', phase: 'verify' }, { sessionId: 's1', phase: 'verify', states: null }, { sessionId: 's1', phase: 'verify', states: ['passed'] }]) assert.equal(readChecks(none, 's1', 'verify'), null, JSON.stringify(none));
-  assert.deepEqual(readChecks({ sessionId: 's1', phase: 'verify', name: 7, states: { validate: 'bogus', test: 'waiting', load: 'failed' } }, 's1', 'verify'), { sessionId: 's1', phase: 'verify', name: '', states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'failed' } });
+  assert.deepEqual(readChecks({ sessionId: 's1', phase: 'verify', name: 7, states: { validate: 'bogus', test: 'waiting', load: 'failed' } }, 's1', 'verify'), { sessionId: 's1', phase: 'verify', name: '', states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'failed' }, results: {} });
 });
 
 test('moving a check of what is no set of checks, or to what is no state, changes nothing and does not throw', () => {
@@ -126,7 +126,7 @@ test('moving a check of what is no set of checks, or to what is no state, change
 
 test('a gate that ended leaves no check running: one still running waits again, and the others stay', () => {
   const left = moved('verify', { validate: 'passed', test: 'failed', typecheck: 'running' });
-  assert.deepEqual(settledChecks(left), { sessionId: 's1', phase: 'verify', name: 'turns', states: { validate: 'passed', test: 'failed', typecheck: 'waiting', load: 'waiting' } });
+  assert.deepEqual(settledChecks(left), { sessionId: 's1', phase: 'verify', name: 'turns', states: { validate: 'passed', test: 'failed', typecheck: 'waiting', load: 'waiting' }, results: {} });
   assert.equal(left.states.typecheck, 'running');
   for (const none of [null, undefined, 'x', [], {}]) assert.deepEqual(settledChecks(none), none);
 });
@@ -653,11 +653,11 @@ test('a stopped record says so in the header, its rail is dim with no current ph
   assert.deepEqual(model.header, { title: 'MOD BUILDER', state: `turn-counter ${DOT} edit of 0.1.0 ${DOT} stopped at Red`, tone: 'warning' });
   assert.equal(model.isRailDim, true);
   assert.deepEqual(rail(model), [`done:1 Knowledge ${TICK}`, `done:2 Describe ${TICK}`, `done:3 Spec ${TICK}`, 'later:4 Red', 'later:5 Green', 'later:6 Verify', 'later:7 Done']);
-  assert.deepEqual(headings(model), ['Baseline the mod as it stood', '3 Spec passed']);
+  assert.deepEqual(headings(model), ['Stopped', 'Baseline the mod as it stood', '3 Spec passed']);
   assert.equal(model.status, null);
   const build = paneModel(input({ record: record('green', { stopped: true }) }));
   assert.equal(build.header.state, `turn-counter ${DOT} stopped at Green`);
-  assert.deepEqual(headings(build), []);
+  assert.deepEqual(headings(build), ['Stopped']);
   const marked = paneModel(input({ record: record('green', { stopped: 'yes' }) }));
   assert.equal(marked.status, 'green');
 });

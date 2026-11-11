@@ -101,7 +101,7 @@ test('putting it back runs the script on the mod, its restore point and a stoppe
   await editing($)
   w.answer = PUT_BACK
   expect(await said($, 'stop')).toBe(
-    `mod-builder: the edit of ${MOD} is stopped at phase 2 (Describe). Other plugins' folders can be written again. The mod is put back as it was before this edit, in ${MOD}; the folder as it was when stopped is kept beside it as ${STOPPED}. Moved into the restored mod: .git, node_modules. Nothing was deleted.`,
+    `mod-builder: the edit of ${MOD} is stopped at phase 2 (Describe). Other plugins' folders can be written again. The mod is put back as it was before this edit, in ${MOD}; the folder as it was when stopped is kept beside it as ${STOPPED}. Moved into the restored mod: .git, node_modules. Nothing was deleted. The mod's git history is as it is now, commits made during the edit included: git shows the restored files as changes against them.`,
   )
   expect(putBacks(w)).toEqual([['bash', `${ROOT}/scripts/put-back.sh`, MOD, RESTORE, STOPPED]])
 })
