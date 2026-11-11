@@ -496,13 +496,13 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   if (record.red !== 'skipped' || record.baseline === undefined) return { verdict, evidence: versioned, note: copy, change }
   const asked = await askOfUntested($, record, record.baseline, registersOf(said(validated)), checked)
   if ('verdict' in asked) return asked
-  return { verdict, evidence: asked.evidence === '' ? versioned : `${versioned}; ${asked.evidence}`, note: copy, change: { ...change, agreed: asked.agreed } }
+  return { verdict, evidence: asked.evidence === '' ? versioned : `${versioned}; ${asked.evidence}`, note: copy, change: { ...change, agreed: asked.agreed, ...(asked.registers === undefined ? {} : { agreedRegisters: asked.registers }) } }
 }
 
 // The question of an edit whose Red was skipped (SPEC.md 8.23). At Green it is always asked; at Verify, only when
 // a file is not as the person agreed at Green. Answers the refusal, or what the gate's evidence says of the
 // answer (nothing when nothing was asked) with the hashes the answer covered.
-async function askOfUntested($: Engine, record: BuildRecord, baseline: Baseline, registersNow: string[], checked: Hashes | null): Promise<Step | { evidence: string; agreed: Hashes }> {
+async function askOfUntested($: Engine, record: BuildRecord, baseline: Baseline, registersNow: string[], checked: Hashes | null): Promise<Step | { evidence: string; agreed: Hashes; registers: string[] | undefined }> {
   const { modDir } = record
   const tsconfig = () => readText($, `${modDir}/tsconfig.json`)
   const now = await hashMod($, modDir)
@@ -513,12 +513,17 @@ async function askOfUntested($: Engine, record: BuildRecord, baseline: Baseline,
   if (asChecked === null || !asChecked.pass) return refuse(`the mod changed while its checks ran${asChecked === null ? '' : ` (${asChecked.reason})`}: ask again`)
   const isAgain = record.phase === 'verify' && record.agreed !== undefined
   const changed = isAgain ? untestedChanges(record.agreed as Hashes, now, await tsconfig(), baseline.hashes) : untestedChanges(baseline.hashes, now, await tsconfig())
-  if (isAgain && changed.length === 0) return { evidence: '', agreed: covered }
+  // What was agreed at Green stands when nothing was asked: the next question compares with that, not with this.
+  if (isAgain && changed.length === 0) return { evidence: '', agreed: covered, registers: record.agreedRegisters }
   const files: UntestedFile[] = []
   for (const file of changed) {
     files.push({ ...file, before: file.how === 'added' ? null : await readText($, `${baseline.restore}/${file.path}`), after: file.how === 'missing' ? null : await readText($, `${modDir}/${file.path}`) })
   }
-  const question = untestedQuestion({ files, tests: baseline.tests, restore: baseline.restore, registersBefore: baseline.registers ?? null, registersNow, isAgain })
+  // Asked again, only what differs from what was agreed at Green is said: a difference already agreed to is not.
+  // A record agreed before that was kept has only the baseline's to compare with.
+  const isSinceGreen = isAgain && record.agreedRegisters !== undefined
+  const registersBefore = isSinceGreen ? (record.agreedRegisters as string[]) : baseline.registers ?? null
+  const question = untestedQuestion({ files, tests: baseline.tests, restore: baseline.restore, registersBefore, registersNow, isAgain, isSinceGreen })
   let answer: string | null = null
   try {
     answer = await $.ui.ask(question, { options: testChangeOptions(), header: 'Changes' })
@@ -531,7 +536,7 @@ async function askOfUntested($: Engine, record: BuildRecord, baseline: Baseline,
   const after = await hashMod($, modDir)
   const same = after === null ? null : hashGate(covered, agreedHashes(after, await tsconfig(), baseline.hashes))
   if (same === null || !same.pass) return refuse(`the mod changed while the person was being asked${same === null ? '' : ` (${same.reason})`}: ask again`)
-  return { evidence: untestedEvidence(changed, answer as string), agreed: covered }
+  return { evidence: untestedEvidence(changed, answer as string), agreed: covered, registers: registersNow }
 }
 
 // ------------------------------------------------------------------------------------------ an edit (SPEC.md 8)

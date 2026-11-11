@@ -653,6 +653,7 @@ export type BuildRecord = {
   skipped?: SkipReason // an edit's: why its Red is skipped
   attempt?: Attempt // the pane's: what the last refused gate of the current phase said (SPEC.md 8.18)
   finished?: Finished // the pane's: what the gate that ended Verify counted
+  agreedRegisters?: string[] // an edit whose Red was skipped: what validate said when the person agreed at Green
   agreed?: Hashes // an edit whose Red was skipped: the files the person's answer at Green covered (SPEC.md 8.23)
   stop?: Stop // the pane's: what the person answered when an edit was stopped, and the folder kept beside the mod
 }
@@ -1504,6 +1505,71 @@ export function registersOf(validated: string | null | undefined): string[] {
   return found
 }
 
+// The names on one of validate's lines: split at each ", " that is outside braces and outside a quoted value,
+// since a hook's own matcher holds commas, and a quoted value may hold braces ("ui.render{component=Pane,
+// requestId=x}", "tool.call{tool=\"a{b\"}"). A line that says "nothing" names none.
+function namesOn(value: string): string[] {
+  const names: string[] = []
+  let depth = 0
+  let isQuoted = false
+  let from = 0
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i]
+    if (char === '"' && value[i - 1] !== '\\') isQuoted = !isQuoted
+    else if (!isQuoted && char === '{') depth++
+    else if (!isQuoted && char === '}') depth = Math.max(0, depth - 1)
+    else if (!isQuoted && depth === 0 && char === ',' && value[i + 1] === ' ') {
+      names.push(value.slice(from, i))
+      from = i + 2
+    }
+  }
+  names.push(value.slice(from))
+  const kept = names.map((name) => name.trim()).filter((name) => name !== '')
+  return kept.length === 1 && /^nothing\b/.test(kept[0] as string) ? [] : kept
+}
+
+// How what validate said differs between two readings, as the question says it: for a line of names (its
+// hooks, its calls, what it reads of the environment) only the names added and the names gone, a name as often
+// as it is there (a hook registered twice is one more hook); a line that is new or gone as a whole is said so.
+// Lines that say the same names in another order are no difference. Nothing when nothing differs.
+export function registerChanges(before: readonly string[] | null | undefined, now: readonly string[] | null | undefined): string[] {
+  const read = (lines: readonly string[] | null | undefined): Map<string, string[]> => {
+    const kept = new Map<string, string[]>()
+    for (const line of Array.isArray(lines) ? lines : []) {
+      const said = typeof line === 'string' ? line.match(/^(\S+ [a-z][a-z .]*): (.*)$/) : null
+      if (said === null) continue
+      kept.set(said[1] as string, [...(kept.get(said[1] as string) ?? []), ...namesOn(said[2] as string)])
+    }
+    return kept
+  }
+  // The names of `some` that `others` does not hold, each as often as it is there beyond `others`.
+  const beyond = (some: readonly string[], others: readonly string[]): string[] => {
+    const left = [...others]
+    return some.filter((name) => {
+      const at = left.indexOf(name)
+      if (at < 0) return true
+      left.splice(at, 1)
+      return false
+    })
+  }
+  const was = read(before)
+  const is = read(now)
+  const changes: string[] = []
+  for (const key of new Set([...was.keys(), ...is.keys()])) {
+    const old = was.get(key)
+    const cur = is.get(key)
+    if (old === undefined) changes.push(`${key}: new, ${(cur as string[]).length === 0 ? 'nothing' : (cur as string[]).join(', ')}`)
+    else if (cur === undefined) changes.push(`${key}: gone, it was ${old.length === 0 ? 'nothing' : old.join(', ')}`)
+    else {
+      const added = beyond(cur, old)
+      const gone = beyond(old, cur)
+      const parts = [...(added.length === 0 ? [] : [`added ${added.join(', ')}`]), ...(gone.length === 0 ? [] : [`gone ${gone.join(', ')}`])]
+      if (parts.length > 0) changes.push(`${key}: ${parts.join('; ')}`)
+    }
+  }
+  return changes
+}
+
 // A path the engine writes into a mod it loads in an interactive session (probed, SPEC.md 8.23): under
 // `.claude-plugin/types/`, its `tsconfig.json`, its `.gitignore`, and one `index.d.ts` in a folder for each set of
 // types. Only those: any other file there is the mod's own and is listed, since code can be put anywhere. A
@@ -1559,9 +1625,14 @@ export type UntestedAsk = {
   files: readonly UntestedFile[]
   tests: number | null // how many tests the baseline had
   restore: string // the restore point's folder
-  registersBefore: readonly string[] | null // registersOf at the baseline; null when it kept none
+  // registersOf at the baseline, or, when asked again at Verify, as it was when the person agreed at Green; null
+  // when none was kept
+  registersBefore: readonly string[] | null
   registersNow: readonly string[]
   isAgain: boolean // asked at Verify, for what changed since the answer at Green
+  // Whether `registersBefore` is what was agreed at Green. A record agreed before that was kept has only the
+  // baseline's to compare with, and the question then says "before this edit".
+  isSinceGreen?: boolean
 }
 
 // What the person is asked (SPEC.md 8.23): each file with its lines added and removed against the restore
@@ -1586,14 +1657,11 @@ export function untestedQuestion(ask: UntestedAsk): string {
     }
   }
   if (sorted.length > LISTED_FILES) text.push(`and ${sorted.length - LISTED_FILES} more ${sorted.length - LISTED_FILES === 1 ? 'file' : 'files'}`)
-  const before = Array.isArray(ask?.registersBefore) ? ask.registersBefore.filter((line) => typeof line === 'string') : null
-  const now = Array.isArray(ask?.registersNow) ? ask.registersNow.filter((line) => typeof line === 'string') : []
-  if (before !== null && (before.length !== now.length || before.some((line, index) => line !== now[index]))) {
-    text.push('What the mod hooks, answers and calls is not as before this edit:')
-    for (const line of before) text.push(`    before: ${line}`)
-    if (before.length === 0) text.push('    before: nothing')
-    for (const line of now) text.push(`    now: ${line}`)
-    if (now.length === 0) text.push('    now: nothing')
+  // Only what differs: against the baseline, or, asked again, against what was agreed at Green.
+  const differs = Array.isArray(ask?.registersBefore) ? registerChanges(ask.registersBefore, ask?.registersNow) : []
+  if (differs.length > 0) {
+    text.push(ask?.isSinceGreen === true ? 'What the mod hooks, answers and calls is not as when you agreed at Green:' : 'What the mod hooks, answers and calls is not as before this edit:')
+    for (const line of differs) text.push(`    ${line}`)
   }
   const isOne = isCount(ask?.tests) && ask.tests === 1
   const tests = isOne ? 'The 1 test' : isCount(ask?.tests) ? `The ${ask.tests} tests` : 'The tests'
