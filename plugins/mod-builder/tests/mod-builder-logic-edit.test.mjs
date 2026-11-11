@@ -553,6 +553,8 @@ test('a file that is gone has every line removed, files come in the order of the
     'These test files are not as they were before this edit:',
     '- hooks/x.test.ts: 0 lines added, 1 line removed',
     '- tests/b.test.ts: gone (4 lines removed)',
+    // SPEC.md 8.18: a removed line that opens a test is quoted as one that holds "expect" is.
+    "    removed: test('one', () => {",
     '    removed: expect(cut(row)).toBe(40)',
     '    removed: expect(cut(wide)).toBe(40)',
     'These tests no longer exist: one; two',
@@ -570,9 +572,9 @@ test('at most 20 removed lines are quoted in all, across the files, then how man
   assert.equal(said[16], '    removed: expect(a14).toBe(1)');
   assert.equal(said[17], '- tests/b.test.ts: gone (8 lines removed)');
   assert.equal(said[22], '    removed: expect(b4).toBe(1)');
-  assert.deepEqual(said.slice(23), ['and 3 more removed lines that hold "expect"', 'Go on with these changes?']);
+  assert.deepEqual(said.slice(23), ['and 3 more removed lines that hold "expect" or open a test', 'Go on with these changes?']);
   const one = testChangeQuestion([{ path: 'tests/a.test.ts', before: many(21, 'a'), after: '' }], []).split('\n');
-  assert.equal(one[one.length - 2], 'and 1 more removed line that holds "expect"');
+  assert.equal(one[one.length - 2], 'and 1 more removed line that holds "expect" or opens a test');
   const exact = testChangeQuestion([{ path: 'tests/a.test.ts', before: many(20, 'a'), after: '' }], []).split('\n');
   assert.equal(exact.length, 23);
   assert.equal(exact.some((line) => line.startsWith('and ')), false);
