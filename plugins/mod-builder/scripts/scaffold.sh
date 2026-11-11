@@ -29,6 +29,13 @@
 #   scaffold.sh --again-hooks <mod folder> <mod name>
 #     The same two for hooks/ alone (SPEC.md 9.17): hooks/hooks.json and hooks/register.tsx. Nothing under tests/
 #     is compared, listed or written: at Red the tests are the build's to change, and hooks/ is still the template.
+# Every check and every laying-again also looks, in the whole mod, for source outside hooks/ and tests/ (SPEC.md
+# 9.17, point 4): a file whose name ends in .ts, .tsx, .mts, .cts, .js, .jsx, .mjs or .cjs. Scaffold may add a
+# contract, so a declaration file under types/ (.d.ts, .d.mts, .d.cts) is none; and what the mod does not own is
+# not looked into or is let be: its own .git and node_modules at the top, and the one index.d.ts Claude Code
+# writes in each folder under .claude-plugin/types/. A link outside hooks/ and tests/ is source whatever its
+# name: what it points at could be. Each is printed as "source: <path>", after the lines above; a check that finds one exits
+# 1, and --again and --again-hooks print them and delete nothing.
 # Whatever reads the output may stop reading early: everything is worked out before the first line is printed,
 # nothing runs beside the script, and its temporary folder is used by it alone and removed when it ends.
 set -u
@@ -131,6 +138,28 @@ list_extras() {
     done <"$staged/.sorted"
   done
 }
+# The mod's source outside hooks/ and tests/, one path from the mod to a line in "$staged/.sources", sorted as
+# bytes; a link is listed by its name and never followed. When a folder of the mod can't be read through, what it
+# holds is not known, and the line "<the mod> (a folder can't be read)" says so.
+list_sources() {
+  local path
+  : >"$staged/.sources"
+  [[ -d "$mod" && ! -L "$mod" ]] || return 0
+  # The search runs from inside the mod with paths from it: find reads a -path as a pattern, and the mod's own
+  # path may hold a character a pattern gives meaning to.
+  if ! (cd -- "$mod" && find . -mindepth 1 \( -path ./.git -o -path ./node_modules -o -path ./hooks -o -path ./tests \) -prune -o ! -type d \( -type l -o -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' -o -name '*.js' -o -name '*.jsx' -o -name '*.mjs' -o -name '*.cjs' \) -print0) >"$staged/.found" 2>/dev/null; then
+    printf '%s\n' "the mod (a folder can't be read)" >>"$staged/.sources"
+    return 0
+  fi
+  LC_ALL=C sort -z "$staged/.found" >"$staged/.sorted"
+  while IFS= read -r -d '' path; do
+    path=${path#./}
+    [[ $path == types/* && ( $path == *.d.ts || $path == *.d.mts || $path == *.d.cts ) ]] && continue
+    # What Claude Code writes into a mod it loads: one index.d.ts in each folder under .claude-plugin/types/.
+    [[ $path == .claude-plugin/types/*/index.d.ts && $path != .claude-plugin/types/*/*/index.d.ts ]] && continue
+    printf '%s\n' "$path" >>"$staged/.sources"
+  done <"$staged/.sorted"
+}
 # What the script says is gathered here, and printed once, when everything is done. A reader that has stopped
 # reading gets no complaint: where the caller has the broken pipe ignored, the write fails without a word, and
 # the exit code is still the script's own.
@@ -151,6 +180,8 @@ if [[ $mode == check ]]; then
   done
   list_extras
   while IFS= read -r path; do said+=("extra: $path"); done <"$staged/.extras"
+  list_sources
+  while IFS= read -r path; do said+=("source: $path"); done <"$staged/.sources"
   tidy
   if ((${#said[@]} > 0)); then
     say "${said[@]}"
@@ -181,6 +212,8 @@ if [[ $mode == again ]]; then
   for file in "${laid[@]}"; do said+=("wrote $mod/$file"); done
   list_extras
   while IFS= read -r path; do said+=("extra: $path"); done <"$staged/.extras"
+  list_sources
+  while IFS= read -r path; do said+=("source: $path"); done <"$staged/.sources"
   tidy
   say "${said[@]}"
   exit 0

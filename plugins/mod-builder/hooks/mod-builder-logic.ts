@@ -276,6 +276,14 @@ export function scaffoldDiffers(output: string): string[] {
   return [...new Set(lines)]
 }
 
+// The source files `scaffold.sh` found outside hooks/ and tests/ (SPEC.md 9.17, point 4): what follows "source: "
+// on its lines, in its order, each once.
+export function scaffoldSources(output: string): string[] {
+  if (typeof output !== 'string') return []
+  const lines = output.replace(/\r\n/g, '\n').split('\n').filter((line) => /^source: ./.test(line))
+  return [...new Set(lines.map((line) => line.slice('source: '.length)))]
+}
+
 // How many differences a refusal names; the rest are counted.
 export const SCAFFOLD_NAMED = 10
 
@@ -290,7 +298,18 @@ export function scaffoldKeptGate(check: Run, again: string, at: 'scaffold' | 're
   const ran = ended(check, 'the scaffold check')
   if (!ran.pass) return ran
   const differs = scaffoldDiffers(check.output)
-  if (check.exitCode === 0 && differs.length === 0 && check.output.replace(/\r\n/g, '\n').split('\n').some((line) => line.startsWith('as laid: '))) return { pass: true }
+  const sources = scaffoldSources(check.output)
+  // Source outside hooks/ and tests/ (SPEC.md 9.17, point 4): before Green the mod's code is the template's alone,
+  // so a file of code elsewhere refuses as a changed hooks/ does. No guarded tool removes a file; a shell command
+  // does, at Scaffold and at Red alike, so nothing strands.
+  const shown = sources.slice(0, SCAFFOLD_NAMED).join(', ') + (sources.length > SCAFFOLD_NAMED ? `, and ${sources.length - SCAFFOLD_NAMED} more` : '')
+  const elsewhere = `Remove each with a shell command; what a test needs to name is declared in a declaration file under types/`
+  const also = sources.length > 0 ? `. Source outside hooks/ and tests/ is not written before Green either (${shown}). ${elsewhere}` : ''
+  if (check.exitCode === 1 && differs.length === 0 && sources.length > 0) {
+    const why = at === 'red' ? 'the mod\'s code is written at Green, after its tests' : 'at Scaffold the mod\'s code is the template\'s alone, and its behaviour is written at Red (tests) and Green (code)'
+    return { pass: false, reason: `the mod holds source outside hooks/ and tests/ (${shown}): ${why}. ${elsewhere}` }
+  }
+  if (check.exitCode === 0 && differs.length === 0 && sources.length === 0 && check.output.replace(/\r\n/g, '\n').split('\n').some((line) => line.startsWith('as laid: '))) return { pass: true }
   if (check.exitCode === 1 && differs.length > 0) {
     const named = differs.slice(0, SCAFFOLD_NAMED).join('; ')
     const more = differs.length > SCAFFOLD_NAMED ? `; and ${differs.length - SCAFFOLD_NAMED} more` : ''
@@ -298,12 +317,12 @@ export function scaffoldKeptGate(check: Run, again: string, at: 'scaffold' | 're
     if (at === 'red') {
       return {
         pass: false,
-        reason: `hooks/ is not as the scaffold laid it (${named}${more}): it closed when Scaffold passed, and the mod's code is written at Green, after its tests. Put it back with: ${again}${extra}. When that command refuses, a link or a folder stands where a file goes: remove it with a shell command first`,
+        reason: `hooks/ is not as the scaffold laid it (${named}${more}): it closed when Scaffold passed, and the mod's code is written at Green, after its tests. Put it back with: ${again}${extra}. When that command refuses, a link or a folder stands where a file goes: remove it with a shell command first${also}`,
       }
     }
     return {
       pass: false,
-      reason: `hooks/ and tests/ are not as the scaffold laid them (${named}${more}): at Scaffold they hold the template and nothing else, and the mod's behaviour is written at Red (tests) and Green (code). Put them back with: ${again}${extra}`,
+      reason: `hooks/ and tests/ are not as the scaffold laid them (${named}${more}): at Scaffold they hold the template and nothing else, and the mod's behaviour is written at Red (tests) and Green (code). Put them back with: ${again}${extra}${also}`,
     }
   }
   return { pass: false, reason: `the scaffold check gave no answer to read (it exited ${check.exitCode})` }
