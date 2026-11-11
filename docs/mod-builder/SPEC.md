@@ -2487,3 +2487,22 @@ the driving session.**
    `agent.spawn` on `isTeammate` is possible and needed. The same input shows an agent's `permissionMode`
    is the parent's (`acceptEdits` here).
 
+
+### 9.14 Two corrections to 9.12 after the second probes (2026-11-11)
+
+Decided by the driving session ("corrections to the mechanism, mine to decide"), which accepted 9.13.
+
+1. **The advisor** is a stated limit, not guarded: a server-side tool never reaches a mod's hook, it writes
+   no file, and it exists only where the person's settings name an advisor model. 9.12's rule becomes:
+   the guard refuses every tool call by the reader **that reaches it**, other than `Read`, `Grep`, `Glob`
+   and `SubagentHandback`. `docs/limits` says that a reader may consult the advisor on machines that have
+   one. The reader's prompt does not mention it.
+2. **Headless**, as the building session proposed in 9.13, point 4: `SubagentHandback` allowed for the
+   reader; the nudge sent with a `.catch`, after the record is written and the pane redrawn, and never
+   awaited; no sleep-polling in the gate; `docs/limits` states that headless rests on one run, that the
+   main model sees the reader's report there, and that a build stays at Red until the gate is called again
+   when the nudge can't be sent.
+   One addition, because the main model may see the report (headless always; elsewhere never, by 9.10):
+   **the gate reads the verdict only from the record the mod wrote from `turn.complete`, never from
+   anything the model passes, and the gate's input schema gains no field for it.** A test holds that.
+3. **Teammates** are refused at spawn by `isTeammate` (9.13, point 5).
