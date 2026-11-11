@@ -2397,3 +2397,32 @@ exception to "no phase goes back" (3.3, 8.3).
 - **A build whose Red was skipped** (the refactor route, a repair whose tests fit) may go back too: Red is
   then entered for the first time, tests only, and ends as a repair's entered Red does.
 
+### 9.12 How the reader's report reaches the model: a correction to 9.3's mechanism (2026-11-11)
+
+Decided by the driving session, not the owner, after 9.10's point 5; its words: "a correction to the
+mechanism of 9.3, not to what the owner approved (a reader at every Red whose finding holds Red, then asks
+the person), so I decide it".
+
+1. The gate's first call starts the reader and answers: the reader is reading; end your turn now;
+   mod-builder will prompt you when it has reported; do not call the gate again before that.
+2. The mod's `turn.complete` hook for the reader's `agentId` writes the answer into the record, redraws the
+   pane, and then calls `$.prompt.submit` with a fixed text: "mod-builder: the test reader has reported.
+   Call mod_builder_gate." The text holds nothing the reader wrote.
+3. The verdict is only ever read by the gate, from the record. The prompt is a nudge: if it is refused,
+   lost or late, a gate call by the model or after the person says "continue" finds the answer in the
+   record and goes on. A gate call while the reader still runs answers "still reading (N s)" and starts
+   nothing.
+4. No answer 10 minutes after the start: the next gate call counts the round as "no verdict" (9.3).
+5. If a prompt submitted while the main turn still runs is refused or dropped, the hook tries once more
+   from the main session's own next `turn.complete` when the record holds an unread answer. (9.13, point 1:
+   it is queued, so this is a fallback only.)
+
+Also from the probes, into the design (the driving session):
+- The reader must not be able to consult or write through anything: the guard refuses every tool call by
+  the reader's `agentId` other than `Read`, `Grep` and `Glob`, and says so in the debug log. (9.13, points
+  3 and 4, show two tools this rule does not fit as written.)
+- `omitClaudeMd: true` on every agent the mod registers.
+- A teammate in a pane of its own is outside the guard: with `--agents`, the mod's `agent.spawn` hook
+  refuses a test-writer or implementer spawn that is a teammate, with the reason.
+- The agents name no model; what they inherit is stated in `docs/limits`.
+
