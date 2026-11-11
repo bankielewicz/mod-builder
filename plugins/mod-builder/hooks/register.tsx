@@ -7,11 +7,14 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
+  APPROVE_NO_CHANGE, EDIT_PHASES, baselineVerdict, editApprovalOptions, editApprovalQuestion, editFolderVerdict, editRedGate, editSpecGate, editSpecKept, entryKind,
+  isEditSkill, isOpenRecord, isTestPath, isKeptOut, keptTestsGate, mayRefactor, namesGone, newEditRecord, nextPhaseOf, phaseLabelOf, putsBack, recordKind, refactorRecord, repairRedGate,
+  restoreFolder, stopOptions, stoppedFolder, stoppedRecord, testChangeEvidence, testChangeGate, testChangeOptions, testChangeQuestion, testFilesChanged, testFilesToAsk, testHashesOf, versionGate,
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, pluginFolderBeingMade, redGate,
   scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
-import type { BuildRecord, Hashes, Phase, Run, SpecNow, TypesCandidate, Verdict } from './mod-builder-logic'
+import type { AskedFile, Baseline, BuildRecord, Check, Hashes, Kind, Phase, Run, SpecNow, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
 
 type Engine = EngineInterface
 
@@ -32,8 +35,10 @@ const NOT_A_FILE = 'not a file'
 // How a build is started (SPEC.md 7.5): the build skill's own command. `/mod-builder <words>` can't start one: it
 // runs this mod's command, and a submitted command's text can't be rewritten into another command.
 const START = '/mod-builder:build'
+// How an edit is started (SPEC.md 8.3): the edit skill's own command.
+const EDIT_START = '/mod-builder:edit'
 
-const NO_BUILD = `mod-builder: no build is open in this session. ${START} <what the mod should do> starts one.`
+const NO_BUILD = `mod-builder: no build is open in this session. ${START} <what the mod should do> starts one, and ${EDIT_START} <mod folder> <what to change> an edit.`
 
 const PANE = 'mod-builder'
 // The store key that holds the Claude Code version the documentation was last fetched under.
@@ -83,16 +88,27 @@ async function specNow($: Engine, modDir: string, approvedLength: number | null)
 // The hash of every file under the mod's tests/, by its path from the mod's folder; null when the folder can't
 // be listed. What is no file and no folder (a link) is recorded as such, so that swapping one in is a change.
 async function hashTests($: Engine, modDir: string): Promise<Hashes | null> {
+  return hashUnder($, modDir, 'tests')
+}
+
+// Every file of the mod, by its path from the mod's folder, without its own .git and node_modules (SPEC.md 8.3,
+// the baseline): what an edit is compared with, and where its test files are found wherever they sit.
+async function hashMod($: Engine, modDir: string): Promise<Hashes | null> {
+  return hashUnder($, modDir, '')
+}
+
+async function hashUnder($: Engine, modDir: string, from: string): Promise<Hashes | null> {
   const hashes: Hashes = {}
   const walk = async (rel: string): Promise<boolean> => {
     let entries
     try {
-      entries = await $.fs.list(`${modDir}/${rel}`)
+      entries = await $.fs.list(rel === '' ? modDir : `${modDir}/${rel}`)
     } catch {
       return false
     }
     for (const entry of entries) {
-      const path = `${rel}/${entry.name}`
+      const path = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (isKeptOut(path)) continue
       if (entry.kind === 'dir' && !entry.isLink) {
         if (!(await walk(path))) return false
       } else if (entry.kind === 'file' && !entry.isLink) {
@@ -107,7 +123,7 @@ async function hashTests($: Engine, modDir: string): Promise<Hashes | null> {
     }
     return true
   }
-  return (await walk('tests')) ? hashes : null
+  return (await walk(from)) ? hashes : null
 }
 
 // ------------------------------------------------------------------------------------ Verify's typecheck
@@ -157,7 +173,7 @@ async function typecheckCommand($: Engine, modDir: string): Promise<{ argv: read
   // file the build put in the mod (node_modules/.bin/tsc) must not be taken for one.
   const outside = config.slice(0, config.lastIndexOf('/'))
   for (const compiler of COMPILERS) {
-    if (isCompiler(await run($, [...compiler, '-v'], COMPILER_MS, outside))) return { argv: [...compiler, '--noEmit', '-p', config], cwd: outside, config, types }
+    if (isCompiler(await run($, [...compiler, '-v'], COMPILER_MS, outside))) return { argv: [...compiler, '--noEmit', '--pretty', 'false', '-p', config], cwd: outside, config, types }
   }
   return 'no TypeScript compiler could be run ("npx --no-install tsc" found none, and "npx -y -p typescript tsc" could not download one): install one with "npm install -g typescript", then ask again'
 }
@@ -216,20 +232,22 @@ async function paneView($: Engine): Promise<PaneView> {
   const entry = await $.store.get(sessionKey(sessionId))
   const kept = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
   const record = isBuildRecord(kept) && kept.sessionId === sessionId ? kept : null
-  const at = record === null ? 0 : phaseNumber(record.phase)
+  const kind: Kind = record === null ? entryKind(entry) : (recordKind(record) as Kind)
+  const shown: readonly Phase[] = kind === 'edit' ? EDIT_PHASES : PHASES
+  const at = record === null ? 0 : shown.indexOf(record.phase) + 1
   const title = !isSessionEntry(entry)
     ? 'No build in this session.'
     : entry.modDir === null
-      ? 'A build is open. Its mod folder is not named yet.'
+      ? `${kind === 'edit' ? 'An edit' : 'A build'} is open. Its mod folder is not named yet.`
       : record === null
         ? `Building ${entry.modDir}, but its record is missing or another session's.`
-        : `Building ${entry.modDir}`
-  const phases = PHASES.map((phase) => {
-    const number = phaseNumber(phase)
+        : `${kind === 'edit' ? 'Editing' : 'Building'} ${entry.modDir}`
+  const phases = shown.map((phase) => {
+    const number = shown.indexOf(phase) + 1
     const mark = at === 0 || number > at ? '[ ]' : number < at ? '[x]' : '[>]'
     return { text: `${mark} ${number} ${phaseTitle(phase)}`, isDim: mark !== '[>]' }
   })
-  const before = record === null || at < 2 ? undefined : PHASES[at - 2]
+  const before = record === null || at < 2 ? undefined : shown[at - 2]
   const seen = before === undefined || record === null ? undefined : record.evidence[before]
   const evidence = before === undefined || seen === undefined || seen === '' ? '' : `${phaseTitle(before)}: ${seen}`
   const home = await $.env.get('HOME')
@@ -270,16 +288,28 @@ type TypesFile = { path: string; sha256: string }
 
 // The typecheck, once for each distinct types file, in the order of their hashes; it stops at the first that fails.
 // `against` is the types file of the last run: the one a failure is named for.
-async function typecheckEach($: Engine, typecheck: Typecheck, modDir: string): Promise<{ ran: Run & { errors: string }; against: TypesFile }> {
+// `testFiles` are an edit's test files, which the typecheck names (SPEC.md 8.14); a build names none.
+async function typecheckEach($: Engine, typecheck: Typecheck, modDir: string, testFiles: readonly string[] = []): Promise<{ ran: Run & { errors: string }; against: TypesFile }> {
   let ran: Run & { errors: string } = { exitCode: Number.NaN, output: '', errors: '' }
   let against = typecheck.types[0] as TypesFile
   for (const types of typecheck.types) {
     against = types
-    await $.fs.write(typecheck.config, typecheckConfig(types.path, modDir))
+    await $.fs.write(typecheck.config, typecheckConfig(types.path, modDir, testFiles))
     ran = await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd)
     if (ran.exitCode !== 0) break
   }
   return { ran, against }
+}
+
+// The typecheck against every distinct types file, none left out when one fails: what the baseline and a repair's
+// Red read, each run with the folder the compiler ran in (SPEC.md 8.10).
+async function typecheckAll($: Engine, typecheck: Typecheck, modDir: string, testFiles: readonly string[]): Promise<{ ran: Run & { errors: string }; against: TypesFile }[]> {
+  const all: { ran: Run & { errors: string }; against: TypesFile }[] = []
+  for (const types of typecheck.types) {
+    await $.fs.write(typecheck.config, typecheckConfig(types.path, modDir, testFiles))
+    all.push({ ran: await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd), against: types })
+  }
+  return all
 }
 
 // What a refused typecheck quotes: the compiler's last lines, and always the types file it failed against, though
@@ -292,10 +322,10 @@ function typecheckDetail(ran: Run & { errors: string }, against: TypesFile): str
 
 // The typecheck as Scaffold and Red end on it (SPEC.md 7.10): the same one Green and Verify run, here while the
 // files it judges can still be changed. Answers the refusal, or the hashes of the types it passed against.
-async function typecheckNow($: Engine, modDir: string): Promise<Step | string[]> {
+async function typecheckNow($: Engine, modDir: string, testFiles: readonly string[] = []): Promise<Step | string[]> {
   const typecheck = await typecheckCommand($, modDir)
   if (typeof typecheck === 'string') return refuse(typecheck)
-  const { ran, against } = await typecheckEach($, typecheck, modDir)
+  const { ran, against } = await typecheckEach($, typecheck, modDir, testFiles)
   const verdict = typecheckGate(ran)
   if (!verdict.pass) return { verdict, detail: typecheckDetail(ran, against) }
   return [...new Set(typecheck.types.map((one) => one.sha256))].sort()
@@ -306,8 +336,13 @@ async function typecheckNow($: Engine, modDir: string): Promise<Step | string[]>
 // compared before them and after. A failed typecheck or load is answered with the last lines of what it said.
 async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   const { modDir } = record
-  const kept = await unchanged($, record, true)
+  const isEdit = recordKind(record) === 'edit'
+  const kept = isEdit ? await editUnchanged($, record) : await unchanged($, record, true)
   if (!kept.pass) return { verdict: kept }
+  // An edit's test files are named to the typecheck, wherever they sit (SPEC.md 8.14).
+  const testFiles = isEdit ? Object.keys(testHashesOf((await hashMod($, modDir)) ?? {})) : []
+  // What the test run is held to: the count Red recorded, else (a skipped Red) the baseline's, else none.
+  const testsBefore = record.testsAtRed ?? record.baseline?.tests ?? 0
   const manifest = await readText($, `${modDir}/.claude-plugin/plugin.json`)
   let name = ''
   try {
@@ -336,15 +371,15 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   await $.fs.write(log, '')
   const validated = await validate($, modDir)
   const tested = await test($, modDir)
-  const { ran: typechecked, against } = await typecheckEach($, typecheck, modDir)
+  const { ran: typechecked, against } = await typecheckEach($, typecheck, modDir, testFiles)
   // `/cost` is answered by Claude Code itself: the session loads the mod and makes no model call.
   const loaded = await run($, ['claude', '--plugin-dir', modDir, '-p', '/cost', '--debug-file', log], LOAD_MS)
   const logged = (await readText($, log)) ?? ''
   const runs = { validate: validated, test: tested, typecheck: typechecked, load: loaded, loadShown: loadShown(logged, name) }
-  const verdict = verifyGate(runs, record.testsAtRed as number)
+  const verdict = verifyGate(runs, testsBefore)
   if (!verdict.pass) {
     // Which of the four it was is asked of the rules (refusedAt), not read from the reason's words.
-    const at = refusedAt(runs, record.testsAtRed as number)
+    const at = refusedAt(runs, testsBefore)
     if (at === 'validate') return quoting(verdict, validateLines(said(validated)))
     if (at === 'test') return quoting(verdict, lastLines(said(tested)))
     if (at === 'typecheck') return { verdict, detail: typecheckDetail(typechecked, against) }
@@ -355,9 +390,284 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
     const own = [...(loaded.exitCode === 0 ? [] : [lastLines(said(loaded))]), ...skipped].filter((part) => part !== '')
     return quoting(verdict, own.length > 0 ? own.join('\n') : lastLines(logged.split('\n').filter((line) => name !== '' && line.includes(name)).join('\n')))
   }
-  const still = await unchanged($, record, true)
+  const still = isEdit ? await editUnchanged($, record) : await unchanged($, record, true)
   if (!still.pass) return { verdict: still }
-  return { verdict, evidence: `validate, ${verdict.tests} tests, the typecheck (types sha256 ${hashes.join(', ')}) and a headless load of ${name} all pass`, note: copy }
+  const evidence = `validate, ${verdict.tests} tests, the typecheck (types sha256 ${hashes.join(', ')}) and a headless load of ${name} all pass`
+  if (!isEdit) return { verdict, evidence, note: copy }
+  // An edit whose Red was skipped wrote no test: the run is held to the baseline's tests (SPEC.md 8.15).
+  if (record.red === 'skipped') {
+    const same = keptTestsGate(tested, record.baseline, record.skipped)
+    if (!same.pass) return quoting(same, lastLines(said(tested)))
+  }
+  // The version is greater than before the edit (SPEC.md 8.3); judged again at Verify, where plugin.json is open.
+  let version: unknown
+  try {
+    version = (JSON.parse(manifest ?? '') as { version?: unknown }).version
+  } catch {
+    version = undefined
+  }
+  const greater = versionGate(record.baseline?.version ?? null, version)
+  if (!greater.pass) return { verdict: greater }
+  return { verdict, evidence: `${evidence}; version ${String(version)}${record.baseline?.version == null ? '' : `, after ${record.baseline.version}`}`, note: copy }
+}
+
+// ------------------------------------------------------------------------------------------ an edit (SPEC.md 8)
+
+const RESTORE_MS = 300000
+
+// The hash checks an edit's gates make from Red on: SPEC.md as approved (or grown by the "Built" block from Verify
+// on), and every test file as recorded: at Red, or at the baseline when Red was skipped.
+async function editUnchanged($: Engine, record: BuildRecord): Promise<Verdict> {
+  const spec = await specNow($, record.modDir, record.spec === null ? null : record.spec.length)
+  const kept = specKept(record.spec as NonNullable<BuildRecord['spec']>, spec === null ? null : spec.now, record.phase)
+  if (!kept.pass) return kept
+  const recorded = record.testHashes ?? (record.red === 'skipped' && record.baseline !== undefined ? testHashesOf(record.baseline.hashes) : null)
+  const now = await hashMod($, record.modDir)
+  if (recorded === null) return { pass: false, reason: 'no hashes are recorded for the test files' }
+  if (now === null) return { pass: false, reason: 'the mod\'s files could not be read' }
+  return hashGate(recorded, testHashesOf(now))
+}
+
+// The mod as it stands when an edit opens (SPEC.md 8.3): its four checks run on it before anything is written,
+// what they showed recorded, and the restore point made. Answers the new record with what to tell the model, or
+// why no edit opens.
+async function takeBaseline($: Engine, modDir: string, sessionId: string): Promise<{ record: BuildRecord; said: string } | string> {
+  const hashes = await hashMod($, modDir)
+  if (hashes === null) return `the files of ${modDir} could not be read`
+  const manifest = await readText($, `${modDir}/.claude-plugin/plugin.json`)
+  let name = ''
+  let version: string | null = null
+  try {
+    const read = JSON.parse(manifest ?? '') as { name?: unknown; version?: unknown }
+    name = String(read.name ?? '')
+    version = typeof read.version === 'string' ? read.version : null
+  } catch {
+    return `${modDir}/.claude-plugin/plugin.json can't be read`
+  }
+  const typecheck = await typecheckCommand($, modDir)
+  if (typeof typecheck === 'string') return typecheck
+  const home = await $.env.get('HOME')
+  const at = await $.clock.now()
+  const restore = restoreFolder(home, sessionId, at)
+  if (restore === null) return 'the restore point has no folder: HOME is not set, or this session has no plain id'
+  const log = `${home ?? ''}/.claude/mod-builder-data/v2/loads/${sessionId}.log`
+  try {
+    await $.fs.write(log, '')
+  } catch (error) {
+    return `the log of the baseline's load could not be written (${String(error)})`
+  }
+  const testFiles = Object.keys(testHashesOf(hashes))
+  const validated = await validate($, modDir)
+  const tested = await test($, modDir)
+  const typechecked = await typecheckAll($, typecheck, modDir, testFiles)
+  const loaded = await run($, ['claude', '--plugin-dir', modDir, '-p', '/cost', '--debug-file', log], LOAD_MS)
+  const logged = (await readText($, log)) ?? ''
+  const typechecks: TypecheckRun[] = typechecked.map((one) => ({ run: one.ran, cwd: typecheck.cwd }))
+  const verdict = baselineVerdict({ validate: validated, test: tested, typechecks, load: loaded, loadShown: loadShown(logged, name) }, modDir, Object.keys(hashes))
+  if (!verdict.taken) return verdict.reason
+  // Nothing was written to the mod by these checks: it is hashed again, and must be as it was.
+  const after = await hashMod($, modDir)
+  const same = after === null ? null : hashGate(hashes, after)
+  if (same === null || !same.pass) return `${modDir} changed while its baseline was being taken${same === null ? '' : ` (${same.reason})`}: ask again`
+  const made = await run($, ['bash', `${$.plugin.root}/scripts/restore-point.sh`, modDir, restore], RESTORE_MS)
+  if (made.exitCode !== 0) return `the restore point could not be made (${lastLines(said(made), 3).replace(/\n/g, ' ') || 'restore-point.sh ended with no exit code'})`
+  const spec = await specNow($, modDir, null)
+  const baseline: Baseline = {
+    version, tests: verdict.tests, names: testNames(tested.output) ?? [], hashes,
+    spec: spec === null ? null : { length: spec.now.length, hash: spec.now.hash }, failed: verdict.failed, restore, at,
+  }
+  const failing = typechecked.find((one) => one.ran.exitCode !== 0)
+  const quoted: Record<Check, string> = {
+    validate: validateLines(said(validated)), test: lastLines(said(tested)),
+    typecheck: failing === undefined ? '' : typecheckDetail(failing.ran, failing.against), load: lastLines(said(loaded)),
+  }
+  const passes = verdict.failed.length === 0
+  const how = passes
+    ? `It passes its four checks as it stands (${verdict.tests} tests).`
+    : `As it stands it does not pass: ${verdict.failed.join(', ')}.${verdict.red === 'edit' ? ' It has no test file, and nothing else fails: Red is entered, and ends as in any edit.' : ' This edit is a repair.'}`
+  const red = verdict.red === 'skipped' ? ' Its test files fit this build, so Red is skipped: Spec is followed by Green.' : verdict.red === 'repair' ? ' Red is entered, tests only: it ends when a test file exists and the test files typecheck.' : ''
+  const lines = verdict.failed.map((check) => (quoted[check] === '' ? '' : `\n${check}:\n${check === 'typecheck' ? quoted[check] : `The last lines of its output:\n${quoted[check]}`}`)).join('')
+  const record = newEditRecord(modDir, sessionId, baseline, verdict.red)
+  const summary = passes ? `passes its four checks (${verdict.tests} tests)` : `fails ${verdict.failed.join(', ')}`
+  return {
+    record: { ...record, evidence: { baseline: `${summary}; version ${version ?? 'none'}; restore point ${restore}` } },
+    said: `${how}${passes ? '' : red} Its restore point is ${restore}.${lines}`,
+  }
+}
+
+// 8.4's question at an edit's or a repair's Red: asked when a test file the baseline had has changed or is gone.
+// Answers the refusal, or what the evidence says of it ('' when there was nothing to ask).
+async function askOfTests($: Engine, record: BuildRecord, now: Hashes, tested: Run | null): Promise<Step | string> {
+  const baseline = record.baseline as Baseline
+  const asked = testFilesToAsk(baseline.hashes, now)
+  if (asked.length === 0) return ''
+  const files: AskedFile[] = []
+  for (const file of asked) {
+    const before = await readText($, `${baseline.restore}/${file.path}`)
+    if (before === null) return refuse(`${file.path} can't be read in the restore point (${baseline.restore}), so the person can't be shown what changed`)
+    files.push({ path: file.path, before, after: file.how === 'missing' ? null : await readText($, `${record.modDir}/${file.path}`) })
+  }
+  const names = tested === null ? null : testNames(tested.output)
+  const question = testChangeQuestion(files, names === null ? [] : namesGone(baseline.names, names)) as string
+  let answer: string | null = null
+  try {
+    answer = await $.ui.ask(question, { options: testChangeOptions(), header: 'Tests' })
+  } catch {
+    return refuse('the person could not be asked about the changed test files (the question was dismissed, or nobody is at this session)')
+  }
+  const verdict = testChangeGate(answer)
+  if (!verdict.pass) return { verdict }
+  return testChangeEvidence(asked, answer as string)
+}
+
+// The check that ends an edit's phase, run now. `claims` is whether the gate's call put the change forward as one
+// with no behaviour change (SPEC.md 8.15).
+async function checkEdit($: Engine, record: BuildRecord, claims: boolean): Promise<Step> {
+  const { modDir } = record
+  const baseline = record.baseline
+  if (baseline === undefined) return refuse(`the edit's record holds no baseline. Start the edit again with ${EDIT_START}`)
+  switch (record.phase) {
+    case 'knowledge':
+    case 'describe':
+      return check($, record)
+    case 'done':
+      return refuse('the edit is done: nothing follows phase 7')
+    case 'spec': {
+      const before = await specNow($, modDir, baseline.spec === null ? null : baseline.spec.length)
+      const kept = editSpecKept(baseline.spec, before === null ? null : before.now, before === null ? '' : before.text, claims)
+      if (!kept.pass) return { verdict: kept }
+      const isOffered = mayRefactor(baseline, record.red)
+      if (claims && !isOffered) {
+        return refuse('this edit can\'t be approved as one with no behaviour change: that route is for a mod that passed its baseline and has tests with a count. Call the gate without no_behaviour_change')
+      }
+      const options = editApprovalOptions(claims, isOffered)
+      let answer: string | null = null
+      try {
+        answer = await $.ui.ask(editApprovalQuestion(modDir, options), { options, header: 'Spec' })
+      } catch {
+        return refuse('the person could not be asked (the question was dismissed, or nobody is at this session)')
+      }
+      const verdict = editSpecGate(answer, options)
+      if (!verdict.pass) return { verdict }
+      const after = await specNow($, modDir, null)
+      if (before === null || after === null || after.now.hash !== before.now.hash) return refuse('SPEC.md changed while the person was being asked: ask again')
+      const approved = { specApprovedAt: await $.clock.now(), spec: { length: before.now.length, hash: before.now.hash } }
+      const routed = verdict.route === 'refactor' ? refactorRecord({ ...record, ...approved }) : null
+      return {
+        verdict: { pass: true },
+        evidence: `the person answered "${answer}"${routed === null ? '' : `: Red is skipped, every test is kept as it is`}`,
+        change: routed === null ? approved : { ...approved, red: routed.red, skipped: routed.skipped },
+      }
+    }
+    case 'red': {
+      const kept = await specUnchanged($, record)
+      if (!kept.pass) return { verdict: kept }
+      const before = await hashMod($, modDir)
+      if (before === null) return refuse('the mod\'s files could not be read')
+      const tests = testHashesOf(before)
+      const linked = Object.keys(tests).find((path) => tests[path] === NOT_A_FILE)
+      if (linked !== undefined) return refuse(`${linked} is a link or no file: a test must be a file of the mod's own, so that what it holds can be recorded`)
+      const testFiles = Object.keys(tests)
+      let tested: (Run & { errors: string }) | null = null
+      let ended: string
+      let count = 0
+      if (record.red === 'repair') {
+        const typecheck = await typecheckCommand($, modDir)
+        if (typeof typecheck === 'string') return refuse(typecheck)
+        const all = await typecheckAll($, typecheck, modDir, testFiles)
+        const verdict = repairRedGate(all.map((one) => ({ run: one.ran, cwd: typecheck.cwd })), modDir, Object.keys(before))
+        if (!verdict.pass) {
+          const failing = all.find((one) => one.ran.exitCode !== 0)
+          return failing === undefined ? { verdict } : { verdict, detail: typecheckDetail(failing.ran, failing.against) }
+        }
+        ended = `the test files typecheck (types sha256 ${[...new Set(typecheck.types.map((one) => one.sha256))].sort().join(', ')})`
+      } else {
+        tested = await test($, modDir)
+        const verdict = editRedGate(tested, baseline.names, testFilesChanged(baseline.hashes, before))
+        if (!verdict.pass) return quoting(verdict, lastLines(said(tested)))
+        count = verdict.tests as number
+        const types = await typecheckNow($, modDir, testFiles)
+        if (!Array.isArray(types)) return types
+        ended = `${count} tests ran, a new or changed one failing by assertion; the typecheck passes (types sha256 ${types.join(', ')})`
+      }
+      const asked = await askOfTests($, record, before, tested)
+      if (typeof asked !== 'string') return asked
+      const after = await hashMod($, modDir)
+      if (after === null) return refuse('the mod\'s files could not be read')
+      const same = hashGate(tests, testHashesOf(after))
+      if (!same.pass) return refuse(`the test files changed while Red's checks ran (${same.reason}): ask again`)
+      const still = await specUnchanged($, record)
+      if (!still.pass) return { verdict: still }
+      const changed = testFilesChanged(baseline.hashes, before)
+      return {
+        verdict: { pass: true },
+        evidence: `${ended}; ${testFiles.length} test files hashed${changed.length === 0 ? '' : `, not as at the baseline: ${changed.join(', ')}`}${asked === '' ? '' : `; ${asked}`}`,
+        change: { testsAtRed: count, testHashes: tests },
+      }
+    }
+    case 'green': {
+      const step = await fourChecks($, record)
+      if (!step.verdict.pass || step.evidence === undefined) return step
+      return { ...step, evidence: `${step.evidence}; the test files and SPEC.md are as recorded` }
+    }
+    case 'verify':
+      return fourChecks($, record)
+    case 'scaffold':
+      return refuse('an edit has no Scaffold: its record is damaged')
+  }
+}
+
+// SPEC.md alone, as approved: what Red's gate of an edit checks before its test files are recorded.
+async function specUnchanged($: Engine, record: BuildRecord): Promise<Verdict> {
+  const spec = await specNow($, record.modDir, record.spec === null ? null : record.spec.length)
+  return specKept(record.spec as NonNullable<BuildRecord['spec']>, spec === null ? null : spec.now, record.phase)
+}
+
+// `/mod-builder stop` (SPEC.md 8.5): ends this session's open build or edit at any phase. The record is marked
+// stopped and the session is no longer bound to the folder. An edit then asks whether the mod stays as it is or
+// is put back as it was; putting it back deletes nothing (scripts/put-back.sh).
+async function stop($: Engine): Promise<string> {
+  const sessionId = await $.session.id()
+  const key = sessionKey(sessionId)
+  const entry = await $.store.get(key)
+  if (!isSessionEntry(entry)) return 'mod-builder: no build or edit is open in this session, so there is nothing to stop.'
+  const record = entry.modDir === null ? undefined : await $.store.get(buildKey(entry.modDir))
+  if (entry.modDir === null) {
+    await $.store.set(key, null)
+    $.ui.invalidate('ui.render')
+    return `mod-builder: stopped. This session's ${entryKind(entry)} had named no folder yet, and nothing was changed.`
+  }
+  // A record that is missing, or another session's, is not this session's to stop: only the session is unbound.
+  if (!isBuildRecord(record) || record.sessionId !== sessionId) {
+    await $.store.set(key, null)
+    $.ui.invalidate('ui.render')
+    return `mod-builder: stopped. The record for ${entry.modDir} is missing or is not this session's, so it was left as it is; this session is no longer bound to the folder.`
+  }
+  if (!isOpenRecord(record)) {
+    await $.store.set(key, null)
+    $.ui.invalidate('ui.render')
+    return `mod-builder: the ${recordKind(record) === 'edit' ? 'edit' : 'build'} of ${record.modDir} was already ${record.stopped === true ? 'stopped' : 'done'}; this session is no longer bound to it, and nothing else was changed.`
+  }
+  const kind = recordKind(record) as Kind
+  // The record first, then the session: a record marked stopped holds nothing even if the second write fails.
+  await $.store.set(buildKey(record.modDir), stoppedRecord(record))
+  await $.store.set(key, null)
+  $.ui.invalidate('ui.render')
+  const stopped = `mod-builder: the ${kind} of ${record.modDir} is stopped at ${phaseLabelOf(kind, record.phase)}. Other plugins' folders can be written again.`
+  if (kind !== 'edit' || record.baseline === undefined) return `${stopped} The folder is left as it is.`
+  let answer: string | null = null
+  try {
+    answer = await $.ui.ask(`The edit of ${record.modDir} is stopped. What becomes of the mod?`, { options: stopOptions(), header: 'Stop' })
+  } catch {
+    answer = null
+  }
+  if (!putsBack(answer)) return `${stopped} The mod is kept as it is now. Its restore point stays at ${record.baseline.restore}.`
+  const beside = stoppedFolder(record.modDir, await $.clock.now())
+  if (beside === null) return `${stopped} It could not be put back: no name could be made for the stopped folder. The mod is as it is now, and its restore point is ${record.baseline.restore}.`
+  const put = await run($, ['bash', `${$.plugin.root}/scripts/put-back.sh`, record.modDir, record.baseline.restore, beside], RESTORE_MS)
+  if (put.exitCode !== 0) return `${stopped} It could not be put back: ${lastLines(said(put), 3).replace(/\n/g, ' ') || 'put-back.sh ended with no exit code'}`
+  const moved = put.output.split('\n').find((line) => line.startsWith('moved: ')) ?? 'moved: nothing'
+  return `${stopped} The mod is put back as it was before this edit, in ${record.modDir}; the folder as it was when stopped is kept beside it as ${beside}. ${moved === 'moved: nothing' ? 'Nothing was moved between them.' : `Moved into the restored mod: ${moved.slice('moved: '.length)}.`} Nothing was deleted.`
 }
 
 // The check that ends the record's phase, run now.
@@ -454,19 +764,42 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
 
 // One call of the gate tool: names the mod's folder when the build is pending, else runs the check that ends
 // the current phase and moves the build on when it passes. The answer is the text the model reads.
-async function gate($: Engine, modDirArgument: unknown): Promise<string> {
+async function gate($: Engine, modDirArgument: unknown, claims = false): Promise<string> {
   const sessionId = await $.session.id()
   const entry = await $.store.get(sessionKey(sessionId))
   if (!isSessionEntry(entry)) return NO_BUILD
+  if (entry.modDir === null && entryKind(entry) === 'edit') {
+    const modDir = typeof modDirArgument === 'string' ? absolutePath(modDirArgument, await $.session.cwd()) : null
+    if (modDir === null) return `mod-builder: this edit has not named its mod's folder. Call ${GATE_TOOL} with mod_dir, the folder of the mod to edit.`
+    const kept = await $.store.get(buildKey(modDir))
+    const may = editFolderVerdict({
+      modDir, pluginRoot: $.plugin.root, sessionId, kept,
+      hasManifest: await $.fs.exists(`${modDir}/.claude-plugin/plugin.json`), hooksJson: await readText($, `${modDir}/hooks/hooks.json`),
+    })
+    if (!may.pass) return `mod-builder: no edit was opened: ${may.reason}${may.reason.endsWith('.') ? '' : '.'}`
+    // An edit this session left unfinished in the folder goes on, with the baseline it took then.
+    if (isOpenRecord(kept) && (kept as BuildRecord).sessionId === sessionId && recordKind(kept) === 'edit') {
+      await $.store.set(sessionKey(sessionId), { modDir, kind: 'edit' })
+      return `mod-builder: the edit of ${modDir} goes on. It is at ${phaseLabelOf('edit', (kept as BuildRecord).phase)}. Call ${GATE_TOOL} again to ask for the next phase.`
+    }
+    const taken = await takeBaseline($, modDir, sessionId)
+    if (typeof taken === 'string') return `mod-builder: no edit was opened, and nothing was written: ${taken}.`
+    await $.store.set(buildKey(modDir), taken.record)
+    await $.store.set(sessionKey(sessionId), { modDir, kind: 'edit' })
+    $.ui.invalidate('ui.render')
+    return `mod-builder: the edit's mod folder is ${modDir}. ${taken.said}\nIt is at ${phaseLabelOf('edit', 'knowledge')}. Call ${GATE_TOOL} again to ask for the next phase.`
+  }
   if (entry.modDir === null) {
     const modDir = typeof modDirArgument === 'string' ? absolutePath(modDirArgument, await $.session.cwd()) : null
     if (modDir === null) return `mod-builder: this build has not named its mod's folder. Call ${GATE_TOOL} with mod_dir, the folder the mod is built in.`
     const kept = await $.store.get(buildKey(modDir))
-    if (isBuildRecord(kept) && kept.sessionId !== sessionId && kept.phase !== 'done') {
-      return `mod-builder: ${modDir} is being built by another session (it is at ${phaseLabel(kept.phase)}). Name another folder.`
+    if (isOpenRecord(kept) && (kept as BuildRecord).sessionId !== sessionId) {
+      const theirs = kept as BuildRecord
+      return `mod-builder: ${modDir} is being ${recordKind(theirs) === 'edit' ? 'edited' : 'built'} by another session (it is at ${phaseLabelOf(recordKind(theirs) as Kind, theirs.phase)}). Name another folder.`
     }
-    // A build this session left unfinished in the folder goes on; a finished one gives way to a new record.
-    const record = isBuildRecord(kept) && kept.sessionId === sessionId && kept.phase !== 'done' ? kept : newRecord(modDir, sessionId)
+    // A build this session left unfinished in the folder goes on; a finished or stopped one, or an edit, gives
+    // way to a new record.
+    const record = isOpenRecord(kept) && (kept as BuildRecord).sessionId === sessionId && recordKind(kept) === 'build' ? (kept as BuildRecord) : newRecord(modDir, sessionId)
     await $.store.set(buildKey(modDir), record)
     await $.store.set(sessionKey(sessionId), { modDir })
     return `mod-builder: the build's mod folder is ${modDir}. It is at ${phaseLabel(record.phase)}. Call ${GATE_TOOL} again to ask for the next phase.`
@@ -475,16 +808,30 @@ async function gate($: Engine, modDirArgument: unknown): Promise<string> {
   if (!isBuildRecord(record) || record.sessionId !== sessionId || record.modDir !== entry.modDir) {
     return `mod-builder: the build's record for ${entry.modDir} is missing or is not this session's. Start the build again with ${START}.`
   }
+  const kind = recordKind(record) as Kind
   if (typeof modDirArgument === 'string' && absolutePath(modDirArgument, await $.session.cwd()) !== record.modDir) {
-    return `mod-builder: this session's build is in ${record.modDir}, and stays there. Call ${GATE_TOOL} without mod_dir.`
+    return `mod-builder: this session's ${kind} is in ${record.modDir}, and stays there. Call ${GATE_TOOL} without mod_dir.`
   }
-  const step = await check($, record)
-  if (!step.verdict.pass) return `mod-builder: still at ${phaseLabel(record.phase)}. Not passed: ${step.verdict.reason}.${step.detail === undefined ? '' : `\n${step.detail}`}`
-  const next = nextPhase(record.phase) as Phase
+  if (record.stopped === true) return `mod-builder: the ${kind} of ${record.modDir} was stopped. Start a new one with ${kind === 'edit' ? EDIT_START : START}.`
+  if (kind === 'build') {
+    const step = await check($, record)
+    if (!step.verdict.pass) return `mod-builder: still at ${phaseLabel(record.phase)}. Not passed: ${step.verdict.reason}.${step.detail === undefined ? '' : `\n${step.detail}`}`
+    const next = nextPhase(record.phase) as Phase
+    const evidence = { ...record.evidence, [record.phase]: step.evidence ?? '' }
+    await $.store.set(buildKey(record.modDir), { ...record, ...step.change, phase: next, evidence })
+    $.ui.invalidate('ui.render')
+    return `mod-builder: ${phaseLabel(record.phase)} passed (${step.evidence ?? ''}). The build is now at ${phaseLabel(next)}.${step.note === undefined ? '' : `\n${step.note}`}`
+  }
+  const step = await checkEdit($, record, claims)
+  const at = phaseLabelOf('edit', record.phase)
+  if (!step.verdict.pass) return `mod-builder: still at ${at}. Not passed: ${step.verdict.reason}.${step.detail === undefined ? '' : `\n${step.detail}`}`
+  const moved = { ...record, ...step.change }
+  const next = nextPhaseOf('edit', record.phase, moved.red) as Phase
   const evidence = { ...record.evidence, [record.phase]: step.evidence ?? '' }
-  await $.store.set(buildKey(record.modDir), { ...record, ...step.change, phase: next, evidence })
+  await $.store.set(buildKey(record.modDir), { ...moved, phase: next, evidence })
   $.ui.invalidate('ui.render')
-  return `mod-builder: ${phaseLabel(record.phase)} passed (${step.evidence ?? ''}). The build is now at ${phaseLabel(next)}.${step.note === undefined ? '' : `\n${step.note}`}`
+  const skips = record.phase === 'spec' && next === 'green' ? ` Red is skipped (${moved.skipped === 'no behaviour change' ? 'no behaviour change' : 'the test files fit this build'}).` : ''
+  return `mod-builder: ${at} passed (${step.evidence ?? ''}).${skips} The edit is now at ${phaseLabelOf('edit', next)}.${step.note === undefined ? '' : `\n${step.note}`}`
 }
 
 // The folders above a path that hold a plugin's manifest, nearest first.
@@ -525,14 +872,20 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: GATE_TOOL,
       description:
-        `Asks mod-builder for the next phase of the mod build this session started with ${START}. The first call names the folder the mod is built in (mod_dir). Each later call runs the check that ends the current phase (the person approving the spec, validate, the tests, the typecheck, a load) and answers whether the build moved on, or what failed. Call it when a phase's work is done; it is the only way to the next phase.`,
-      inputSchema: { type: 'object', properties: { mod_dir: { type: 'string', description: 'The folder the mod is built in, absolute or from the working directory. Given on the first call only.' } } },
+        `Asks mod-builder for the next phase of the mod build this session started with ${START}, or of the edit it started with ${EDIT_START}. The first call names the folder the mod is built in, or the mod to edit (mod_dir). Each later call runs the check that ends the current phase (the person approving the spec, validate, the tests, the typecheck, a load) and answers whether the build moved on, or what failed. Call it when a phase's work is done; it is the only way to the next phase.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          mod_dir: { type: 'string', description: 'The folder the mod is built in, or the folder of the mod to edit; absolute or from the working directory. Given on the first call only.' },
+          no_behaviour_change: { type: 'boolean', description: `In an edit, at Spec only: true puts the change forward as one with no behaviour change (a tidy-up, a description, a README). The person is then offered "${APPROVE_NO_CHANGE}", which skips Red and keeps every test as it is.` },
+        },
+      },
       isDeferred: false,
     })
     await $.command.register({
       name: 'mod-builder',
-      description: `mod-builder: "refresh" fetches the mod documentation now; alone, shows where this session's build stands. ${START} <what the mod should do> builds a mod`,
-      argumentHint: '[refresh]',
+      description: `mod-builder: "refresh" fetches the mod documentation now; "stop" ends this session's build or edit; alone, shows where this session's build stands. ${START} <what the mod should do> builds a mod, ${EDIT_START} <mod folder> <what to change> edits one`,
+      argumentHint: '[refresh|stop]',
     })
     // Not awaited: the session starts while the fetch runs. A headless session never fetches.
     if (e.isInteractive) void refreshWhenStale($, options.refreshDays)
@@ -547,8 +900,18 @@ export const register: Register = (on, options) => {
       const entry = await $.store.get(key)
       const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
       // A build under way stays as it is when the skill is expanded again; a finished or lost one gives way.
-      if (!(isBuildRecord(record) && record.phase !== 'done')) await $.store.set(key, { modDir: null })
+      if (!isOpenRecord(record)) await $.store.set(key, { modDir: null })
       // Unasked, so it is placed only where the terminal has the room; /mod-builder opens it at any width.
+      void $.ui.open({ id: PANE, title: 'mod-builder' })
+      $.ui.invalidate('ui.render')
+    }
+    // What starts an edit (SPEC.md 8.3): this plugin's edit skill being expanded, exactly as `build` opens a build.
+    if (isEditSkill(e, $.plugin.name, $.plugin.root)) {
+      const key = sessionKey(await $.session.id())
+      const entry = await $.store.get(key)
+      const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
+      // A build or an edit under way stays as it is; a finished, stopped or lost one gives way to a pending edit.
+      if (!isOpenRecord(record)) await $.store.set(key, { modDir: null, kind: 'edit' })
       void $.ui.open({ id: PANE, title: 'mod-builder' })
       $.ui.invalidate('ui.render')
     }
@@ -561,7 +924,7 @@ export const register: Register = (on, options) => {
   // It is registered before the guard's hook, so that it is the first to see its tool's call: on 2.1.322 a failure
   // in a hook beneath another hook of the same module is handed to the upper hook's handler, never to its own.
   on('tool.call', { tool: 'mcp__mod-builder__mod_builder_gate' }, async ($, e) => ({
-    result: await gate($, (e as { mod_dir?: unknown }).mod_dir),
+    result: await gate($, (e as { mod_dir?: unknown }).mod_dir, (e as { no_behaviour_change?: unknown }).no_behaviour_change === true),
   })).catch(gateFailed)
 
   // Every tool call passes here; only a write by a tool the guard looks at is judged. No matcher, so that a tool
@@ -604,6 +967,13 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'mod-builder' }, async ($, e) => {
     const word = e.args.trim()
     if (word === 'refresh') return { text: (await refresh($)).text }
+    if (word === 'stop') {
+      try {
+        return { text: await stop($) }
+      } catch (error) {
+        return { text: `mod-builder: the stop failed (${String(error)}). Nothing was moved; run /mod-builder to see where this session stands.` }
+      }
+    }
     if (word !== '') {
       return { text: `mod-builder: "/mod-builder refresh" fetches the mod documentation now, and "/mod-builder" alone shows this session's build. To build a mod, run: ${START} ${word}` }
     }
