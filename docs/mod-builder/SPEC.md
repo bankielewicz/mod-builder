@@ -1402,3 +1402,42 @@ case).
 `tests/node_modules/` is now typechecked, where the compiler used to pass it over. A dependency kept there
 that does not typecheck refuses Red while `tests/` is open. The named files are in `include`, not `files`,
 so one that is gone when the compiler runs is passed over rather than stopping the check.
+
+### 8.14 Test files as root files: the stop-time review's third finding (2026-11-11, at `0a678a2`)
+
+**The finding** (Codex's stop-time review of 8.13, with TypeScript 5.6.3's compiler API): "naming files in
+`include` does not guarantee checking them … `tests/a.test.ts` suppressed `tests/a.test.tsx`; the latter's
+type error produced no diagnostic. An explicit `files` control reported TS2322. Use explicit file roots and
+add a compiler regression covering this collision." Reproduced by the building session on the compiler's
+command line [ran, TypeScript 7.0.2, and 5.6.3 by the reader]: through `include`, of two files that differ
+only in their ending the compiler keeps one, whether a folder reaches them or both are named there; named
+under `files`, both are checked.
+
+**Built** (`b402e25`, the existing tests reading the folders and then the named files, in a commit of its
+own, none failing; `e31114a` red; `0a678a2` green) [ran]: `typecheckConfig` names an edit's test files under
+`files`, and `include` holds the types file and the three folders alone; with no test file there is no
+`files` key and the configuration is a build's to the byte. 6 tests, two of which run a real compiler on the
+configuration the rule writes: one on the pair `tests/a.test.ts` and `tests/a.test.tsx`, which failed at the
+red commit with only the first reported, and one on a dot name, `node_modules`, `bower_components`, `.mts`,
+`.cts` and a file outside the three folders. 402 of 402 rules, validate and script tests, 216 of 216 module
+tests, validate and the typecheck pass; the verifier's PASS with 5 mutants. CI installs a TypeScript compiler
+so that the two tests run there; where there is none they are reported as skipped.
+
+**The independent read** [ran, by that agent, on 7.0.2 and 5.6.3] found no test file whose error is lost
+under `files`: every pair of the four endings, a file beside a declaration file or a `.js` of its name, a
+file both reached and named, and the odd paths of 8.13. It found the two compiler tests failed under a
+terminal or with `FORCE_COLOR` set, because the newer compiler then prints its errors in another shape, with
+colour; the tests now pass `--pretty false`.
+
+**What step 2 owes because of this:**
+- **The gate must run the compiler with `--pretty false`.** `typecheckErrors` reads the plain shape
+  (`path(line,column): error TS…`). In the other shape it reads nothing, and `testsFit` then refuses ("shows
+  no error line to read"): safe, and stuck. The hooks module's command has no such flag today; a build only
+  quotes the output, so 0.1.0 is not affected.
+- A named file that is gone when the compiler runs now stops the check (`error TS6053`, which names no file
+  and refuses) where `include` passed it over. The hooks module lists the test files just before each run.
+- Two test files whose names differ only in letter case stop the check the same way (`error TS1149`).
+
+**Still not checked, as in 8.13:** a declaration file under `tests/` (`skipLibCheck`), and a name that holds
+a backslash. A build's typecheck names no file, so in a build `tests/.x.test.ts`, and `tests/a.test.tsx`
+beside `tests/a.test.ts`, are not typechecked: 0.1.0's gap, for the owner to weigh with step 2.
