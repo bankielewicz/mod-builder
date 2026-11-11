@@ -1924,11 +1924,12 @@ export function paneModel(input: PaneInput): PaneModel {
       const spec = typeof given.spec === 'string' ? given.spec : null
       state = `${base} \u00b7 ${spec === null ? 'SPEC.md not written yet' : 'SPEC.md written'}`
       blocks.push(...baselineBlock())
+      // Above the spec, which can fill the pane: a refused approval's reason must not be cut off beneath it.
+      blocks.push({ heading: [], rows: attemptRows() })
       const text = spec === null ? '' : (kind === 'edit' ? changeSection(spec, specThen) : spec).trim()
       blocks.push(text === ''
         ? { heading: heading(kind === 'edit' ? 'The change' : 'The spec'), rows: [row({ text: kind === 'edit' && spec !== null ? '  no section for this change yet, at the end of SPEC.md' : '  SPEC.md is not written yet', tone: 'dim' })] }
         : { heading: heading(kind === 'edit' ? 'The change, as SPEC.md has it' : 'The spec, as SPEC.md has it'), rows: [], markdown: text })
-      blocks.push({ heading: [], rows: attemptRows() })
       status = `spec \u00b7 ${refused === null ? '' : `${refused} \u00b7 `}waiting for your approval`
       break
     }
