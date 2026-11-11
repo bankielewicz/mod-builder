@@ -391,7 +391,8 @@ test('Guard: a refusal at Red, at Green and at Verify marks the phases before as
 test('Guard: a refusal at Done shows the table with Done\'s row, and leaves Done\'s header and its cleared status line as they are', () => {
   const model = paneModel(input({ record: record('done'), refusals: refusedAt('done', 'tests/a.test.ts') }));
   assert.deepEqual(model.header, { title: 'MOD BUILDER', state: `turn-counter ${DOT} built and checked`, tone: 'success' });
-  assert.deepEqual(headings(model), [TABLE, 'What was built', 'What was checked', 'Try it']);
+  // At Done the table comes last: what was checked, which counts the refusals, stays in view above it.
+  assert.deepEqual(headings(model), ['What was built', 'What was checked', 'Try it', TABLE]);
   assert.deepEqual(texts(block(model, TABLE)).slice(4, 6), [['  7 Verify', 'anything but tests/ and hooks/', 'closed'], ['  8 Done', 'anything but tests/ and hooks/', 'now']]);
   assert.equal(model.status, null);
 });

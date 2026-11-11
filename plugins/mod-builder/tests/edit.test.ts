@@ -274,7 +274,9 @@ test('on the route Green holds every test file to the baseline and the run to th
   w.runs.test = { exitCode: 0, stdout: passing(3, [...NAMES, 'a new one']) }
   expect(first(await gate($))).toBe('mod-builder: still at phase 5 (Green). Not passed: tests run that the mod did not have before this edit, which changes no behaviour: a new one.')
   w.runs.test = { exitCode: 0, stdout: passing(2, NAMES) }
-  expect(first(await gate($))).toMatch(/^mod-builder: phase 5 \(Green\) passed \(validate, 2 tests, .* all pass; version 0\.1\.1, after 0\.1\.0; the test files and SPEC\.md are as recorded\)\. The edit is now at phase 6 \(Verify\)\.$/)
+  // With Red skipped, Green asks the person about what changed (SPEC.md 8.23).
+  w.answer = GO_ON
+  expect(first(await gate($))).toMatch(/^mod-builder: phase 5 \(Green\) passed \(validate, 2 tests, .* all pass; version 0\.1\.1, after 0\.1\.0; the person answered "Go on with these changes" for what changed with Red skipped: \.claude-plugin\/plugin\.json \(changed\); the test files and SPEC\.md are as recorded\)\. The edit is now at phase 6 \(Verify\)\.$/)
   expect((await write($, TEST)).deny).toMatch(/of this edit/)
 })
 
@@ -424,6 +426,8 @@ test('a repair whose test files fit goes from Spec to Green, and Green ends when
   expect(first(await gate($))).toBe('mod-builder: still at phase 5 (Green). Not passed: the typecheck exited 1.')
   w.runs.tsc = { exitCode: 0, stdout: '' }
   w.files[MANIFEST] = `{ "name": "${NAME}", "version": "0.1.1" }`
+  // With Red skipped, Green asks the person about what changed (SPEC.md 8.23).
+  w.answer = GO_ON
   expect(first(await gate($))).toMatch(/phase 5 \(Green\) passed/)
 })
 
@@ -647,6 +651,7 @@ test('in a repair whose Red was skipped, Green holds the run to the tests the mo
   w.runs.test = { exitCode: 0, stdout: passing(2, ['draws its line', 'opens another']) }
   expect(first(await gate($))).toBe('mod-builder: still at phase 5 (Green). Not passed: tests the mod had before this edit no longer run: opens the pane.')
   w.runs.test = { exitCode: 0, stdout: passing(2, NAMES) }
+  w.answer = GO_ON
   expect(first(await gate($))).toMatch(/phase 5 \(Green\) passed/)
 })
 
