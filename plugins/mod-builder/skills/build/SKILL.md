@@ -64,7 +64,7 @@ name, and nothing else, then call the gate again. The pane beside the chat shows
 | 1 | Knowledge | nothing in the mod | a snapshot exists |
 | 2 | Describe | nothing in the mod | (always) |
 | 3 | Spec | `SPEC.md` | the person approves the spec |
-| 4 | Scaffold | everything (`SPEC.md` stays as approved) | validate passes, the tests run, the typecheck passes |
+| 4 | Scaffold | everything (`SPEC.md` stays as approved) | validate passes, the tests pass, the typecheck passes |
 | 5 | Red | `tests/` | more tests than at Scaffold, a new one failing on an assertion; the typecheck passes |
 | 6 | Green | anything but `tests/` and `SPEC.md` | validate, the tests, the typecheck and a headless load all pass |
 | 7 | Verify | anything but `tests/`, `hooks/` and the approved part of `SPEC.md` | the same four pass again |
@@ -121,11 +121,12 @@ aside without asking the person. Set the manifest's `description` to the mod's o
 scaffold needs to be the right shape (a contract in `types/` if the mod keeps `$.state`, for example), checked
 against the build's types; behaviour comes in phases 5 and 6. The template is a pane with a command; when the
 mod is another shape (a band, a status line), reshape `hooks/register.tsx` and `tests/pane.test.tsx` here,
-keeping at least one passing test. Then call the gate, which runs the validator and the tests, records the
-tests that exist now, and typechecks the mod against this build's types. Everything but `tests/` closes when
-Scaffold passes and opens again only at Green, and Red ends on the same typecheck: declare here whatever the
-tests of phase 5 will name (a type in the contract, a value the module exports), because a test can't typecheck
-against what is not there.
+with every test passing. Then call the gate, which runs the validator and the tests, records the tests that
+exist now, and typechecks the mod against this build's types. Every test has to pass here: a test that fails at
+Scaffold, or a module that throws as it loads, is refused with the test run's last lines. Everything but
+`tests/` closes when Scaffold passes and opens again only at Green, and Red ends on the same typecheck: declare
+here whatever the tests of phase 5 will name (a type in the contract, a value the module exports), because a
+test can't typecheck against what is not there.
 
 ### 5. Red
 
@@ -178,6 +179,10 @@ stops here. Tell the person what failed rather than working around it.
 Tell the person what was built and where, how to load it (`claude --plugin-dir <mod folder>`), the command
 that opens it, and the "Built on" line. If the mod's folder is in a git repository, stage only the mod's
 folder and commit it locally with a message that says what the mod does. Never push.
+
+Offer nothing else. This plugin has no edit skill and no sharing step yet: there is no `/mod-builder:edit`,
+and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here. A change to
+a finished mod is made by hand, or by a new build in a fresh folder.
 
 ## Handing a phase to a subagent
 

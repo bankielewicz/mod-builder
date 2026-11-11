@@ -260,6 +260,9 @@ export function specGate(answer: string | null | undefined): Verdict {
 export function scaffoldGate(validate: Run, test: Run): Verdict {
   for (const check of [ended(validate, VALIDATE), ended(test, TEST)]) if (!check.pass) return check
   if (validate.exitCode !== 0) return { pass: false, reason: `claude plugin validate --strict exited ${validate.exitCode}` }
+  // A scaffold's tests all pass (SPEC.md 7.11): everything but tests/ closes when Scaffold passes, and Red takes
+  // no failure that does not open with an assertion error, so a test that fails here could never be mended there.
+  if (test.exitCode !== 0) return { pass: false, reason: `claude plugin test exited ${test.exitCode}: not every test of the scaffold passes` }
   const run = parseTestRun(test.output)
   if (run === null) return { pass: false, reason: NO_COUNT }
   return { pass: true, tests: run.tests }
