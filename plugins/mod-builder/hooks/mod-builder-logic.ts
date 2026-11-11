@@ -487,20 +487,24 @@ export function isTypesOf(text: string, version: string): boolean {
 
 // The tsconfig.json for the check, as the types file's own header gives it, naming the types file and the mod's
 // hooks/, tests/ and types/ by their full paths: it is kept outside the mod. `testFiles` are the mod's test files
-// by their paths from its folder (SPEC.md 8.10, 8.13): each one is named too, wherever it lies, so that no test
-// file an edit freezes at Red goes unchecked. Nothing rests on which files the compiler reaches in a folder it is
-// given: that list is the compiler's own, and it passes over a name that opens with a dot and the folders
-// node_modules, bower_components and jspm_packages (hooks/.test.ts and tests/bower_components/b/b.test.ts were not
-// checked, 2026-11-11), while a file that is named is always checked. Only source the compiler reads when it is
-// named is named: .ts, .tsx, .mts and .cts. A build names none.
+// by their paths from its folder (SPEC.md 8.10, 8.13, 8.14): each one is named too, wherever it lies, as a root
+// file under `files`, so that no test file an edit freezes at Red goes unchecked. Nothing rests on which files
+// the compiler reaches through `include`: there it passes over a name that opens with a dot and the folders
+// node_modules, bower_components and jspm_packages, and of two files that differ only in their ending it keeps
+// one (tests/a.test.ts shut out tests/a.test.tsx, 2026-11-11, in a folder and when both were named there). A
+// root file is always checked; one that is gone when the compiler runs stops the check with an error that names
+// no file, which refuses. Only source the compiler reads is named: .ts, .tsx, .mts and .cts. A build names none,
+// and its configuration has no `files` key.
 export function typecheckConfig(typesFile: string, modDir: string, testFiles: readonly string[] = []): string {
   const others = (Array.isArray(testFiles) ? testFiles : []).filter((path) => typeof path === 'string' && isTestPath(path) && /\.(tsx?|mts|cts)$/.test(path))
+  const files = [...new Set(others.map((path) => (segments(path) ?? []).join('/')))].sort().map((path) => `${modDir}/${path}`)
   const config = {
     compilerOptions: {
       target: 'es2023', lib: ['es2023'], types: [], module: 'esnext', moduleResolution: 'bundler', strict: true,
       noUncheckedIndexedAccess: true, noEmit: true, skipLibCheck: true, jsx: 'react', jsxFactory: 'h', jsxFragmentFactory: 'Fragment',
     },
-    include: [typesFile, `${modDir}/hooks`, `${modDir}/tests`, `${modDir}/types`, ...[...new Set(others.map((path) => (segments(path) ?? []).join('/')))].sort().map((path) => `${modDir}/${path}`)],
+    include: [typesFile, `${modDir}/hooks`, `${modDir}/tests`, `${modDir}/types`],
+    ...(files.length > 0 ? { files } : {}),
   }
   return `${JSON.stringify(config, null, 2)}\n`
 }
