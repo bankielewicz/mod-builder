@@ -526,8 +526,8 @@ export function isTypesOf(text: string, version: string): boolean {
 // node_modules, bower_components and jspm_packages, and of two files that differ only in their ending it keeps
 // one (tests/a.test.ts shut out tests/a.test.tsx, 2026-11-11, in a folder and when both were named there). A
 // root file is always checked; one that is gone when the compiler runs stops the check with an error that names
-// no file, which refuses. Only source the compiler reads is named: .ts, .tsx, .mts and .cts. A build names none,
-// and its configuration has no `files` key.
+// no file, which refuses. Only source the compiler reads is named: .ts, .tsx, .mts and .cts. A build's test
+// files are named as an edit's are (SPEC.md 9.7); with none to name, the configuration has no `files` key.
 export function typecheckConfig(typesFile: string, modDir: string, testFiles: readonly string[] = []): string {
   const others = (Array.isArray(testFiles) ? testFiles : []).filter((path) => typeof path === 'string' && isTestPath(path) && /\.(tsx?|mts|cts)$/.test(path))
   const files = [...new Set(others.map((path) => (segments(path) ?? []).join('/')))].sort().map((path) => `${modDir}/${path}`)

@@ -340,7 +340,7 @@ type TypesFile = { path: string; sha256: string }
 
 // The typecheck, once for each distinct types file, in the order of their hashes; it stops at the first that fails.
 // `against` is the types file of the last run: the one a failure is named for.
-// `testFiles` are an edit's test files, which the typecheck names (SPEC.md 8.14); a build names none.
+// `testFiles` are the mod's test files, which the typecheck names (SPEC.md 8.14 for an edit, 9.7 for a build).
 async function typecheckEach($: Engine, typecheck: Typecheck, modDir: string, testFiles: readonly string[] = []): Promise<{ ran: Run & { errors: string }; against: TypesFile }> {
   let ran: Run & { errors: string } = { exitCode: Number.NaN, output: '', errors: '' }
   let against = typecheck.types[0] as TypesFile
@@ -388,6 +388,21 @@ function typecheckDetail(ran: Run & { errors: string }, against: TypesFile): str
   return lines === '' ? `It printed nothing. It ran against ${types}.` : `The last lines of its output, against ${types}:\n${lines}`
 }
 
+// The mod's test files as the typecheck is to name them (SPEC.md 8.14, 9.7): every file under tests/ and every
+// file named as a test, wherever it sits, by its path from the mod's folder. A build names them as an edit does,
+// at each of its gates that typecheck, so that no test file is frozen at Red unchecked. Answers why not, as
+// text, when the mod's files can't all be read (then nothing says which test files there are, and naming none
+// would pass them unchecked) or when one of them is a link or no plain file (the compiler would read through
+// it, or stop on it without naming it).
+async function testFilesOf($: Engine, modDir: string): Promise<string[] | string> {
+  const all = await hashMod($, modDir)
+  if (all === null) return 'the mod\'s files could not be read, so its test files can\'t be named to the typecheck'
+  const tests = testHashesOf(all)
+  const linked = Object.keys(tests).find((path) => tests[path] === NOT_A_FILE)
+  if (linked !== undefined) return `${linked} is a link or no file: a test must be a file of the mod's own, so that the typecheck reads what the mod holds`
+  return Object.keys(tests)
+}
+
 // The typecheck as Scaffold and Red end on it (SPEC.md 7.10): the same one Green and Verify run, here while the
 // files it judges can still be changed. Answers the refusal, or the hashes of the types it passed against.
 async function typecheckNow($: Engine, modDir: string, testFiles: readonly string[] = []): Promise<Step | string[]> {
@@ -407,10 +422,12 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   const isEdit = recordKind(record) === 'edit'
   const kept = isEdit ? await editUnchanged($, record) : await unchanged($, record, true)
   if (!kept.pass) return { verdict: kept }
-  // An edit's test files are named to the typecheck, wherever they sit (SPEC.md 8.14).
+  // The test files are named to the typecheck, wherever they sit (SPEC.md 8.14; a build's too, 9.7).
   // The mod as the four checks find it: what the person is asked about later must be what was checked.
   const checked = isEdit ? await hashMod($, modDir) : null
-  const testFiles = isEdit ? Object.keys(testHashesOf(checked ?? {})) : []
+  const named = isEdit ? Object.keys(testHashesOf(checked ?? {})) : await testFilesOf($, modDir)
+  if (typeof named === 'string') return refuse(named)
+  const testFiles = named
   // What the test run is held to: the count Red recorded, else (a skipped Red) the baseline's, else none.
   const testsBefore = record.testsAtRed ?? record.baseline?.tests ?? 0
   const manifest = await readText($, `${modDir}/.claude-plugin/plugin.json`)
@@ -884,7 +901,9 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       // which stand before its plugin-directory section, or the last lines of the test run.
       if (!verdict.pass) return validated.exitCode !== 0 ? quoting(verdict, validateLines(said(validated))) : quoting(verdict, lastLines(said(tests)), undefined, tests)
       // The typecheck too (SPEC.md 7.10): hooks/ and types/ close when Scaffold passes, and Red ends on a typecheck.
-      const types = await typecheckNow($, modDir)
+      const named = await testFilesOf($, modDir)
+      if (typeof named === 'string') return refuse(named)
+      const types = await typecheckNow($, modDir, named)
       if (!Array.isArray(types)) return types
       // And once more, after the checks: what they judged is what closes when Scaffold passes.
       const still = await scaffoldKept($, modDir)
@@ -908,7 +927,9 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       // The typecheck, after the test run's verdict (SPEC.md 7.10): tests/ closes when Red passes, so a test that
       // does not typecheck is refused here, while it can still be changed. It runs before the tests are hashed
       // again, so what is recorded is what was typechecked.
-      const types = await typecheckNow($, modDir)
+      const named = await testFilesOf($, modDir)
+      if (typeof named === 'string') return refuse(named)
+      const types = await typecheckNow($, modDir, named)
       if (!Array.isArray(types)) return types
       const testHashes = await hashTests($, modDir)
       if (before === null || testHashes === null) return refuse('the files under tests/ could not be read')
