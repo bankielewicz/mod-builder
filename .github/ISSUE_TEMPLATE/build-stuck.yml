@@ -1,0 +1,96 @@
+name: "A build stopped or was refused"
+description: "A /mod-builder:build run that a gate refused, that a write was refused in, or that could not reach Done."
+title: "Build stuck at <phase>: <the gate's reason, in a few words>"
+labels: ["build"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/limits](https://github.com/bankielewicz/mod-builder/blob/main/docs/limits/README.md) first: a listed limit is known. Paste text exactly as it was printed, not a summary of it.
+  - type: input
+    id: claude-version
+    attributes:
+      label: "Claude Code version"
+      description: "The output of `claude --version`."
+      placeholder: "2.1.322 (Claude Code)"
+    validations:
+      required: true
+  - type: input
+    id: plugin-commit
+    attributes:
+      label: "mod-builder commit or version"
+      description: "`git rev-parse --short HEAD` in your copy of this repository, or the version in plugins/mod-builder/.claude-plugin/plugin.json if you installed from the marketplace."
+      placeholder: "7a2e3ba, or 0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: "How mod-builder was loaded"
+      options:
+        - "claude --plugin-dir <path>/plugins/mod-builder"
+        - "/plugin install mod-builder --marketplace bankielewicz/mod-builder"
+        - Another way (say which below)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: "Operating system"
+      description: "Include WSL if you use it. Native Windows paths and macOS are listed in docs/limits as not judged or unverified."
+      placeholder: "Ubuntu 24.04 under WSL2"
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: "Phase the build was at"
+      description: "The phase marked `[>]` in the pane, or named in the gate's answer (\"still at phase 5 (Red)\")."
+      options: ["1 Knowledge", "2 Describe", "3 Spec", "4 Scaffold", "5 Red", "6 Green", "7 Verify", "8 Done"]
+    validations:
+      required: true
+  - type: textarea
+    id: answer
+    attributes:
+      label: "The gate's or the guard's answer, whole"
+      description: "Every line, starting at \"mod-builder:\". Include the quoted lines beneath it and, for a typecheck, the types file and sha256 it names."
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: request
+    attributes:
+      label: "What you asked it to build"
+      description: "The words after /mod-builder:build."
+    validations:
+      required: true
+  - type: input
+    id: snapshot
+    attributes:
+      label: "Documentation snapshot"
+      description: "The pane's \"Docs: snapshot ...\" line, or the content of ~/.claude/mod-builder-data/v2/docs/latest."
+      placeholder: "2026-11-10T194027Z"
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: "Model and permission mode"
+      placeholder: "sonnet, auto mode"
+    validations:
+      required: true
+  - type: textarea
+    id: outside
+    attributes:
+      label: "What the same command prints when you run it yourself"
+      description: "Run the command the answer names against the mod's folder (`claude plugin validate --strict <mod>`, `claude plugin test <mod>`) and paste the output and exit code. Write \"not run\" if you did not."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "What you expected instead, and why"
+      description: "If a page of the documentation or a section of docs/mod-builder/SPEC.md says so, name it."
+    validations:
+      required: true

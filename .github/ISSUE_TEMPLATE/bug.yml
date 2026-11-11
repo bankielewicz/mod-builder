@@ -1,0 +1,88 @@
+name: "Something else is wrong"
+description: "A wrong refusal or a missing one by the guard, the documentation refresh or lookup, the pane, the scaffold, or a document that says something the plugin does not do."
+title: "<part>: <what happened, in a few words>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a build that a gate refused, use the other form. Paste text exactly as it was printed.
+  - type: input
+    id: claude-version
+    attributes:
+      label: "Claude Code version"
+      description: "The output of `claude --version`."
+      placeholder: "2.1.322 (Claude Code)"
+    validations:
+      required: true
+  - type: input
+    id: plugin-commit
+    attributes:
+      label: "mod-builder commit or version"
+      description: "`git rev-parse --short HEAD` in your copy of this repository, or the version in plugins/mod-builder/.claude-plugin/plugin.json if you installed from the marketplace."
+      placeholder: "7a2e3ba, or 0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: "How mod-builder was loaded"
+      options:
+        - "claude --plugin-dir <path>/plugins/mod-builder"
+        - "/plugin install mod-builder --marketplace bankielewicz/mod-builder"
+        - Another way (say which below)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: "Operating system"
+      description: "Include WSL if you use it. Native Windows paths and macOS are listed in docs/limits as not judged or unverified."
+      placeholder: "Ubuntu 24.04 under WSL2"
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: "Part"
+      options:
+        - The guard (a write refused, or allowed, wrongly)
+        - The documentation refresh or the lookup script
+        - The pane or the /mod-builder command
+        - The scaffold script or the pane template
+        - A document in this repository
+        - The plugin's own tests or typecheck
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Exact steps"
+      description: "Each command or prompt as typed, in order, from a fresh session if you can."
+      placeholder: |
+        1. claude --plugin-dir ...
+        2. /mod-builder refresh
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "What was printed"
+      description: "Whole, unedited. For a document, quote the sentence and give the file and line."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "What you expected, and what says so"
+      description: "Name the documentation page, the section of docs/mod-builder/SPEC.md, or the command output that your expectation rests on."
+    validations:
+      required: true
+  - type: dropdown
+    id: repeat
+    attributes:
+      label: "Does it happen every time?"
+      options: ["Yes, every time", "Sometimes", "Once so far", "Not tried again"]
+    validations:
+      required: true

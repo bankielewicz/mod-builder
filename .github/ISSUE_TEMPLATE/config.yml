@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/bankielewicz/mod-builder/security/advisories/new
+    about: "A way around the guard or a gate that docs/limits does not list. Do not open a public issue for it."
