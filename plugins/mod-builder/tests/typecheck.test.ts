@@ -49,7 +49,8 @@ const config = (w: World) => JSON.parse(w.files[CONFIG] ?? 'null') as { compiler
 test('Verify typechecks against the build\'s own types, with a tsconfig it writes outside the mod', async ($, on) => {
   const w = await atVerify(on)
   expect(await gate($)).toMatch(/^mod-builder: phase 7 \(Verify\) passed /)
-  expect(config(w)).toEqual({ compilerOptions: OPTIONS, include: [TYPES, `${MOD}/hooks`, `${MOD}/tests`, `${MOD}/types`] })
+  // A build's test files are named as root files, as an edit's are (SPEC.md 9.7).
+  expect(config(w)).toEqual({ compilerOptions: OPTIONS, include: [TYPES, `${MOD}/hooks`, `${MOD}/tests`, `${MOD}/types`], files: [TEST_FILE] })
   expect(typechecks(w)).toEqual([['npx', '--no-install', 'tsc', '--noEmit', '--pretty', 'false', '-p', CONFIG]])
   expect(Object.keys(w.files).filter((file) => file.startsWith(`${MOD}/`)).sort()).toEqual([`${MOD}/.claude-plugin/plugin.json`, SPEC, TEST_FILE].sort())
 })
