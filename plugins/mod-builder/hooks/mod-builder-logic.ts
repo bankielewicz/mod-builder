@@ -487,11 +487,18 @@ export function isTypesOf(text: string, version: string): boolean {
 
 // The tsconfig.json for the check, as the types file's own header gives it, naming the types file and the mod's
 // hooks/, tests/ and types/ by their full paths: it is kept outside the mod. `testFiles` are the mod's test files
-// by their paths from its folder (SPEC.md 8.10): one that lies outside those three folders is named too, so that
-// no test file an edit freezes at Red goes unchecked. A build names none.
+// by their paths from its folder (SPEC.md 8.10): one that naming those three folders does not reach is named too,
+// so that no test file an edit freezes at Red goes unchecked. That is a file outside them, and a file inside them
+// under a node_modules folder, or whose name, or a folder on its way, opens with a dot: the compiler passes those
+// over in a folder it is given (hooks/.test.ts, tests/.b.test.tsx and tests/node_modules/dep/n.test.ts were not
+// checked, 2026-11-11; `claude plugin test` runs the first two). Only source the compiler reads when it is named
+// is named: .ts, .tsx, .mts and .cts. A build names none.
 export function typecheckConfig(typesFile: string, modDir: string, testFiles: readonly string[] = []): string {
-  const covered = (path: string) => ['hooks', 'tests', 'types'].includes((segments(path) ?? [])[0] ?? '')
-  const others = (Array.isArray(testFiles) ? testFiles : []).filter((path) => typeof path === 'string' && isTestPath(path) && !covered(path))
+  const covered = (path: string) => {
+    const parts = segments(path) ?? []
+    return ['hooks', 'tests', 'types'].includes(parts[0] ?? '') && !parts.slice(1).some((part) => part.startsWith('.') || part === 'node_modules')
+  }
+  const others = (Array.isArray(testFiles) ? testFiles : []).filter((path) => typeof path === 'string' && isTestPath(path) && /\.(tsx?|mts|cts)$/.test(path) && !covered(path))
   const config = {
     compilerOptions: {
       target: 'es2023', lib: ['es2023'], types: [], module: 'esnext', moduleResolution: 'bundler', strict: true,
