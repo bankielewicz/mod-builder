@@ -8,9 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 dated copy of Anthropic's mod documentation, test-first, through eight guarded phases. The plugin lives in
 `plugins/mod-builder/`; the repository root is a one-entry marketplace (`.claude-plugin/marketplace.json`).
 
-`SPEC.md` is the specification and the record. Sections 1 to 6 say what the plugin is; section 7 is a dated log
-of every decision, who made it, what was probed, and what is still open. Read `SPEC.md` 3.3 (the phase guard)
-and the latest 7.x sections before changing behaviour. `BACKLOG.md` holds what waits until after the MVP.
+`docs/mod-builder/SPEC.md` is the specification and the record. Sections 1 to 6 say what the plugin is; section
+7 is a dated log of every decision, who made it, what was probed, and what is still open. Read its 3.3 (the
+phase guard) and the latest 7.x sections before changing behaviour. `docs/mod-builder/BACKLOG.md` holds what
+waits until after the MVP. Below, and in the code's comments, "`SPEC.md` 7.x" means that specification; a
+`SPEC.md` named among a mod's files (`tests/`, `hooks/`) is the spec of the mod being built, in its own folder.
 `README.md` lists the plugin's limits; a behaviour change usually changes a limit there too.
 
 ## Commands

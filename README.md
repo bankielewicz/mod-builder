@@ -118,8 +118,8 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
   checked while it can still be changed. A test written at Red that names a type the contract does not
   declare, or a value `hooks/` does not export yet, is a type error there; declare such things at Scaffold.
 - **A test that can never pass stops the build at Green**: tests are frozen at Red and nothing goes back.
-  So does a types file written by another session after Red that the frozen tests fail against (`SPEC.md`
-  7.10 lists these).
+  So does a types file written by another session after Red that the frozen tests fail against (this
+  repository's specification, 7.10, lists these).
 - **Red accepts only failures that open with `AssertionError`.** A test that throws before its `expect` is
   refused, and the test has to be rewritten to drive the mod through its events.
 - **Native Windows paths are not judged**: the guard reads `/` paths only (WSL is unaffected). macOS is
@@ -140,11 +140,13 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
   writes of the call that names the folder leaves a record behind (the next naming call takes it up).
 - A mod folder whose path holds `*`, `?` or `[` is read as a pattern by the typecheck's `tsconfig.json`.
 
-What waits until after the MVP is in `BACKLOG.md`; how each of these was found is in `SPEC.md`, section 7.
+What waits until after the MVP is in [`docs/mod-builder/BACKLOG.md`](docs/mod-builder/BACKLOG.md); how each of
+these was found is in this repository's specification,
+[`docs/mod-builder/SPEC.md`](docs/mod-builder/SPEC.md), section 7.
 
 ## Built on
 
 Built on Claude Code 2.1.322, from the docs snapshot 2026-11-10T194027Z, against the types sha256
-60ff86c1215663578dcd96bb09c05aee8a36e0366862f011509460d51a03ceca. The demonstration of `SPEC.md` section 4
-(a `turn-counter` mod built through all eight phases on that build) is recorded in `SPEC.md` 7.8, and a second
-one by another session, of another mod, in `SPEC.md` 7.11.
+60ff86c1215663578dcd96bb09c05aee8a36e0366862f011509460d51a03ceca. The demonstration of the specification's
+section 4 (a `turn-counter` mod built through all eight phases on that build) is recorded in its 7.8, and a
+second one by another session, of another mod, in its 7.11.

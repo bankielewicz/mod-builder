@@ -217,7 +217,8 @@ plugins/mod-builder/
   skills/build/SKILL.md             the eight phases; templates/pane/ beside it
   scripts/refresh-docs.sh, lookup.sh, scaffold.sh (lays templates/pane/ into a mod's folder; step 4)
   tests/                            logic tests, pane tests; scripts/*.test.mjs for the two scripts
-SPEC.md, README.md
+docs/mod-builder/SPEC.md, docs/mod-builder/BACKLOG.md (moved there from the top folder, 7.13)
+README.md
 ```
 
 `scripts/refresh-docs.sh` moves from the repository's top folder into the plugin in the first build step.
@@ -1022,4 +1023,7 @@ every commit carried a personal address as author and committer.
   and is not pushed.
 - **Pushed:** `main` as rewritten, to give the pull request a branch to target; this section, the README's
   two corrections and `CLAUDE.md` go in a pull request, which the building session does not merge.
-
+- **Where this file is.** In the same pull request the owner asked for this file and `BACKLOG.md` to be moved
+  from the repository's top folder into `docs/mod-builder/` ("move backlog & spec into docs/<slug>/ folder");
+  the folder's name was the building session's choice. `README.md` and `CLAUDE.md` name the new paths. In
+  this file and in the code's comments, "`SPEC.md`" and "`BACKLOG.md`" still name these two files.
