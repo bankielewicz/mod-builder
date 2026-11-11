@@ -1477,3 +1477,18 @@ edit should do: "Refactor route (Recommended)".
 - No phase is widened: this is the refactor step of test-first work, with the tests closed and passing.
 - The section appended to the mod's `SPEC.md` says "No behaviour change" in its first line, so the record
   shows which route the edit took. The pane shows Red as skipped, with the reason.
+
+### 8.16 The pane is rebuilt to the mockup in 0.2.0 (2026-11-11)
+
+The built pane is plain text lines and does not match the mockup the owner approved. The owner, asked in
+the driving session when it should be rebuilt to the mockup (status line, phase rail, evidence rows, guard
+toast): "In 0.2.0 (Recommended)".
+
+- It is part of step 2's "the pane" (8.9), as a plan of its own, for a build and an edit alike.
+- The reference is the six frames in `docs/design/` (Main, Spec, Guard, Build, Verify, Done), each as its
+  exported source and a picture; the pictures are what the pane is compared with.
+- Only surfaces Anthropic's cached documents name are used (a pane, the status line, a toast, a band), each
+  cited by page and line. Where a frame shows something the API can't draw, this file says so and the
+  nearest thing is built; nothing is dropped in silence.
+- Before the plan, the building session lists each element of each frame with the surface and the call it
+  will use for it, and the driving session reviews that list against the pictures.
