@@ -20,7 +20,7 @@ body:
     attributes:
       label: "mod-builder commit or version"
       description: "`git rev-parse --short HEAD` in your copy of this repository, or the version in plugins/mod-builder/.claude-plugin/plugin.json if you installed from the marketplace."
-      placeholder: "7a2e3ba, or 0.1.0"
+      placeholder: "156a738, or 0.1.0"
     validations:
       required: true
   - type: dropdown
