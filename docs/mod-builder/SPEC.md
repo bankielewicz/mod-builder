@@ -1963,3 +1963,115 @@ first call, because the baseline runs the typecheck (a build loads it in phase 2
 left to the person: the model tells them it exists and never restores or deletes by hand.
 
 **Known:** the build skill's first heading has a space before its `#` (as at 0.1.0); not changed here.
+
+### 8.26 The question of a skipped Red says only what differs (2026-11-11, at `1d74844`)
+
+The driving session accepted steps 2 and 3 and the guard of 8.23 at `be44e23` on its own runs and a live
+probe, with one fix (its words): "the question's 'hooks, answers and calls' block prints every line before
+and now. Show only the lines that differ, and on a line of names only what was added and what is gone
+(`calls: added $.ui.toast`). At Verify's re-ask show only what differs from what was agreed at Green, so an
+already agreed difference is not shown again."
+
+Plan 35: `dd055b9` (two existing tests follow the fix), `e0f530d` red, `1d74844` green; 373 module tests,
+599 node tests, validate passes. The verifier's first verdict was FAIL for one reason only: the worktree
+was found on `main` partway through its run (the reflog has "checkout: moving from edit-skill to main" at
+15:09 UTC; neither the verifier nor the building session ran it, and no session's transcript on the machine
+shows who did). Everything else was reproduced in a disposable worktree. With `edit-skill` checked out
+again, clean at `1d74844`, the six commands and the end check passed: PASS, 6 mutants.
+
+As built (`registerChanges` in the rules):
+
+- A line of what validate said is `<module's file> <kind>: <names>`. Lines of one module and kind are read
+  as one list; names are split at each ", " outside braces and outside a quoted value; "nothing" names none.
+- For a kind both readings have, the question says `<kind>: added <names>; gone <names>`, a name counted as
+  often as it is there (a hook registered twice is one more hook). A kind only one reading has is said as
+  `new, <names>` or `gone, it was <names>`. The same names in another order are no difference, and a kind
+  with no difference is not shown.
+- The record keeps what validate said when the person agreed (`agreedRegisters`), at Green and again at
+  Verify. Asked again at Verify, the question compares with that, under "What the mod hooks, answers and
+  calls is not as when you agreed at Green:", and lists only the files changed since. A record that kept
+  none compares with the baseline, under "... is not as before this edit:".
+
+**Decided by the building session where the fix was silent:** the counting of a repeated name, the wording
+for a kind only one reading has, and the fallback to the baseline.
+
+**What the independent reader found in the draft (48 mutants), corrected before the red commit:** a name
+present twice was hidden, and braces inside a quoted value split a name wrongly.
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `1d74844` loaded with `--plugin-dir`, the
+installed copy switched off; the building session answered every dialog]:
+- A repair whose code called `$.ui.show`: Green's question read "What the mod hooks, answers and calls is
+  not as before this edit:" and one line, `./register.tsx calls: added $.ui.open; gone $.ui.show`.
+- An edit put forward as no behaviour change that added a toast: Green's question had the one line
+  `./register.tsx calls: added $.ui.toast`. After "Go on with these changes", the description in
+  `plugin.json` was changed at Verify; the question asked again read "These files are not as they were when
+  you agreed at Green (lines are counted against the mod before this edit):" with `.claude-plugin/plugin.json:
+  2 lines added, 2 lines removed` alone: `hooks/register.tsx` and the calls line were not shown again. Done
+  then listed both answers.
+- **Not run live:** a difference in what the mod registers that arises after Green (`hooks/` is closed at
+  Verify, so it takes a shell command); module tests hold it.
+
+### 8.27 Step 4, the building session's demonstration (2026-11-11, at `1d74844`)
+
+What the driving session asked of the building session (its words): "step 4's demonstration by you of what
+8.7 lists and your probes have not shown (a repair, a mod with no tests, an edit through Red that changes an
+existing test)". Run by the building session, which answered every dialog, on Claude Code 2.1.322 with
+sonnet, the plugin a `git archive` of `1d74844` loaded with `--plugin-dir`, the installed copy switched off.
+The mods were six copies of `hi-probe` (a pane mod this plugin built for 8.20's probes: three tests,
+version 0.1.0), each in a folder of its own, not copies of `tool-log` and `prompt-count`: 8.7's items 1 and
+2 on those two mods are the driving session's demonstration.
+
+The first five reached Done with the pane's "validate, N tests, the typecheck (3 types files) and a headless
+load of hi-probe all pass" and "version 0.1.1, after 0.1.0". Outside the sessions the building session then
+ran `claude plugin validate --strict` (passes) and `claude plugin test` (every test passes) on each, read
+`version` as 0.1.1, and compared the first bytes of each `SPEC.md` with the file before the edit (the same;
+the change's section and its "Built" lines follow). The typecheck and the headless load were run by the
+gates only, not again outside. [ran]
+
+1. **A repair, Red skipped** (8.7 item 6, first case; the code's `$.ui.open` replaced by `$.ui.show`, which
+   this build does not have). The baseline: "fails test, typecheck: this edit is a repair". The rail showed
+   "4 Red skipped: the test files fit". Green asked 8.23's question (8.26 has its text), and Done lists the
+   answer.
+2. **A repair that enters Red** (8.7 item 6, second case; a test's `$.ui.mount` replaced by `$.ui.render`,
+   so the test file no longer typechecks). The gate's first answer: "As it stands it does not pass: test,
+   typecheck. This edit is a repair. Red is entered, tests only". The test was corrected at Red, Red passed
+   on "the test files typecheck", 8.4's question listed `tests/hi.test.tsx: 1 line added, 1 line removed`,
+   and nothing under `hooks/` needed a change.
+3. **A mod with no test file** (its `tests/` taken away). It is an edit, not a repair: Red wrote the first
+   test file, two tests. Red's gate first refused ("still at phase 4 (Red). Not passed: the typecheck
+   exited 1", with the output's last lines); the test was corrected and Red passed. Done: 2 tests.
+4. **An edit through Red that changes an existing test** ("make the pane line read hello instead of hi").
+   8.4's question: "These test files are not as they were before this edit: - tests/hi.test.tsx: 3 lines
+   added, 3 lines removed", the two removed lines quoted, "These tests no longer exist: the pane shows the
+   word hi", "Go on with these changes?". Done lists the answer: `the person answered "Go on with these
+   changes" for: tests/hi.test.tsx (changed)`.
+5. **The refactor route with a change at Verify**: 8.26.
+6. **The guard and the gates during an edit** (8.7 items 3 and 4; the model was told to try each):
+   - The first line of the original `SPEC.md` changed at Spec: "still at phase 3 (Spec). Not passed: SPEC.md
+     no longer begins as it did before this edit: the change is written as a new section at its end, and
+     nothing above it may change." With the line put back, the approval was asked.
+   - A `Write` of `hooks/register.tsx` at Red: "mod-builder: hooks/register.tsx can't be written in phase 4
+     (Red) of this edit, which may write test files only (tests/, and any *.test.ts or *.test.tsx). ..."
+   - `tests/pane.test.tsx` removed at Red by `rm`, and `tests/hi.test.tsx` changed: 8.4's question listed
+     both, "- tests/pane.test.tsx: gone (27 lines removed)" with its removed lines, and "These tests no
+     longer exist: the pane shows the word hi; the pane draws its line; the command opens the pane".
+     "Not yet": "still at phase 4 (Red). Not passed: the person has not agreed to the changed test files
+     (answer: "Not yet")."
+   - `/mod-builder stop` there, answered "Keep the mod as it is now": the pane kept the stopped frame
+     ("stopped at Red", the answer, the mod's folder and its restore point). "Put it back" was not run
+     again here: 8.19 and the driving session's probe at `be44e23` have it.
+   - Naming the loaded plugin's own folder: "no edit was opened: ... is this plugin's own folder:
+     mod-builder does not edit itself."
+
+**Seen, and left as it is:**
+- A repair's Baseline block in the pane says "fails test, typecheck" twice, in its heading row and in the
+  row beneath.
+- In one session the model appended the "Built" lines to `SPEC.md` with a shell command, not
+  the Edit tool; no write had been refused first. The guard does not judge a shell command (`docs/limits`),
+  and Verify's gate read the file as it does any other.
+- With the 8.23 question asked at Green and again at Verify, Done shows two rows that begin with the same
+  words, the later answer first.
+
+**Not shown by the building session:** 8.7's items 1 and 2 on `tool-log` and `prompt-count`; item 7 on the
+real engine (a record stored by 0.1.0; module tests hold it); item 5's "Put it back" on the final commit
+(shown at earlier commits, as above).
