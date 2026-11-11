@@ -22,8 +22,8 @@ Everything mod-builder is known not to do, or to do in a way worth knowing first
   evidence, in the pane and in the mod's "Built on" line.
 - **A `SPEC.md` changed after approval stops every later gate**, with no way back to Spec. A build can't go
   back a phase at all; a refused validate, test run, typecheck or load is answered with the command's last 20
-  lines (for validate, the last 20 before its plugin-directory section), so that it can be fixed before
-  `hooks/` closes at Verify.
+  lines (for validate, the last 20 before its plugin-directory section), so that it can be fixed while
+  the files it judges can still be changed: `tests/` closes at the end of Red and `hooks/` at Verify.
 - **A test can name only what Scaffold left.** Scaffold and Red each end on the typecheck, so that a file is
   checked while it can still be changed. A test written at Red that names a type the contract does not
   declare, or a value `hooks/` does not export yet, is a type error there; declare such things at Scaffold.

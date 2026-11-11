@@ -24,6 +24,8 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
 ## Built on
 
 Built on Claude Code 2.1.322, from the docs snapshot 2026-11-10T194027Z, against the types sha256
-60ff86c1215663578dcd96bb09c05aee8a36e0366862f011509460d51a03ceca. The demonstration of the specification's
+60ff86c1215663578dcd96bb09c05aee8a36e0366862f011509460d51a03ceca. This line names one types
+file; the "Built on" line the gate writes into a mod's `SPEC.md` names every distinct types file its typecheck
+ran against, sorted. The demonstration of the specification's
 section 4 (a `turn-counter` mod built through all eight phases on that build) is recorded in its 7.8, and a
 second one by another session, of another mod, in its 7.11.
