@@ -22,10 +22,13 @@ test('a test file under a folder whose name opens with a dot is named too, at an
   assert.deepEqual(included(['.hid/e.test.ts', '.test.ts']), [...BASE, '/work/mod/.hid/e.test.ts', '/work/mod/.test.ts']);
 });
 
-test('a test file the three folders reach is still not named, a dot elsewhere in its name included', () => {
-  assert.deepEqual(included(['tests/a.test.ts', 'hooks/x.test.ts', 'types/deep/t.test.ts', 'tests/a.b.test.tsx', 'hooks/a.dir/x.test.ts']), BASE);
-  // A path made whole first: "./" and "x/.." are not folders that open with a dot.
-  assert.deepEqual(included(['./tests/a.test.ts', 'tests/x/../a.test.ts', 'tests/./a.test.ts']), BASE);
+// SPEC.md 8.13: a test file the three folders would reach is named as well. Which files a folder reaches is the
+// compiler's own list (it also passes over bower_components and jspm_packages), and nothing rests on it now.
+test('a test file the three folders reach is named as well, by its path made whole', () => {
+  assert.deepEqual(included(['tests/a.test.ts', 'hooks/x.test.ts', 'types/deep/t.test.ts', 'tests/a.b.test.tsx', 'hooks/a.dir/x.test.ts']), [
+    ...BASE, '/work/mod/hooks/a.dir/x.test.ts', '/work/mod/hooks/x.test.ts', '/work/mod/tests/a.b.test.tsx', '/work/mod/tests/a.test.ts', '/work/mod/types/deep/t.test.ts',
+  ]);
+  assert.deepEqual(included(['./tests/a.test.ts', 'tests/x/../a.test.ts', 'tests/./a.test.ts']), [...BASE, '/work/mod/tests/a.test.ts']);
 });
 
 test('each such file is named once, by its path made whole, and what is no test file is not named', () => {
@@ -48,8 +51,8 @@ test('a dot opens a name at any depth and before any character: each such test f
 
 test('a test file under a node_modules folder inside tests/ is named: the compiler passes that folder over too', () => {
   assert.deepEqual(included(['tests/node_modules/dep/n.test.ts', 'tests/a/node_modules/x.ts']), [...BASE, '/work/mod/tests/a/node_modules/x.ts', '/work/mod/tests/node_modules/dep/n.test.ts']);
-  // Under hooks/ such a file is no test file at all, and a folder that only holds the word is reached.
-  assert.deepEqual(included(['hooks/node_modules/q/h.test.ts', 'tests/node_modules_old/a.test.ts']), BASE);
+  // Under hooks/ such a file is no test file at all; one in a folder that only holds the word is one (SPEC.md 8.13).
+  assert.deepEqual(included(['hooks/node_modules/q/h.test.ts', 'tests/node_modules_old/a.test.ts']), [...BASE, '/work/mod/tests/node_modules_old/a.test.ts']);
 });
 
 test('the three folders are named as spelled: a test file under Tests/ or HOOKS/ is outside them, and is named', () => {

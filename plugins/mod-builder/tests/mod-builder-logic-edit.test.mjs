@@ -640,8 +640,9 @@ test('the typecheck names each test file outside hooks/, tests/ and types/, and 
   const base = ['/t/claude-code.d.ts', '/work/mod/hooks', '/work/mod/tests', '/work/mod/types'];
   assert.equal(typecheckConfig('/t/claude-code.d.ts', MOD, []), typecheckConfig('/t/claude-code.d.ts', MOD));
   assert.deepEqual(JSON.parse(typecheckConfig('/t/claude-code.d.ts', MOD)).include, base);
-  assert.deepEqual(included(['tests/a.test.ts', 'hooks/x.test.ts', 'types/t.test.ts']), base);
-  assert.deepEqual(included(['lib/y.test.tsx', 'a.test.ts', 'tests/a.test.ts', 'lib/y.test.tsx']), [...base, '/work/mod/a.test.ts', '/work/mod/lib/y.test.tsx']);
+  // SPEC.md 8.13: a test file inside the three folders is named as well; nothing rests on what a folder reaches.
+  assert.deepEqual(included(['tests/a.test.ts', 'hooks/x.test.ts', 'types/t.test.ts']), [...base, '/work/mod/hooks/x.test.ts', '/work/mod/tests/a.test.ts', '/work/mod/types/t.test.ts']);
+  assert.deepEqual(included(['lib/y.test.tsx', 'a.test.ts', 'tests/a.test.ts', 'lib/y.test.tsx']), [...base, '/work/mod/a.test.ts', '/work/mod/lib/y.test.tsx', '/work/mod/tests/a.test.ts']);
   // What is no test file, or no path, is not named: the model's words never reach the compiler's list.
   assert.deepEqual(included(['lib/util.ts', '../outside.test.ts', '', null, 3]), base);
   assert.deepEqual(included(null), base);
