@@ -1811,3 +1811,49 @@ question for a changed test, Done with "Built on ... 60ff86c12156, a33c3b254b7c.
 `mod-builder: refused: hooks/register.tsx, at Done`. **Found in that probe:** the table of what each phase
 may write is drawn first, and at Done it pushed "What was checked", which holds the count, out of the pane's
 visible rows (a side agent's note said the same). Fixed in the next plan: at Done the table comes last.
+
+### 8.23 An edit whose Red was skipped asks the person at Green (2026-11-11)
+
+A side agent's note: on the refactor route (8.15) new behaviour that no test covers passes Green, because
+the old tests still pass. The owner, asked in the driving session what guard the route should have: "option
+1 seems sound" (option 1: "Show changes, ask": the mod asks the person with the list of changed files and
+their line counts, "Not yet" first). The design is the driving session's, reviewed by its advisor; the
+building session records it here before building it.
+
+1. **Asked at Green's gate**, after the four checks and the version check pass, while every file it judges
+   can still be changed (7.10). Only the exact approving answer passes; "Not yet" is first; any other answer
+   keeps the edit at Green.
+2. **Asked whenever Red was skipped**: the refactor route, and a repair whose test files fit the build. The
+   second is the driving session's application of the owner's answer to the same opening.
+3. **The question names** each file changed, added or gone since the baseline, by the baseline's hashes, with
+   its lines added and removed against the copy in the restore point, at most 20 files and then "and N
+   more"; `SPEC.md` and test files are left out (the first is approved at Spec, the second are held to the
+   baseline's hashes). It says how many tests are held unchanged and that they are the only check of
+   behaviour, and names the restore point. When what `claude plugin validate` reports that the mod hooks,
+   answers and calls is not as at the baseline, the question says so with both; that is named, never refused
+   on.
+4. **What was agreed is held.** The record keeps the hash of every file the answer covered. At Verify's gate
+   a file other than `SPEC.md` that differs from them is asked about again, the same way; those files can
+   still be written at Verify, so nothing strands.
+5. **Engine-written files are not listed.**
+6. **The limit:** this is the person's judgement of a list, not proof that behaviour is unchanged; and a
+   write by a shell command is outside the guard as before, though it shows in this list, which is made
+   from hashes.
+7. The answer and the files it covered are in the gate's evidence, and so a row in the pane.
+
+**Facts checked before the plan** [ran, 2.1.322, a copy of a built mod in a scratch folder]:
+- **The baseline keeps no validate output** (`Baseline` holds the version, the tests' count and names, the
+  hashes, `SPEC.md`'s length and hash, the failed checks, the restore point and the time). So the lines of
+  validate's output that say what each module hooks, which command it answers and what it calls are recorded
+  at the baseline from now on; an edit opened before this has none, and its question says nothing of them.
+  On the probe mod they were: `./register.tsx hooks: session.start, command.run{command=hi-probe},
+  ui.render{component=Pane, requestId=hi-probe}`, `./register.tsx answers its own command:
+  command.run{command=hi-probe}`, `./register.tsx calls: $.command.register, $.ui.open, $.ui.resolve`.
+- **None of the gate's checks writes into the mod.** The file list was the same before and after `claude
+  plugin validate --strict`, `claude plugin test` and the headless load (`claude --plugin-dir <mod> -p /cost
+  --debug-file <log>`); the typecheck's `tsconfig.json` is written under the plugin's data folder (7.5).
+- **An interactive session that loads the mod with `--plugin-dir` does write into it**: the folder
+  `.claude-plugin/types/` (the build's types, a `tsconfig.json` and a `.gitignore`), and at the mod's top a
+  `tsconfig.json` that holds only `{ "extends": "./.claude-plugin/types/tsconfig.json" }`. A person trying
+  the mod during an edit makes these. So the list leaves out everything under `.claude-plugin/types/`, and a
+  top-level `tsconfig.json` that was not there at the baseline and holds exactly that.
