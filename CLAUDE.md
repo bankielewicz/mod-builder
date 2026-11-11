@@ -100,7 +100,8 @@ between sessions), never picking one. A refused command is answered with its las
   another Claude session the owner works through ("the driving session"), not the owner; say which.
 - The GitHub repository is `https://github.com/bankielewicz/mod-builder` (remote `origin`). Changes reach
   `main` there through a pull request the owner merges; never push to `main` and never push unasked. Commits
-  use the owner's GitHub noreply address (set in this repository's git config; `SPEC.md` 7.13). Commit trailers
-  are copied as the plan or the session's attribution gives them.
+  use the owner's GitHub noreply address (set in this repository's git config; `SPEC.md` 7.13). Commits
+  carry no `Co-Authored-By` line (`.claude/settings.json` sets `attribution.commit` to an empty string;
+  `SPEC.md` 7.14); the `Claude-Session` line stays.
 
 `devforgeai/handoff/` (ignored by git) holds session handoffs; `TASKS.md` there lists each plan's commits.
