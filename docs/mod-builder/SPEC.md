@@ -1338,3 +1338,31 @@ does not check the record's `red` field.
 session's own probe of this step (8.9) is still owed; fact 5 of 8.2 was read on the pane template only;
 macOS stays unverified. The typecheck naming stray test files was built on the driving session's stated
 intent to ask for it, before the ask itself arrived.
+
+### 8.12 The typecheck reaches every test file: a stop-time review's finding (2026-11-11, at `cbd061d`)
+
+**The finding** (Codex's stop-time review of 8.11): "The new typecheck configuration can silently omit test
+files before freezing them." As built in 8.11, `typecheckConfig` named a test file only when it lay outside
+`hooks/`, `tests/` and `types/`. The compiler, given a folder, passes over a file whose name, or a folder on
+its way, opens with a dot, and over a `node_modules` folder [ran, the gate's own configuration and a real
+compiler: `hooks/.test.ts`, `tests/.b.test.tsx`, `tests/.deep/c.test.ts` and `hooks/.hid/a.test.ts`, each
+holding a type error, were not reported; `tests/ok.test.ts` was]. `claude plugin test` runs `hooks/.test.ts`
+and `tests/.b.test.tsx` [ran]. So an edit could freeze such a test file at Red without it ever being
+typechecked.
+
+**Built** (`317aabf` red, `cbd061d` green; no existing test changed) [ran]: the typecheck names each test
+file that is source the compiler reads once named (`.ts`, `.tsx`, `.mts`, `.cts`) and that the three folders
+do not reach: one outside them, or inside them under a `node_modules` folder or a name that opens with a
+dot. 9 logic tests; 389 of 389 rules, validate and script tests, 216 of 216 module tests, validate and the
+typecheck pass; the verifier's PASS with 7 mutants. With the real compiler and the configuration the built
+rule writes, all six such files' errors are reported [ran].
+
+**The independent read** of the first four tests found the `node_modules` case, `.mts` and `.cts`, and five
+mutants no test failed (a dot folder three levels down, a dot before a character that is no letter, the
+three folders compared without regard to case); each has a test now. It also showed a file named in upper
+case (`u.test.TS`) is read by the compiler neither in a folder nor when named, so the rule does not name it,
+and the engine does not run it (8.11).
+
+**Left, for the owner:** a build's typecheck has the same blind spot for `tests/.x.test.ts`, since a build
+names no test file; 0.1.0 is unchanged here. The compiler reads a named path as a pattern, so a test file
+whose name holds `*` or `?` also draws in its siblings; they are test files too.
