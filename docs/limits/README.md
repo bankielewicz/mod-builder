@@ -41,6 +41,26 @@ Everything mod-builder is known not to do, or to do in a way worth knowing first
   writes of the call that names the folder leaves a record behind (the next naming call takes it up).
 - A mod folder whose path holds `*`, `?` or `[` is read as a pattern by the typecheck's `tsconfig.json`.
 
+## An edit whose Red was skipped
+
+An edit that changes no behaviour, and a repair whose tests already fit the build, skip Red: no new test
+covers what they change. Green's gate then asks the person, with the list of files changed, added or gone and
+their line counts (this repository's specification, 8.23 and 8.24).
+
+- **The answer is the person's judgement of a list, not proof that behaviour is unchanged.** The question
+  shows file names and line counts, never content: the person opens the files, or the restore point it names,
+  to see what changed.
+- **A write by a shell command is outside the phase guard, as everywhere.** It does show in this list, which
+  is made from hashes.
+- **`node_modules` at the mod's top is in no hash**, so a change there is not listed. A link in the mod is
+  listed each time, since its content is never read.
+- **A change to `hooks/` found at Verify can't be taken back by a guarded write**: `hooks/` is closed there.
+  It came from outside the guard and goes back the same way, or the edit is stopped with `/mod-builder stop`.
+- **Left out of the list**: `SPEC.md` (approved at Spec), test files (held to the hashes of before the edit),
+  and the files Claude Code itself writes into a mod it loads (`.claude-plugin/types/tsconfig.json`, the
+  `.gitignore` there, one `index.d.ts` in each folder there, and a top-level `tsconfig.json` that only extends
+  them).
+
 ## Platforms
 
 - **Native Windows paths are not judged**: the guard reads `/` paths only (WSL is unaffected). macOS is

@@ -1919,3 +1919,47 @@ draft, an edit of a real mod asked for as "move the word shown into a named cons
   from hashes.
 - `node_modules` at the mod's top is in no hash (8.19), so a change there is not listed. A link in the mod is
   listed each time, since its content is never read.
+
+### 8.25 Step 3, the edit skill, as built (2026-11-11, at `63e7f99`)
+
+Plan 34: `f3199f5` (the build skill's two Done tests), `23e5cdd` red, `63e7f99` green; verifier PASS with 17 mutants; 53 skill
+tests, 588 node tests, 370 module tests.
+
+- **`skills/edit/SKILL.md`** is what the model is told when a person runs `/mod-builder:edit <mod folder>
+  <what to change>`. It has the build skill's shape: the three things that make it different, the lookup, a
+  table of the seven phases, a section for each, then a repair, the stop, and handing a phase to a subagent.
+  Its wording is pinned by `scripts/skill-edit.test.mjs`, which also holds its claims to the rules (the table
+  to `mayWriteIn`, the kinds of edit to `baselineVerdict`, where "No behaviour change" stands to
+  `saysNoChange`, a repair's Red to `repairRedGate`, the answers to the mod's own words).
+- **The build skill's Done** now says: "Tell them that a change to the finished mod, or a repair after a
+  Claude Code update, is made with `/mod-builder:edit <mod folder> <what to change>`. Offer nothing else: this
+  plugin has no sharing step yet", in place of "This plugin has no edit skill".
+
+**Made with `skill-creator`'s loop** (draft, try on real prompts, read the runs, revise), by the building
+session. The tries were two edits of a real mod on the real engine [ran, 2.1.322, the draft loaded with
+`--plugin-dir`]:
+- "make the pane show the word hello instead of hi": the skill loaded `plugin-authoring`, named the mod, told
+  the person the baseline and the restore point, appended a section, changed a test at Red (8.4's question
+  appeared and was answered), raised the version, and reached Done.
+- "move the word shown into a named constant. No behaviour change.": the skill called the gate with
+  `no_behaviour_change`, the third answer skipped Red, Green's question (8.23) was answered "Not yet" and
+  then approved, and the edit reached Done.
+- **Not tried:** a repair (a mod that fails its baseline); a mod with no test file; `/mod-builder stop`
+  during a skill-driven edit; whether the skill's description alone makes Claude load it for a request that
+  does not name the command (`skill-creator`'s description run was not made). Step 4's demonstration covers
+  a repair and the stop.
+
+**What the independent reader found in the draft, corrected before the red commit:** a mod that fails only
+for having no test file was sent to "A repair" (it is an edit whose Red writes its first tests); a repair's
+Red also needs a test file to exist and still asks 8.4's question; "No behaviour change" must be the first
+words under the section's heading, which the draft's bullet layout hid; a call with `no_behaviour_change` on
+a mod the route is not for is refused, not merely not offered; the baseline's hashes and the restore point
+leave out `.git` and `node_modules`; the table's Red and Verify rows left out the person's agreement and the
+version; "anything under `tests/`" means the mod's top-level `tests/`; a test file can't be a link; a
+refused first call leaves the session waiting for a folder with every plugin's folder closed.
+
+**Decided by the building session:** the `plugin-authoring` skill is loaded in phase 1, before the gate's
+first call, because the baseline runs the typecheck (a build loads it in phase 2). `/mod-builder stop` is
+left to the person: the model tells them it exists and never restores or deletes by hand.
+
+**Known:** the build skill's first heading has a space before its `#` (as at 0.1.0); not changed here.
