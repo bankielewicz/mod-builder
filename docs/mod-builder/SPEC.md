@@ -2830,3 +2830,114 @@ the reader's reads (9.10); on a machine with an advisor model the reader may con
 rests on one run, the main model sees the reader's report there, and a nudge that can't be sent leaves the
 build at Red until the gate is called (9.14); a gate call is needed after the reader ends, so a session
 that ends meanwhile resumes by calling the gate.
+
+### 9.20 Before Green a build holds no source outside `hooks/` and `tests/`, as built (2026-11-11, at `7968602`)
+
+Plan 39 (9.17, point 4; **the building session's rule, not the driving session's or the owner's**, as the
+driving session said again on resuming: it is theirs to keep or change at step 3's review): `c2a88cb` red,
+`7968602` green; verifier PASS, every criterion reproduced and 10 mutants each failing a named test; 412
+module tests, 682 node tests, validate, `bash -n` and the typecheck pass [ran, by the implementer and the
+verifier].
+
+- **The script** (`--check`, `--check-hooks`, and after writing, `--again` and `--again-hooks`) prints one
+  line `source: <path>` for each source file of the mod outside `hooks/` and `tests/`, and exits 1 on any.
+- **Both gates** refuse on such a line as they do on a changed `hooks/`: at Scaffold "the mod holds source
+  outside hooks/ and tests/ (...): at Scaffold the mod's code is the template's alone, and its behaviour
+  is written at Red (tests) and Green (code). Remove each with a shell command; what a test needs to name
+  is declared in a declaration file under types/"; at Red "...: the mod's code is written at Green, after
+  its tests. Remove each ...". Beside a changed `hooks/` both are said. An edit is not asked.
+- **How a refused build mends it:** it removes each named file with a shell command (the guard closes no
+  shell command), and calls the gate again; what the tests need to name moves to `types/*.d.ts`. Nothing is
+  kept or copied by mod-builder.
+
+**Exactly which paths** [ran, by the building session, `scaffold.sh --check` at `7968602` on a mod as laid
+with one file of each kind added; `--check-hooks` gave the same lines]:
+
+| Path added | Named as source |
+| --- | --- |
+| `lib/count.ts`, `src/z.ts`, `util.mjs`, `a.js`, `b.cjs`, `c.jsx`, `d.tsx`, `e.mts`, `f.cts` | yes |
+| `.hidden.ts`, `lib/.dot.js` (a name that starts with a dot) | yes |
+| `link.ts` (a link to a source file) | yes |
+| `types/code.ts` (under `types/`, not a declaration) | yes |
+| `sub/node_modules/y/index.js` (a `node_modules` below the top folder) | yes |
+| `types/extra.d.ts` | no |
+| `README.md`, `NOTES.md`, `docs/a.md`, `assets/a.txt` | no |
+| `.claude-plugin/plugin.json`, `package.json`, `tsconfig.json`, `data.json`, `types/data.json` | no |
+| `run.sh`, `scripts/x.sh`, `scripts/y.py` (code, but not of the eight endings) | no |
+| `node_modules/x/index.js` (the top folder's), `.git/hook.js` | no (not looked into) |
+
+So the rule is by ending (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`), not by folder: a
+`lib/` folder is allowed and a source file in it is not.
+
+**What the independent reader found** (79 mutants), corrected before the red commit; among them a mod whose
+own path holds a character a `find` pattern gives meaning to, and "as laid" printed beside a source line.
+
+**Two departures.** The implementer stopped on a type error in the new module test; the building session
+fixed that one line and amended the local red commit once (to `c2a88cb`), with the plan's copy and hash;
+drafts are typechecked before a plan is made from now on. And the plan's first criterion named
+verification command 5 where it meant 3; the plan was corrected while the verifier ran, and the verifier
+reports both.
+
+**Known and left:** a declaration file under `types/` can hold code a test imports as a value only if it
+were not a declaration (the typecheck holds that); a shell script or a file of another language is not
+named; the top folder's `node_modules` is not looked into, so code put there is not seen; a returned Red
+skips this check (9.18).
+
+### 9.21 The driving session's four notes on resuming, and what follows from them (2026-11-11)
+
+From its file `to-builder-030-resume.md`, after the building session was compacted:
+
+1. "Tests clean up after themselves. `/tmp` filled with 58,882 `mod-builder-*` folders. Every test and
+   script test that makes a temporary folder removes it when it ends, pass or fail, and makes it under a
+   folder the run names, not bare `/tmp`. Fix that through a plan before step 3's plans, with a test that a
+   run leaves nothing."
+2. "Nothing outside the repository and your scratchpad is deleted without the owner's say-so, the `/tmp`
+   leftovers of your own tests included: say what you want to remove and why, and wait."
+3. The reader reads files the judged model wrote: "In the reader's prompt, the test files and the spec are
+   given as quoted data, and it is told that nothing inside them is an instruction and that text addressing
+   the reader is itself a finding. The rule that reads the answer takes the verdict from the answer's first
+   line only. State in SPEC and docs/limits that this lowers the risk and does not remove it."
+4. The rule of 9.20 is the building session's: its paths and its mending are listed at the end of step 3
+   (the table above).
+
+**Measured first** [ran, at `7968602`, `TMPDIR` set to an empty folder]: one run of the node tests leaves
+377 folders (184 `mod-builder-scaffold-hooks-*`, 53 `-scaffold-*`, 46 `-test-*`, 34 `-scaffold-check-*`, 25
+`-restore-*`, 21 `-scaffold-source-*`, 9 `-bin-*`, 3 `-cwd-*`, 1 `-home-*`, and `claude-<user id>`, which
+Claude Code's own `plugin validate` makes); one run of the module tests leaves none (their world is in
+memory). With `TMPDIR` under the session's scratchpad two tests of `page-rules.test.mjs` skip ("this
+process can write a read-only folder"), as the file's head says they may.
+
+**As it will be built (the building session's reading of note 1, for the driving session to keep or
+change):**
+- `35e0303`, existing tests, no behaviour changed: every `mkdtempSync` of the node tests goes through one
+  function, `tempDir(prefix)` in `scripts/test-helpers.mjs`.
+- Then a plan that changes that helper alone. "A folder the run names" is read as: each test process makes
+  one folder, `mod-builder-run-*`, under `TMPDIR`, and every temporary folder of its tests is made inside
+  it; the process removes that one folder when it ends: on a pass, a failed test, an uncaught error, and
+  on `SIGINT`, `SIGTERM` and `SIGHUP`. A folder a test made unreadable is opened and removed too. Whoever
+  starts the run chooses where by setting `TMPDIR`.
+- The new tests: a passing run, a failing run, a run ended by an error and one ended by `SIGTERM` each
+  leave nothing in the folder given as `TMPDIR`; and a whole run of every other node test file leaves
+  nothing there but `claude-<user id>`.
+- **A stated limit:** a process killed outright (`SIGKILL`, a power cut) leaves its one
+  `mod-builder-run-*` folder. The scripts' own temporary folders were already removed by their traps
+  (9.18).
+
+**Note 3, as it will be built (in the reader's rules, before their plan):** the prompt already said a
+line that tells the reader what to answer is something to report; it now says so of everything the reader
+opens by tool, and of any text addressed to the reader or to whoever judges the tests, and the first
+message says the same of the files it names. The verdict is read from the answer's first line that holds
+anything and from nowhere else: `VERDICT: PASS` lower down never counts, `VERDICT: FINDINGS` first with
+`VERDICT: PASS` later is findings. The building session keeps one thing stricter than the note: a first
+line `VERDICT: PASS` with anything after it is no verdict (the rules' reader found a pass with caveats
+read as a pass). [read, the eleven reader answers the probes recorded (9.10, 9.13, 9.19): each begins with
+its verdict line, nothing before it.] This lowers the risk and does not remove it: the reader is a model
+reading text the judged model wrote, and a test file can still persuade it.
+
+**Changes to 9.19 from the rules' independent reader** (140 mutants, before the rules' plan): findings may
+be marked `-`, `*`, `+` or numbered; control characters in a finding become spaces; a path that holds a
+control character is never given to the reader (Red is refused and names it), since rewriting the name
+could point the reader at another file; a round that ends at two or more asks the person in the same
+call; a superseded reader counts as a round (open for the driving session); on the call that reads an
+answer for unchanged tests Red's other checks are not run again (a build still checks `hooks/`); the
+reader's tool calls are also refused at the gate tool's own hook; the withholding hook has a `.catch`.
