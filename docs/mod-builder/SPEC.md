@@ -2075,3 +2075,25 @@ gates only, not again outside. [ran]
 **Not shown by the building session:** 8.7's items 1 and 2 on `tool-log` and `prompt-count`; item 7 on the
 real engine (a record stored by 0.1.0; module tests hold it); item 5's "Put it back" on the final commit
 (shown at earlier commits, as above).
+
+### 8.28 Step 5, the documents (2026-11-11)
+
+Changed, as 8.9 lists: `docs/limits/README.md` (two new sections, "An edit" and "The pane"; "Not built yet"
+no longer says there is no edit skill), `docs/how-it-works/README.md` (an edit, phase by phase; the pane),
+`README.md` (the commands table gains `/mod-builder:edit` and `/mod-builder stop`; a short "to change the
+finished mod"; the limits met first), `CHANGELOG.md` (0.2.0), both manifests, and `BACKLOG.md` (items 15, 21
+and 22 struck with their numbers kept, since `ci.yml` and this record cite them; 18 cut to "Going back one
+phase, and a retry count per phase", 8.5's words).
+
+**Decided by the building session where 8.9 is silent**, each for the owner to keep or drop:
+- `.claude-plugin/marketplace.json` had no version: its one plugin entry now has `"version": "0.2.0"`, as
+  `plugin.json` has. `claude plugin validate --strict .` passes with both [ran, 2.1.322].
+- `docs/reference/README.md` is not on 8.9's list and was changed too, because "What it reaches" is read
+  from `claude plugin validate`: the calls gain `$.ui.status` and `$.ui.toast`; the files gain the restore
+  point and, on "Put it back", the renamed folder; the commands gain `restore-point.sh` and `put-back.sh`.
+- `CLAUDE.md` (the repository's guidance for Claude Code) named only the build skill; it now names the edit
+  skill and section 8, in a commit of its own.
+- The plugin's `description` in both manifests still says only "Builds"; it was left.
+
+After the changes: 373 module tests, 599 node tests (2 skipped where no TypeScript compiler is named), and
+validate passes for the plugin and the marketplace [ran].

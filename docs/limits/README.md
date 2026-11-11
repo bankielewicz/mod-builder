@@ -45,7 +45,8 @@ Everything mod-builder is known not to do, or to do in a way worth knowing first
 
 An edit that changes no behaviour, and a repair whose tests already fit the build, skip Red: no new test
 covers what they change. Green's gate then asks the person, with the list of files changed, added or gone and
-their line counts (this repository's specification, 8.23 and 8.24).
+their line counts, and with what differs in what the mod hooks, answers and calls as
+`claude plugin validate` reports it (this repository's specification, 8.23, 8.24 and 8.26).
 
 - **The answer is the person's judgement of a list, not proof that behaviour is unchanged.** The question
   shows file names and line counts, never content: the person opens the files, or the restore point it names,
@@ -61,6 +62,36 @@ their line counts (this repository's specification, 8.23 and 8.24).
   `.gitignore` there, one `index.d.ts` in each folder there, and a top-level `tsconfig.json` that only extends
   them).
 
+## An edit
+
+- **An edit can't go back a phase either.** `/mod-builder stop` with "Put it back" is the way out: it returns
+  the mod to its restore point and keeps the stopped work beside it as `<mod>.stopped-<stamp>`.
+- **The restore point leaves out `.git` and `node_modules` at the mod's top.** Putting a mod back moves those
+  two from the stopped folder into the restored one, so the mod's git history is as it is at the stop, not as
+  it was before the edit.
+- **Restore points are never removed by mod-builder.** Each edit leaves one under
+  `~/.claude/mod-builder-data/v2/restore/`; so does each stopped folder beside its mod.
+- **Only the session that opened a build or an edit can stop it.**
+- **The original text of `SPEC.md` is held byte for byte**: a typo above the change's section can't be
+  corrected in an edit.
+- **This plugin's own folder can't be edited by it.**
+- **At a repair's Red the test run is not read** (the mod already fails): Red ends when the test files
+  typecheck, so a test file that typechecks but does not load is found at Green, where tests are closed.
+- **A claim of "no behaviour change" is checked only on the route that skips Red.** Approved with the plain
+  "Approve", the edit goes through Red like any other.
+
+## The pane
+
+- **A gate call the engine cuts off leaves its check shown as running** until the next gate starts.
+- **A stop that lands between a gate's last look at the record and its write is written over**: there is no
+  lock. The gate looks again just before it writes, which narrows this and does not close it.
+- **A long folder path is cut at the pane's width**, in the heading, Done's rows and the check commands.
+- **A repair's failing checks are named twice** in the Baseline block.
+- **When the Red-skipped question was answered at Green and again at Verify, Done shows both answers** in two
+  rows that begin alike, the later one first.
+- **The pane mod-builder opens by itself waits when the terminal is too narrow for Claude Code to seat it**;
+  `/mod-builder` opens it at any width.
+
 ## Platforms
 
 - **Native Windows paths are not judged**: the guard reads `/` paths only (WSL is unaffected). macOS is
@@ -68,11 +99,12 @@ their line counts (this repository's specification, 8.23 and 8.24).
 
 ## Not built yet
 
-- **No edit skill and no sharing step yet.** A change to a finished mod is made by hand, or by a new build
-  in a fresh folder.
+- **No sharing step yet.**
+- **No going back one phase, and no limit on retries**: the pane counts refused writes, and nothing stops a
+  build or an edit after a number of them.
 - **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold, where every test has to
   pass before Red opens: a scaffold whose tests fail, or whose module throws as it loads, is refused there.
 
 What waits until after the MVP is in [`docs/mod-builder/BACKLOG.md`](../mod-builder/BACKLOG.md); how each of
 these was found is in this repository's specification,
-[`docs/mod-builder/SPEC.md`](../mod-builder/SPEC.md), section 7.
+[`docs/mod-builder/SPEC.md`](../mod-builder/SPEC.md), sections 7 and 8.

@@ -37,10 +37,12 @@ suggestion, not a commitment.
 
 ## Building and changing mods
 
-15. An `edit` skill for an existing mod: a dated change section in its SPEC, one approval, a version bump.
+15. ~~An `edit` skill for an existing mod: a dated change section in its SPEC, one approval, a version bump.~~
+    Built in 0.2.0 (`SPEC.md` section 8).
 16. More templates than `pane`: a command, a tool-call guard, a status line, a tool.
 17. A resume after a session ends mid-build, and a hand-off of a build to another session.
-18. A retry count per phase, and a stop command that ends a build cleanly.
+18. Going back one phase, and a retry count per phase. (The stop command, `/mod-builder stop`, was built in
+    0.2.0: `SPEC.md` 8.5.)
 19. Suggesting `/design` mockups for more than panes: bands, transcript rows, dialogs.
 23. A band above the prompt for mod-builder (`{ component: 'AbovePrompt' }`): one line that says where the
     build stands when the pane is waiting for a wider terminal. Left out of 0.2.0 (`SPEC.md` 8.18, point 2).
@@ -49,5 +51,7 @@ suggestion, not a commitment.
 
 20. A marketplace entry check and a release step: version in both manifests, a "What it reaches" table
     from `claude plugin validate`, and "Built on".
-21. CI for the repository: validate and test the plugin on a pinned Claude Code version.
-22. Taking over the first mod-builder's repository name, with a note for people who installed the first.
+21. ~~CI for the repository: validate and test the plugin on a pinned Claude Code version.~~ Done:
+    `.github/workflows/ci.yml`.
+22. ~~Taking over the first mod-builder's repository name, with a note for people who installed the first.~~
+    Struck in 0.2.0 (`SPEC.md` 8.9): the repository is `bankielewicz/mod-builder`.
