@@ -2,7 +2,7 @@
 // and a runner for a script under bash. Nothing here reaches the network beyond 127.0.0.1.
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,9 +69,47 @@ export async function startSite(pages, extraIndexLines = []) {
   return site;
 }
 
-// Every temporary folder a test makes is made here: a new folder whose name starts with `prefix`.
+// Removes `folder` and all it holds. A test may have closed a folder inside it (mode 0): when the plain removal
+// fails, every folder is opened first. A link is removed and never followed, neither to open nor to remove.
+function removeAll(folder) {
+  const open = (path) => {
+    let entry;
+    try { entry = lstatSync(path); } catch { return; }
+    if (!entry.isDirectory()) return;
+    try { chmodSync(path, 0o700); } catch { return; }
+    let names = [];
+    try { names = readdirSync(path); } catch { return; }
+    for (const name of names) open(join(path, name));
+  };
+  try {
+    rmSync(folder, { recursive: true, force: true });
+    return;
+  } catch { /* something inside is closed: open it and remove once more */ }
+  open(folder);
+  try { rmSync(folder, { recursive: true, force: true }); } catch { /* what is left can't be removed by this user */ }
+}
+
+// The signals a run is ended by from outside, and their numbers: the process then ends with 128 plus the number,
+// as a shell reports it, and by ending itself it still removes its folder. SIGKILL can't be caught.
+const ENDED_BY = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
+
+// The one folder of this test process, made under TMPDIR on first use and removed when the process ends, whether
+// its tests passed, failed, threw, or the process was told to stop (SPEC.md 9.21).
+let runFolder = null;
+function ofThisRun() {
+  if (runFolder === null) {
+    const made = mkdtempSync(join(tmpdir(), 'mod-builder-run-'));
+    runFolder = made;
+    process.on('exit', () => removeAll(made));
+    for (const [signal, number] of Object.entries(ENDED_BY)) process.on(signal, () => process.exit(128 + number));
+  }
+  return runFolder;
+}
+
+// Every temporary folder a test makes is made here: a new folder whose name starts with `prefix`, inside the one
+// folder of this test process. No test removes it: it goes with that folder when the process ends.
 export function tempDir(prefix) {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return mkdtempSync(join(ofThisRun(), prefix));
 }
 
 export function newCache() {
