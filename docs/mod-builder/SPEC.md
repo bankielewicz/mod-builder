@@ -1052,3 +1052,161 @@ Co-Authored-By from the commits") and for the setting that keeps it out of new o
   to leave the trailer off [read: code.claude.com/docs/en/settings-reference.md, "attribution.commit"; no
   environment variable does this, env-vars.md read whole]. The pull-request line and the session link are
   left at their defaults.
+
+## 8. Change 0.2.0: an `edit` skill, and a stop (approved by the owner, 2026-11-10)
+
+The owner, on what is next for the plugin: "option 1 is approved" (make a finished mod changeable,
+`BACKLOG.md` item 15). This section is the design as approved in 8.8; nothing in it is built yet.
+
+### 8.1 Why
+
+A finished mod can't be changed through the gates: at Done `hooks/` and `tests/` are closed, and a build
+never goes back (7.12). Both of the driving session's finished demonstrations ended with a real flaw found
+in the mod just built, and the model could offer only a new build, a hand edit outside the gates, or
+leaving it. Anthropic's own flow is "To change a mod you already have … ask for the change … Claude edits
+the hooks module, runs `claude plugin validate`, and fixes what it reports" [read: create.md:246-254,
+snapshot 2026-11-10T194027Z].
+
+### 8.2 Facts this rests on
+
+1. `claude plugin test` prints each test file's path on a line of its own before that file's `(pass)` and
+   `(fail)` lines [ran, 2.1.322, on a mod the plugin built], so a failure can be tied to its file.
+2. `builtMisses` reads only what follows the approved length of `SPEC.md` [read:
+   `hooks/mod-builder-logic.ts`], so when an edit's approval records the whole file, an older "Built"
+   block can't satisfy Verify.
+3. A stored record has no field saying what kind of build it is [read: `BuildRecord`]; one without the
+   field must go on reading as a build.
+4. "Files Claude saves during its turn reload when the turn ends" for a folder loaded with `--plugin-dir`
+   [read: create.md:256]. An edit doesn't need the mod loaded; if it is, it reloads as the edit goes.
+5. **A mod's tests don't import the mod.** The pane template's test and every test of the two mods the
+   driving session's demonstrations built import only from `claude-code/testing` (and types from
+   `claude-code`) [read: the template and `scratch/mydemo3`, `scratch/mydemo4`, 2026-11-10]: they drive
+   the mod through its events. So a test written at Red needs nothing declared before it.
+6. The gate's typecheck includes `hooks/`, `tests/` and `types/`, with `skipLibCheck` [read:
+   `typecheckConfig`].
+
+### 8.3 What an edit is
+
+Started with `/mod-builder:edit <mod folder> <what to change>`; `skill.prompt` for this plugin's `edit`
+skill opens a pending edit, exactly as `build` does (3.3). The gate's first call names the folder.
+
+- **The folder must be a mod**: it holds `.claude-plugin/plugin.json` and a `hooks/hooks.json` with a
+  `modules` key; it isn't this plugin's own folder or one inside it; and no other session's unfinished
+  build or edit holds it. Otherwise the gate refuses, saying which.
+- **The baseline, taken at that call, before anything is written:** the mod runs validate, the tests, the
+  typecheck and the headless load on the mod as it stands, and records the manifest's `version`, the test
+  count and names, a hash of every file in the folder, and `SPEC.md`'s length and hash (or that there is
+  none). It also makes the restore point (8.5).
+- **Phases of an edit whose baseline passes. Each phase writes one kind of thing, as in a build:**
+
+  | # | Phase | May write | It ends when |
+  |---|---|---|---|
+  | 1 | Knowledge | nothing | a snapshot exists |
+  | 2 | Describe | nothing | (no gate) |
+  | 3 | Spec | `SPEC.md`, by appending | the file still begins with its baseline bytes, and the person approves (the same question, "Not yet" first) |
+  | 4 | Red | `tests/` only | the tests fail; every failing block opens with `AssertionError`; at least one failing test is new by name or sits in a test file whose hash differs from the baseline's; the typecheck passes; and 8.4's question, when it applies |
+  | 5 | Green | anything but `tests/` and `SPEC.md` | the four checks pass; `plugin.json`'s `version` is greater than the baseline's |
+  | 6 | Verify | as in a build | the change's "Built" lines hold every types hash; the four checks pass; the hashes agree |
+  | 7 | Done | as in a build | (end) |
+
+  **Red is what it is in a build: tests first, and nothing else.** There is no phase before it for
+  declarations (fact 5). A change to the mod's contract in `types/` is made at Green, with the code. A
+  test that names something not declared yet is refused by Red's typecheck while `tests/` is still open,
+  so it is rewritten to drive the mod through its events; nothing strands. (A first draft had a "Prepare"
+  phase before Red, open to `hooks/`; a side agent's note showed a fix written there would leave Red
+  unable to pass. The owner, on widening Red instead: "why expand red? red is only for unit tests 1st in
+  TDD." Fact 5 then showed Prepare had no job. The owner: "Yes, no Prepare (Recommended)".)
+- **The change is written into the mod's `SPEC.md` as a new section at its end**, headed with the new
+  version and the date: what changes, each API use with its citation, what it reaches now, its tests,
+  and any existing test it changes or removes. Nothing above it may change. A mod with no `SPEC.md` gets
+  one that holds only this section.
+- **The pane** shows the edit's phases and evidence as it shows a build's, and names it an edit.
+
+### 8.4 Tests that are changed or gone
+
+An edit may change what an existing test expects, which is also how a test is loosened. At Red's gate
+the mod compares the test names it runs with the baseline's. When a name the baseline had is gone, the
+gate asks the person, with the names: "These tests no longer exist: … Go on without them?", "Not yet"
+first. A test file whose content changed is listed in the gate's answer and the pane's evidence, by
+path. The owner: "Ask me at the gate (Recommended)".
+
+### 8.5 A restore point, and a stop
+
+- **Restore point.** At the baseline the mod copies the mod's folder (without `node_modules` and `.git`)
+  to `~/.claude/mod-builder-data/v2/restore/<session id>/<stamp>/`, and records where. The owner: "Backup
+  copy (Recommended)".
+- **`/mod-builder stop`** ends this session's open build or edit, at any phase. The record becomes
+  stopped, the folder is no longer bound to the session, and other plugins' folders open again. For an
+  edit it then asks: "Keep the mod as it is now" (first) or "Put it back as it was before this edit".
+  Putting it back deletes nothing: the folder as it is now is renamed `<mod>.stopped-<stamp>` beside it,
+  and the restore point is copied to `<mod>`. The answer names both folders.
+- A stopped or Done record gives way to a new build or edit of the same folder, as a Done one does now.
+- This is the stop of `BACKLOG.md` item 18; going back one phase, and its retry count, stay there.
+
+### 8.6 A mod whose baseline fails: a repair, in the same pure phases
+
+A mod written for an older Claude Code that no longer typechecks or loads is the case this plugin
+exists for. The owner: "Repair it (Recommended)", and then, asked whether a repair may write tests and
+code in one phase: "Split into pure phases (Recommended)". So a repair has no phase of its own:
+
+- The baseline's failing checks, quoted, are the repair's red evidence. They are recorded and shown.
+- **Red, tests only, is skipped when the baseline's tests already fit the build** (they typecheck). It is
+  entered when they don't: it then ends when the tests typecheck against the build's types; they need
+  not fail anew, because the mod already fails. 8.4's question applies to every test that is gone.
+- **Green, code only,** ends as in any edit: the four checks pass and the version is greater. A repair
+  whose tests typecheck but can never pass with honest code is stopped (8.5), as a build is.
+- Then Verify and Done.
+
+### 8.7 What "it works" means for 0.2.0
+
+With the plugin loaded by `--plugin-dir`, on sonnet, on copies of two mods this plugin built:
+
+1. **`tool-log`** (rows are cut by character count, so wide characters overflow the pane):
+   `/mod-builder:edit <copy> cut each row by display width` reaches Done. Outside the session: validate,
+   every test, the typecheck and a headless load pass; `version` went from 0.1.0 to a greater one;
+   `SPEC.md` begins with its former bytes and ends with the change and its "Built" lines.
+2. **`prompt-count`** (prompts that other plugins or scheduled triggers submit are counted as the
+   person's): the same, for a change that alters what an existing test expects.
+3. A `Write` under `hooks/` at Red is refused; a line of the original spec changed at Spec is refused by
+   its gate; the folder of this plugin itself can't be named.
+4. A test removed at Red raises 8.4's question, and "Not yet" keeps the edit at Red.
+5. `/mod-builder stop` at Green, with "Put it back": the folder's files hash as the baseline's did, and
+   the edited folder stands beside it under its new name.
+6. A repair: a copy with a type error put into `hooks/` (its tests still fit) goes from Spec to Green and
+   on to Done with Red skipped; a copy whose test no longer typechecks enters Red first.
+7. A record stored by 0.1.0 still reads as a build, and a 0.1.0 build still runs to Done.
+
+### 8.8 The owner's decisions (2026-11-10)
+
+1. **The slice and where it lives:** "Approve, branch + PR (Recommended)": built on a branch and opened as
+   a pull request on `bankielewicz/mod-builder` when the driving session's own demonstration of 8.7
+   passes. Nothing reaches `main` unreviewed.
+2. **A mod whose baseline fails:** "Repair it (Recommended)", in pure phases (8.6).
+3. **Tests that are gone at Red:** "Ask me at the gate (Recommended)" (8.4).
+4. **The restore point:** "Backup copy (Recommended)" (8.5).
+5. **No Prepare phase; Red stays tests-only** (8.3).
+6. **Purpose-built subagents** (a test writer for Red, an implementer for Green, an independent reader
+   of the tests before Red's gate, none with a pinned model): "Next change, after the edit
+   (Recommended)". They get their own section and probes as 0.3.0, including whether the guard can tell
+   which agent is calling; until that is shown, path rules and gates enforce and agents only specialise.
+
+**Known and not changed here:** a new build's Scaffold opens everything, so a model can write the whole
+mod there and Red then has nothing to fail (the same early-fix opening the first draft's Prepare had).
+For the owner to decide with 0.3.0.
+
+### 8.9 How it gets built
+
+As 7.1 and 7.2: on a branch from `main`, one written plan per change through the three agents in
+`.claude/agents/`, an independent read of each plan's tests before its red commit, a change this spec
+requires to an existing test in a commit of its own first, the driving session's own probe before a step
+is accepted, and commits without a `Co-Authored-By` line (7.14). Steps:
+
+1. **The rules**: the edit's phases and what each may write, the baseline's verdict, Red's rule for an
+   edit, the repair's two cases, the version comparison, the record's kind (a record without it is a
+   build), the folder a gate may name.
+2. **The hooks module**: opening an edit on `skill.prompt`, naming and the baseline, the restore point,
+   8.4's question, `/mod-builder stop` and putting a mod back, the pane.
+3. **The `edit` skill** with `skill-creator`, and the build skill's Done wording (it now names the edit).
+4. **The demonstration** of 8.7 by the building session, then by the driving session.
+5. **The documents**: `docs/limits`, `docs/how-it-works`, the README's commands table, `CHANGELOG.md`,
+   both manifests at 0.2.0, and `BACKLOG.md` with items 15, 21 and 22 struck and 18 cut to what is left.
