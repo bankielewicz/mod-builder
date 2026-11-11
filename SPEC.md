@@ -976,3 +976,29 @@ run on this code; macOS stays unverified.
 **Step 5 is accepted** by the owner's words ("When both are verified, step 5 is accepted: fast-forward main to
 the branch and stop. Do not push."): `main` is fast-forwarded to this branch at the commit that holds this
 section. 7.10's items 1 to 4 stay open, with `BACKLOG.md`.
+
+### 7.12 The final code, demonstrated by the driving session (2026-11-10, at `bf31f81`)
+
+[ran, by the driving session: 2.1.322, sonnet, auto mode, an interactive session in a terminal pane, the
+plugin exported from `bf31f81` with `git archive` and loaded with `--plugin-dir`, `mod-builder@claudemod`
+switched off by `--settings`; a watch script chose option 2, "Approve", once, and touched no other dialog]
+
+- **At `bf31f81`:** `claude plugin test plugins/mod-builder` 216 of 216; rules and script tests 302 of 302;
+  `claude plugin validate --strict` passes for the marketplace and the plugin.
+- **`/mod-builder:build a status pane that shows how many prompts I have sent in this session and when the
+  last one was`**, a request no earlier run used, built `prompt-count` through all eight phases in one
+  session, with no gate refusing for a reason the model could not act on. The pane's last evidence row:
+  `Verify: validate, 11 tests, the typecheck (types sha256 60ff86c1…, a33c3b25…) and a headless load …`.
+- **Checked outside that session:** `claude plugin validate --strict` passes; `claude plugin test` 11 of 11;
+  a headless load logs `hooks module prompt-count@inline loaded (…); events:
+  session.start,command.run,prompt.submit,ui.render` and no skipped hook; its `SPEC.md` holds the gate's
+  "Built on" line with both hashes; its nine citations (`api.md:15`, `:24`, `:39`, `:186`, `events.md:253`,
+  `interface.md:188`, `:290`, `:337`, `:848`) each resolve in snapshot `2026-11-10T194027Z` to a line about
+  what it is cited for. The guard refused one write during the build.
+- **After Done** the owner's Codex stop hook found a flaw in the built mod (prompts that other plugins or
+  scheduled triggers submit are counted as the person's). The model offered a new build in a fresh folder,
+  an edit by hand outside the gates, or leaving it: the three things this plugin has, and no edit skill
+  (7.11's wording held). The same happened after the third run. A finished mod can't be changed through
+  the gates until `BACKLOG.md` item 15 (an `edit` skill) is built.
+- **Section 4's four points hold on the final code:** point 1 and 2 here and in 7.11; point 3 in 7.8 and by
+  the refusal above; point 4 in 7.8. The MVP candidate works as section 4 defines it. Nothing is pushed.
