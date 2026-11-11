@@ -2748,3 +2748,85 @@ point 4, run only when that count is zero.
 **Known and left:** a build opened before this change that is at Red with a reshaped `hooks/` is refused,
 and `--again-hooks` writes over it without keeping a copy; the second check stands after the last look at
 `SPEC.md`, and no test pins that order; a process killed outright leaves its temporary folder.
+
+### 9.19 Step 3, the reader, as it will be built (2026-11-11, before its plans)
+
+9.3 with 9.12 and 9.14. Decided by the building session where those are silent, for the driving session to
+keep or change at its review of step 3. Two more probes first [ran, 2.1.322, sonnet, the probe mod `ap`]:
+
+- **The model can't start the withheld type itself.** Asked to use the Agent tool with the reader's type by
+  name, it got "Agent type 'ap:reader5' not found. Available agents: ...". The gate still reads an answer
+  only under the id its own spawn returned.
+- **The reader's prompt on 9.9's first case** (the `tool-log` edit of 8.29: a width table whose three new
+  tests use one character). The draft prompt, run twice: both answered `VERDICT: FINDINGS` in 16 and 21 s,
+  in the fixed form, with four findings each, among them "No test uses an emoji, although the spec lists
+  emoji planes as two columns wide" and "Every wide character in the tests is the CJK ideograph 漢. No
+  test uses Hangul syllables, Hangul Jamo, kana or full-width forms", the zero-width characters other than
+  one combining mark, and no cut of a row that mixes widths.
+
+**The reader's two texts.** Its system prompt, registered once and never built from anything the model
+writes: what it is for, that it only reads, the question ("if the code got this behaviour wrong, which
+test would fail?"), what never counts as a finding (style, naming, a missing test for something the
+specification does not list, how the code might be written, a test it would have written differently), and
+the form: `VERDICT: PASS`, or `VERDICT: FINDINGS` and one line `- <where>: <what no test would catch>` for
+each, at most 10, the verdict line first and nothing after the findings. Its first message, built by a
+rule from paths alone: the mod's folder, `SPEC.md` (in an edit, the line its change's section starts at),
+and the test files to read (a build: every test file; an edit: those new or changed since the baseline).
+
+**Where the answer is kept** (a reading of 9.12's "writes the answer into the record"): under a key of its
+own in the store, by the agent's id, not inside the build's record. The gate reads, changes and writes the
+record with no lock (8.20's limit); a "still reading" call could otherwise write over an answer the hook
+had just stored. The record holds which reader is out (its id, when it started, the hashes of the test
+files it was started on), the rounds that did not pass, and what the last round found. The ids of the
+readers a session started are kept in the store too, not in the module's memory, which a reload empties.
+
+**One call of Red's gate, in order:**
+1. The test files are hashed. A reader that is out for these hashes, has not answered and started less
+   than 10 minutes ago: the answer is "the test reader is still reading (N s)", and no test and no compiler
+   is run. This is a third outcome, neither a pass nor a refusal: it is not counted as a refused gate, and
+   raises no toast.
+2. Otherwise every check Red already has runs as before (9.3: the reader never reads tests the gate would
+   refuse anyway). 8.4's question is asked once for the same changed files: the person's agreement is kept
+   by their hashes, since the gate is now called at least twice.
+3. Then the reader, for these hashes:
+   - an answer under the id the record names: read by the rule. `VERDICT: PASS` passes Red. Findings, or
+     no verdict (no verdict line, an empty answer, a turn that ended otherwise than by an answer, 10
+     minutes without one), end the round as not passed;
+   - no reader out for these hashes, and the last round was not about them: one is started, and the
+     answer is "the test reader is reading; end your turn now; mod-builder will prompt you when it has
+     reported; do not call the gate again before that". A spawn that is denied or fails is a round with no
+     verdict;
+   - the last round was about these very hashes and did not pass: after one such round the findings are
+     given again (the tests have to change for a new round); after two or more, the person is asked, with
+     the last round's findings or "the reader gave no verdict", "Not yet" first and "Go on with these
+     tests" second. Only that answer passes, and it is evidence.
+4. Red passes only when the test files at that moment hash as those the verdict, or the person's answer,
+   was about.
+
+**The hook** on `turn.complete`: for an agent id among the session's readers, when the session's record
+is open (not stopped, not done) and names that id, it stores the answer under the id's key, redraws the
+pane, and then sends the nudge, not awaited, with a `.catch`: "mod-builder: the test reader has reported.
+Call mod_builder_gate." A superseded reader's late answer is stored under its own id and never read. On
+the main session's own `turn.complete`, an answer that is stored and still unread is nudged once more, and
+no more than that.
+
+**The guard**: a tool call by one of the session's readers that reaches the mod and is not `Read`, `Grep`,
+`Glob` or `SubagentHandback` is refused and logged to the debug log.
+
+**Registration**: at `session.start`, after the gate tool, each in a `try`: a build that has no
+`$.agent.register` still gets its gate, and its reader's spawn is then a round with no verdict. The type
+is withheld by an `agent.offer` hook.
+
+**The gate's input** gains no field (9.14): the verdict is read from the store alone. A test holds that.
+
+**Three plans:** the rules (the verdict's reader, the first message, what a call does next, the question,
+the pane's rows); the hooks module (registration, the two-call gate, the hook, the nudge, the guard, 8.4's
+agreement kept); both skills' wording, moved into a reference file each skill names, so that neither
+passes its 200 lines.
+
+**Limits to state in `docs/limits`:** the reader is a model's judgement (9.3); a test file or `SPEC.md`
+can hold text addressed to the reader; another plugin can deny the spawn, rewrite its prompt, or refuse
+the reader's reads (9.10); on a machine with an advisor model the reader may consult it (9.14); headless
+rests on one run, the main model sees the reader's report there, and a nudge that can't be sent leaves the
+build at Red until the gate is called (9.14); a gate call is needed after the reader ends, so a session
+that ends meanwhile resumes by calling the gate.
