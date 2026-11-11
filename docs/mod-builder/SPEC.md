@@ -2691,3 +2691,16 @@ reference file the skill names.
 the code written at Green, which 9.11 keeps. Red's check of `hooks/` would refuse every such Red, and
 `--again-hooks` would write over that code. So point 2's check is for a Red entered from Scaffold; the
 step that builds the way back (9.8, step 4) owes the exception, and a test for it.
+
+4. **Code outside `hooks/` (a side agent's note, 2026-11-11).** The check compares `hooks/` and `tests/`
+   only, and at Scaffold the guard allows every path: a build could put its logic in `lib/count.ts` there,
+   no gate would name it, and a test at Red could import it. So 9.15's limit ("a test can name only the
+   template's module and what `types/` declares") was not true as written. 9.4 already says what Scaffold
+   may change: the manifest, `types/*.d.ts`, `README.md`. **The building session reads that as the rule
+   and builds it, in a plan of its own after point 2's, for the driving session to keep or change:** the
+   script's check also names as extra any source file (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`,
+   `.mjs`, `.cjs`) of the mod outside `hooks/` and `tests/` that is not a declaration file under `types/`,
+   leaving out what the mod does not own (`.git`, `node_modules`, and the types Claude Code writes under
+   `.claude-plugin/types/`). Scaffold's gate and Red's both refuse on it; such a file was written by a
+   guarded tool at Scaffold or by a shell command, and a shell command removes it. Not built before its
+   plan.
