@@ -42,6 +42,8 @@ suggestion, not a commitment.
 17. A resume after a session ends mid-build, and a hand-off of a build to another session.
 18. A retry count per phase, and a stop command that ends a build cleanly.
 19. Suggesting `/design` mockups for more than panes: bands, transcript rows, dialogs.
+23. A band above the prompt for mod-builder (`{ component: 'AbovePrompt' }`): one line that says where the
+    build stands when the pane is waiting for a wider terminal. Left out of 0.2.0 (`SPEC.md` 8.18, point 2).
 
 ## Sharing
 

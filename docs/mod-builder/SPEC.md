@@ -1501,3 +1501,85 @@ correction, inside the owner's "Backup copy (Recommended)": when a stopped edit 
 rename and the copy, the mod moves `.git` and `node_modules`, when present, from `<mod>.stopped-<stamp>`
 into the restored `<mod>`. Nothing is deleted; the answer names what was moved. It is tested with a real
 folder that holds both.
+
+### 8.18 The pane's design: each frame's elements, and the surface and call for each (2026-11-11)
+
+The building session's list, approved by the driving session against `docs/design/png/` "as written, the
+differences you named included", with six points (below). Citations are page:line in snapshot
+`2026-11-10T194027Z`. Colours are theme keys, so they follow the person's theme and not the mockup's hex.
+
+**On every frame**
+
+| Element in the frames | Surface and call | Note |
+|---|---|---|
+| The rounded frame around the pane | the pane: `$.ui.open({ id, title })`, drawn by `ui.render` on `{ component: 'Pane' }` [read: interface.md:186-190, :290-294] | The engine draws the frame and places the pane. No border of the mod's own. |
+| `MOD BUILDER`, bold, letter-spaced | `Text` with `bold` [read: interface.md:518] | A terminal has no letter-spacing: plain bold capitals. |
+| The state at the right of the header | a `Box` row with `justifyContent: 'space-between'`, `Text dimColor` [read: reference.md:282-283] | `color: 'warning'` after a refusal; `'success'` at Done. |
+| The phase rail | a `Box` row with `flexWrap: 'wrap'` and `columnGap`; done phases `color: 'success'` with a check mark; the current one a `Text` with `backgroundColor` and `bold`; later ones `dimColor` | `backgroundColor` "fills only as wide as the text" [read: gallery.md:128], which makes the chip: `'suggestion'`, and `'success'` for Done. |
+| The rule under the rail | a `Text dimColor` of `─` repeated to `e.props.bodyColumns` [read: reference.md:270] | No rule element is documented. |
+| Headings and aligned rows | `Text bold`; a row is a `Box` row of cells with a `width`, long cells `wrap: 'truncate-end'` | |
+| The line at the bottom left | `$.ui.status(text)` [read: api.md:211] | **Differs:** the engine opens it with `⚠` and the mod's name. |
+| The toast | `$.ui.toast(text)` [read: api.md:212] | The engine adds the mod's name and places it. |
+| `mockup`, `[N] are placeholders` | not built | Notes on the mockup. |
+
+**Frame by frame**
+
+| Frame | Element | What is drawn, and from what |
+|---|---|---|
+| Main | the line under the prompt | a transcript line with `$.ui.log` when a build or an edit opens [read: api.md:213]. **Differs:** it opens with `●` and the mod's name. |
+| Main | the Knowledge block | from the cache's `checked`, `latest`, `manifest.tsv` and `_changes.md`, and the session's version; changed headings only where `_changes.md` holds them; "refreshing…" while a fetch this session started runs. |
+| Spec | the four blocks of the spec | **Nearest thing:** the mod's `SPEC.md` itself, with `Markdown({ text })` [read: interface.md:520], cut to the pane's rows. A free-form spec can't be cut into those four blocks reliably. |
+| Spec | the approval dialog, "Approve" first | `$.ui.ask` as now [read: events.md:147]. **Differs on purpose:** "Not yet" stays first (3.3). The mockup's hint about `hooks/` and `tests/` goes into the question's text; the dialog's own rows are the engine's. |
+| Guard | the refused call in the transcript | the engine's own row for the guard's `{ deny }` [read: events.md:67-71]. **Differs:** the refusal keeps its wording, which tests pin. |
+| Guard | "1 edit refused" in the header and the status line | a count of refusals for each phase, in the record. |
+| Guard | the toast on a refusal | `$.ui.toast`, once for each phase (point 1). |
+| Guard | the table of what each phase may write | from the rules' own table, shown from a refusal until the next gate passes; an edit shows the edit's. |
+| Build | "approved 15:31 · building" | from the record's approval time. |
+| Build | a passed phase with its detail lines | the gate's recorded evidence for that phase, in rows. **Differs:** the file list, "expected 1, received 0" and function names are not recorded by any gate. |
+| Build | the current phase, "working…", with the failing test | the last refused gate's reason and failing test names, in the record. |
+| Verify | the four checks, each passed or running, with its command | one row for each check with the command the gate runs; "running" is drawn between checks (probed below). |
+| Verify | "what the debug log must show" | **Differs:** the rows are what the gate reads: the `hooks module <name>@inline loaded` line, no line that says it failed to load, no skipped hook. The gate's load runs `/cost`, so there is no row for a command's answer. |
+| Verify | "Unchanged since their gates" | from the gate's comparison of hashes. |
+| Done | the header with the version | read from the mod's `plugin.json` by the gate. |
+| Done | "What was built" | files and tests counted, and the "Built on" line. **Not built:** "3 local commits": the plugin makes none. |
+| Done | "Try it" | the command's name from validate's `answers its own command` line; without one, the first half only. |
+| Done | the second box, the new mod loaded | **Not built:** that is the built mod's own pane. |
+
+**For an edit, beyond the frames:** a rail of seven phases, the header naming it an edit with the version it
+had; a skipped Red drawn dim with its reason ("no behaviour change", "the test files fit"); a repair's
+failing baseline checks as a block; 8.4's answer and the files it covered as an evidence row; a stopped
+record with the header saying so and the rail dim.
+
+**The six points** (the driving session):
+1. The toast on a refusal comes once for each phase; the header and the status line carry the count.
+2. No band in 0.2.0 (`BACKLOG.md`).
+3. **The pane only draws.** `ui.render` reads the record and the cache's files; it runs no command and makes
+   no request. What it newly needs (refusals for each phase, the last refused gate's reason and failing test
+   names, each check's state inside a gate) is a field the gate or the guard writes. A record without those
+   fields draws as zero or empty, so a 0.1.0 record still draws. No gate's verdict reads them.
+4. The status line is cleared when the record reaches Done or is stopped, and when a new session finds no
+   open record.
+5. The four probes below are run before the plan.
+6. Tests: one module test for each frame, which mounts the pane on a record for that frame and finds its
+   rail state, its heading and one row; and the edit rail, a skipped Red with its reason, a repair's failing
+   checks, and a stopped record. The existing pane tests change in a commit of their own first.
+
+Also decided by the building session, the driving session agreeing: 8.4's question quotes a removed line
+that opens a test (`test(`, `it(`, `test.skip(`) as it quotes one that holds `expect`, inside the same 20.
+
+**The four probes** [ran, 2.1.322, a probe mod's pane in an interactive session in a terminal, 150 columns
+and then narrower, the pane placed above the prompt (`placement: 'inline'`)]:
+- **`justifyContent` and `flexWrap` draw as meant:** `MOD BUILDER` at the left edge and the state at the
+  right; the rail on one line at 150 and 100 columns and wrapped onto two at 72 and 50. A `Text` with
+  `backgroundColor` draws the current phase as a chip.
+- **The pane redraws inside a running call.** A `tool.call` hook that set a value, called
+  `$.ui.invalidate('ui.render')` and awaited a five-second process twice showed its first, second and last
+  value in turn while the call was pending; a `command.run` hook did the same. So the Verify frame draws a
+  "running" row.
+- **`$.ui.status(undefined)` clears the line**: `⚠ pp: knowledge · snapshot …` appeared under the prompt
+  and was gone after it.
+- **Narrow widths:** the pane drew at 100, 72, 50 and 34 columns; nothing stopped it drawing. At 34 the
+  header no longer fits on a line. A cell with a `width` shrinks and wraps its word (`validat` / `e`) once
+  the row is wider than the pane, so each cell is cut with `wrap: 'truncate-end'` and not left to wrap.
+  **Not probed:** the pane beside the transcript (`placement: 'dock'`), which needs a wide fullscreen
+  terminal; its width is at most 45% of the terminal's [read: interface.md:311].
