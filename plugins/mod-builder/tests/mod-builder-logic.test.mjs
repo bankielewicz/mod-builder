@@ -329,7 +329,9 @@ test('only the answer "Approve" passes the spec gate', () => {
 
 test('the scaffold gate passes when validate exits 0, and records how many tests ran', () => {
   assert.deepEqual(scaffoldGate(run(0, 'Validation passed'), run(0, THREE_PASS)), { pass: true, tests: 3 });
-  assert.deepEqual(scaffoldGate(run(0), run(1, ONE_ASSERTION_FAILS)), { pass: true, tests: 2 });
+  // A scaffold's test run that does not exit 0 is refused (SPEC.md 7.11), with tests of its own in
+  // mod-builder-logic-scaffold-tests.test.mjs.
+  assert.deepEqual(scaffoldGate(run(0), run(1, ONE_ASSERTION_FAILS)), { pass: false, reason: 'claude plugin test exited 1: not every test of the scaffold passes' });
 });
 
 test('the scaffold gate refuses when validate fails, or when the test run shows no count to record', () => {
@@ -337,7 +339,7 @@ test('the scaffold gate refuses when validate fails, or when the test run shows 
     { pass: false, reason: 'claude plugin validate --strict exited 1' });
   assert.deepEqual(scaffoldGate(run(2, 'usage'), run(0, THREE_PASS)),
     { pass: false, reason: 'claude plugin validate --strict exited 2' });
-  assert.deepEqual(scaffoldGate(run(0), run(1, 'claude plugin test: no hooks module to load\n')),
+  assert.deepEqual(scaffoldGate(run(0), run(0, 'claude plugin test: no hooks module to load\n')),
     { pass: false, reason: "the test run's last line reports no test count" });
 });
 
