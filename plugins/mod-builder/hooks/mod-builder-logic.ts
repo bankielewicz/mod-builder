@@ -486,14 +486,18 @@ export function isTypesOf(text: string, version: string): boolean {
 }
 
 // The tsconfig.json for the check, as the types file's own header gives it, naming the types file and the mod's
-// hooks/, tests/ and types/ by their full paths: it is kept outside the mod.
-export function typecheckConfig(typesFile: string, modDir: string): string {
+// hooks/, tests/ and types/ by their full paths: it is kept outside the mod. `testFiles` are the mod's test files
+// by their paths from its folder (SPEC.md 8.10): one that lies outside those three folders is named too, so that
+// no test file an edit freezes at Red goes unchecked. A build names none.
+export function typecheckConfig(typesFile: string, modDir: string, testFiles: readonly string[] = []): string {
+  const covered = (path: string) => ['hooks', 'tests', 'types'].includes((segments(path) ?? [])[0] ?? '')
+  const others = (Array.isArray(testFiles) ? testFiles : []).filter((path) => typeof path === 'string' && isTestPath(path) && !covered(path))
   const config = {
     compilerOptions: {
       target: 'es2023', lib: ['es2023'], types: [], module: 'esnext', moduleResolution: 'bundler', strict: true,
       noUncheckedIndexedAccess: true, noEmit: true, skipLibCheck: true, jsx: 'react', jsxFactory: 'h', jsxFragmentFactory: 'Fragment',
     },
-    include: [typesFile, `${modDir}/hooks`, `${modDir}/tests`, `${modDir}/types`],
+    include: [typesFile, `${modDir}/hooks`, `${modDir}/tests`, `${modDir}/types`, ...[...new Set(others.map((path) => (segments(path) ?? []).join('/')))].sort().map((path) => `${modDir}/${path}`)],
   }
   return `${JSON.stringify(config, null, 2)}\n`
 }
@@ -623,6 +627,9 @@ export type BuildRecord = {
   testsAtRed: number | null
   testHashes: Hashes | null // every file under tests/, when Red passed
   evidence: Record<string, string> // phase -> what the gate that ended it saw
+  kind?: Kind // SPEC.md 8: a record without it is a build
+  red?: RedMode // an edit's: how its Red ends, or that it is skipped
+  stopped?: boolean // SPEC.md 8.5: ended by /mod-builder stop
 }
 
 export function sessionKey(sessionId: string): string {
@@ -659,7 +666,10 @@ export function isSessionEntry(value: unknown): value is SessionEntry {
 export function isBuildRecord(value: unknown): value is BuildRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Partial<BuildRecord>
-  return typeof record.modDir === 'string' && record.modDir.startsWith('/') && typeof record.sessionId === 'string' && record.sessionId !== '' && isPhase(record.phase)
+  if (!(typeof record.modDir === 'string' && record.modDir.startsWith('/') && typeof record.sessionId === 'string' && record.sessionId !== '' && isPhase(record.phase))) return false
+  // A kind that is none of the kinds is a damaged record, and so is a phase its kind does not have.
+  const kind = recordKind(value)
+  return kind !== null && phasesOf(kind).includes(record.phase as Phase)
 }
 
 // ------------------------------------------------------------------------------------- the guard
@@ -739,6 +749,8 @@ export function guardVerdict(input: GuardInput): WriteVerdict {
   // when the plugin folder it lies in is not the mod's own: outside the mod, any plugin folder; under the mod, one
   // that lies inside it. (A plugin folder above the mod leaves the mod's own paths to the phase.) A record that
   // can't be read is not Done.
+  // A stopped record binds nothing (SPEC.md 8.5): neither its own folder nor another plugin's.
+  if (own && (input.record as BuildRecord).stopped === true) return { allowed: true }
   const inMod = folder === undefined ? null : pathInMod(input.entry.modDir, folder, '/')
   const others = folder !== undefined && (relPath === null || (inMod !== null && inMod !== ''))
   const done = own && (input.record as BuildRecord).phase === 'done'
@@ -752,7 +764,8 @@ export function guardVerdict(input: GuardInput): WriteVerdict {
   if (!own) {
     return { allowed: false, reason: `mod-builder: ${relPath === '' ? 'the mod folder' : relPath} can't be written: the build's record for ${input.entry.modDir} is missing or is not this session's. Call the ${GATE_TOOL} tool to see where the build stands.` }
   }
-  return writeVerdict((input.record as BuildRecord).phase, relPath)
+  const record = input.record as BuildRecord
+  return writeVerdictIn(recordKind(record) as Kind, record.phase, relPath, record.red)
 }
 
 // ------------------------------------------------------------------------------- the headless load
@@ -783,4 +796,462 @@ export function loadShown(log: string, name: string): boolean {
     says(line, `${module} failed to load`) || says(line, `${name}: hooks module did not load`) ||
     ((says(line, `${module} `) || says(line, `${name}: `)) && line.includes('not loaded:'))
   return lines.some((line) => says(line, `${module} loaded`)) && !lines.some(failed) && hooksSkipped(log, name).length === 0
+}
+
+// ------------------------------------------------------------------------------------- an edit (SPEC.md 8)
+
+// What a record is of: a new mod built from nothing, or a finished mod changed (an edit, which is also how a mod
+// whose checks fail is repaired).
+export const KINDS = ['build', 'edit'] as const
+export type Kind = (typeof KINDS)[number]
+
+// An edit has no Scaffold: the mod is there. Each phase writes one kind of thing, as in a build.
+export const EDIT_PHASES = ['knowledge', 'describe', 'spec', 'red', 'green', 'verify', 'done'] as const
+
+// The kind a stored record names. A record with no `kind` is a build: 0.1.0 stored none (SPEC.md 8.2, fact 3).
+// Null for what is no record, or names a kind that is none.
+export function recordKind(record: unknown): Kind | null {
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) return null
+  const kind = (record as { kind?: unknown }).kind
+  if (kind === undefined) return 'build'
+  return typeof kind === 'string' && (KINDS as readonly string[]).includes(kind) ? (kind as Kind) : null
+}
+
+// Whether a record still holds its folder: it is neither Done nor stopped (SPEC.md 8.5). What is no record holds
+// nothing.
+export function isOpenRecord(record: unknown): boolean {
+  return isBuildRecord(record) && record.phase !== 'done' && record.stopped !== true
+}
+
+export function phasesOf(kind: Kind): readonly Phase[] {
+  return kind === 'edit' ? EDIT_PHASES : kind === 'build' ? PHASES : []
+}
+
+// 1 for Knowledge up to the kind's last phase; 0 for a phase the kind does not have.
+export function phaseNumberOf(kind: Kind, phase: Phase): number {
+  return phasesOf(kind).indexOf(phase) + 1
+}
+
+// "phase 4 (Red)" in an edit, "phase 5 (Red)" in a build.
+export function phaseLabelOf(kind: Kind, phase: Phase): string {
+  return `phase ${phaseNumberOf(kind, phase)} (${TITLES[phase]})`
+}
+
+// How an edit's Red ends (SPEC.md 8.6, 8.10): 'edit', on a new or changed test failing by assertion; 'repair', when
+// the mod already fails, on a test file existing and the test files typechecking; 'skipped', when the mod already
+// fails and its test files fit the build, so that Spec is followed by Green.
+export const RED_MODES = ['edit', 'repair', 'skipped'] as const
+export type RedMode = (typeof RED_MODES)[number]
+
+// The phase after this one for a record of `kind`, or null after Done and for a phase the kind does not have. An
+// edit whose Red is skipped goes from Spec to Green; nothing else skips, and no kind goes back.
+export function nextPhaseOf(kind: Kind, phase: Phase, red?: RedMode): Phase | null {
+  const phases = phasesOf(kind)
+  const at = phases.indexOf(phase)
+  if (at < 0) return null
+  if (kind === 'edit' && phase === 'spec' && red === 'skipped') return 'green'
+  return phases[at + 1] ?? null
+}
+
+// Whether a path from the mod's folder names a test file by its name: it ends in ".test.ts" or ".test.tsx", as
+// `claude plugin test` finds them anywhere in the mod but under a node_modules folder (SPEC.md 8.10: it ran
+// hooks/.test.ts, and neither node_modules/dep/d.test.ts nor lib/U.TEST.TS). With `foldCase`, without regard to
+// case.
+function namedTest(relPath: string, foldCase: boolean): boolean {
+  const parts = (segments(relPath) ?? []).map((part) => (foldCase ? part.toLowerCase() : part))
+  return !parts.includes('node_modules') && /\.test\.tsx?$/.test(parts[parts.length - 1] ?? '')
+}
+
+// Whether a path from the mod's folder is one of an edit's test files: anything under tests/, and a file named as
+// a test wherever it sits. These are what Red may write, what closes when Red passes, and what 8.4 asks about.
+export function isTestPath(relPath: string): boolean {
+  return typeof relPath === 'string' && relPath !== '' && (area(relPath, false) === 'tests' || namedTest(relPath, false))
+}
+
+// Whether a guarded tool may write `relPath` in `phase` of a record of `kind`. A build keeps mayWrite. An edit
+// keeps it too, with two differences (SPEC.md 8.3, 8.10): it has no Scaffold, and a file named as a test is a test
+// file wherever it sits, so Red may write it and nothing after Red may. As in mayWrite, a name that closes is
+// compared without regard to case and one that opens must be spelled exactly.
+export function mayWriteIn(kind: Kind, phase: Phase, relPath: string): boolean {
+  if (kind === 'build') return mayWrite(phase, relPath)
+  if (kind !== 'edit' || !phasesOf(kind).includes(phase) || typeof relPath !== 'string') return false
+  if (phase === 'red') return isTestPath(relPath)
+  if (namedTest(relPath, true)) return false
+  return mayWrite(phase, relPath)
+}
+
+const EDIT_MAY_WRITE: Record<string, string> = {
+  knowledge: 'nothing in the mod',
+  describe: 'nothing in the mod',
+  spec: 'SPEC.md only, by adding to its end',
+  red: 'test files only (tests/, and any *.test.ts or *.test.tsx)',
+  green: 'anything but test files and SPEC.md',
+  verify: 'anything but test files and hooks/',
+  done: 'anything but test files and hooks/',
+}
+
+const ASKED = 'the person has agreed to every earlier test file that changed or is gone'
+
+function editEndsWhen(phase: Phase, red: RedMode | undefined): string {
+  switch (phase) {
+    case 'spec': return 'the person approves the change'
+    case 'red':
+      return red === 'repair'
+        ? `a test file exists, the test files typecheck, and ${ASKED}`
+        : `a new or changed test fails by assertion, the mod typechecks, and ${ASKED}`
+    case 'green': return 'validate, the tests, the typecheck and the headless load pass, and the version in plugin.json is greater than before the edit'
+    default: return ENDS_WHEN[phase]
+  }
+}
+
+// The guard's answer for one write under a record of `kind`, with the reason a refusal shows. A build's is
+// writeVerdict's, word for word.
+export function writeVerdictIn(kind: Kind, phase: Phase, relPath: string, red?: RedMode): WriteVerdict {
+  if (kind === 'build') return writeVerdict(phase, relPath)
+  if (mayWriteIn(kind, phase, relPath)) return { allowed: true }
+  const shown = typeof relPath !== 'string' || relPath === '' ? 'the mod folder' : relPath
+  if (kind !== 'edit' || !phasesOf(kind).includes(phase)) return { allowed: false, reason: `mod-builder: ${shown} can't be written: the edit's record names no phase.` }
+  const next = nextPhaseOf(kind, phase, red)
+  const opens = next === null ? '' : ` ${capital(phaseLabelOf(kind, next))} opens when ${editEndsWhen(phase, red)}: ask for it by calling the ${GATE_TOOL} tool.`
+  return { allowed: false, reason: `mod-builder: ${shown} can't be written in ${phaseLabelOf(kind, phase)} of this edit, which may write ${EDIT_MAY_WRITE[phase]}.${opens}` }
+}
+
+// ---------------------------------------------------------------------------- the folder an edit may name
+
+export type EditFolder = {
+  modDir: string // absolute
+  pluginRoot: string // this plugin's own folder
+  hasManifest: boolean // the folder holds .claude-plugin/plugin.json
+  hooksJson: string | null // what its hooks/hooks.json holds, or null when there is none
+  kept: unknown // what the store holds under buildKey(modDir)
+  sessionId: string
+}
+
+// Whether the gate may open an edit on a folder (SPEC.md 8.3): it is a mod (a plugin whose hooks/hooks.json has a
+// "modules" key), it is not this plugin's own folder or one inside it, and no other session's unfinished build or
+// edit holds it. A refusal says which.
+export function editFolderVerdict(input: EditFolder): Verdict {
+  if (typeof input !== 'object' || input === null || typeof input.modDir !== 'string' || !input.modDir.startsWith('/')) {
+    return { pass: false, reason: 'the folder to edit is not named by a path from the root' }
+  }
+  // Both paths are made whole first: one that climbs above the root is no path, and names nothing.
+  const modDir = absolutePath(input.modDir, '/')
+  if (modDir === null) return { pass: false, reason: 'the folder to edit is not named by a path from the root' }
+  const pluginRoot = typeof input.pluginRoot === 'string' && input.pluginRoot.startsWith('/') ? absolutePath(input.pluginRoot, '/') : null
+  if (pluginRoot === null) return { pass: false, reason: `${modDir} can't be judged: this plugin's own folder is not known` }
+  const inPlugin = pathInMod(pluginRoot, modDir, '/')
+  if (inPlugin === '') return { pass: false, reason: `${modDir} is this plugin's own folder: mod-builder does not edit itself` }
+  if (inPlugin !== null) return { pass: false, reason: `${modDir} is inside this plugin's own folder: mod-builder does not edit itself` }
+  if (input.hasManifest !== true) return { pass: false, reason: `${modDir} holds no .claude-plugin/plugin.json: it is not a plugin` }
+  if (typeof input.hooksJson !== 'string') return { pass: false, reason: `${modDir} holds no hooks/hooks.json: it is not a mod` }
+  let hooks: unknown = null
+  try {
+    hooks = JSON.parse(input.hooksJson)
+  } catch {
+    return { pass: false, reason: `${modDir}/hooks/hooks.json can't be read as JSON: it is not a mod` }
+  }
+  if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks) || !Object.prototype.hasOwnProperty.call(hooks, 'modules')) {
+    return { pass: false, reason: `${modDir}/hooks/hooks.json has no "modules" key: it is not a mod` }
+  }
+  if (typeof input.sessionId !== 'string' || input.sessionId === '') return { pass: false, reason: `${modDir} can't be judged: this session's id is not known` }
+  if (isOpenRecord(input.kept) && (input.kept as BuildRecord).sessionId !== input.sessionId) {
+    const kept = input.kept as BuildRecord
+    const kind = recordKind(kept) as Kind
+    return { pass: false, reason: `${modDir} is being ${kind === 'edit' ? 'edited' : 'built'} by another session (it is at ${phaseLabelOf(kind, kept.phase)}). Name another folder.` }
+  }
+  return { pass: true }
+}
+
+// ------------------------------------------------------------------------------------- the baseline
+
+// Where the typecheck's error lines lie. The compiler prints "<path>(<line>,<column>): error TS<number>: ...", the
+// path from the folder it ran in (`cwd`), not from the mod (SPEC.md 8.10). `tests` are the mod's test files that
+// hold an error, by their paths from the mod's folder, each once and sorted; `others` counts error lines that
+// name any other file; `unplaced` counts error lines that name no file ("error TS18003: ...").
+export type TypecheckErrors = { tests: string[]; others: number; unplaced: number }
+
+export function typecheckErrors(output: string, cwd: string, modDir: string): TypecheckErrors {
+  const found: TypecheckErrors = { tests: [], others: 0, unplaced: 0 }
+  if (typeof output !== 'string') return found
+  for (const line of output.split('\n').map((text) => text.replace(/\r$/, ''))) {
+    if (/^error TS\d+:/.test(line)) {
+      found.unplaced++
+      continue
+    }
+    const named = line.match(/^(.+)\(\d+,\d+\): error TS\d+:/)
+    if (named === null) continue
+    const path = absolutePath(named[1] as string, cwd)
+    const relPath = path === null ? null : pathInMod(modDir, path, '/')
+    if (relPath !== null && isTestPath(relPath)) {
+      if (!found.tests.includes(relPath)) found.tests.push(relPath)
+    } else {
+      found.others++
+    }
+  }
+  found.tests.sort()
+  return found
+}
+
+// One run of the typecheck, against one types file, and the folder the compiler ran in.
+export type TypecheckRun = { run: Run; cwd: string }
+
+// Whether the mod's test files fit the build, read from the typechecks' error lines and not their exit codes: the
+// one typecheck also judges hooks/, which Red can't write (SPEC.md 8.10). They fit when every typecheck ran to an
+// exit code and, where it is not 0, shows an error line, none of which names a test file or no file at all.
+export function testsFit(typechecks: readonly TypecheckRun[], modDir: string): Verdict {
+  if (!Array.isArray(typechecks) || typechecks.length === 0) return { pass: false, reason: 'no typecheck was run' }
+  const inTests: string[] = []
+  for (const one of typechecks) {
+    const check = ended(one?.run as Run, 'the typecheck')
+    if (!check.pass) return check
+    if (one.run.exitCode === 0) continue
+    const errors = typecheckErrors(one.run.output, one.cwd, modDir)
+    if (errors.unplaced > 0) return { pass: false, reason: `the typecheck exited ${one.run.exitCode} with an error that names no file` }
+    if (errors.tests.length === 0 && errors.others === 0) return { pass: false, reason: `the typecheck exited ${one.run.exitCode} and shows no error line to read` }
+    for (const path of errors.tests) if (!inTests.includes(path)) inTests.push(path)
+  }
+  if (inTests.length > 0) return { pass: false, reason: `the test files do not typecheck: ${inTests.sort().join(', ')}` }
+  return { pass: true }
+}
+
+export type Check = 'validate' | 'test' | 'typecheck' | 'load'
+
+export type BaselineRuns = { validate: Run; test: Run; typechecks: readonly TypecheckRun[]; load: Run; loadShown: boolean }
+
+// The baseline's verdict (SPEC.md 8.3, 8.6, 8.10). `taken` is false when a check ended with no exit code: that is
+// no evidence that the mod passes or fails, and no edit opens on it. Else `failed` lists the checks the mod does
+// not pass as it stands, in the order they run; `tests` is the count its test run shows, or null; and `red` is
+// how the edit's Red ends. A mod that passes all four is edited. One with no test file fails its test run for
+// that alone: when nothing else fails it is edited too, and when something does it is repaired with Red entered.
+// Any other failing mod is repaired, with Red skipped when its test files fit the build.
+export type BaselineVerdict =
+  | { taken: false; reason: string }
+  | { taken: true; failed: Check[]; tests: number | null; hasTests: boolean; red: RedMode }
+
+export function baselineVerdict(runs: BaselineRuns, modDir: string, files: readonly string[]): BaselineVerdict {
+  if (typeof runs !== 'object' || runs === null) return { taken: false, reason: `the baseline could not be taken: ${VALIDATE} ended with no exit code` }
+  const typechecks = Array.isArray(runs.typechecks) ? runs.typechecks : []
+  if (typechecks.length === 0) return { taken: false, reason: 'the baseline could not be taken: no typecheck was run' }
+  const all = [ended(runs.validate, VALIDATE), ended(runs.test, TEST), ...typechecks.map((one) => ended(one?.run as Run, 'the typecheck')), ended(runs.load, 'the headless load')]
+  for (const check of all) if (!check.pass) return { taken: false, reason: `the baseline could not be taken: ${check.reason}` }
+  const hasTests = Array.isArray(files) && files.some((path) => typeof path === 'string' && namedTest(path, false))
+  const run = parseTestRun(runs.test.output)
+  const failed: Check[] = []
+  if (runs.validate.exitCode !== 0) failed.push('validate')
+  if (runs.test.exitCode !== 0 || run === null) failed.push('test')
+  if (typechecks.some((one) => one.run.exitCode !== 0)) failed.push('typecheck')
+  if (runs.load.exitCode !== 0 || runs.loadShown !== true) failed.push('load')
+  const others = failed.filter((check) => check !== 'test' || hasTests)
+  const red: RedMode = others.length === 0 ? 'edit' : !hasTests || !testsFit(typechecks, modDir).pass ? 'repair' : 'skipped'
+  return { taken: true, failed, tests: run === null ? null : run.tests, hasTests, red }
+}
+
+// ------------------------------------------------------------------------------------- an edit's Red
+
+// Each "(fail)" block of a test run with the test file it sits under: `claude plugin test` prints a file's path
+// from the mod's folder on a line of its own, ending in a colon, before that file's lines (SPEC.md 8.2, fact 1).
+// `file` is null for a block no such line precedes.
+export function failuresByFile(output: string): { file: string | null; name: string; body: string }[] {
+  const run = typeof output === 'string' ? parseTestRun(output) : null
+  if (run === null) return []
+  const files: (string | null)[] = []
+  let file: string | null = null
+  for (const line of output.split('\n').map((text) => text.replace(/\r$/, ''))) {
+    const heads = line.match(/^(\S.*\.test\.tsx?):$/)
+    if (heads !== null) file = heads[1] as string
+    else if (line.startsWith('(fail) ')) files.push(file)
+  }
+  return run.failures.map((failure, index) => ({ file: files[index] ?? null, name: failure.name, body: failure.body }))
+}
+
+// Red to Green in an edit whose mod passed its baseline (SPEC.md 8.3): the tests fail; every failing block opens
+// with an assertion error; and at least one failing test is new by name, or sits in a test file that is not as it
+// was at the baseline (`changedTestFiles`: changed or added, by their paths from the mod's folder). No count is
+// compared: an edit may change a test and add none. The typecheck and 8.4's question are judged after this.
+export function editRedGate(test: Run, namesAtBaseline: string[], changedTestFiles: string[]): Verdict {
+  if (!isNames(namesAtBaseline)) return { pass: false, reason: 'no test names are recorded from the baseline' }
+  if (!isNames(changedTestFiles)) return { pass: false, reason: 'the test files could not be compared with the baseline' }
+  const check = ended(test, TEST)
+  if (!check.pass) return check
+  if (test.exitCode === 0) return { pass: false, reason: 'claude plugin test exited 0: no test fails yet' }
+  const run = parseTestRun(test.output)
+  if (run === null) return { pass: false, reason: NO_COUNT }
+  const failures = failuresByFile(test.output)
+  if (failures.length === 0) return { pass: false, reason: 'claude plugin test failed, but its output holds no (fail) block' }
+  const other = failures.filter((failure) => !opensWithAssertion(failure.body))
+  if (other.length > 0) return { pass: false, reason: `not failing by assertion: ${other.map((failure) => failure.name).join('; ')}` }
+  const fresh = (failure: { file: string | null; name: string }) => !namesAtBaseline.includes(failure.name) || (failure.file !== null && changedTestFiles.includes(failure.file))
+  if (!failures.some(fresh)) {
+    return { pass: false, reason: `no new or changed test fails: every failing test had its name at the baseline, in a test file that is as it was (${failures.map((failure) => failure.name).join('; ')})` }
+  }
+  return { pass: true, tests: run.tests }
+}
+
+// Red to Green in a repair (SPEC.md 8.6, 8.10): the mod has a test file, and its test files typecheck against the
+// build's types. The tests need not fail anew: the mod already fails. `files` are the mod's files now.
+export function repairRedGate(typechecks: readonly TypecheckRun[], modDir: string, files: readonly string[]): Verdict {
+  if (!(Array.isArray(files) && files.some((path) => typeof path === 'string' && namedTest(path, false)))) {
+    return { pass: false, reason: 'the mod has no test file yet (a *.test.ts or *.test.tsx)' }
+  }
+  return testsFit(typechecks, modDir)
+}
+
+// ------------------------------------------------------------------------------- 8.4: test files asked about
+
+// The test files of a set of hashes: those isTestPath names.
+export function testHashesOf(hashes: Hashes): Hashes {
+  const found: Hashes = {}
+  if (!isHashes(hashes)) return found
+  for (const path of Object.keys(hashes).sort()) if (isTestPath(path)) found[path] = hashes[path] as string
+  return found
+}
+
+// The test files the person is asked about at Red (SPEC.md 8.4): each that existed at the baseline and has changed
+// or is gone, sorted by path. One that is new since the baseline raises no question.
+export function testFilesToAsk(baseline: Hashes, now: Hashes): { path: string; how: 'changed' | 'missing' }[] {
+  if (!isHashes(baseline) || !isHashes(now)) return []
+  const found = changedFiles(testHashesOf(baseline), testHashesOf(now))
+  return found.filter((file) => file.how !== 'added') as { path: string; how: 'changed' | 'missing' }[]
+}
+
+// The test files that are not as at the baseline, new ones included: what editRedGate takes as changed.
+export function testFilesChanged(baseline: Hashes, now: Hashes): string[] {
+  if (!isHashes(baseline) || !isHashes(now)) return []
+  return changedFiles(testHashesOf(baseline), testHashesOf(now)).filter((file) => file.how !== 'missing').map((file) => file.path)
+}
+
+// The names the baseline's tests had that no test has now, in the baseline's order, each once.
+export function namesGone(atBaseline: string[], now: string[]): string[] {
+  if (!isNames(atBaseline) || !isNames(now)) return []
+  return [...new Set(atBaseline)].filter((name) => !now.includes(name))
+}
+
+function linesOf(text: string): string[] {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  if (lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+// The most cells the comparison's table may hold. Two files past it are compared line by line as heaps instead.
+export const COMPARED_CELLS = 4_000_000
+
+// The lines of `before` that `after` no longer holds, and how many it gained: a line-by-line comparison by longest
+// common subsequence, as a diff makes it. A line ending is not part of a line. Files too long for that table
+// (COMPARED_CELLS) are compared without regard to order: a line is removed as often as `before` holds it more
+// than `after` does. That can only miss a line that moved, never one that is gone.
+export function lineChanges(before: string, after: string): { added: number; removed: string[] } {
+  const a = linesOf(typeof before === 'string' ? before : '')
+  const b = linesOf(typeof after === 'string' ? after : '')
+  if ((a.length + 1) * (b.length + 1) > COMPARED_CELLS) {
+    const left = new Map<string, number>()
+    for (const line of b) left.set(line, (left.get(line) ?? 0) + 1)
+    const gone: string[] = []
+    for (const line of a) {
+      const held = left.get(line) ?? 0
+      if (held > 0) left.set(line, held - 1)
+      else gone.push(line)
+    }
+    return { added: b.length - (a.length - gone.length), removed: gone }
+  }
+  const width = b.length + 1
+  const table = new Uint32Array((a.length + 1) * width)
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      table[i * width + j] = a[i] === b[j] ? (table[(i + 1) * width + j + 1] as number) + 1 : Math.max(table[(i + 1) * width + j] as number, table[i * width + j + 1] as number)
+    }
+  }
+  const removed: string[] = []
+  let i = 0
+  let j = 0
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++
+      j++
+    } else if ((table[(i + 1) * width + j] as number) >= (table[i * width + j + 1] as number)) {
+      removed.push(a[i++] as string)
+    } else {
+      j++
+    }
+  }
+  while (i < a.length) removed.push(a[i++] as string)
+  const kept = a.length - removed.length
+  return { added: b.length - kept, removed }
+}
+
+// A test file the person is asked about: as it was in the restore point, and as it is now (null when it is gone).
+export type AskedFile = { path: string; before: string; after: string | null }
+
+export const GO_ON = 'Go on with these changes'
+export const QUOTED_LINES = 20
+
+export function testChangeOptions(): string[] {
+  return [NOT_YET, GO_ON]
+}
+
+// 8.4's question, or null when no earlier test file changed or is gone: each file with the lines added and
+// removed against its baseline copy; under it every removed line that holds "expect", at most QUOTED_LINES in
+// all, then how many more; then the test names that are gone.
+export function testChangeQuestion(files: readonly AskedFile[], gone: readonly string[]): string | null {
+  const asked = Array.isArray(files) ? files.filter((file) => typeof file === 'object' && file !== null && typeof file.path === 'string') : []
+  if (asked.length === 0) return null
+  const said = (count: number) => (count === 1 ? '1 line' : `${count} lines`)
+  const text = ['These test files are not as they were before this edit:']
+  let quoted = 0
+  let more = 0
+  for (const file of [...asked].sort((one, other) => (one.path < other.path ? -1 : one.path > other.path ? 1 : 0))) {
+    const changes = lineChanges(file.before, file.after === null ? '' : file.after)
+    text.push(file.after === null ? `- ${file.path}: gone (${said(changes.removed.length)} removed)` : `- ${file.path}: ${said(changes.added)} added, ${said(changes.removed.length)} removed`)
+    for (const line of changes.removed.filter((removed) => removed.includes('expect'))) {
+      if (quoted < QUOTED_LINES) {
+        text.push(`    removed: ${line.trim()}`)
+        quoted++
+      } else {
+        more++
+      }
+    }
+  }
+  if (more > 0) text.push(`and ${more} more removed ${more === 1 ? 'line that holds' : 'lines that hold'} "expect"`)
+  const names = Array.isArray(gone) ? gone.filter((name) => typeof name === 'string') : []
+  if (names.length > 0) text.push(`These tests no longer exist: ${names.join('; ')}`)
+  text.push('Go on with these changes?')
+  return text.join('\n')
+}
+
+// Only the person's own approving answer passes; any other answer, typed text or none keeps the edit at Red.
+export function testChangeGate(answer: string | null | undefined): Verdict {
+  if (answer === GO_ON) return { pass: true }
+  return { pass: false, reason: `the person has not agreed to the changed test files (answer: ${answer == null ? 'none' : JSON.stringify(answer)})` }
+}
+
+// What the gate's evidence says of the question: the answer and the files it covered.
+export function testChangeEvidence(files: readonly { path: string; how: 'changed' | 'missing' }[], answer: string): string {
+  const asked = (Array.isArray(files) ? files : []).filter((file) => typeof file === 'object' && file !== null && typeof file.path === 'string')
+  const covered = asked.map((file) => `${file.path} (${file.how === 'missing' ? 'gone' : 'changed'})`)
+  return `the person answered ${JSON.stringify(answer)} for: ${covered.join(', ')}`
+}
+
+// ------------------------------------------------------------------------------------- the version
+
+// The three numbers of a version such as "1.2.3", or null for anything else: a missing one, one with fewer or
+// more parts, or anything before the first number or after the third.
+function threeNumbers(version: unknown): [bigint, bigint, bigint] | null {
+  const match = typeof version === 'string' ? version.match(/^(\d+)\.(\d+)\.(\d+)$/) : null
+  return match === null ? null : [BigInt(match[1] as string), BigInt(match[2] as string), BigInt(match[3] as string)]
+}
+
+// Green's rule for plugin.json's version in an edit (SPEC.md 8.3, 8.10): it is three numbers, and greater than the
+// baseline's, compared number by number. When the baseline had no version, or one that is not three numbers, any
+// three numbers pass: there is nothing to be greater than.
+export function versionGate(atBaseline: unknown, now: unknown): Verdict {
+  const next = threeNumbers(now)
+  if (next === null) {
+    return { pass: false, reason: now === undefined || now === null ? 'plugin.json has no version' : `plugin.json's version is ${JSON.stringify(now)}, which is not three numbers as in 1.2.3` }
+  }
+  const before = threeNumbers(atBaseline)
+  if (before === null) return { pass: true }
+  for (let part = 0; part < 3; part++) {
+    if ((next[part] as bigint) > (before[part] as bigint)) return { pass: true }
+    if ((next[part] as bigint) < (before[part] as bigint)) break
+  }
+  return { pass: false, reason: `plugin.json's version is ${now}, not greater than the ${atBaseline} it had before the edit` }
 }
