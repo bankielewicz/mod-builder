@@ -2562,3 +2562,68 @@ change at its review of step 2.
   write over the tests Red has just written; so it is not built in this step, and is put to the driving
   session with step 2: leave it as a limit, or have Red's gate refuse a `hooks/` that is not as laid, with
   a way back that lays `hooks/` alone.
+
+### 9.16 Step 2 as built: the closed Scaffold, and a build's typecheck naming its test files (2026-11-11, at `948b1fd`)
+
+**Plan 36, the closed Scaffold** (9.4, 9.15): `d228162` (existing tests: Scaffold's evidence and order of
+commands, the skill's two pinned sentences, the test world's answer for the script), `61d4aea` red,
+`5bc09e0` green; verifier PASS with 11 mutants. **Plan 37, the typecheck** (9.7): `c7242fa` (one existing
+test), `38162fa` red, `948b1fd` green; verifier PASS with 5 mutants. After both: 399 module tests, 637 node
+tests, validate and the typecheck pass [ran, by the agents and the verifiers].
+
+As built:
+- `scaffold.sh --check <mod folder> <name>` writes nothing in the mod and prints `changed: <path>`,
+  `missing: <path>` or `extra: <path>` for what under `hooks/` and `tests/` is not as the template lays it
+  for that name, exit 1; or `as laid: hooks/hooks.json hooks/register.tsx tests/pane.test.tsx`, exit 0. A
+  link is never followed (in place of a laid file it is "changed"; anywhere else "extra"); `hooks/` or
+  `tests/` that is itself a link is "changed"; a folder there that can't be read through is "extra".
+- `scaffold.sh --again <mod folder> <name>` writes the three files as laid over what is there, leaves the
+  manifest and everything else, deletes nothing, and prints `extra:` for what else is there. It refuses a
+  link or a folder where a file goes, and then writes nothing. Neither mode asks for an author.
+- The rule `scaffoldKeptGate` passes only a check that exited 0, said "as laid" and named no difference. A
+  refusal names up to ten differences and counts the rest, and gives the `--again` command with the mod's
+  folder quoted, adding "and remove each file named as extra" when one is.
+- Scaffold's gate asks first, before validate, and once more after the typecheck. Its evidence now opens
+  "hooks/ and tests/ are as the scaffold laid them;".
+- The build skill's sections 4 and 5 say so: leave `hooks/` and `tests/` as laid; a mod of another shape
+  replaces the template's tests at Red and its code at Green; what a test of phase 5 can name. The table
+  row for Scaffold is unchanged (it would pass the skill's own 115-character limit otherwise).
+- A build's test files (every file under `tests/`, and every file named as a test) are named to the
+  typecheck as root files at Scaffold, at Red after the test run, at Green and at Verify. When the mod's
+  files can't all be read, or a file named as a test is a link or no plain file, the gate refuses and says
+  which, before a compiler runs.
+
+**What the two independent readers found, corrected before each red commit.** For plan 36 (60 mutants, 6
+real gaps): a file whose path looks like two laid paths joined by a space was passed over; an unreadable
+folder was passed over; `--check` stopped on an author with a control character; the command in the refusal
+did not quote the folder; six behaviours no test held (among them: Red may replace the template's tests,
+which now has a test). For plan 37 (23 mutants, 5 real gaps): an unreadable file made every gate name no
+test file and pass; a dangling link named as a test stopped every gate with an error that names no file.
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `948b1fd` loaded with `--plugin-dir`, the
+installed copy switched off, the building session answering the one dialog] (9.9, item 4): a build of a
+pane `word-count`, told to write its counting into `hooks/register.tsx` and to add `hooks/count.ts` at
+Scaffold. The gate: "still at phase 4 (Scaffold). Not passed: hooks/ and tests/ are not as the scaffold
+laid them (changed: hooks/register.tsx; extra: hooks/count.ts): at Scaffold they hold the template and
+nothing else, and the mod's behaviour is written at Red (tests) and Green (code). Put them back with: bash
+".../scripts/scaffold.sh" --again ...". The model ran that command and removed the extra file; the next
+call: "phase 4 (Scaffold) passed (hooks/ and tests/ are as the scaffold laid them; claude plugin validate
+--strict exited 0; 2 tests ran; the typecheck passes (...))". It declared a `$.state` contract in `types/`
+at Scaffold, wrote six tests at Red against the template's module (Red passed with 8 tests), the code at
+Green, and reached Done. Outside the session validate passes and 8 of 8 tests pass.
+
+**Known and left** (for `docs/limits` at the documents step, and 9.15's last point for the driving
+session):
+- The comparison runs at Scaffold only: a shell command can write under `hooks/` before Red unnoticed.
+- A test written at Red can name only the template's module and what `types/` declares.
+- A source file under `tests/node_modules/` is named to the typecheck, in a build as in an edit.
+- Every file of the mod is read once more at each gate of a build (to find its test files).
+- A build opened by 0.2.0 that is past Red meets the stricter typecheck at Green with its tests closed.
+- `--again` writes over `hooks/register.tsx` and `tests/pane.test.tsx` without keeping a copy: what a model
+  wrote there at Scaffold is gone, as the refusal intends.
+
+**An accident to record:** the first reader ran one command in the owner's home folder by mistake and left
+seven small folders of template files there. Nothing in the repository was touched. The building session
+did not delete them (outside the repository); it wrote the owner a script that removes each only when it
+holds a scaffolded mod and nothing else. Later readers and agents were told to `cd` to an absolute path in
+every command that writes.
