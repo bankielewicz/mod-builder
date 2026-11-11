@@ -180,9 +180,9 @@ Tell the person what was built and where, how to load it (`claude --plugin-dir <
 that opens it, and the "Built on" line. If the mod's folder is in a git repository, stage only the mod's
 folder and commit it locally with a message that says what the mod does. Never push.
 
-Offer nothing else. This plugin has no edit skill and no sharing step yet: there is no `/mod-builder:edit`,
-and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here. A change to
-a finished mod is made by hand, or by a new build in a fresh folder.
+Tell them that a change to the finished mod, or a repair after a Claude Code update, is made with
+`/mod-builder:edit <mod folder> <what to change>`. Offer nothing else: this plugin has no sharing step yet,
+and the `plugin-authoring` skill's offer to share the mod as a GitHub repository is not made here.
 
 ## Handing a phase to a subagent
 

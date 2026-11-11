@@ -33,8 +33,10 @@ export type World = {
   files: Record<string, string>
   // The person's answer to the next question; null dismisses it.
   answer: string | null
-  // What each command answers, by a word its arguments hold: 'validate', 'test', 'tsc', '--plugin-dir'; and
-  // 'refresh' for the docs fetcher, which is known by its file's name.
+  // Answers to the questions that come first, in order; when it is empty, `answer` is given.
+  answers: (string | null)[]
+  // What each command answers, by a word its arguments hold: 'validate', 'test', 'tsc', '--plugin-dir'; and, known
+  // by its file's name, 'refresh' for the docs fetcher, 'restore' for restore-point.sh, 'putback' for put-back.sh.
   runs: Record<string, Ran>
   commands: string[]
   // What each compiler answers when asked for its version (`-v`), by its command: INSTALLED and DOWNLOADED.
@@ -58,6 +60,10 @@ export type World = {
   existsFails: boolean
   // Lines the plugin wrote to the transcript.
   logged: string[]
+  // What the plugin set the status line to, in order; undefined is the line cleared.
+  statuses: (string | undefined)[]
+  // The toasts the plugin showed.
+  toasts: string[]
   // What the plugin did.
   asked: { question: string; options: string[] }[]
   ran: string[][]
@@ -100,7 +106,8 @@ export function world(on: On, start: Partial<World> = {}): World {
     store: {},
     files: {},
     answer: 'Approve',
-    runs: { validate: ok('Validation passed'), test: ok(passing(1)), tsc: ok(), '--plugin-dir': ok() },
+    answers: [],
+    runs: { validate: ok('Validation passed'), test: ok(passing(1)), tsc: ok(), '--plugin-dir': ok(), restore: ok('restore point: made\n'), putback: ok('put back\n') },
     commands: ['help', 'cost'],
     compilers: { [INSTALLED]: ok('Version 5.9.3\n'), [DOWNLOADED]: ok('Version 5.9.3\n') },
     env: { HOME, CLAUDE_TMPDIR: TMP },
@@ -116,6 +123,8 @@ export function world(on: On, start: Partial<World> = {}): World {
     unwritable: [],
     existsFails: false,
     logged: [],
+    statuses: [],
+    toasts: [],
     asked: [],
     ran: [],
     timeouts: [],
@@ -135,6 +144,14 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('session.id', () => (w.sessionId === null ? deny('the session has no id') : value(w.sessionId)))
   on('ui.log', (_, e) => {
     w.logged.push((e as { text: string }).text)
+    return value(undefined)
+  })
+  on('ui.status', (_, e) => {
+    w.statuses.push((e as { text: string | undefined }).text)
+    return value(undefined)
+  })
+  on('ui.toast', (_, e) => {
+    w.toasts.push((e as { text: string }).text)
     return value(undefined)
   })
   on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))
@@ -210,7 +227,8 @@ export function world(on: On, start: Partial<World> = {}): World {
     w.ranIn.push(init?.cwd)
     if (argv[0] === 'id') return w.runs.id === undefined || w.runs.id === 'never starts' ? deny('failed to start') : value({ exitCode: w.runs.id.exitCode, stdout: w.runs.id.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
     const fetcher = argv.some((one) => one.endsWith('/refresh-docs.sh'))
-    const word = fetcher ? 'refresh' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
+    const script = ['restore-point.sh', 'put-back.sh'].find((name) => argv.some((one) => one.endsWith(`/${name}`)))
+    const word = fetcher ? 'refresh' : script === 'restore-point.sh' ? 'restore' : script === 'put-back.sh' ? 'putback' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
     // A compiler asked for its version answers by its own command; any other run, by the word it holds.
     const asked = argv.at(-1) === '-v' ? w.compilers[argv.slice(0, -1).join(' ')] : undefined
     const ran = asked !== undefined ? asked : word === undefined ? undefined : w.runs[word]
@@ -228,8 +246,9 @@ export function world(on: On, start: Partial<World> = {}): World {
       const asked = (e as unknown as { questions: { question: string; options: { label: string }[] }[] }).questions[0]
       w.asked.push({ question: asked?.question ?? '', options: (asked?.options ?? []).map((option) => option.label) })
       w.whileAsked()
-      if (w.answer === null) return { deny: 'dismissed' }
-      return { result: { answers: { [asked?.question ?? '']: w.answer } } } as never
+      const given = w.answers.length > 0 ? (w.answers.shift() as string | null) : w.answer
+      if (given === null) return { deny: 'dismissed' }
+      return { result: { answers: { [asked?.question ?? '']: given } } } as never
     }
     const fields = e as { file_path?: string; notebook_path?: string }
     w.reachedTheTool.push({ tool: String(e.tool), path: fields.file_path ?? fields.notebook_path ?? '' })

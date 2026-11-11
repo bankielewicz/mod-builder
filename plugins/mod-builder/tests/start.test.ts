@@ -28,8 +28,8 @@ test('"/mod-builder <what to build>" starts nothing and answers with the line th
 test('the gate tool and the command say in their descriptions that a build is started with /mod-builder:build', async ($, on) => {
   const w = world(on)
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: false })
-  expect(w.described).toEqual({ 'mod-builder': `mod-builder: "refresh" fetches the mod documentation now; alone, shows where this session's build stands. ${START} <what the mod should do> builds a mod` })
-  expect((w.registered[0] as unknown as { description: string }).description).toMatch(/the mod build this session started with \/mod-builder:build\. /)
+  expect(w.described).toEqual({ 'mod-builder': `mod-builder: "refresh" fetches the mod documentation now; "stop" ends this session's build or edit; alone, shows where this session's build stands. ${START} <what the mod should do> builds a mod, /mod-builder:edit <mod folder> <what to change> edits one` })
+  expect((w.registered[0] as unknown as { description: string }).description).toMatch(/the mod build this session started with \/mod-builder:build, or of the edit it started with \/mod-builder:edit\. /)
 })
 
 test('a build whose record is gone is sent back to /mod-builder:build, by the gate and by the guard', async ($, on) => {
@@ -43,6 +43,6 @@ test('a build whose record is gone is sent back to /mod-builder:build, by the ga
 test('"/mod-builder refresh" and "/mod-builder" alone are as they were: neither is taken for words to build', async ($, on) => {
   const w = world(on, { runs: { refresh: { exitCode: 0, stdout: 'refresh-docs: unchanged since 2026-11-10T151216Z\n' } } })
   expect(await said($, ' refresh ')).toBe('mod-builder: refresh-docs: unchanged since 2026-11-10T151216Z')
-  expect(await said($, '')).toMatch(/^mod-builder: No build in this session\. /)
+  expect(await said($, '')).toMatch(/^mod-builder: no build or edit in this session\. /)
   expect(w.ran.length).toBe(1)
 })

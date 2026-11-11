@@ -1052,3 +1052,1068 @@ Co-Authored-By from the commits") and for the setting that keeps it out of new o
   to leave the trailer off [read: code.claude.com/docs/en/settings-reference.md, "attribution.commit"; no
   environment variable does this, env-vars.md read whole]. The pull-request line and the session link are
   left at their defaults.
+
+## 8. Change 0.2.0: an `edit` skill, and a stop (approved by the owner, 2026-11-10)
+
+The owner, on what is next for the plugin: "option 1 is approved" (make a finished mod changeable,
+`BACKLOG.md` item 15). This section is the design as approved in 8.8; nothing in it is built yet.
+
+### 8.1 Why
+
+A finished mod can't be changed through the gates: at Done `hooks/` and `tests/` are closed, and a build
+never goes back (7.12). Both of the driving session's finished demonstrations ended with a real flaw found
+in the mod just built, and the model could offer only a new build, a hand edit outside the gates, or
+leaving it. Anthropic's own flow is "To change a mod you already have … ask for the change … Claude edits
+the hooks module, runs `claude plugin validate`, and fixes what it reports" [read: create.md:246-254,
+snapshot 2026-11-10T194027Z].
+
+### 8.2 Facts this rests on
+
+1. `claude plugin test` prints each test file's path on a line of its own before that file's `(pass)` and
+   `(fail)` lines [ran, 2.1.322, on a mod the plugin built], so a failure can be tied to its file.
+2. `builtMisses` reads only what follows the approved length of `SPEC.md` [read:
+   `hooks/mod-builder-logic.ts`], so when an edit's approval records the whole file, an older "Built"
+   block can't satisfy Verify.
+3. A stored record has no field saying what kind of build it is [read: `BuildRecord`]; one without the
+   field must go on reading as a build.
+4. "Files Claude saves during its turn reload when the turn ends" for a folder loaded with `--plugin-dir`
+   [read: create.md:256]. An edit doesn't need the mod loaded; if it is, it reloads as the edit goes.
+5. **A mod's tests don't import the mod.** The pane template's test and every test of the two mods the
+   driving session's demonstrations built import only from `claude-code/testing` (and types from
+   `claude-code`) [read: the template and `scratch/mydemo3`, `scratch/mydemo4`, 2026-11-10]: they drive
+   the mod through its events. So a test written at Red needs nothing declared before it.
+6. The gate's typecheck includes `hooks/`, `tests/` and `types/`, with `skipLibCheck` [read:
+   `typecheckConfig`].
+
+### 8.3 What an edit is
+
+Started with `/mod-builder:edit <mod folder> <what to change>`; `skill.prompt` for this plugin's `edit`
+skill opens a pending edit, exactly as `build` does (3.3). The gate's first call names the folder.
+
+- **The folder must be a mod**: it holds `.claude-plugin/plugin.json` and a `hooks/hooks.json` with a
+  `modules` key; it isn't this plugin's own folder or one inside it; and no other session's unfinished
+  build or edit holds it. Otherwise the gate refuses, saying which.
+- **The baseline, taken at that call, before anything is written:** the mod runs validate, the tests, the
+  typecheck and the headless load on the mod as it stands, and records the manifest's `version`, the test
+  count and names, a hash of every file in the folder, and `SPEC.md`'s length and hash (or that there is
+  none). It also makes the restore point (8.5).
+- **Phases of an edit whose baseline passes. Each phase writes one kind of thing, as in a build:**
+
+  | # | Phase | May write | It ends when |
+  |---|---|---|---|
+  | 1 | Knowledge | nothing | a snapshot exists |
+  | 2 | Describe | nothing | (no gate) |
+  | 3 | Spec | `SPEC.md`, by appending | the file still begins with its baseline bytes, and the person approves (the same question, "Not yet" first) |
+  | 4 | Red | `tests/` only | the tests fail; every failing block opens with `AssertionError`; at least one failing test is new by name or sits in a test file whose hash differs from the baseline's; the typecheck passes; and 8.4's question, when it applies |
+  | 5 | Green | anything but `tests/` and `SPEC.md` | the four checks pass; `plugin.json`'s `version` is greater than the baseline's |
+  | 6 | Verify | as in a build | the change's "Built" lines hold every types hash; the four checks pass; the hashes agree |
+  | 7 | Done | as in a build | (end) |
+
+  **Red is what it is in a build: tests first, and nothing else.** There is no phase before it for
+  declarations (fact 5). A change to the mod's contract in `types/` is made at Green, with the code. A
+  test that names something not declared yet is refused by Red's typecheck while `tests/` is still open,
+  so it is rewritten to drive the mod through its events; nothing strands. (A first draft had a "Prepare"
+  phase before Red, open to `hooks/`; a side agent's note showed a fix written there would leave Red
+  unable to pass. The owner, on widening Red instead: "why expand red? red is only for unit tests 1st in
+  TDD." Fact 5 then showed Prepare had no job. The owner: "Yes, no Prepare (Recommended)".)
+- **The change is written into the mod's `SPEC.md` as a new section at its end**, headed with the new
+  version and the date: what changes, each API use with its citation, what it reaches now, its tests,
+  and any existing test it changes or removes. Nothing above it may change. A mod with no `SPEC.md` gets
+  one that holds only this section.
+- **The pane** shows the edit's phases and evidence as it shows a build's, and names it an edit.
+
+### 8.4 Test files that are changed or gone
+
+An edit may change what an existing test expects, which is also how a test is loosened. **At Red's gate of
+an edit or a repair the mod asks the person when any test file that existed at the baseline has changed or
+is gone**, not only when a test name is gone. The question names each such file with the lines added and
+removed against the baseline copy in the restore point, and quotes every removed line that holds `expect`
+(at most 20 lines in all, then "and N more"); test names that are gone are listed too. "Not yet" is first;
+any answer but the approving one keeps the edit at Red. A test file that is new since the baseline raises
+no question. The answer and the files it covered are recorded in the gate's evidence and shown in the pane.
+
+The owner: "Ask me at the gate (Recommended)". As first written, this section asked only when a test name
+was gone and listed a changed file in the answer; a side agent raised that a test kept by name but weakened
+was then only listed, never asked about, and the driving session gave the rule above as the owner's answer
+applied to that case (2026-11-11).
+
+### 8.5 A restore point, and a stop
+
+- **Restore point.** At the baseline the mod copies the mod's folder (without `node_modules` and `.git`)
+  to `~/.claude/mod-builder-data/v2/restore/<session id>/<stamp>/`, and records where. The owner: "Backup
+  copy (Recommended)".
+- **`/mod-builder stop`** ends this session's open build or edit, at any phase. The record becomes
+  stopped, the folder is no longer bound to the session, and other plugins' folders open again. For an
+  edit it then asks: "Keep the mod as it is now" (first) or "Put it back as it was before this edit".
+  Putting it back deletes nothing: the folder as it is now is renamed `<mod>.stopped-<stamp>` beside it,
+  and the restore point is copied to `<mod>`. The answer names both folders.
+- A stopped or Done record gives way to a new build or edit of the same folder, as a Done one does now.
+- This is the stop of `BACKLOG.md` item 18; going back one phase, and its retry count, stay there.
+
+### 8.6 A mod whose baseline fails: a repair, in the same pure phases
+
+A mod written for an older Claude Code that no longer typechecks or loads is the case this plugin
+exists for. The owner: "Repair it (Recommended)", and then, asked whether a repair may write tests and
+code in one phase: "Split into pure phases (Recommended)". So a repair has no phase of its own:
+
+- The baseline's failing checks, quoted, are the repair's red evidence. They are recorded and shown.
+- **Red, tests only, is skipped when the baseline's tests already fit the build** (they typecheck). It is
+  entered when they don't: it then ends when the tests typecheck against the build's types; they need
+  not fail anew, because the mod already fails. 8.4's question applies to every test that is gone.
+- **Green, code only,** ends as in any edit: the four checks pass and the version is greater. A repair
+  whose tests typecheck but can never pass with honest code is stopped (8.5), as a build is.
+- Then Verify and Done.
+
+### 8.7 What "it works" means for 0.2.0
+
+With the plugin loaded by `--plugin-dir`, on sonnet, on copies of two mods this plugin built:
+
+1. **`tool-log`** (rows are cut by character count, so wide characters overflow the pane):
+   `/mod-builder:edit <copy> cut each row by display width` reaches Done. Outside the session: validate,
+   every test, the typecheck and a headless load pass; `version` went from 0.1.0 to a greater one;
+   `SPEC.md` begins with its former bytes and ends with the change and its "Built" lines.
+2. **`prompt-count`** (prompts that other plugins or scheduled triggers submit are counted as the
+   person's): the same, for a change that alters what an existing test expects.
+3. A `Write` under `hooks/` at Red is refused; a line of the original spec changed at Spec is refused by
+   its gate; the folder of this plugin itself can't be named.
+4. A test removed at Red raises 8.4's question, and "Not yet" keeps the edit at Red.
+5. `/mod-builder stop` at Green, with "Put it back": the folder's files hash as the baseline's did, and
+   the edited folder stands beside it under its new name.
+6. A repair: a copy with a type error put into `hooks/` (its tests still fit) goes from Spec to Green and
+   on to Done with Red skipped; a copy whose test no longer typechecks enters Red first.
+7. A record stored by 0.1.0 still reads as a build, and a 0.1.0 build still runs to Done.
+
+### 8.8 The owner's decisions (2026-11-10)
+
+1. **The slice and where it lives:** "Approve, branch + PR (Recommended)": built on a branch and opened as
+   a pull request on `bankielewicz/mod-builder` when the driving session's own demonstration of 8.7
+   passes. Nothing reaches `main` unreviewed.
+2. **A mod whose baseline fails:** "Repair it (Recommended)", in pure phases (8.6).
+3. **Tests that are gone at Red:** "Ask me at the gate (Recommended)" (8.4).
+4. **The restore point:** "Backup copy (Recommended)" (8.5).
+5. **No Prepare phase; Red stays tests-only** (8.3).
+6. **Purpose-built subagents** (a test writer for Red, an implementer for Green, an independent reader
+   of the tests before Red's gate, none with a pinned model): "Next change, after the edit
+   (Recommended)". They get their own section and probes as 0.3.0, including whether the guard can tell
+   which agent is calling; until that is shown, path rules and gates enforce and agents only specialise.
+
+**Known and not changed here:** a new build's Scaffold opens everything, so a model can write the whole
+mod there and Red then has nothing to fail (the same early-fix opening the first draft's Prepare had).
+For the owner to decide with 0.3.0.
+
+### 8.9 How it gets built
+
+As 7.1 and 7.2: on a branch from `main`, one written plan per change through the three agents in
+`.claude/agents/`, an independent read of each plan's tests before its red commit, a change this spec
+requires to an existing test in a commit of its own first, the driving session's own probe before a step
+is accepted, and commits without a `Co-Authored-By` line (7.14). Steps:
+
+1. **The rules**: the edit's phases and what each may write, the baseline's verdict, Red's rule for an
+   edit, the repair's two cases, the version comparison, the record's kind (a record without it is a
+   build), the folder a gate may name.
+2. **The hooks module**: opening an edit on `skill.prompt`, naming and the baseline, the restore point,
+   8.4's question, `/mod-builder stop` and putting a mod back, the pane.
+3. **The `edit` skill** with `skill-creator`, and the build skill's Done wording (it now names the edit).
+4. **The demonstration** of 8.7 by the building session, then by the driving session.
+5. **The documents**: `docs/limits`, `docs/how-it-works`, the README's commands table, `CHANGELOG.md`,
+   both manifests at 0.2.0, and `BACKLOG.md` with items 15, 21 and 22 struck and 18 cut to what is left.
+
+
+### 8.10 The audit before step 1, and what it changed (2026-11-11)
+
+Before the rules were planned the building session ran 7.10's audit for every edit, repair and stop gate
+(which closed files does each check judge?) and probed what it could on 2.1.322.
+
+**Probed** [ran, 2.1.322, on a scaffolded pane mod]:
+- Fact 1 of 8.2 holds: each test file's path is on a line of its own (`tests/more.test.ts:`), from the mod's
+  folder, before that file's `(pass)` and `(fail)` lines. A file that does not load shows as `(fail) the
+  file did not load` under its path, and counts as one test in the last line.
+- A mod with no test file: `claude plugin test` exits 1 and prints `claude plugin test: no *.test.ts or
+  *.test.tsx under <mod>`, with a `tests/` folder that is empty or with none.
+- Test files anywhere in the mod are run: `hooks/x.test.ts` and `lib/y.test.ts` ran beside
+  `tests/pane.test.tsx`.
+- A manifest with no `version` fails `claude plugin validate --strict` (exit 1, a warning under
+  `--strict`); one with `"version": "banana"` passes it (exit 0).
+- The typecheck prints an error's path from the compiler's own folder, not the mod's
+  (`../two/hooks/register.tsx(28,7): error TS2322: …`, `../two/tests/broken.test.ts(2,25): error TS2307:
+  …`), one line for each error, for errors in `hooks/` and in `tests/` in the same run.
+- Fact 5 of 8.2 could be read only on the pane template: `scratch/mydemo3` and `scratch/mydemo4` are not in
+  the building session's checkout.
+
+**Three findings that changed the rules, and the answers.** Each was asked with its evidence; the answer came
+as text pasted into the building session, the driving session's recommendation with its reasons ("option 1
+on all three"). Whether the owner typed it is not known to the building session.
+
+1. **A mod with no tests.** By 8.6 its baseline fails (the test run exits 1), so it is a repair; its tests
+   "fit", there being none, so Red is skipped; Green then needs a passing test run with the tests closed and
+   can never end. Answer, "Enter Red": a mod with no test file always enters Red, tests only. Red ends when
+   a test file exists and the test files typecheck; when the baseline's other checks all pass, it ends as in
+   any edit, on a test failing by assertion.
+2. **Test files outside `tests/`.** By 8.3's table such a file is closed at Red and open at Green, so a test
+   could be written with the code. Answer, "Tests by name": in an edit, any `*.test.ts` or `*.test.tsx`
+   anywhere in the mod is a test file, as everything under `tests/` is: written at Red only, closed from
+   Green on, hashed, and covered by 8.4's question. A build keeps its rule. The driving session added that
+   the typecheck must then cover every test file, so that none is frozen unchecked: the typecheck's
+   configuration names each test file outside `hooks/`, `tests/` and `types/`.
+3. **The version.** Answer, "Any x.y.z passes": when the baseline has no version, or one that is not three
+   numbers as in `1.2.3`, Green requires the new one to be three numbers and nothing more; otherwise the new
+   one must be greater, compared number by number. A version with anything after the third number is not
+   three numbers.
+
+**Decided by the building session where section 8 is silent, for review:**
+- **Whether the tests fit is read from the typecheck's error lines**, not its exit code: the one typecheck
+  also judges `hooks/`, closed at Red, and 8.7's item 6 needs a type error in `hooks/` to skip Red. The test
+  files fit when, for every types file, no error line names a test file and no error line names no file at
+  all; a typecheck that exits non-zero and shows no error line is not read as fitting. Repair Red ends on
+  the same reading.
+- When Red is skipped the test files are held to the baseline's hashes from Green on, as Red's are in a
+  build.
+- A stopped record is not a phase: it is a mark on the record, and a stopped record, like a Done one, does
+  not hold its folder against another session.
+
+**Checks that first judge files already closed, none built:**
+- 7.10's items 2 to 4 hold for an edit as for a build (a types file that appears later, a Claude Code
+  update during the edit, the compiler `npx` downloads). In an edit a types file that appears between the
+  baseline and Red is first judged against `hooks/` while it is closed.
+- At a repair's Red the test run is not read (the mod already fails), so a test file that typechecks and
+  then does not load, or a test no honest code can pass, first shows at Green with the test files closed.
+  8.6 names the second; the remedy for both is the stop.
+- Green's version rule is not judged again at Verify, where `plugin.json` is still open. Step 2 can run it
+  there too; nothing closes it.
+- The stop judges no file. Putting a mod back leaves out `.git` and `node_modules` (8.5), so a mod that is
+  a git repository comes back without its `.git`, which stays in the `.stopped-` folder. For the owner to
+  weigh before step 2.
+- The folder a gate may name is refused by path when it is this plugin's own. The plugin's source, edited
+  from an installed copy of the plugin, is another path and is not refused.
+
+### 8.11 Step 1, the rules, as built (2026-11-11, at `83955b5`)
+
+**Built** (`fc3f407` red, `83955b5` green; no existing test changed) [ran]: the rules of an edit as pure
+functions in `hooks/mod-builder-logic.ts`, under one new section, with 78 logic tests in
+`tests/mod-builder-logic-edit.test.mjs`. An edit's phases, numbers and labels (`phasesOf`, `phaseNumberOf`,
+`phaseLabelOf`, `nextPhaseOf`); what each may write and the refusal's words (`isTestPath`, `mayWriteIn`,
+`writeVerdictIn`, and `guardVerdict` judging by the record's kind); the record's kind and whether it still
+holds its folder (`recordKind`, `isOpenRecord`); the folder a gate may name (`editFolderVerdict`); the
+baseline (`typecheckErrors`, `testsFit`, `baselineVerdict`); Red (`failuresByFile`, `editRedGate`,
+`repairRedGate`); 8.4's question (`testHashesOf`, `testFilesToAsk`, `testFilesChanged`, `namesGone`,
+`lineChanges`, `testChangeQuestion`, `testChangeOptions`, `testChangeGate`, `testChangeEvidence`); the version
+(`versionGate`); and `typecheckConfig` naming test files outside its three folders. The hooks module calls
+none of the new rules yet: that is step 2.
+
+**Run** [ran]: 380 of 380 rules, validate and script tests; 216 of 216 module tests; `claude plugin validate
+--strict`; the typecheck; the verifier's PASS, with 19 mutants each failing its named test. On real output
+[ran, 2.1.322 and a downloaded TypeScript]: `failuresByFile` tied `the file did not load` to
+`tests/broken.test.ts` and `a new one fails` to `tests/more.test.ts`; `editRedGate` refused that run as "not
+failing by assertion: the file did not load"; `typecheckErrors` placed one error in `tests/broken.test.ts`
+and one elsewhere from the compiler's `../two/…` paths; `baselineVerdict` read a mod with no test file and
+nothing else failing as an edit whose Red is entered.
+
+**The independent read** of the first 60 tests (an agent that did not write them, about 170 mutants and a
+fuzz of every new rule) found 18 mutants no test failed and four defects, all mended before the red commit,
+with 18 tests added: a folder named through a path that climbs above the root passed as not this plugin's;
+the guard went on judging a stopped record's own folder by its old phase; the 20-line cap and the question's
+other words were pinned loosely; the comparison's table could exhaust memory on a very long test file (two
+files past 4,000,000 cells are now compared without regard to order). A probe it prompted [ran]: `claude
+plugin test` runs `hooks/.test.ts`, and runs neither `node_modules/dep/d.test.ts` nor `lib/U.TEST.TS`; the
+rule for a test file by name follows that.
+
+**Decided in the plan where the words were silent, beyond 8.10's list, for review:** a stopped record lets
+every write pass, under its own folder too ("the folder is no longer bound to the session"); a version's
+numbers may open with a zero and are compared exactly whatever their size; the question ends "and N more
+removed lines that hold "expect"" where 8.4 says "and N more", and a line is quoted when it holds the letters
+`expect` as written; a failing block that no path line precedes is never taken as changed; `isBuildRecord`
+does not check the record's `red` field.
+
+**Found and not built, for the owner before step 2:**
+- **An edit that changes nothing a test can see can't leave Red** (a side agent's note, and the audit's own
+  reading): a tidy-up of the code, a manifest description, a README. Red ends only on a failing test, as in
+  a build. The ways out today are the stop and a hand edit. Refuse such an edit up front, give it a route
+  of its own, or leave it: the owner's to decide.
+- Green in an edit whose Red was skipped needs a test count to hold the run to; the baseline's is recorded
+  (`tests`, null when its run showed none). Step 2 decides what Green compares with when it is null.
+- `guardVerdict` handed no input at all throws, as it did before this change; the hooks module always hands
+  it one.
+
+**Not done, or swapped:** the 18 added tests were not read a second time by another agent; the driving
+session's own probe of this step (8.9) is still owed; fact 5 of 8.2 was read on the pane template only;
+macOS stays unverified. The typecheck naming stray test files was built on the driving session's stated
+intent to ask for it, before the ask itself arrived.
+
+### 8.12 The typecheck reaches every test file: a stop-time review's finding (2026-11-11, at `cbd061d`)
+
+**The finding** (Codex's stop-time review of 8.11): "The new typecheck configuration can silently omit test
+files before freezing them." As built in 8.11, `typecheckConfig` named a test file only when it lay outside
+`hooks/`, `tests/` and `types/`. The compiler, given a folder, passes over a file whose name, or a folder on
+its way, opens with a dot, and over a `node_modules` folder [ran, the gate's own configuration and a real
+compiler: `hooks/.test.ts`, `tests/.b.test.tsx`, `tests/.deep/c.test.ts` and `hooks/.hid/a.test.ts`, each
+holding a type error, were not reported; `tests/ok.test.ts` was]. `claude plugin test` runs `hooks/.test.ts`
+and `tests/.b.test.tsx` [ran]. So an edit could freeze such a test file at Red without it ever being
+typechecked.
+
+**Built** (`317aabf` red, `cbd061d` green; no existing test changed) [ran]: the typecheck names each test
+file that is source the compiler reads once named (`.ts`, `.tsx`, `.mts`, `.cts`) and that the three folders
+do not reach: one outside them, or inside them under a `node_modules` folder or a name that opens with a
+dot. 9 logic tests; 389 of 389 rules, validate and script tests, 216 of 216 module tests, validate and the
+typecheck pass; the verifier's PASS with 7 mutants. With the real compiler and the configuration the built
+rule writes, all six such files' errors are reported [ran].
+
+**The independent read** of the first four tests found the `node_modules` case, `.mts` and `.cts`, and five
+mutants no test failed (a dot folder three levels down, a dot before a character that is no letter, the
+three folders compared without regard to case); each has a test now. It also showed a file named in upper
+case (`u.test.TS`) is read by the compiler neither in a folder nor when named, so the rule does not name it,
+and the engine does not run it (8.11).
+
+**Left, for the owner:** a build's typecheck has the same blind spot for `tests/.x.test.ts`, since a build
+names no test file; 0.1.0 is unchanged here. The compiler reads a named path as a pattern, so a test file
+whose name holds `*` or `?` also draws in its siblings; they are test files too.
+
+### 8.13 Every test file is named: the stop-time review's second finding (2026-11-11, at `f8e1d16`)
+
+**The finding** (Codex's stop-time review of 8.12): "The typecheck coverage fix still silently omits test
+files." 8.12 named the test files a folder does not reach by listing what the compiler passes over; the list
+was short. In a folder it is given the compiler also passes over `bower_components` and `jspm_packages`
+[ran: `tests/bower_components/b/b.test.ts` and `tests/jspm_packages/j/j.test.ts`, each holding a type error,
+were not reported; named, they were]. Which files a folder reaches is the compiler's own list, and a rule
+that copies it is wrong whenever the list is longer than the copy.
+
+**Built** (`64fe551`, the three existing tests that said a reached file is not named, in a commit of their
+own; `8655f55` red; `f8e1d16` green) [ran]: `typecheckConfig` names every test file of the edit that is
+source the compiler reads when named (`.ts`, `.tsx`, `.mts`, `.cts`), wherever it lies, after the types file
+and the three folders. 7 logic tests; 396 of 396 rules, validate and script tests, 216 of 216 module tests,
+validate and the typecheck pass; the verifier's PASS with 6 mutants. With the real compiler and the
+configuration the built rule writes, the seven probe files' errors are all reported [ran].
+
+**The independent read** tried, with the real compiler, every kind of path it could think of named in
+`include` [ran, by that agent]: spaces, `*`, `?`, brackets and braces in names, a folder named `**`,
+`node_modules`, `bower_components`, `jspm_packages` and dot folders at several depths, folders named `out`
+and `dist`, a 376-character path, a linked file and a linked folder. Each was checked. It added three tests
+(the order of names that differ in letter case, 300 names, a name that is a test's only in other letter
+case).
+
+**What is still not checked, known and left:**
+- A declaration file named as a test (`tests/e.test.d.ts`): the gate's typecheck runs with `skipLibCheck`
+  (8.2, fact 6), which passes over every declaration file, named or not. `claude plugin test` was not seen
+  to run one.
+- A file whose name holds a backslash: the compiler reads the backslash as a folder separator.
+- A file named in upper case (`u.test.TS`): the compiler reads it neither in a folder nor when named, and
+  the engine does not run it (8.11).
+
+**What it costs:** everything under `tests/` is a test file of an edit, so source under
+`tests/node_modules/` is now typechecked, where the compiler used to pass it over. A dependency kept there
+that does not typecheck refuses Red while `tests/` is open. The named files are in `include`, not `files`,
+so one that is gone when the compiler runs is passed over rather than stopping the check.
+
+### 8.14 Test files as root files: the stop-time review's third finding (2026-11-11, at `0a678a2`)
+
+**The finding** (Codex's stop-time review of 8.13, with TypeScript 5.6.3's compiler API): "naming files in
+`include` does not guarantee checking them … `tests/a.test.ts` suppressed `tests/a.test.tsx`; the latter's
+type error produced no diagnostic. An explicit `files` control reported TS2322. Use explicit file roots and
+add a compiler regression covering this collision." Reproduced by the building session on the compiler's
+command line [ran, TypeScript 7.0.2, and 5.6.3 by the reader]: through `include`, of two files that differ
+only in their ending the compiler keeps one, whether a folder reaches them or both are named there; named
+under `files`, both are checked.
+
+**Built** (`b402e25`, the existing tests reading the folders and then the named files, in a commit of its
+own, none failing; `e31114a` red; `0a678a2` green) [ran]: `typecheckConfig` names an edit's test files under
+`files`, and `include` holds the types file and the three folders alone; with no test file there is no
+`files` key and the configuration is a build's to the byte. 6 tests, two of which run a real compiler on the
+configuration the rule writes: one on the pair `tests/a.test.ts` and `tests/a.test.tsx`, which failed at the
+red commit with only the first reported, and one on a dot name, `node_modules`, `bower_components`, `.mts`,
+`.cts` and a file outside the three folders. 402 of 402 rules, validate and script tests, 216 of 216 module
+tests, validate and the typecheck pass; the verifier's PASS with 5 mutants. CI installs a TypeScript compiler
+so that the two tests run there; where there is none they are reported as skipped.
+
+**The independent read** [ran, by that agent, on 7.0.2 and 5.6.3] found no test file whose error is lost
+under `files`: every pair of the four endings, a file beside a declaration file or a `.js` of its name, a
+file both reached and named, and the odd paths of 8.13. It found the two compiler tests failed under a
+terminal or with `FORCE_COLOR` set, because the newer compiler then prints its errors in another shape, with
+colour; the tests now pass `--pretty false`.
+
+**What step 2 owes because of this:**
+- **The gate must run the compiler with `--pretty false`.** `typecheckErrors` reads the plain shape
+  (`path(line,column): error TS…`). In the other shape it reads nothing, and `testsFit` then refuses ("shows
+  no error line to read"): safe, and stuck. The hooks module's command has no such flag today; a build only
+  quotes the output, so 0.1.0 is not affected.
+- A named file that is gone when the compiler runs now stops the check (`error TS6053`, which names no file
+  and refuses) where `include` passed it over. The hooks module lists the test files just before each run.
+- Two test files whose names differ only in letter case stop the check the same way (`error TS1149`).
+
+**Still not checked, as in 8.13:** a declaration file under `tests/` (`skipLibCheck`), and a name that holds
+a backslash. A build's typecheck names no file, so in a build `tests/.x.test.ts`, and `tests/a.test.tsx`
+beside `tests/a.test.ts`, are not typechecked: 0.1.0's gap, for the owner to weigh with step 2.
+
+### 8.15 Step 1 accepted; an edit no test can see takes a refactor route (2026-11-11)
+
+**Step 1 is accepted** by the driving session at `c5a9e60` (8.12 to 8.14 included), on its own run (400
+rules tests passing and 2 skipped for want of a compiler, 216 of 216 module tests, validate) and its own
+probe on real `claude plugin test` output from a copy of `scratch/mydemo3/tool-log` [ran, by the driving
+session, 2.1.322]: a changed expectation passes `editRedGate` only when its file is handed in as changed,
+and `testFilesToAsk` names the file; a new `lib/extra.test.ts` that throws `new Error('AssertionError:
+pretend')` is refused as not failing by assertion (the engine printed `Error: AssertionError: pretend`); a
+stray test file reusing a baseline name passes only through the changed file, and the engine runs it;
+`tests/../hooks/register.tsx` is refused at Red and `lib/X.TEST.TS` at Green; `1.2.10` is greater than
+`1.2.3`, and `1.2.4-rc1`, `v1.2.4`, the number `1.3` and `0.1.1` with a line end after it are refused. "Your
+decisions listed in 8.11 'for review' stand as written."
+
+Seen in that probe, not a defect: a test turned off with `test.skip(` shows in 8.4's question only as line
+counts, because the removed line holds no `expect`. Left to the building session, which decides it in step
+2's plan; a removed line quoted for opening a test counts inside the same 20.
+
+**The refactor route.** 8.11 left open an edit that changes nothing a test can see (a tidy-up, a manifest
+description, a README), which can never leave Red. The owner, asked in the driving session what such an
+edit should do: "Refactor route (Recommended)".
+
+- The gate's call that asks for Spec's approval may say the change is "no behaviour change". The approval
+  question then says so in its text and offers three options: "Not yet" first, then the usual approving
+  option, then one that approves it as a change with no behaviour change. Only that third answer takes the
+  route; the usual approving answer sends the edit to Red as normal.
+- On the route Red is skipped (`RedMode` `skipped`, as in a repair whose test files fit). From Green on
+  every test file is held to the baseline's hashes.
+- Green ends when the four checks pass, the test run shows the baseline's count and the baseline's names
+  with none failing, and the version is greater. Verify and Done are as in any edit.
+- It is not offered when the baseline has no test file or its test run showed no count: such a mod enters
+  Red (8.10, answer 1). So the null count of 8.11 can't arise on this route; for a repair whose Red was
+  skipped, step 2's plan proposes the comparison.
+- No phase is widened: this is the refactor step of test-first work, with the tests closed and passing.
+- The section appended to the mod's `SPEC.md` says "No behaviour change" in its first line, so the record
+  shows which route the edit took. The pane shows Red as skipped, with the reason.
+
+### 8.16 The pane is rebuilt to the mockup in 0.2.0 (2026-11-11)
+
+The built pane is plain text lines and does not match the mockup the owner approved. The owner, asked in
+the driving session when it should be rebuilt to the mockup (status line, phase rail, evidence rows, guard
+toast): "In 0.2.0 (Recommended)".
+
+- It is part of step 2's "the pane" (8.9), as a plan of its own, for a build and an edit alike.
+- The reference is the six frames in `docs/design/` (Main, Spec, Guard, Build, Verify, Done), each as its
+  exported source and a picture; the pictures are what the pane is compared with.
+- Only surfaces Anthropic's cached documents name are used (a pane, the status line, a toast, a band), each
+  cited by page and line. Where a frame shows something the API can't draw, this file says so and the
+  nearest thing is built; nothing is dropped in silence.
+- Before the plan, the building session lists each element of each frame with the surface and the call it
+  will use for it, and the driving session reviews that list against the pictures.
+
+### 8.17 Putting a mod back keeps its git history: a correction to 8.5 (2026-11-11)
+
+8.5's restore point leaves out `.git` and `node_modules`, so a mod put back would come back without them,
+its history left in the `.stopped-` folder (8.10's audit, and a side agent's note). The driving session's
+correction, inside the owner's "Backup copy (Recommended)": when a stopped edit is put back, after the
+rename and the copy, the mod moves `.git` and `node_modules`, when present, from `<mod>.stopped-<stamp>`
+into the restored `<mod>`. Nothing is deleted; the answer names what was moved. It is tested with a real
+folder that holds both.
+
+### 8.18 The pane's design: each frame's elements, and the surface and call for each (2026-11-11)
+
+The building session's list, approved by the driving session against `docs/design/png/` "as written, the
+differences you named included", with six points (below). Citations are page:line in snapshot
+`2026-11-10T194027Z`. Colours are theme keys, so they follow the person's theme and not the mockup's hex.
+
+**On every frame**
+
+| Element in the frames | Surface and call | Note |
+|---|---|---|
+| The rounded frame around the pane | the pane: `$.ui.open({ id, title })`, drawn by `ui.render` on `{ component: 'Pane' }` [read: interface.md:186-190, :290-294] | The engine draws the frame and places the pane. No border of the mod's own. |
+| `MOD BUILDER`, bold, letter-spaced | `Text` with `bold` [read: interface.md:518] | A terminal has no letter-spacing: plain bold capitals. |
+| The state at the right of the header | a `Box` row with `justifyContent: 'space-between'`, `Text dimColor` [read: reference.md:282-283] | `color: 'warning'` after a refusal; `'success'` at Done. |
+| The phase rail | a `Box` row with `flexWrap: 'wrap'` and `columnGap`; done phases `color: 'success'` with a check mark; the current one a `Text` with `backgroundColor` and `bold`; later ones `dimColor` | `backgroundColor` "fills only as wide as the text" [read: gallery.md:128], which makes the chip: `'suggestion'`, and `'success'` for Done. |
+| The rule under the rail | a `Text dimColor` of `─` repeated to `e.props.bodyColumns` [read: reference.md:270] | No rule element is documented. |
+| Headings and aligned rows | `Text bold`; a row is a `Box` row of cells with a `width`, long cells `wrap: 'truncate-end'` | |
+| The line at the bottom left | `$.ui.status(text)` [read: api.md:211] | **Differs:** the engine opens it with `⚠` and the mod's name. |
+| The toast | `$.ui.toast(text)` [read: api.md:212] | The engine adds the mod's name and places it. |
+| `mockup`, `[N] are placeholders` | not built | Notes on the mockup. |
+
+**Frame by frame**
+
+| Frame | Element | What is drawn, and from what |
+|---|---|---|
+| Main | the line under the prompt | a transcript line with `$.ui.log` when a build or an edit opens [read: api.md:213]. **Differs:** it opens with `●` and the mod's name. |
+| Main | the Knowledge block | from the cache's `checked`, `latest`, `manifest.tsv` and `_changes.md`, and the session's version; changed headings only where `_changes.md` holds them; "refreshing…" while a fetch this session started runs. |
+| Spec | the four blocks of the spec | **Nearest thing:** the mod's `SPEC.md` itself, with `Markdown({ text })` [read: interface.md:520], cut to the pane's rows. A free-form spec can't be cut into those four blocks reliably. |
+| Spec | the approval dialog, "Approve" first | `$.ui.ask` as now [read: events.md:147]. **Differs on purpose:** "Not yet" stays first (3.3). The mockup's hint about `hooks/` and `tests/` goes into the question's text; the dialog's own rows are the engine's. |
+| Guard | the refused call in the transcript | the engine's own row for the guard's `{ deny }` [read: events.md:67-71]. **Differs:** the refusal keeps its wording, which tests pin. |
+| Guard | "1 edit refused" in the header and the status line | a count of refusals for each phase, in the record. |
+| Guard | the toast on a refusal | `$.ui.toast`, once for each phase (point 1). |
+| Guard | the table of what each phase may write | from the rules' own table, shown from a refusal until the next gate passes; an edit shows the edit's. |
+| Build | "approved 15:31 · building" | from the record's approval time. |
+| Build | a passed phase with its detail lines | the gate's recorded evidence for that phase, in rows. **Differs:** the file list, "expected 1, received 0" and function names are not recorded by any gate. |
+| Build | the current phase, "working…", with the failing test | the last refused gate's reason and failing test names, in the record. |
+| Verify | the four checks, each passed or running, with its command | one row for each check with the command the gate runs; "running" is drawn between checks (probed below). |
+| Verify | "what the debug log must show" | **Differs:** the rows are what the gate reads: the `hooks module <name>@inline loaded` line, no line that says it failed to load, no skipped hook. The gate's load runs `/cost`, so there is no row for a command's answer. |
+| Verify | "Unchanged since their gates" | from the gate's comparison of hashes. |
+| Done | the header with the version | read from the mod's `plugin.json` by the gate. |
+| Done | "What was built" | files and tests counted, and the "Built on" line. **Not built:** "3 local commits": the plugin makes none. |
+| Done | "Try it" | the command's name from validate's `answers its own command` line; without one, the first half only. |
+| Done | the second box, the new mod loaded | **Not built:** that is the built mod's own pane. |
+
+**For an edit, beyond the frames:** a rail of seven phases, the header naming it an edit with the version it
+had; a skipped Red drawn dim with its reason ("no behaviour change", "the test files fit"); a repair's
+failing baseline checks as a block; 8.4's answer and the files it covered as an evidence row; a stopped
+record with the header saying so and the rail dim.
+
+**The six points** (the driving session):
+1. The toast on a refusal comes once for each phase; the header and the status line carry the count.
+2. No band in 0.2.0 (`BACKLOG.md`).
+3. **The pane only draws.** `ui.render` reads the record and the cache's files; it runs no command and makes
+   no request. What it newly needs (refusals for each phase, the last refused gate's reason and failing test
+   names, each check's state inside a gate) is a field the gate or the guard writes. A record without those
+   fields draws as zero or empty, so a 0.1.0 record still draws. No gate's verdict reads them.
+4. The status line is cleared when the record reaches Done or is stopped, and when a new session finds no
+   open record.
+5. The four probes below are run before the plan.
+6. Tests: one module test for each frame, which mounts the pane on a record for that frame and finds its
+   rail state, its heading and one row; and the edit rail, a skipped Red with its reason, a repair's failing
+   checks, and a stopped record. The existing pane tests change in a commit of their own first.
+
+Also decided by the building session, the driving session agreeing: 8.4's question quotes a removed line
+that opens a test (`test(`, `it(`, `test.skip(`) as it quotes one that holds `expect`, inside the same 20.
+
+**The four probes** [ran, 2.1.322, a probe mod's pane in an interactive session in a terminal, 150 columns
+and then narrower, the pane placed above the prompt (`placement: 'inline'`)]:
+- **`justifyContent` and `flexWrap` draw as meant:** `MOD BUILDER` at the left edge and the state at the
+  right; the rail on one line at 150 and 100 columns and wrapped onto two at 72 and 50. A `Text` with
+  `backgroundColor` draws the current phase as a chip.
+- **The pane redraws inside a running call.** A `tool.call` hook that set a value, called
+  `$.ui.invalidate('ui.render')` and awaited a five-second process twice showed its first, second and last
+  value in turn while the call was pending; a `command.run` hook did the same. So the Verify frame draws a
+  "running" row.
+- **`$.ui.status(undefined)` clears the line**: `⚠ pp: knowledge · snapshot …` appeared under the prompt
+  and was gone after it.
+- **Narrow widths:** the pane drew at 100, 72, 50 and 34 columns; nothing stopped it drawing. At 34 the
+  header no longer fits on a line. A cell with a `width` shrinks and wraps its word (`validat` / `e`) once
+  the row is wider than the pane, so each cell is cut with `wrap: 'truncate-end'` and not left to wrap.
+  **Not probed:** the pane beside the transcript (`placement: 'dock'`), which needs a wide fullscreen
+  terminal; its width is at most 45% of the terminal's [read: interface.md:311].
+
+### 8.19 Step 2, the hooks module of an edit, as built (2026-11-11, at `e09e04d`)
+
+Built by the building session through the three agents, each plan read first by an agent that did not write
+its tests (7.2). Local commits on `edit-skill`; nothing is pushed.
+
+| Plan | What | Commits | Verifier |
+|---|---|---|---|
+| 27 | The rules the hooks module asks: what opens an edit, its record and restore point, the refactor route (8.15), the stop, 8.4's question quoting a line that opens a test | `aa78f38` (two existing tests), `bb2305b` red, `b87206d` green | PASS, 17 mutants; 444 node tests |
+| 28 | `scripts/restore-point.sh` and `scripts/put-back.sh`, tested on real folders | `4576109` red, `0e3fe0c` green | PASS, 18 mutants; 467 node tests |
+| 29 | `hooks/register.tsx`: the edit skill opening a pending edit, the baseline and restore point, each gate of an edit, the refactor route, 8.4's question, `/mod-builder stop` | `25d3b8c` (existing module tests), `dcc7066` red, `e09e04d` green | PASS, 23 mutants; 285 module tests, 467 node tests |
+
+**Decided in the plans where section 8 is silent** (the building session; for the owner's review):
+- "No behaviour change" is read in the appended section's first line of text after its heading, at the line's
+  start, in any letter case. A section that holds only a heading passes Spec's check that one was added.
+- The refactor route needs a baseline test file by name, a count above 0 and at least one name. On it each
+  name runs as often as the baseline had it. Green on a skipped Red refuses a record that does not say why Red
+  was skipped.
+- The gate tool takes a second input, `no_behaviour_change`; only `true` is a claim, and a claim on a mod the
+  route is not offered for is refused before anybody is asked.
+- A mod that one of its own baseline checks writes into opens no edit: the baseline is what the restore point
+  holds. The baseline's answer quotes each failing check's last lines.
+- At an edit's Red the order is: SPEC.md as approved, the test files hashed, the test run (in a repair, the
+  typechecks alone), the typecheck, 8.4's question, the test files hashed again, SPEC.md again. A repair that
+  entered Red records no test count: Green holds its test files by their hashes.
+- The version is judged at Green and again at Verify.
+- `/mod-builder stop` marks the record stopped before it unbinds the session; it leaves a record that is Done,
+  already stopped, missing or another session's as it is; for a build it asks nothing. The stopped folder is
+  stamped with the time of the stop. Left out of the baseline's hashes and the restore point: `.git` and
+  `node_modules` at the mod's top only.
+- The restore point is complete only when a `.complete` marker stands beside its folder; `put-back.sh` refuses
+  one without it, compares folders with `-ef` and not by spelling, and takes a stopped folder only when it is
+  `<mod>.stopped-*` beside the mod. Modes are kept both ways.
+
+**What the independent readers found, and what was done:** in the scripts, a half-made restore point could be
+put back, and a link could stand in for the mod's folder (the marker and the `-ef` checks answer both). In the
+hooks module's draft: stop acted on an edit that was Done, stop's two writes were in the order that could leave
+a record open, the wording at Done was a build's, and the baseline was hashed again by comparing texts; each
+was fixed before the red commit, with 28 tests added.
+
+**Probed** [ran, 2.1.322, an interactive session in a terminal, a real mod in a scratch folder, the installed
+copy of mod-builder switched off]:
+- The whole edit: the edit skill opened a pending edit; the gate took the baseline (four checks) and made the
+  restore point before any write; Spec's dialog; Red with a new failing test; 8.4's question when a baseline
+  test file was changed; Green; then `/mod-builder stop` with "Put it back", which renamed the folder and
+  restored the mod.
+- A `command.run` hook can ask with `$.ui.ask`: `/mod-builder stop`'s question appeared and its answer was read.
+
+### 8.20 Step 2, the pane rebuilt to the mockup, as built (2026-11-11, at `1735192`)
+
+| Plan | What | Commits | Verifier |
+|---|---|---|---|
+| 30 | The pane's rules in `hooks/mod-builder-logic.ts`: `paneModel` and what it reads | `080e055` red, `31b8e6e` green | PASS, 31 mutants; 78 logic tests, 545 node tests |
+| 31 | `hooks/register.tsx` draws the pane, sets the status line and the toasts, and writes what the pane reads | `ac2bfd2` (existing tests), `d2f5127` red, `1735192` green | PASS, 38 mutants; 330 module tests, 545 node tests |
+
+**How it is built.** `paneModel` is a pure rule: from the session's entry, its record, two store values and
+the cache's files it answers the header, the rail, the blocks of rows and the status line. The hooks module
+draws that with `Box`, `Text` and `Markdown`, and calls `$.ui.status`, `$.ui.toast` and `$.ui.log`. What the
+pane newly needs is written by the guard and the gate, and read by no verdict (point 3):
+- `refusals:<folder>` in the store: the guard's count of refused writes for each phase, the last one, and
+  the phases that had their toast. The guard never writes the record.
+- `checks:<folder>`: each of the four checks' state (waiting, running, passed, failed) while Green's or
+  Verify's gate runs them.
+- `record.attempt`: the last refused gate's reason, the failing tests' names and how many passed.
+- `record.finished`: at Verify's pass, the version, the files and tests counted, the command the mod answers,
+  and the gate's own "Built on" line.
+
+**Differs from 8.18's list, or adds to it** (the building session; listed for the driving session):
+- After a refused write a build's header says `<name> · 1 edit refused · phase Spec`: the frame's words with
+  the mod's name kept before them (the first reader: without it the header no longer said which mod). In an
+  edit, where "edit" names the work itself, it says `1 write refused`.
+- The refusals and the check states carry the session's id and are read only when it matches, and both are
+  emptied when a record opens; every gate starts by emptying the check states. This stands in place of the
+  start time the first reader asked for: a build's record has none.
+- The Guard table has a row for Knowledge, Describe or Done only while that is the current phase. From
+  Knowledge, Spec's row says the snapshot comes first.
+- At Red the status line says how many tests fail; at Scaffold and Green how many pass.
+- A check that failed turns Verify's header and status line to say which did not pass; beside a refused write
+  both are kept.
+- A refused approval is drawn above the spec, not beneath it: on 2.1.322 a spec longer than the pane cut the
+  row off.
+- The Verify frame shows the four checks and not Green's evidence, which stays in the record; Done shows
+  Verify's. Two existing tests that read Green's evidence from the pane at Verify now read it from the record.
+- Done's "built on" row is the gate's own "Built on" line, which names the types the typecheck ran against;
+  a record without it (0.1.0's) gets a shorter line. An edit's shorter line says "checked on".
+- Two toasts beyond the refusal's, both in the frames: "mod docs refreshed, N pages changed" after a fetch
+  that made a new snapshot, and "<mod> is built · 4 of 4 checks passed" at Done ("is edited" for an edit).
+- The approval question of a build gains the frame's hint: "Nothing under hooks/ or tests/ can be written
+  until you approve." An edit's question already said what may be written; the rule's wording for an edit
+  (`approvalHint('edit')`) is built and not used.
+- The transcript's line when a build or an edit opens comes once, not again while it waits for its folder.
+- `/mod-builder` alone answers with the header's words and the rail's current phase, then the cache as before.
+- `changesIn` reads `_changes.md` as `refresh-docs.sh` writes it, a heading being a list item that keeps its
+  `#` marks; the test's fixture is that script's output on two folders made for it.
+- Text shown has its control characters, the zero-width marks and the direction overrides replaced by a
+  space; a refused path over 120 characters is cut, its end kept. A fetch stamped ahead of the clock is said
+  with its stamp.
+- **Not built, as 8.18 said:** the band; "3 local commits"; the built mod's own pane; a row for a command's
+  answer at Verify.
+
+**A defect of the gate found while building the pane, and fixed in plan 31.** A gate wrote the record it had
+read before its checks, so a build or edit stopped while its gate ran (the approval question can stay open
+for minutes) was moved on and made open again, and an edit that had been put back was marked on. The second
+reader found it because the Done toast would have announced it. A gate now moves the record only while it is
+still this session's open record at the same phase, and otherwise answers that nothing was moved.
+
+**What the independent readers found.** The first read the rules' first draft: 92 of 239 mutants survived, and
+the draft threw on damaged stored values, counted for every session of a folder, and did not read the real
+`_changes.md`. The second read the revision: 51 of 335 survived (about 15 equivalent), with control characters
+reaching the check rows and a doubled slash. The third read the hooks module's draft: 70 of 167 survived, with
+writes refused side by side each toasted and under-counted, check states of an earlier gate shown after a gate
+that refused early, and the stop above. Those defects were fixed before the red commits, with tests.
+
+**What stays untested or thin** (the third reader's 167 mutants, run again on `1735192`: 21 no longer apply,
+118 fail a test, 28 survive, 10 of which that reader judged equivalent):
+- A check's state between its own command and the gate's verdict (a mutant that marks it passed regardless
+  survives, because the gate marks the check it refused at); the load's state when its log does not show the
+  mod, apart from one case.
+- The test run a refusal carries at an edit's Red and at a skipped Red (only a build's and an edit's Green
+  are tested).
+- The bookkeeping's own failures: a state, a refused gate or a settled state that can't be written (the test
+  world has no failing store write), and the settle after a check that throws.
+- The redraws around a fetch, and the gaps between cells. The test world does not see `$.ui.invalidate`.
+- In the rules: the spec's markdown is not cut to the pane's rows (the engine cuts what it draws); several
+  tests pin the wording of the write tables by copying it.
+- The module test that no gate reads the pane's fields runs one passing Green gate; it does not run a refusing
+  gate, Spec, Verify or the guard with damaged values.
+
+**The stopped frame is not reached by `/mod-builder stop`.** The stop unbinds the session, so the pane then
+says "no build or edit in this session" and the status line is cleared (point 4 holds). The rule's drawing of a
+stopped record (header "stopped at <phase>", dim rail) is reached only when a record is stopped while the
+session is still bound to it, which the tests arrange by hand. For the driving session: leave it, or keep the
+session's last folder so the pane shows what was stopped.
+
+**Differences from the pictures that 8.18 did not list** (the second reader): Main draws "N changed, N added, N
+removed" where the picture has "N changed, N the same"; the approval time is said with "UTC"; Verify's "6 of
+6" and "0 errors" are not drawn (the gate records a count at its end, not per check); "Unchanged since their
+gates" is a fixed row that says what the gate compares, not a result. And 8.18's Guard row says the count of
+refusals is "in the record": it is beside it, under `refusals:<folder>`, so that the guard never writes the
+record.
+
+**Probed** [ran, 2.1.322, two interactive sessions in a terminal of 150 columns, the hooks module loaded with
+`--plugin-dir` (the second with the file plan 31 committed, by its sha256), each a real build of a small pane
+mod in a scratch folder]:
+- Main: the header with the state at the right, the rail with the current phase as a chip, the rule, the
+  Knowledge block, and the status line `⚠ mod-builder: build · waiting for the mod's folder`.
+- Spec: the approval dialog with the hint in its text; after "Not yet", the spec drawn as markdown.
+- Guard: after a refused `Write`, the header `hello-probe · 1 edit refused · phase Spec`, the table with
+  `now` on Spec's row, and the status line `spec · 1 edit refused · waiting for your approval`.
+- Build: `hi-probe · approved 08:52 UTC · building`, `3 Spec passed` with its row, `4 Scaffold working…`.
+- Verify, while its gate ran: `passed validate`, `running test`, the other two waiting, and the status line
+  `verify · 1 of 4 checks passed · test running`.
+- Done: `hi-probe 0.1.0 · built and checked`, "6 files · 3 tests", the gate's "Built on" line, "Try it" with
+  `/hi-probe`, and the status line cleared.
+- A headless session loads the committed module: `claude --plugin-dir plugins/mod-builder -p /cost
+  --debug-file <log>` exited 0, and the log holds `hooks module mod-builder@inline loaded` and no line that
+  says a hook was skipped or failed.
+- **Not seen:** the toasts (gone before a capture of the screen); "refreshing…" while a fetch runs, and writes
+  refused side by side (both rest on a variable of the module that only the test world has exercised); an
+  edit's frames, a repair and a stopped record, which are held by module tests alone.
+
+**Known and left** (limits; `docs/limits/README.md` is step 5's to update):
+- A gate call the engine cuts off leaves its check "running" until the next gate starts.
+- Between a gate's last look at the record and its write there is no lock: a stop that lands in between is
+  still written over.
+- A long folder path fills its row: the table's heading, Done's rows and the check commands are cut at the
+  pane's width, and "then" before the command at Done was squeezed to "th…" in the probe.
+
+### 8.21 Open after step 2, for the owner
+
+- **A claim of "no behaviour change" with the plain "Approve".** The edit then goes through Red with that
+  sentence in its section. Leave it, refuse the plain answer on such a call, or have the gate ask for the
+  section to be rewritten first.
+- **A build names no test file to the typecheck** (8.14 is an edit's rule), so `tests/.x.test.ts`, and
+  `a.test.tsx` beside `a.test.ts`, go unchecked in a build. Leave it, or give builds the same rule.
+- **8.11's open points still stand:** a test file that typechecks but does not load at a repair's Red; the
+  plugin's own source edited from an installed copy.
+- **The header's wording after a refused write** (8.20) changes an approved frame's text by adding the mod's
+  name, and uses another noun in an edit.
+- **A gate has a new answer** (8.20): "was stopped or moved while this gate ran, so nothing was moved". It was
+  decided by the building session while fixing the stop defect, without the driving session.
+- **The stopped frame** (8.20): leave it unreachable by `/mod-builder stop`, or keep what was stopped in view.
+
+### 8.22 The driving session's review of step 2: five fixes to the pane (2026-11-11, at `e3dae77`)
+
+The driving session reviewed step 2 at `979021f` on its own runs (543 node tests passing and 2 skipped for
+want of a compiler, 330 of 330 module tests, validate; the two scripts on a real git folder; a live build to
+Done with the pane captured every 20 seconds). "Your six decisions stand, the gate's new answer for a record
+stopped while its gate ran included." It asked for five fixes, built as plan 32: `245afbe` (existing tests),
+`8b2882c` red, `e3dae77` green; verifier PASS with 22 mutants; 347 module tests, 558 node tests.
+
+1. **Hashes no longer swamp a row.** In the pane only, a whole sha256 is shown by its first 12 characters,
+   and "types sha256" followed by two or more is said as "2 types files" in a gate's evidence, the baseline's
+   rows, a refused gate's reason and "What was checked". The "Built on" row keeps each hash, cut to 12. The
+   record, the gate's answer and the mod's `SPEC.md` keep them whole.
+2. **Verify's rows carry a result**: "2 of 2" beside the test row (passed of ran, from the run's own count)
+   and "0 errors" beside the typecheck row (the lines the compiler printed that hold `error TS<n>:`), once
+   each has ended. A compiler that failed and printed no such line shows no count.
+3. **The load's rows name the mod from the start**, from its `plugin.json`, read when the pane is drawn.
+   The three rows are one reading: the gate reads the load's debug log once, after the run, so they turn
+   together, and they show "found" only between the load's end and the gate's answer, after which Done's
+   frame replaces Verify's.
+4. **A write refused at Done is counted and toasted**, and Done's "What was checked" counts it.
+5. **What `/mod-builder stop` stopped stays in view** until the session opens another build or edit: the
+   header says stopped, the rail is dim, and a "Stopped" block says, for an edit, which answer was given and
+   names the two folders. The session stays unbound: only the folder's name is kept, under
+   `stopped:<session>`, which the guard and the gate never read. The answer is written into the stopped
+   record once the person has given it, and only while that record is still the one this stop stopped.
+
+"Put it back"'s answer now adds, when the script moved `.git` back: "The mod's git history is as it is now,
+commits made during the edit included: git shows the restored files as changes against them."
+
+**"Unchanged since their gates"** (the driving session did not see it in its captures): the row is built, and
+is the last block of the Verify frame at every state of the checks; in a pane of few rows it is below the
+load's block and can be cut off.
+
+**The independent reader** (77 mutants of the draft, 13 surviving, 5 of them equivalent) found three defects,
+fixed before the red commit: the pane said "nobody answered" while the person was still being asked; the
+answer was written from the record read before the question, over a record another session had made since;
+and "0 errors" stood beside a typecheck that failed without printing an error line.
+
+**Probed** [ran, 2.1.322, an interactive session, the hooks module of `e3dae77` with the `edit` skill's draft,
+an edit of a real mod from baseline to Done]: the baseline's block, Red's evidence with "2 types files", 8.4's
+question for a changed test, Done with "Built on ... 60ff86c12156, a33c3b254b7c."; then an `Edit` of
+`hooks/register.tsx` at Done was refused and **the toast was seen**, at the right under the prompt:
+`mod-builder: refused: hooks/register.tsx, at Done`. **Found in that probe:** the table of what each phase
+may write is drawn first, and at Done it pushed "What was checked", which holds the count, out of the pane's
+visible rows (a side agent's note said the same). Fixed in the next plan: at Done the table comes last.
+
+### 8.23 An edit whose Red was skipped asks the person at Green (2026-11-11)
+
+A side agent's note: on the refactor route (8.15) new behaviour that no test covers passes Green, because
+the old tests still pass. The owner, asked in the driving session what guard the route should have: "option
+1 seems sound" (option 1: "Show changes, ask": the mod asks the person with the list of changed files and
+their line counts, "Not yet" first). The design is the driving session's, reviewed by its advisor; the
+building session records it here before building it.
+
+1. **Asked at Green's gate**, after the four checks and the version check pass, while every file it judges
+   can still be changed (7.10). Only the exact approving answer passes; "Not yet" is first; any other answer
+   keeps the edit at Green.
+2. **Asked whenever Red was skipped**: the refactor route, and a repair whose test files fit the build. The
+   second is the driving session's application of the owner's answer to the same opening.
+3. **The question names** each file changed, added or gone since the baseline, by the baseline's hashes, with
+   its lines added and removed against the copy in the restore point, at most 20 files and then "and N
+   more"; `SPEC.md` and test files are left out (the first is approved at Spec, the second are held to the
+   baseline's hashes). It says how many tests are held unchanged and that they are the only check of
+   behaviour, and names the restore point. When what `claude plugin validate` reports that the mod hooks,
+   answers and calls is not as at the baseline, the question says so with both; that is named, never refused
+   on.
+4. **What was agreed is held.** The record keeps the hash of every file the answer covered. At Verify's gate
+   a file other than `SPEC.md` that differs from them is asked about again, the same way; those files can
+   still be written at Verify, so nothing strands.
+5. **Engine-written files are not listed.**
+6. **The limit:** this is the person's judgement of a list, not proof that behaviour is unchanged; and a
+   write by a shell command is outside the guard as before, though it shows in this list, which is made
+   from hashes.
+7. The answer and the files it covered are in the gate's evidence, and so a row in the pane.
+
+**Facts checked before the plan** [ran, 2.1.322, a copy of a built mod in a scratch folder]:
+- **The baseline keeps no validate output** (`Baseline` holds the version, the tests' count and names, the
+  hashes, `SPEC.md`'s length and hash, the failed checks, the restore point and the time). So the lines of
+  validate's output that say what each module hooks, which command it answers and what it calls are recorded
+  at the baseline from now on; an edit opened before this has none, and its question says nothing of them.
+  On the probe mod they were: `./register.tsx hooks: session.start, command.run{command=hi-probe},
+  ui.render{component=Pane, requestId=hi-probe}`, `./register.tsx answers its own command:
+  command.run{command=hi-probe}`, `./register.tsx calls: $.command.register, $.ui.open, $.ui.resolve`.
+- **None of the gate's checks writes into the mod.** The file list was the same before and after `claude
+  plugin validate --strict`, `claude plugin test` and the headless load (`claude --plugin-dir <mod> -p /cost
+  --debug-file <log>`); the typecheck's `tsconfig.json` is written under the plugin's data folder (7.5).
+- **An interactive session that loads the mod with `--plugin-dir` does write into it**: the folder
+  `.claude-plugin/types/` (the build's types, a `tsconfig.json` and a `.gitignore`), and at the mod's top a
+  `tsconfig.json` that holds only `{ "extends": "./.claude-plugin/types/tsconfig.json" }`. A person trying
+  the mod during an edit makes these. So the list leaves out everything under `.claude-plugin/types/`, and a
+  top-level `tsconfig.json` that was not there at the baseline and holds exactly that.
+
+### 8.24 The question of a skipped Red, as built (2026-11-11, at `f56401d`)
+
+Plan 33: `b05d648` (existing tests), `4e8148e` red, `f56401d` green; verifier PASS with 23 mutants; 370 module tests, 570
+node tests. Built as 8.23 says, with these decisions and corrections by the building session:
+
+- **The options and the approving answer are 8.4's**: "Not yet", then "Go on with these changes". The
+  question's header is "Changes".
+- **Correction to 8.23, point 5 and its third fact.** The first draft left out everything under
+  `.claude-plugin/types/`. The independent reader showed that code put there would then never be listed.
+  Left out now are only the files the engine is known to write: `.claude-plugin/types/tsconfig.json`, the
+  `.gitignore` there, one `index.d.ts` in each folder there (a declaration file holds no behaviour), and a
+  top-level `tsconfig.json` that was not there at the baseline and holds only the line that extends the
+  types' own. Any other file there is listed.
+- **What validate said is kept without its "(via ...)" tails.** On a larger module validate prints each call
+  with the functions it is made through (`$.fs.read (via readText, hashUnder)`); kept whole, every refactor
+  that moved a call would have read as a difference, on the very route this guards (the reader ran it on
+  this plugin). Every line that names a module's file is kept: what it hooks, the command it answers, its
+  gating hooks, its calls, and what it reads and writes of the environment.
+- **The mod is hashed three times around the question.** Before the four checks, when the person is asked
+  (a file written while the checks ran refuses with "ask again", and nobody is asked), and after the answer
+  (a file changed while the question was open is not agreed to).
+- **At Verify** the question is asked only when a file is not as agreed at Green; a record at Verify that
+  holds no agreement (one made before this rule) is asked as at Green. Lines are always counted against the
+  restore point's copy, and the question says so when it is asked again.
+- **Correction to 8.23, point 4.** "Those files can still be written at Verify" does not hold for `hooks/`,
+  which is closed there. A change to `hooks/` found at Verify came from outside the guard (a shell command,
+  or the person's own editor); after "Not yet" it goes back the same way, or the edit is stopped (8.5).
+- A file whose copy can't be read as text is listed as changed with "its lines can't be compared".
+- **In the pane** the answer is a row of a block "What the person agreed to" in the Verify frame, and of
+  "What was checked" at Done; 8.4's answer at Red is shown the same way. Before this, neither frame showed
+  Red's or Green's evidence, so the row 8.4 promised was only visible while the edit was at Green.
+- **At Done the table of what each phase may write is drawn last** (8.22's finding).
+
+**The independent reader** ran 77 mutants on the first draft (53 failed a test) and found the two corrections
+above, that Red's answer row never matched, and that a file written during the checks was agreed to
+unchecked; each is fixed and tested.
+
+**Probed** [ran, 2.1.322, an interactive session, the hooks module of `f56401d` with the `edit` skill's
+draft, an edit of a real mod asked for as "move the word shown into a named constant. No behaviour change."]:
+- The skill called the gate with `no_behaviour_change`, and the Spec dialog offered "Approve: no behaviour
+  change" third; picking it skipped Red (the rail: "4 Red skipped: no behaviour change").
+- At Green, after the four checks, the dialog "Changes" asked: the two changed files with their line counts
+  (`.claude-plugin/plugin.json: 1 line added, 1 line removed`, `hooks/register.tsx: 4 lines added, 1 line
+  removed`), "The 3 tests the mod had before this edit are held unchanged and pass: they are the only check
+  of behaviour.", the restore point's path, "Not yet" first.
+- "Not yet" answered: "still at phase 5 (Green). Not passed: the person has not agreed to the changes made
+  with Red skipped (answer: "Not yet")."
+- Asked again and answered "Go on with these changes": Green passed with the answer in its evidence; Verify
+  passed with nothing asked; Done's "What was checked" shows the answer's row.
+- **Not probed by the building session:** an edit that adds behaviour while the old tests pass; a change
+  made at Verify being asked about again; a file the engine wrote being left out (this session loaded
+  mod-builder, not the mod, so the engine wrote nothing into it). Each is held by a module test, and the
+  driving session's own probe covers them.
+
+**Limits** (also in `docs/limits/README.md`):
+- The question is the person's judgement of a list of files and line counts. It is no proof that behaviour is
+  unchanged, and it shows no content: the person opens the files, or the restore point, to see.
+- A write by a shell command is outside the phase guard as before; it does show in this list, which is made
+  from hashes.
+- `node_modules` at the mod's top is in no hash (8.19), so a change there is not listed. A link in the mod is
+  listed each time, since its content is never read.
+
+### 8.25 Step 3, the edit skill, as built (2026-11-11, at `63e7f99`)
+
+Plan 34: `f3199f5` (the build skill's two Done tests), `23e5cdd` red, `63e7f99` green; verifier PASS with 17 mutants; 53 skill
+tests, 588 node tests, 370 module tests.
+
+- **`skills/edit/SKILL.md`** is what the model is told when a person runs `/mod-builder:edit <mod folder>
+  <what to change>`. It has the build skill's shape: the three things that make it different, the lookup, a
+  table of the seven phases, a section for each, then a repair, the stop, and handing a phase to a subagent.
+  Its wording is pinned by `scripts/skill-edit.test.mjs`, which also holds its claims to the rules (the table
+  to `mayWriteIn`, the kinds of edit to `baselineVerdict`, where "No behaviour change" stands to
+  `saysNoChange`, a repair's Red to `repairRedGate`, the answers to the mod's own words).
+- **The build skill's Done** now says: "Tell them that a change to the finished mod, or a repair after a
+  Claude Code update, is made with `/mod-builder:edit <mod folder> <what to change>`. Offer nothing else: this
+  plugin has no sharing step yet", in place of "This plugin has no edit skill".
+
+**Made with `skill-creator`'s loop** (draft, try on real prompts, read the runs, revise), by the building
+session. The tries were two edits of a real mod on the real engine [ran, 2.1.322, the draft loaded with
+`--plugin-dir`]:
+- "make the pane show the word hello instead of hi": the skill loaded `plugin-authoring`, named the mod, told
+  the person the baseline and the restore point, appended a section, changed a test at Red (8.4's question
+  appeared and was answered), raised the version, and reached Done.
+- "move the word shown into a named constant. No behaviour change.": the skill called the gate with
+  `no_behaviour_change`, the third answer skipped Red, Green's question (8.23) was answered "Not yet" and
+  then approved, and the edit reached Done.
+- **Not tried:** a repair (a mod that fails its baseline); a mod with no test file; `/mod-builder stop`
+  during a skill-driven edit; whether the skill's description alone makes Claude load it for a request that
+  does not name the command (`skill-creator`'s description run was not made). Step 4's demonstration covers
+  a repair and the stop.
+
+**What the independent reader found in the draft, corrected before the red commit:** a mod that fails only
+for having no test file was sent to "A repair" (it is an edit whose Red writes its first tests); a repair's
+Red also needs a test file to exist and still asks 8.4's question; "No behaviour change" must be the first
+words under the section's heading, which the draft's bullet layout hid; a call with `no_behaviour_change` on
+a mod the route is not for is refused, not merely not offered; the baseline's hashes and the restore point
+leave out `.git` and `node_modules`; the table's Red and Verify rows left out the person's agreement and the
+version; "anything under `tests/`" means the mod's top-level `tests/`; a test file can't be a link; a
+refused first call leaves the session waiting for a folder with every plugin's folder closed.
+
+**Decided by the building session:** the `plugin-authoring` skill is loaded in phase 1, before the gate's
+first call, because the baseline runs the typecheck (a build loads it in phase 2). `/mod-builder stop` is
+left to the person: the model tells them it exists and never restores or deletes by hand.
+
+**Known:** the build skill's first heading has a space before its `#` (as at 0.1.0); not changed here.
+
+### 8.26 The question of a skipped Red says only what differs (2026-11-11, at `1d74844`)
+
+The driving session accepted steps 2 and 3 and the guard of 8.23 at `be44e23` on its own runs and a live
+probe, with one fix (its words): "the question's 'hooks, answers and calls' block prints every line before
+and now. Show only the lines that differ, and on a line of names only what was added and what is gone
+(`calls: added $.ui.toast`). At Verify's re-ask show only what differs from what was agreed at Green, so an
+already agreed difference is not shown again."
+
+Plan 35: `dd055b9` (two existing tests follow the fix), `e0f530d` red, `1d74844` green; 373 module tests,
+599 node tests, validate passes. The verifier's first verdict was FAIL for one reason only: the worktree
+was found on `main` partway through its run (the reflog has "checkout: moving from edit-skill to main" at
+15:09 UTC; neither the verifier nor the building session ran it, and a search of this machine's Claude Code
+and Codex transcripts for a `git checkout` or `git switch` at that minute found none, so who did is not
+known). Everything else was reproduced in a disposable worktree. With `edit-skill` checked out
+again, clean at `1d74844`, the six commands and the end check passed: PASS, 6 mutants.
+
+As built (`registerChanges` in the rules):
+
+- A line of what validate said is `<module's file> <kind>: <names>`. Lines of one module and kind are read
+  as one list; names are split at each ", " outside braces and outside a quoted value; "nothing" names none.
+- For a kind both readings have, the question says `<kind>: added <names>; gone <names>`, a name counted as
+  often as it is there (a hook registered twice is one more hook). A kind only one reading has is said as
+  `new, <names>` or `gone, it was <names>`. The same names in another order are no difference, and a kind
+  with no difference is not shown.
+- The record keeps what validate said when the person agreed (`agreedRegisters`), at Green and again at
+  Verify. Asked again at Verify, the question compares with that, under "What the mod hooks, answers and
+  calls is not as when you agreed at Green:", and lists only the files changed since. A record that kept
+  none compares with the baseline, under "... is not as before this edit:".
+
+**Decided by the building session where the fix was silent:** the counting of a repeated name, the wording
+for a kind only one reading has, and the fallback to the baseline.
+
+**What the independent reader found in the draft (48 mutants), corrected before the red commit:** a name
+present twice was hidden, and braces inside a quoted value split a name wrongly.
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `1d74844` loaded with `--plugin-dir`, the
+installed copy switched off; the building session answered every dialog]:
+- A repair whose code called `$.ui.show`: Green's question read "What the mod hooks, answers and calls is
+  not as before this edit:" and one line, `./register.tsx calls: added $.ui.open; gone $.ui.show`.
+- An edit put forward as no behaviour change that added a toast: Green's question had the one line
+  `./register.tsx calls: added $.ui.toast`. After "Go on with these changes", the description in
+  `plugin.json` was changed at Verify; the question asked again read "These files are not as they were when
+  you agreed at Green (lines are counted against the mod before this edit):" with `.claude-plugin/plugin.json:
+  2 lines added, 2 lines removed` alone: `hooks/register.tsx` and the calls line were not shown again. Done
+  then listed both answers.
+- **Not run live:** a difference in what the mod registers that arises after Green (`hooks/` is closed at
+  Verify, so it takes a shell command); module tests hold it.
+
+### 8.27 Step 4, the building session's demonstration (2026-11-11, at `1d74844`)
+
+What the driving session asked of the building session (its words): "step 4's demonstration by you of what
+8.7 lists and your probes have not shown (a repair, a mod with no tests, an edit through Red that changes an
+existing test)". Run by the building session, which answered every dialog, on Claude Code 2.1.322 with
+sonnet, the plugin a `git archive` of `1d74844` loaded with `--plugin-dir`, the installed copy switched off.
+The mods were six copies of `hi-probe` (a pane mod this plugin built for 8.20's probes: three tests,
+version 0.1.0), each in a folder of its own, not copies of `tool-log` and `prompt-count`: 8.7's items 1 and
+2 on those two mods are the driving session's demonstration.
+
+The first five reached Done with the pane's "validate, N tests, the typecheck (3 types files) and a headless
+load of hi-probe all pass" and "version 0.1.1, after 0.1.0". Outside the sessions the building session then
+ran `claude plugin validate --strict` (passes) and `claude plugin test` (every test passes) on each, read
+`version` as 0.1.1, and compared the first bytes of each `SPEC.md` with the file before the edit (the same;
+the change's section and its "Built" lines follow). The typecheck and the headless load were run by the
+gates only, not again outside. [ran]
+
+1. **A repair, Red skipped** (8.7 item 6, first case; the code's `$.ui.open` replaced by `$.ui.show`, which
+   this build does not have). The baseline: "fails test, typecheck: this edit is a repair". The rail showed
+   "4 Red skipped: the test files fit". Green asked 8.23's question (8.26 has its text), and Done lists the
+   answer.
+2. **A repair that enters Red** (8.7 item 6, second case; a test's `$.ui.mount` replaced by `$.ui.render`,
+   so the test file no longer typechecks). The gate's first answer: "As it stands it does not pass: test,
+   typecheck. This edit is a repair. Red is entered, tests only". The test was corrected at Red, Red passed
+   on "the test files typecheck", 8.4's question listed `tests/hi.test.tsx: 1 line added, 1 line removed`,
+   and nothing under `hooks/` needed a change.
+3. **A mod with no test file** (its `tests/` taken away). The gate's first answer: "As it stands it does
+   not pass: test. It has no test file, and nothing else fails: Red is entered, and ends as in any edit."
+   Red wrote the first test file, two tests. Red's gate first refused ("still at phase 4 (Red). Not passed: the typecheck
+   exited 1", with the output's last lines); the test was corrected and Red passed. Done: 2 tests.
+4. **An edit through Red that changes an existing test** ("make the pane line read hello instead of hi").
+   8.4's question: "These test files are not as they were before this edit: - tests/hi.test.tsx: 3 lines
+   added, 3 lines removed", the two removed lines quoted, "These tests no longer exist: the pane shows the
+   word hi", "Go on with these changes?". Done lists the answer: `the person answered "Go on with these
+   changes" for: tests/hi.test.tsx (changed)`.
+5. **The refactor route with a change at Verify**: 8.26.
+6. **The guard and the gates during an edit** (8.7 items 3 and 4; the model was told to try each):
+   - The first line of the original `SPEC.md` changed at Spec: "still at phase 3 (Spec). Not passed: SPEC.md
+     no longer begins as it did before this edit: the change is written as a new section at its end, and
+     nothing above it may change." With the line put back, the approval was asked.
+   - A `Write` of `hooks/register.tsx` at Red: "mod-builder: hooks/register.tsx can't be written in phase 4
+     (Red) of this edit, which may write test files only (tests/, and any *.test.ts or *.test.tsx). ..."
+   - `tests/pane.test.tsx` removed at Red by `rm`, and `tests/hi.test.tsx` changed: 8.4's question listed
+     both, "- tests/pane.test.tsx: gone (27 lines removed)" with its removed lines, and "These tests no
+     longer exist: the pane shows the word hi; the pane draws its line; the command opens the pane".
+     "Not yet": "still at phase 4 (Red). Not passed: the person has not agreed to the changed test files
+     (answer: "Not yet")."
+   - `/mod-builder stop` there, answered "Keep the mod as it is now": the pane kept the stopped frame
+     ("stopped at Red", the answer, the mod's folder and its restore point). "Put it back" was not run
+     again here: 8.19 and the driving session's probe at `be44e23` have it.
+   - Naming the loaded plugin's own folder: "no edit was opened: ... is this plugin's own folder:
+     mod-builder does not edit itself."
+
+**Seen, and left as it is:**
+- A repair's Baseline block in the pane says "fails test, typecheck" twice, in its heading row and in the
+  row beneath.
+- In one session the model appended the "Built" lines to `SPEC.md` with a shell command, not
+  the Edit tool; no write had been refused first. The guard does not judge a shell command (`docs/limits`),
+  and Verify's gate read the file as it does any other.
+- With the 8.23 question asked at Green and again at Verify, Done shows two rows that begin with the same
+  words, the later answer first.
+
+**Not shown by the building session:** 8.7's items 1 and 2 on `tool-log` and `prompt-count`; item 7 on the
+real engine (a record stored by 0.1.0; module tests hold it); item 5's "Put it back" on the final commit
+(shown at earlier commits, as above).
+
+### 8.28 Step 5, the documents (2026-11-11)
+
+Changed, as 8.9 lists: `docs/limits/README.md` (two new sections, "An edit" and "The pane"; "Not built yet"
+no longer says there is no edit skill), `docs/how-it-works/README.md` (an edit, phase by phase; the pane),
+`README.md` (the commands table gains `/mod-builder:edit` and `/mod-builder stop`; a short "to change the
+finished mod"; the limits met first), `CHANGELOG.md` (0.2.0), both manifests, and `BACKLOG.md` (items 15, 21
+and 22 struck with their numbers kept, since `ci.yml` and this record cite them; 18 cut to "Going back one
+phase, and a retry count per phase", 8.5's words).
+
+**Decided by the building session where 8.9 is silent**, each for the owner to keep or drop:
+- `.claude-plugin/marketplace.json` had no version: its one plugin entry now has `"version": "0.2.0"`, as
+  `plugin.json` has. `claude plugin validate --strict .` passes with both [ran, 2.1.322].
+- `docs/reference/README.md` is not on 8.9's list and was changed too, because "What it reaches" is read
+  from `claude plugin validate`: the calls gain `$.ui.status` and `$.ui.toast`; the files gain the restore
+  point and, on "Put it back", the renamed folder; the commands gain `restore-point.sh` and `put-back.sh`.
+- `CLAUDE.md` (the repository's guidance for Claude Code) named only the build skill; it now names the edit
+  skill and section 8, in a commit of its own.
+- The plugin's `description` in both manifests still says only "Builds"; it was left.
+
+After the changes: 373 module tests, 599 node tests (2 skipped where no TypeScript compiler is named), and
+validate passes for the plugin and the marketplace [ran].
+
+### 8.29 0.2.0 accepted by the driving session; the owner approves the push and the pull request (2026-11-11, at `f7014e9`)
+
+From the driving session's file to the building session:
+
+- **The owner**, asked whether the building session should push the branch and open a pull request on
+  `bankielewicz/mod-builder`: "Push and open the PR (Recommended)". Nothing is merged by either session.
+- **The driving session's run at `f7014e9`:** 597 node tests pass and 2 skip, 373 of 373 module tests,
+  validate passes for the plugin and the marketplace. The building session's choices where 8.9 was silent
+  (8.28) stand; the two pane findings of 8.27 stay as limits.
+- **The driving session's demonstration of 8.7 item 1** (sonnet, 2.1.322, a copy of `tool-log`):
+  `/mod-builder:edit tool-log cut each row by display width…` reached Done through Red with one approval.
+  Outside the session: `validate --strict` passes, 15 of 15 tests pass, `version` went from 0.1.0 to 0.1.1,
+  `SPEC.md` begins with its former bytes and ends with the change and its "Built" lines, and a headless load
+  logs "hooks module tool-log@inline loaded".
+- **8.7 item 2** (`prompt-count` through Red) was not run by the driving session: the building session's
+  probe of an edit that changes an existing test (8.27, point 4, on a copy of `hi-probe`) stands for it.
+- The switch of the worktree to `main` at 15:09 UTC (8.26) is still unexplained.

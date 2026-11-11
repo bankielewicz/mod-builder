@@ -13,6 +13,11 @@ claude plugin test plugins/mod-builder
 node --test --test-timeout=120000 plugins/mod-builder/tests/*.test.mjs plugins/mod-builder/scripts/*.test.mjs
 ```
 
+Two of the rules tests run a real TypeScript compiler on the `tsconfig.json` the plugin writes for an edit's
+test files (`tests/mod-builder-logic-edit-file-roots.test.mjs`). They use the compiler the environment variable
+`MOD_BUILDER_TSC` names, else `tsc` when it is on the path, and are reported as skipped when there is neither.
+
+
 The typecheck is against the types of the installed build, which Claude Code writes when its built-in
 `plugin-authoring` skill loads (load it once in any session first; they are never copied into this repository):
 

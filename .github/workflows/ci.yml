@@ -22,6 +22,10 @@ jobs:
           node-version: 24
       - name: Install Claude Code 2.1.322
         run: npm install -g @anthropic-ai/claude-code@2.1.322
+      # Two rules tests run a real compiler on the tsconfig the plugin writes (docs/mod-builder/SPEC.md 8.14);
+      # without one on the path they are skipped.
+      - name: Install a TypeScript compiler
+        run: npm install -g typescript@5
       - name: Validate the marketplace
         run: claude plugin validate --strict .
       - name: Validate the plugin

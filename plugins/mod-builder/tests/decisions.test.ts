@@ -22,7 +22,7 @@ const PANE = {
 const FOUR = [
   ['claude', 'plugin', 'validate', '--strict', MOD],
   ['claude', 'plugin', 'test', MOD],
-  ['npx', '--no-install', 'tsc', '--noEmit', '-p', CONFIG],
+  ['npx', '--no-install', 'tsc', '--noEmit', '--pretty', 'false', '-p', CONFIG],
   ['claude', '--plugin-dir', MOD, '-p', '/cost', '--debug-file', LOG],
 ]
 
@@ -149,7 +149,7 @@ test('at Done the pane shows the sha256 of the types Verify used', async ($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const texts = (await ui.findAll({ type: 'Text' })).map((text) => text.text)
   await ui.unmount()
-  expect(texts.filter((text) => text.startsWith('Verify: '))).toEqual([`Verify: validate, 1 tests, the typecheck (types sha256 ${await sha256(TYPES_TEXT)}) and a headless load of ${NAME} all pass`])
+  expect(texts.filter((text) => text.startsWith('  validate, '))).toEqual([`  validate, 1 tests, the typecheck (types sha256 ${(await sha256(TYPES_TEXT)).slice(0, 12)}) and a headless load of ${NAME} all pass`])
 })
 
 test('the hash recorded is of the file\'s bytes, whatever they are, a byte that is no text included', async ($, on) => {
@@ -173,13 +173,14 @@ test('the sha256 of the types used is in the evidence of Green and of Verify, as
   expect(evidence(w).verify).toMatch(new RegExp(`types sha256 ${sha}`))
 })
 
-test('the pane shows the sha256 of the types the last gate used', async ($, on) => {
-  await standing(on, 'green')
+test('at Verify the pane shows the four checks to run again, and the sha256 of the types Green used stays in the record', async ($, on) => {
+  const w = await standing(on, 'green')
   await gate($)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const texts = (await ui.findAll({ type: 'Text' })).map((text) => text.text)
   await ui.unmount()
-  expect(texts.filter((text) => text.startsWith('Green: '))).toEqual([`Green: validate, 1 tests, the typecheck (types sha256 ${await sha256(TYPES_TEXT)}) and a headless load of ${NAME} all pass; tests/ and SPEC.md are as recorded`])
+  expect(texts.filter((text) => text === '  waiting').length).toBe(7)
+  expect([(w.store[`build:${MOD}`] as { evidence: Record<string, string> }).evidence.green]).toEqual([`validate, 1 tests, the typecheck (types sha256 ${await sha256(TYPES_TEXT)}) and a headless load of ${NAME} all pass; tests/ and SPEC.md are as recorded`])
 })
 
 test('types files that are the same to the byte are one, wherever they sort: the gate passes and records their hash', async ($, on) => {

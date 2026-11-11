@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Done</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+body{margin:0}
+a{color:#7db4ff}a:hover{color:#a9ccff}
+</style>
+</helmet>
+<div style="width: 960px; height: 620px; box-sizing: border-box; padding: 28px 32px; background: #14161a; color: #d6d9de; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 14px; line-height: 22px; display: flex; flex-direction: column; gap: 14px">
+<div style="border: 1px solid #3a4150; border-radius: 6px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between">
+<div style="font-weight: 700; letter-spacing: 3px">MOD BUILDER</div>
+<div style="color: #8fd0a0">turn-counter 0.1.0 · built and checked</div>
+</div>
+<div style="display: flex; gap: 14px; flex-wrap: wrap">
+<span style="color: #8fd0a0">1 Knowledge ✓</span>
+<span style="color: #8fd0a0">2 Describe ✓</span>
+<span style="color: #8fd0a0">3 Spec ✓</span>
+<span style="color: #8fd0a0">4 Scaffold ✓</span>
+<span style="color: #8fd0a0">5 Red ✓</span>
+<span style="color: #8fd0a0">6 Green ✓</span>
+<span style="color: #8fd0a0">7 Verify ✓</span>
+<span style="color: #14161a; background: #8fd0a0; padding: 0 8px; border-radius: 3px; font-weight: 700">8 Done</span>
+</div>
+<div style="border-top: 1px solid #3a4150; padding-top: 10px; display: flex; flex-direction: column; gap: 4px; white-space: pre-wrap">
+<div style="font-weight: 700">What was built</div>
+<div>  mods/turn-counter/   7 files · 6 tests · 3 local commits (spec, tests, code)</div>
+<div>  built on Claude Code 2.1.322, from the documents of 2026-11-10</div>
+<div style="font-weight: 700; padding-top: 6px">What was checked</div>
+<div>  validate · 6 of 6 tests · typecheck · loaded and answered live</div>
+<div>  1 edit refused along the way, at Spec</div>
+<div style="font-weight: 700; padding-top: 6px">Try it</div>
+<div>  claude --plugin-dir mods/turn-counter      then   /turn-counter</div>
+</div>
+</div>
+<div style="border: 1px solid #3a4150; border-radius: 6px; padding: 10px 18px; display: flex; flex-direction: column; gap: 2px; white-space: pre-wrap">
+<div style="color: #a3abb5">the new mod, loaded:</div>
+<div style="font-weight: 700; letter-spacing: 3px">TURN COUNTER</div>
+<div>  turns 12   tool calls 47   since 15:02</div>
+</div>
+<div style="display: flex; justify-content: space-between; color: #a3abb5">
+<div>mod-builder: done · turn-counter 0.1.0</div>
+<div style="color: #14161a; background: #d6d9de; padding: 0 10px; border-radius: 3px">toast: turn-counter is built · 4 of 4 checks passed</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":620}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

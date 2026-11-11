@@ -5,11 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `mod-builder` is a Claude Code plugin (itself a mod: a hooks module) that builds other Claude Code mods from a
-dated copy of Anthropic's mod documentation, test-first, through eight guarded phases. The plugin lives in
+dated copy of Anthropic's mod documentation, test-first, through eight guarded phases, and changes or repairs
+a finished mod through seven (`/mod-builder:edit`, since 0.2.0). The plugin lives in
 `plugins/mod-builder/`; the repository root is a one-entry marketplace (`.claude-plugin/marketplace.json`).
 
 `docs/mod-builder/SPEC.md` is the specification and the record. Sections 1 to 6 say what the plugin is; section
-7 is a dated log of every decision, who made it, what was probed, and what is still open. Read its 3.3 (the
+7 is a dated log of every decision, who made it, what was probed, and what is still open; section 8 is the
+same for change 0.2.0, the edit skill (8.3 to 8.6 its rules, 8.10 which check runs where in an edit). Read its 3.3 (the
 phase guard) and the latest 7.x sections before changing behaviour. `docs/mod-builder/BACKLOG.md` holds what
 waits until after the MVP. Below, and in the code's comments, "`SPEC.md` 7.x" means that specification; a
 `SPEC.md` named among a mod's files (`tests/`, `hooks/`) is the spec of the mod being built, in its own folder.
@@ -60,6 +62,10 @@ Everything is under `plugins/mod-builder/`.
   wording is pinned by `scripts/skill*.test.mjs`; change a sentence and a test there changes with it.
   `skills/build/templates/pane/` is the one scaffold template (its test is stored as `*.template` so the
   plugin's own test run does not pick it up).
+- **`skills/edit/SKILL.md`: the same for an edit or a repair of a finished mod**, started by
+  `/mod-builder:edit <mod folder> <what to change>`: seven phases (no Scaffold), a baseline and a restore point
+  first, the change as a new section at the end of the mod's `SPEC.md`. Pinned by `scripts/skill-edit.test.mjs`.
+  `scripts/restore-point.sh` and `scripts/put-back.sh` serve it and `/mod-builder stop`.
 - **`scripts/`**: `refresh-docs.sh` (fetches the mod documentation into dated snapshots under
   `~/.claude/mod-builder-data/v2/`), `lookup.sh` (search a snapshot, answering `page:line`), `scaffold.sh`
   (lays the template), each with `*.test.mjs` beside it.

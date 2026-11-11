@@ -78,7 +78,7 @@ const fresh = (on: Parameters<typeof world>[0], more: Partial<World> = {}) =>
 
 test('with no build open the gate says so and changes nothing', async ($, on) => {
   const w = world(on)
-  expect(await gate($, 'turn-counter')).toBe('mod-builder: no build is open in this session. /mod-builder:build <what the mod should do> starts one.')
+  expect(await gate($, 'turn-counter')).toBe('mod-builder: no build is open in this session. /mod-builder:build <what the mod should do> starts one, and /mod-builder:edit <mod folder> <what to change> an edit.')
   expect(w.store).toEqual({})
 })
 
@@ -143,7 +143,7 @@ test('Describe has no gate: the next call opens Spec', async ($, on) => {
 test('Spec to Scaffold asks the person, with "Not yet" first, and only "Approve" moves the build', async ($, on) => {
   const w = await at(on, 'spec', { answer: 'Not yet', now: 1731250000000 })
   expect(await gate($)).toBe('mod-builder: still at phase 3 (Spec). Not passed: the person has not approved the spec (answer: "Not yet").')
-  expect(w.asked).toEqual([{ question: `Approve the spec of this mod? (${SPEC})`, options: ['Not yet', 'Approve'] }])
+  expect(w.asked).toEqual([{ question: `Approve the spec of this mod? (${SPEC}) Nothing under hooks/ or tests/ can be written until you approve.`, options: ['Not yet', 'Approve'] }])
   expect(phase(w)).toBe('spec')
   for (const typed of ['looks fine to me', 'approve', 'Approved', 'Approve ', 'do not Approve', 'Approve, Not yet', 'See it first: draw mockups with /design', '']) {
     w.answer = typed
@@ -276,7 +276,7 @@ test('Verify to Done runs validate, the tests, the typecheck and a headless load
     ['npx', '--no-install', 'tsc', '-v'],
     ['claude', 'plugin', 'validate', '--strict', MOD],
     ['claude', 'plugin', 'test', MOD],
-    ['npx', '--no-install', 'tsc', '--noEmit', '-p', `${HOME}/.claude/mod-builder-data/v2/typecheck/s1/tsconfig.json`],
+    ['npx', '--no-install', 'tsc', '--noEmit', '--pretty', 'false', '-p', `${HOME}/.claude/mod-builder-data/v2/typecheck/s1/tsconfig.json`],
     ['claude', '--plugin-dir', MOD, '-p', '/cost', '--debug-file', log],
   ])
   expect(Object.keys(kept(w).evidence as object)).toEqual(['knowledge', 'describe', 'spec', 'scaffold', 'red', 'green', 'verify'])
