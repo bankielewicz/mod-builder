@@ -104,8 +104,8 @@ with the line to run). Eight phases, each ending in something the plugin can obs
 | 1 | Knowledge | refresh if stale; show snapshot date, build, what changed | a snapshot exists |
 | 2 | Describe | the model reads the index and the pages that bear on the request, through the lookup | (no gate) |
 | 3 | Spec | the model writes `<mod>/SPEC.md`: what it does, each API use with its citation, what it reaches, its tests | the person approves, through the mod's own question |
-| 4 | Scaffold | the mod's files from one template (`pane`), checked against the build's types | `claude plugin validate` passes |
-| 5 | Red | tests only | a new test fails by assertion |
+| 4 | Scaffold | the mod's files from one template (`pane`), checked against the build's types | `claude plugin validate` passes, the tests run, the typecheck passes (7.10) |
+| 5 | Red | tests only | a new test fails by assertion; the typecheck passes (7.10) |
 | 6 | Green | code only; tests frozen | validate, every test, the typecheck and a headless load pass (7.7) |
 | 7 | Verify | validate, test, typecheck, a headless load with its debug-log lines | all pass |
 | 8 | Done | summary, "Built on", local commits | (end) |
@@ -160,13 +160,18 @@ with the line to run). Eight phases, each ending in something the plugin can obs
     driver. The owner, afterwards: "i clicked approve - this explains the anomoly you reported." So the
     dialog behaved as documented, and a click or key from anyone at the pane answers it.
   - **Scaffold → Red:** `claude plugin validate --strict` exits 0. The mod records how many tests ran.
+    Then the typecheck exits 0 (7.10): the same one Green runs, against every distinct types file, because
+    `hooks/` and `types/` close when Scaffold passes and Red ends on a typecheck that judges them too.
   - **Red → Green:** `claude plugin test` exits non-zero; its last line reports more tests than at
     Scaffold; every `(fail)` block's **first line** is an assertion error (it starts with
     `AssertionError`, as in `AssertionError: expect(received).toBe()`); and at least one failing test has
     a name that no test had at Scaffold, whose names the mod records there. A file that fails to load
     can't pass: its block doesn't open with an assertion error, even when a source line it quotes holds
     `expect(`. An old test failing beside a new passing one can't pass either. (Step 2 first built this
-    as "`expect(` or `AssertionError` anywhere in the block", with no names; 7.3.)
+    as "`expect(` or `AssertionError` anywhere in the block", with no names; 7.3.) After that verdict the
+    typecheck (the same one, against every distinct types file) exits 0 (7.10): `tests/` closes when Red
+    passes, so a check that judges the tests runs here. A failure names the types file and quotes the
+    compiler's last 20 lines, as at Green, and `tests/` stays open because the build is still at Red.
   - **Green → Verify** (7.7, decision 1) passes only when all four pass, run by the mod in this order: `claude
     plugin validate --strict` exits 0; `claude plugin test` exits 0 with no fewer tests than at Red; the
     typecheck exits 0 against every distinct types file of the build, run once for each in the order of
@@ -791,3 +796,106 @@ standard error; one file stands for each distinct content, the first by path.
 tests) and the code as changed for its read (`refusedAt`, the whole-hash check, the file always named) were
 not read a second time; 7.8's demonstration was not run again on this code (the driving session ran its own
 from `ae7cad8`); the README's "Built on" line still names one hash, the one of 7.8's demonstration.
+
+### 7.10 A check runs while its files are open: the typecheck ends Scaffold and Red (2026-11-10, at `91d86ef`)
+
+**The driving session's finding** [ran, by the driving session, 2026-11-10]: its second demonstration, on an
+export of `762465b` (sonnet, another mod: a pane listing the last five tools used), stuck at Green again, for
+a new reason. 7.9's correction worked, and the typecheck ran. Red passed (10 tests, the new ones failing by
+assertion), the model wrote the code, all 10 tests passed and `hooks/register.tsx` typechecked; Green refused
+on the typecheck with 10 errors, every one in `tests/tool-log.test.tsx` (a helper typed with a wrong alias,
+and `tool.call` stubs with the wrong signature, TS2769). `tests/` had been closed since Red and nothing goes
+back to Red, so the build could never finish. The model stopped and reported it, correctly. The cause, in the
+driving session's words: "the one 7.7 decision 1 fixed for the code and I did not apply to the tests: a check
+must run while the files it judges can still be changed."
+
+**The rule, as given** ("Build exactly this"): Red -> Green also requires the typecheck (the same one, against
+every distinct types file) to exit 0, run after the test run's verdict; a failure is answered like any refused
+typecheck, naming the types file and quoting the compiler's last 20 lines, and `tests/` stays open because the
+build is still at Red. Nothing else about Red changes.
+
+**What the building session found before building it, and the answer.** The rule alone makes a new dead end:
+the typecheck also judges `hooks/` and `types/`, which close when Scaffold passes and open again only at
+Green. Until now their first typecheck was at Green, where they are open; with the rule, a type error left in
+them by Scaffold (the model reshapes the template there) would refuse Red for good. The building session
+asked, with that reason, whether Scaffold -> Red should run the same typecheck; the answer chosen in its
+dialog was "Yes, Scaffold too". **Who answered is not known to the building session**: the dialog does not
+say, and the driving session has answered one by keystroke before (7.9). So: Scaffold -> Red also requires the
+typecheck to exit 0, after validate and the test run, answered the same way.
+
+**As built** (`58899a3` red, `91d86ef` green; the four existing tests it changes in a commit of their own
+first, `4ed4c7e`) [ran]: 208 module tests, 292 rules, validate and script tests, `claude plugin
+validate --strict` and the typecheck pass; the verifier's PASS with eight mutants, each failing its test.
+In the real engine [ran: the built code with one added command, headless, no model call, the five real types
+files]: Scaffold on a scaffolded mod answered `phase 4 (Scaffold) passed (claude plugin validate --strict
+exited 0; 2 tests ran; the typecheck passes (types sha256 60ff86c1…ceca, a33c3b25…7d76))`; Red with a new
+test that fails by assertion and typechecks answered `phase 5 (Red) passed (3 tests ran, the new ones failing
+by assertion; the typecheck passes (types sha256 …); 2 files under tests/ hashed)`; Red with the same test
+holding `const wrong: number = 'not a number'` answered `still at phase 5 (Red). Not passed: the typecheck
+exited 1.`, then `The last lines of its output, against the types file …/5d3947d0…/plugin-authoring/types/
+claude-code.d.ts (sha256 60ff86c1…ceca):` and the compiler's line, `…/tests/more.test.tsx(4,9): error TS2322:
+Type 'string' is not assignable to type 'number'.`
+
+**Decided in the plan where the words were silent, for review:** at Scaffold and at Red the build's types and
+a compiler are looked for only once the earlier checks have passed, and when either is missing the gate
+refuses with the words Green uses and records nothing; at Red the typecheck runs before the tests are hashed
+the second time, so a test changed while the compiler ran is refused as changed while the tests ran; the
+evidence of a passed Scaffold and of a passed Red names the typecheck and every types hash; a write refused
+at Red says Green opens "when a new test fails by assertion and the mod, its tests included, typechecks"; the
+skill tells the model to declare at Scaffold whatever Red's tests will name.
+
+**What the rule costs.** A test at Red can name only what Scaffold left: a type the contract does not declare
+yet, or a value `hooks/` does not export yet, is a type error at Red, where neither can be written. The skill
+says so at Scaffold. A build that finds this at Red has no way back to Scaffold; its tests have to be written
+against what is there (through the mod's events, as the template's are).
+
+**The same principle, checked once across every gate** (what each gate judges, and whether those files were
+open the first time it judged them):
+
+| Check | First run | Files it judges | Open then? |
+|---|---|---|---|
+| the person's approval | Spec | `SPEC.md` | yes |
+| validate | Scaffold | the manifest, `hooks/`, `types/` (not `tests/`: a test file that does not parse leaves validate at exit 0 [ran]) | yes |
+| the test run, as a count and names | Scaffold | `tests/`, `hooks/` | yes |
+| the typecheck | Scaffold (this change) | `hooks/`, `types/`, `tests/` | yes |
+| new tests failing by assertion | Red | `tests/` | yes |
+| the typecheck of the new tests | Red (this change) | `tests/` | yes |
+| every test passes | Green | `hooks/` against `tests/` | `hooks/` yes, **`tests/` no** |
+| the headless load | Green | the manifest, `hooks/` | yes |
+| the four checks again | Verify | all of them | `hooks/` and `tests/` no, but each first ran while they were open |
+| the "Built" block | Verify | what `SPEC.md` gained | yes |
+| the hashes of `SPEC.md` and `tests/` | every gate after | closed files, by design | no: a change stops the build (README) |
+
+What that leaves, each a check that can first fail on files already closed. None is built; they are for the
+owner to decide:
+1. **A test that can never pass.** Green requires every test frozen at Red to pass. A test that typechecks
+   and fails by assertion at Red, but asserts something no code can satisfy (or that the spec does not ask
+   for), is first shown wrong at Green, where `tests/` is closed. No check at Red can find it: the code does
+   not exist yet. The skill tells the model to stop and tell the person. The remedy would be a way back to Red.
+2. **A types file that appears later.** The typecheck runs against every distinct types file there is when
+   the gate runs. Another session that loads plugin-authoring after Red (or after Green) can write a types
+   file with other content; the next gate's typecheck then runs for the first time against that content, on
+   `tests/` (or `hooks/`) already closed. 7.9's facts show two contents for one build; the tests and code of
+   a mod would have to differ in what they need from the two for this to bite.
+3. **A Claude Code update during a build.** The gate reads the session's version each time: a session
+   resumed on a newer build typechecks, validates and loads against that build, with files closed under the
+   older one.
+4. **The compiler npx downloads.** With no compiler installed, `npx -y -p typescript tsc` takes the newest
+   TypeScript at each gate; a release between two gates could refuse what the earlier one passed.
+5. **A phase that can't go back in general** (README): what Red finds wrong in `hooks/` or `types/` beyond a
+   type error, such as a test that needs a hook the scaffold does not register, is written at Green, so it is
+   no dead end; what Green finds wrong in `tests/` is (item 1).
+
+**The tightening of `4855cb3`** (`2117929`, a commit of its own): that commit made the shared helper of
+`gate.test.ts` answer the first line of the gate's answer, which loosened every exact comparison in the file.
+The helper answers the whole text again; the twelve exact comparisons whose answer is one line now say that
+nothing follows it, and the ten whose answer goes on (quoted lines, the "Built on" line) take its first line
+by name, with what follows tested in `decisions.test.ts` and `built.test.ts`. The file's unanchored pattern
+matches are as they were before `4855cb3`.
+
+**Not done, or swapped:** the five tests the reader of this change asked for (the typecheck not run for any
+refusal of the test run, at Red or at Scaffold; an exit 0 that wrote to standard error still passes; the
+order is the hashes', not the paths') were not read a second time, and the four mutants the reader showed
+surviving before them are not among the plan's eight; the reader's note that two tests pin when the types and
+the compiler are looked for (after the earlier checks, where Green looks first) was kept as the plan's
+decision; neither demonstration was run again on this code; macOS stays unverified.
