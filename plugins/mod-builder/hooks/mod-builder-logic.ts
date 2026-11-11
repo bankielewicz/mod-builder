@@ -651,6 +651,8 @@ export type BuildRecord = {
   stopped?: boolean // SPEC.md 8.5: ended by /mod-builder stop
   baseline?: Baseline // an edit's: the mod as it stood when the edit opened
   skipped?: SkipReason // an edit's: why its Red is skipped
+  attempt?: Attempt // the pane's: what the last refused gate of the current phase said (SPEC.md 8.18)
+  finished?: Finished // the pane's: what the gate that ended Verify counted
 }
 
 export function sessionKey(sessionId: string): string {
@@ -1476,4 +1478,520 @@ export function putsBack(answer: string | null | undefined): boolean {
 // The record of a stopped build or edit: as it was, marked stopped. What is no record stays what it was.
 export function stoppedRecord<T>(record: T): T {
   return isBuildRecord(record) ? { ...record, stopped: true } : record
+}
+
+// ------------------------------------------------------------------------------------- the pane (SPEC.md 8.18)
+
+// The pane only draws: these rules turn what the gate and the guard wrote, and what the cache holds, into what is
+// drawn. No gate's verdict reads any of it. A record or a store value without these fields, or with a damaged
+// one, draws as zero or empty, so a record 0.1.0 stored still draws and nothing here throws.
+
+// Text as the pane, a toast or the status line shows it: one line, with no control character and none of the
+// marks that reorder or hide text (zero-width, and the direction overrides).
+function shown(text: unknown): string {
+  return typeof text === 'string' ? text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, ' ').trim() : ''
+}
+
+// A path as a toast and the header show it: cut to 120 characters, its end kept, since that names the file.
+function shownPath(path: unknown): string {
+  const text = shown(path)
+  return text.length > 120 ? `\u2026${text.slice(text.length - 119)}` : text
+}
+
+// A count the pane can say: a whole number from 0 that a number holds exactly. Anything else is no count.
+function shownCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+// What the last refused gate of a phase said: its reason, the tests that failed, and how many passed of how many.
+export type Attempt = { phase: Phase; reason: string; failing: string[]; passed: number | null; tests: number | null }
+
+// What is stored as the last refused gate, when it is this phase's; else null.
+export function readAttempt(value: unknown, phase: Phase): Attempt | null {
+  if (!isPlainObject(value) || value.phase !== phase || !isPhase(phase)) return null
+  const failing = Array.isArray(value.failing) ? value.failing.map(shown).filter((name) => name !== '') : []
+  const passed = shownCount(value.passed)
+  const tests = shownCount(value.tests)
+  const isCounted = passed !== null && tests !== null && passed <= tests
+  return { phase, reason: shown(value.reason), failing, passed: isCounted ? passed : null, tests: isCounted ? tests : null }
+}
+
+// What the gate that ended Verify counted, for Done's frame, with the "Built on" line it composed.
+export type Finished = { version: string | null; files: number | null; tests: number | null; command: string | null; builtOn: string | null }
+
+// What is stored as that, read as far as it can be: what can't be read is null.
+export function readFinished(value: unknown): Finished {
+  const given = isPlainObject(value) ? value : {}
+  const text = (one: unknown): string | null => (shown(one) === '' ? null : shown(one))
+  return {
+    version: text(given.version), files: shownCount(given.files), tests: shownCount(given.tests),
+    command: typeof given.command === 'string' && /^[A-Za-z0-9:_-]+$/.test(given.command) ? given.command : null,
+    builtOn: text(given.builtOn),
+  }
+}
+
+// The guard's count of refused writes, kept beside the record under its own key so that the guard never writes
+// the record: whose they are, how many in each phase, the last one, and the phases a toast was shown for.
+export type Refusals = { sessionId: string; counts: Partial<Record<Phase, number>>; last: { phase: Phase; path: string } | null; toasted: Phase[] }
+
+export function refusalsKey(modDir: string): string {
+  return `refusals:${modDir}`
+}
+
+// The state of each of the four checks while a gate runs them, kept under its own key, with whose they are and
+// the mod's own name.
+export type CheckState = 'waiting' | 'running' | 'passed' | 'failed'
+export type Checks = { sessionId: string; phase: Phase; name: string; states: Record<Check, CheckState> }
+
+export function checksKey(modDir: string): string {
+  return `checks:${modDir}`
+}
+
+const CHECKS: readonly Check[] = ['validate', 'test', 'typecheck', 'load']
+const CHECK_STATES: readonly CheckState[] = ['waiting', 'running', 'passed', 'failed']
+
+// What is stored as the refusals, read as far as it can be. The key is the mod's folder, so what another session
+// left under it (an earlier build or edit of the same folder) is not this one's: that, and anything unreadable,
+// counts as none.
+export function readRefusals(value: unknown, sessionId: string): Refusals {
+  const none: Refusals = { sessionId, counts: {}, last: null, toasted: [] }
+  if (!isPlainObject(value) || typeof sessionId !== 'string' || sessionId === '' || value.sessionId !== sessionId) return none
+  const counts: Partial<Record<Phase, number>> = {}
+  if (isPlainObject(value.counts)) {
+    for (const phase of PHASES) {
+      const count = shownCount(value.counts[phase])
+      if (count !== null && count > 0) counts[phase] = count
+    }
+  }
+  const last = isPlainObject(value.last) && isPhase(value.last.phase) && shown(value.last.path) !== '' ? { phase: value.last.phase, path: shown(value.last.path) } : null
+  const toasted = Array.isArray(value.toasted) ? PHASES.filter((phase) => (value.toasted as unknown[]).includes(phase)) : []
+  return { sessionId, counts, last, toasted }
+}
+
+// One more refused write in a phase: the count, the last one, and the toast to show, which comes once for each
+// phase (SPEC.md 8.18, point 1); null when that phase had its toast.
+export function countRefusal(stored: unknown, sessionId: string, phase: Phase, path: string): { refusals: Refusals; toast: string | null } {
+  const before = readRefusals(stored, sessionId)
+  if (!isPhase(phase)) return { refusals: before, toast: null }
+  const where = shownPath(path) === '' ? 'the mod folder' : shownPath(path)
+  const isFirst = !before.toasted.includes(phase)
+  return {
+    refusals: { sessionId, counts: { ...before.counts, [phase]: (before.counts[phase] ?? 0) + 1 }, last: { phase, path: where }, toasted: isFirst ? PHASES.filter((one) => one === phase || before.toasted.includes(one)) : before.toasted },
+    toast: isFirst ? `refused: ${where}, at ${TITLES[phase]}` : null,
+  }
+}
+
+// What is stored as the checks' states, when it is this session's and this phase's; else null.
+export function readChecks(value: unknown, sessionId: string, phase: Phase): Checks | null {
+  if (!isPlainObject(value) || typeof sessionId !== 'string' || sessionId === '' || value.sessionId !== sessionId) return null
+  if (value.phase !== phase || !isPhase(phase) || !isPlainObject(value.states)) return null
+  const states = {} as Record<Check, CheckState>
+  for (const check of CHECKS) {
+    const state = value.states[check]
+    states[check] = state === 'running' || state === 'passed' || state === 'failed' ? state : 'waiting'
+  }
+  return { sessionId, phase, name: shown(value.name), states }
+}
+
+// The checks' states as a gate starts them, with one moved on, and as a gate that ended leaves them: a check
+// still "running" then was not finished (the gate refused before it, or failed), so it waits again.
+export function newChecks(sessionId: string, phase: Phase, name: string): Checks {
+  return { sessionId, phase, name, states: { validate: 'waiting', test: 'waiting', typecheck: 'waiting', load: 'waiting' } }
+}
+
+export function withCheck(checks: Checks, check: Check, state: CheckState): Checks {
+  if (!isPlainObject(checks) || !isPlainObject(checks.states) || !CHECKS.includes(check) || !CHECK_STATES.includes(state)) return checks
+  return { ...checks, states: { ...checks.states, [check]: state } }
+}
+
+export function settledChecks(checks: Checks): Checks {
+  if (!isPlainObject(checks) || !isPlainObject(checks.states)) return checks
+  const states = { ...checks.states }
+  for (const check of CHECKS) if (states[check] === 'running') states[check] = 'waiting'
+  return { ...checks, states }
+}
+
+// How many pages a snapshot's manifest lists: its lines after the first that name a page. Null when it is none.
+export function pagesIn(manifest: string | null | undefined): number | null {
+  if (typeof manifest !== 'string') return null
+  const lines = manifest.split('\n').map((line) => line.replace(/\r$/, ''))
+  if (!(lines[0] ?? '').startsWith('page\t')) return null
+  return lines.slice(1).filter((line) => /^[a-z-]+\.md\t/.test(line)).length
+}
+
+// What a snapshot's _changes.md says, as refresh-docs.sh writes it: how many pages changed, were added and were
+// removed, and for each its lines each way and the headings its changed lines are under. The script writes a
+// heading as a list item that keeps its marks ("- ## Add a command"); the marks are left out here. Null when the
+// text is no such file.
+export type PageChange = { page: string; how: 'changed' | 'added' | 'removed'; plus: number; minus: number; headings: string[] }
+export type Changes = { changed: number; added: number; removed: number; pages: PageChange[] }
+
+export function changesIn(text: string | null | undefined): Changes | null {
+  if (typeof text !== 'string') return null
+  const lines = text.split('\n').map((line) => line.replace(/\r$/, ''))
+  const totals = lines.map((line) => line.match(/^Pages: (\d+) changed, (\d+) added, (\d+) removed\.$/)).find((match) => match !== null)
+  if (totals === undefined || totals === null) return null
+  const pages: PageChange[] = []
+  for (const line of lines) {
+    const head = line.match(/^## ([a-z-]+\.md): (changed|added|removed),(?: \+(\d+))?(?: -(\d+))?$/)
+    if (head !== null) pages.push({ page: head[1] as string, how: head[2] as PageChange['how'], plus: shownCount(Number(head[3] ?? 0)) ?? 0, minus: shownCount(Number(head[4] ?? 0)) ?? 0, headings: [] })
+    else if (pages.length > 0 && line.startsWith('- ')) {
+      const under = shown(line.slice(2).replace(/^#+ /, ''))
+      if (under !== '') (pages[pages.length - 1] as PageChange).headings.push(under)
+    }
+  }
+  return { changed: shownCount(Number(totals[1])) ?? 0, added: shownCount(Number(totals[2])) ?? 0, removed: shownCount(Number(totals[3])) ?? 0, pages }
+}
+
+// The command a mod answers, from what `claude plugin validate` printed ("answers its own command:
+// command.run{command=<name>}"), or null when it names none.
+export function commandOf(validated: string | null | undefined): string | null {
+  const found = typeof validated === 'string' ? validated.match(/answers its own command: command\.run\{command=([A-Za-z0-9:_-]+)\}/) : null
+  return found === null ? null : (found[1] as string)
+}
+
+// The mod's name as the pane shows it: its folder's own name.
+function modName(modDir: unknown): string {
+  return shown(modDir).split('/').filter((part) => part !== '').pop() ?? 'the mod'
+}
+
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? `1 ${one}` : `${count} ${many}`
+}
+
+// The line the transcript gets when a build or an edit opens (the Main frame). The engine puts the plugin's name
+// before it.
+export function openedLine(kind: Kind): string {
+  return kind === 'edit' ? "checking what Claude Code's mods can do today before planning the change." : "checking what Claude Code's mods can do today before planning."
+}
+
+// What the approval question adds about the guard (the Spec frame's hint).
+export function approvalHint(kind: Kind): string {
+  return kind === 'edit' ? 'No test file and no code can be written until you approve.' : 'Nothing under hooks/ or tests/ can be written until you approve.'
+}
+
+// The toast after a fetch made a new snapshot (the Main frame), and the one at Done (the Done frame).
+export function refreshedToast(changes: Changes | null): string {
+  const read = readChanges(changes)
+  return read === null ? 'mod docs refreshed' : `mod docs refreshed, ${plural(read.changed + read.added + read.removed, 'page', 'pages')} changed`
+}
+
+export function doneToast(modDir: string, kind: Kind): string {
+  return `${modName(modDir)} is ${kind === 'edit' ? 'edited' : 'built'} \u00b7 4 of 4 checks passed`
+}
+
+// What the pane draws. A tone is a meaning, which the hooks module gives a colour of the person's theme.
+export type Tone = 'plain' | 'dim' | 'success' | 'warning' | 'error' | 'current'
+export type Cell = { text: string; tone?: Tone; width?: number }
+export type PaneBlock = { heading: Cell[]; rows: Cell[][]; markdown?: string }
+export type RailItem = { text: string; state: 'done' | 'current' | 'later' | 'skipped' }
+export type PaneModel = {
+  header: { title: string; state: string; tone: Tone }
+  rail: RailItem[]
+  isRailDim: boolean
+  blocks: PaneBlock[]
+  // What `$.ui.status` is given; null clears the line (SPEC.md 8.18, point 4).
+  status: string | null
+}
+
+// What the cache holds and what the session knows, as the hooks module read it.
+export type PaneKnowledge = {
+  latest: string | null // the newest snapshot's stamp
+  checked: string | null // the stamp of the last fetch
+  pages: number | null // pagesIn the newest snapshot's manifest
+  changes: Changes | null // changesIn its _changes.md
+  isRefreshing: boolean // a fetch this session started is running
+  version: string // the session's Claude Code version
+  now: number // milliseconds since 1970
+}
+
+export type PaneInput = {
+  sessionId: string
+  entry: unknown // the store's value under sessionKey(sessionId)
+  record: unknown // the store's value under buildKey(entry.modDir)
+  refusals: unknown // the store's value under refusalsKey(entry.modDir)
+  checks: unknown // the store's value under checksKey(entry.modDir)
+  knowledge: PaneKnowledge
+  spec: string | null // the mod's SPEC.md, read at Spec
+}
+
+const heading = (text: string): Cell[] => [{ text }]
+const row = (...cells: (Cell | string)[]): Cell[] => cells.map((cell) => (typeof cell === 'string' ? { text: cell } : cell))
+
+function readChanges(value: unknown): Changes | null {
+  if (!isPlainObject(value)) return null
+  const changed = shownCount(value.changed)
+  const added = shownCount(value.added)
+  const removed = shownCount(value.removed)
+  if (changed === null || added === null || removed === null) return null
+  const pages: PageChange[] = []
+  for (const page of Array.isArray(value.pages) ? value.pages : []) {
+    if (!isPlainObject(page) || shown(page.page) === '' || !(page.how === 'changed' || page.how === 'added' || page.how === 'removed')) continue
+    pages.push({ page: shown(page.page), how: page.how, plus: shownCount(page.plus) ?? 0, minus: shownCount(page.minus) ?? 0, headings: Array.isArray(page.headings) ? page.headings.map(shown).filter((one) => one !== '') : [] })
+  }
+  return { changed, added, removed, pages }
+}
+
+function readKnowledge(value: unknown): PaneKnowledge {
+  const given = isPlainObject(value) ? value : {}
+  const text = (one: unknown): string | null => (shown(one) === '' ? null : shown(one))
+  return {
+    latest: text(given.latest), checked: text(given.checked), pages: shownCount(given.pages), changes: readChanges(given.changes),
+    isRefreshing: given.isRefreshing === true, version: text(given.version) ?? 'this build', now: typeof given.now === 'number' ? given.now : Number.NaN,
+  }
+}
+
+// A time of day as the pane shows it, in UTC: "15:31 UTC".
+function clockOf(time: unknown): string | null {
+  const stamp = typeof time === 'number' ? stampOf(time) : null
+  return stamp === null ? null : `${stamp.slice(11, 13)}:${stamp.slice(13, 15)} UTC`
+}
+
+// How long ago a stamp was, in whole days, as the Knowledge block says it. A stamp ahead of the clock is said as
+// it is: the clock or the stamp is wrong, and "today" would hide that.
+function daysAgo(stamp: string | null, now: number): string {
+  const at = stamp === null ? null : parseStamp(stamp)
+  if (at === null || !Number.isFinite(now)) return 'never fetched'
+  const days = Math.floor((now - at) / DAY)
+  if (days < 0) return `last fetched ${stamp}, ahead of this clock`
+  return days === 0 ? 'last fetched today' : `last fetched ${plural(days, 'day', 'days')} ago`
+}
+
+function knowledgeBlock(knowledge: PaneKnowledge): PaneBlock {
+  const rows: Cell[][] = [row("Anthropic's mod pages", { text: `${daysAgo(knowledge.checked, knowledge.now)}${knowledge.isRefreshing ? ' \u00b7 refreshing\u2026' : ''}`, tone: 'dim' })]
+  if (knowledge.latest === null) rows.push(row({ text: '  no snapshot yet: /mod-builder refresh fetches one', tone: 'warning' }))
+  else {
+    const changes = knowledge.changes
+    const pages = knowledge.pages === null ? 'pages' : plural(knowledge.pages, 'page', 'pages')
+    rows.push(row(`  ${pages} in snapshot ${knowledge.latest}`, changes === null ? { text: 'the first snapshot, or nothing to compare with', tone: 'dim' } : { text: `${changes.changed} changed, ${changes.added} added, ${changes.removed} removed`, tone: changes.changed + changes.added + changes.removed > 0 ? 'warning' : 'dim' }))
+    for (const page of changes === null ? [] : changes.pages) {
+      rows.push(row({ text: `  ${page.how}`, tone: 'warning', width: 10 }, { text: page.page, width: 16 }, { text: `+${page.plus} -${page.minus} lines${page.headings.length === 0 ? '' : ` \u00b7 ${page.headings.join(', ')}`}`, tone: 'dim' }))
+    }
+  }
+  rows.push(row('API types for this build', { text: `${knowledge.version} \u00b7 read from the installed copy at each typecheck`, tone: 'dim' }))
+  return { heading: heading('Knowledge'), rows }
+}
+
+// What each phase may write (the Guard frame), with the current one marked "now", each earlier one "closed" and
+// each later one with what opens it. A phase that may write nothing in the mod has a row only while it is the
+// current one, so a refusal there still shows where the build or edit is.
+function writeTable(kind: Kind, phase: Phase, red: RedMode | undefined, modDir: string): PaneBlock {
+  const phases = phasesOf(kind)
+  const at = phases.indexOf(phase)
+  const isSkipped = kind === 'edit' && red === 'skipped'
+  const rows: Cell[][] = []
+  for (const one of phases) {
+    const index = phases.indexOf(one)
+    if (index !== at && (one === 'knowledge' || one === 'describe' || one === 'done')) continue
+    if (one === 'red' && isSkipped) continue
+    const may = kind === 'edit' ? (EDIT_MAY_WRITE[one] as string) : MAY_WRITE[one]
+    const earlier = phases[index - 1] as Phase
+    const before = earlier === 'red' && isSkipped ? 'spec' : earlier
+    const ends = kind === 'edit' ? editEndsWhen(before, red) : ENDS_WHEN[before]
+    // Spec opens after Describe, which has no gate: from Knowledge, the snapshot comes first.
+    const when = before === 'describe' && phase === 'knowledge' ? `${ENDS_WHEN.knowledge} and ${ends}` : ends
+    const opens = index === at ? 'now' : index < at ? 'closed' : `opens when ${when}`
+    rows.push(row({ text: `  ${index + 1} ${TITLES[one]}`, width: 13 }, { text: may, width: 34 }, { text: opens, tone: index === at ? 'current' : 'dim' }))
+  }
+  rows.push(row({ text: "A phase opens on what mod-builder observes (your answer, a command's result), never on Claude saying so.", tone: 'dim' }))
+  rows.push(row({ text: 'It checks the tool and the path, and compares SPEC.md and the tests by hash at each gate. Not a sandbox.', tone: 'dim' }))
+  return { heading: heading(`What each phase may write, under ${modDir}/`), rows }
+}
+
+// A passed phase with what its gate saw, one row for each part of the evidence.
+function evidenceBlock(kind: Kind, phase: Phase, evidence: string): PaneBlock {
+  const parts = evidence.split('; ').map(shown).filter((part) => part !== '')
+  return { heading: [{ text: `${phaseNumberOf(kind, phase)} ${TITLES[phase]}` }, { text: 'passed', tone: 'success' }], rows: parts.map((part) => row(`  ${part}`)) }
+}
+
+const CHECK_LABELS: Record<Check, string> = { validate: 'validate', test: 'test', typecheck: 'typecheck', load: 'headless load' }
+const STATE_TONE: Record<CheckState, Tone> = { waiting: 'dim', running: 'current', passed: 'success', failed: 'error' }
+
+// The four checks as rows, each with the command the gate runs for it, and what the load's log must show.
+function checkBlocks(checks: Checks, modDir: string, version: string): PaneBlock[] {
+  const commands: Record<Check, string> = {
+    validate: `claude plugin validate --strict ${modDir}`,
+    test: `claude plugin test ${modDir}`,
+    typecheck: `tsc against the ${version} types`,
+    load: `claude --plugin-dir ${modDir} -p /cost`,
+  }
+  const load = checks.states.load
+  const said = load === 'passed' ? 'found' : load === 'failed' ? 'not shown' : load
+  const name = checks.name === '' ? 'the mod' : checks.name
+  const must = [`hooks module ${name}@inline loaded`, 'no line that says it failed to load, did not load or was not loaded', 'no hook skipped']
+  return [
+    { heading: heading('Each check is a command mod-builder ran itself'), rows: CHECKS.map((check) => row({ text: `  ${checks.states[check]}`, tone: STATE_TONE[checks.states[check]], width: 10 }, { text: CHECK_LABELS[check], width: 14 }, commands[check])) },
+    { heading: heading('Headless load: what the debug log must show'), rows: must.map((line) => row({ text: `  ${said}`, tone: STATE_TONE[load], width: 12 }, line)) },
+  ]
+}
+
+// What the pane draws for a session (SPEC.md 8.18): the header, the phase rail, the blocks of the frame the build
+// or edit is at, and the status line. `record` is drawn only when it is this session's own.
+export function paneModel(input: PaneInput): PaneModel {
+  const given: Partial<PaneInput> = isPlainObject(input) ? input : {}
+  const knowledge = readKnowledge(given.knowledge)
+  const sessionId = typeof given.sessionId === 'string' ? given.sessionId : ''
+  const entry = isSessionEntry(given.entry) ? given.entry : null
+  const record = given.record
+  const own = entry !== null && entry.modDir !== null && isBuildRecord(record) && record.modDir === entry.modDir && record.sessionId === sessionId ? record : null
+  const kind: Kind = own !== null ? (recordKind(own) as Kind) : entryKind(entry)
+  const phases = phasesOf(kind)
+  const later = phases.map((phase, index): RailItem => ({ text: `${index + 1} ${TITLES[phase]}`, state: 'later' }))
+  const title = 'MOD BUILDER'
+  const what = kind === 'edit' ? 'edit' : 'build'
+  if (entry === null) {
+    return { header: { title, state: 'no build or edit in this session', tone: 'dim' }, rail: later, isRailDim: true, blocks: [knowledgeBlock(knowledge)], status: null }
+  }
+  if (entry.modDir === null) {
+    return { header: { title, state: `${kind === 'edit' ? 'an edit' : 'a new mod'} \u00b7 its folder is not named yet`, tone: 'dim' }, rail: later, isRailDim: false, blocks: [knowledgeBlock(knowledge)], status: `${what} \u00b7 waiting for the mod's folder` }
+  }
+  // The folder as it is shown: one line, with no slash at its end.
+  const modDir = shown(entry.modDir).replace(/\/+$/, '')
+  const name = modName(modDir)
+  if (own === null) {
+    return { header: { title, state: `${name} \u00b7 its record is missing or another session's`, tone: 'warning' }, rail: later, isRailDim: true, blocks: [knowledgeBlock(knowledge)], status: null }
+  }
+  const { phase } = own
+  const at = phases.indexOf(phase)
+  const lower = TITLES[phase].toLowerCase()
+  const red: RedMode | undefined = (RED_MODES as readonly unknown[]).includes(own.red) ? own.red : undefined
+  const isSkipped = kind === 'edit' && red === 'skipped'
+  const skipWhy = own.skipped === 'no behaviour change' ? 'no behaviour change' : 'the test files fit'
+  const rail = phases.map((one, index): RailItem => {
+    const label = `${index + 1} ${TITLES[one]}`
+    if (one === 'red' && isSkipped) return { text: `${label} skipped: ${skipWhy}`, state: 'skipped' }
+    return index < at ? { text: `${label} \u2713`, state: 'done' } : index === at ? { text: label, state: 'current' } : { text: label, state: 'later' }
+  })
+  // What the record holds, read as far as it can be.
+  const evidence: Record<string, unknown> = isPlainObject(own.evidence) ? own.evidence : {}
+  const seen = (key: string): string => (typeof evidence[key] === 'string' ? (evidence[key] as string) : '')
+  const stood: Record<string, unknown> | null = isPlainObject(own.baseline) ? own.baseline : null
+  const failedThen = stood !== null && Array.isArray(stood.failed) ? CHECKS.filter((check) => (stood.failed as unknown[]).includes(check)) : []
+  const specThen = stood !== null && isPlainObject(stood.spec) ? shownCount(stood.spec.length) ?? 0 : 0
+  const hadVersion = stood !== null && shown(stood.version) !== '' ? shown(stood.version) : 'a mod with no version'
+  const base = kind === 'edit' ? `${name} \u00b7 edit of ${hadVersion}` : name
+  // A build's refused write is "1 edit refused", the Guard frame's words; in an edit, where "edit" names the work
+  // itself, it is "1 write refused".
+  const noun: [string, string] = kind === 'edit' ? ['write', 'writes'] : ['edit', 'edits']
+  const refusals = readRefusals(given.refusals, sessionId)
+  const refusedNow = refusals.counts[phase] ?? 0
+  const refused = refusedNow > 0 ? `${plural(refusedNow, noun[0], noun[1])} refused` : null
+  const baselineBlock = (): PaneBlock[] => {
+    if (kind !== 'edit' || seen('baseline') === '') return []
+    return [{
+      heading: [{ text: 'Baseline' }, failedThen.length === 0 ? { text: 'the mod as it stood', tone: 'dim' } : { text: `fails ${failedThen.map((check) => CHECK_LABELS[check]).join(', ')}: this edit is a repair`, tone: 'error' }],
+      rows: seen('baseline').split('; ').map(shown).filter((part) => part !== '').map((part) => row(`  ${part}`)),
+    }]
+  }
+  // Each phase that passed before the current one, with what its gate saw. Knowledge and Describe have no rows:
+  // the Knowledge block is theirs.
+  const passedBlocks = (): PaneBlock[] => phases.slice(0, at).filter((one) => one !== 'knowledge' && one !== 'describe' && seen(one) !== '').map((one) => evidenceBlock(kind, one, seen(one)))
+  if (own.stopped === true) {
+    return {
+      header: { title, state: `${base} \u00b7 stopped at ${TITLES[phase]}`, tone: 'warning' },
+      rail: rail.map((item) => (item.state === 'current' ? { ...item, state: 'later' as const } : item)), isRailDim: true,
+      blocks: [...baselineBlock(), ...passedBlocks()], status: null,
+    }
+  }
+  const blocks: PaneBlock[] = []
+  // After a refusal, until the next gate passes: what each phase may write (the Guard frame).
+  if (refused !== null) blocks.push(writeTable(kind, phase, red, modDir))
+  let state = base
+  let tone: Tone = 'dim'
+  // What did not pass at Verify, which a refusal's header keeps.
+  let notPassed = ''
+  let status: string | null = lower
+  const attempt = readAttempt(own.attempt, phase)
+  const attemptRows = (): Cell[][] => {
+    if (attempt === null) return []
+    return [row({ text: attempt.reason === '' ? '  not passed' : `  not passed: ${attempt.reason}`, tone: 'warning' }), ...attempt.failing.map((failing) => row({ text: '  fails', tone: 'error', width: 9 }, failing))]
+  }
+  switch (phase) {
+    case 'knowledge':
+    case 'describe': {
+      state = kind === 'edit' ? base : `${name} \u00b7 new mod`
+      blocks.push(knowledgeBlock(knowledge), ...baselineBlock())
+      blocks.push({ heading: [], rows: [row({ text: 'Everything the plan says about the API will cite one of these, by page and line.', tone: 'dim' })] })
+      const changed = knowledge.changes === null ? 0 : knowledge.changes.changed + knowledge.changes.added + knowledge.changes.removed
+      status = `${lower} \u00b7 snapshot ${knowledge.latest ?? 'none'}${changed === 0 ? '' : ` \u00b7 ${plural(changed, 'page', 'pages')} changed`}`
+      break
+    }
+    case 'spec': {
+      const spec = typeof given.spec === 'string' ? given.spec : null
+      state = `${base} \u00b7 ${spec === null ? 'SPEC.md not written yet' : 'SPEC.md written'}`
+      blocks.push(...baselineBlock())
+      const text = spec === null ? '' : (kind === 'edit' ? changeSection(spec, specThen) : spec).trim()
+      blocks.push(text === ''
+        ? { heading: heading(kind === 'edit' ? 'The change' : 'The spec'), rows: [row({ text: kind === 'edit' && spec !== null ? '  no section for this change yet, at the end of SPEC.md' : '  SPEC.md is not written yet', tone: 'dim' })] }
+        : { heading: heading(kind === 'edit' ? 'The change, as SPEC.md has it' : 'The spec, as SPEC.md has it'), rows: [], markdown: text })
+      blocks.push({ heading: [], rows: attemptRows() })
+      status = `spec \u00b7 ${refused === null ? '' : `${refused} \u00b7 `}waiting for your approval`
+      break
+    }
+    case 'verify': {
+      const checks = readChecks(given.checks, sessionId, phase) ?? newChecks(sessionId, phase, '')
+      const failed = CHECKS.filter((check) => checks.states[check] === 'failed')
+      const passed = CHECKS.filter((check) => checks.states[check] === 'passed').length
+      const running = CHECKS.find((check) => checks.states[check] === 'running')
+      notPassed = failed.length === 0 ? '' : `${failed.map((check) => CHECK_LABELS[check]).join(', ')} did not pass`
+      state = `${base} \u00b7 ${notPassed === '' ? 'checking the finished mod' : notPassed}`
+      if (failed.length > 0) tone = 'error'
+      blocks.push(...checkBlocks(checks, modDir, knowledge.version))
+      blocks.push({ heading: heading('Unchanged since their gates'), rows: [row(`  SPEC.md since approval \u00b7 the test files since ${isSkipped ? 'the baseline' : 'Red'}`, { text: 'compared by hash', tone: 'dim' })] })
+      blocks.push({ heading: [], rows: attemptRows() })
+      status = `verify \u00b7 ${passed} of 4 checks passed${running === undefined ? '' : ` \u00b7 ${CHECK_LABELS[running]} running`}${notPassed === '' ? '' : ` \u00b7 ${notPassed}`}`
+      break
+    }
+    case 'done': {
+      const finished = readFinished(own.finished)
+      state = `${name}${finished.version === null ? '' : ` ${finished.version}`} \u00b7 ${kind === 'edit' ? 'edited' : 'built'} and checked`
+      tone = 'success'
+      const snapshot = seen('knowledge').startsWith('snapshot ') ? shown(seen('knowledge').slice('snapshot '.length)) : knowledge.latest ?? 'unknown'
+      const counted = [finished.files === null ? null : plural(finished.files, 'file', 'files'), finished.tests === null ? null : plural(finished.tests, 'test', 'tests')].filter((one) => one !== null)
+      blocks.push({
+        heading: heading(kind === 'edit' ? 'What was changed' : 'What was built'),
+        rows: [
+          row(`  ${modDir}/`, ...(counted.length === 0 ? [] : [{ text: counted.join(' \u00b7 '), tone: 'dim' as Tone }])),
+          // The gate's own "Built on" line when it stored one: it names the types the typecheck ran against.
+          row(`  ${finished.builtOn ?? `${kind === 'edit' ? 'checked' : 'built'} on Claude Code ${knowledge.version}, from the documents of ${snapshot}`}`),
+        ],
+      })
+      const total = phases.reduce((sum, one) => sum + (refusals.counts[one] ?? 0), 0)
+      const where = phases.filter((one) => (refusals.counts[one] ?? 0) > 0).map((one) => TITLES[one])
+      blocks.push({
+        heading: heading('What was checked'),
+        rows: [row(`  ${seen('verify') === '' ? 'validate, the tests, the typecheck and a headless load' : shown(seen('verify'))}`), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
+      })
+      blocks.push({ heading: heading('Try it'), rows: [row(`  claude --plugin-dir ${modDir}`, ...(finished.command === null ? [] : [{ text: 'then', tone: 'dim' as Tone }, `/${finished.command}`]))] })
+      status = null
+      break
+    }
+    default: {
+      // Scaffold, Red and Green: each passed phase with what its gate saw, then the phase the work is in.
+      const approved = clockOf(own.specApprovedAt)
+      state = `${base}${approved === null ? '' : ` \u00b7 approved ${approved}`} \u00b7 ${kind === 'edit' ? 'editing' : 'building'}`
+      blocks.push(...baselineBlock(), ...passedBlocks())
+      if (phase === 'green') {
+        const checks = readChecks(given.checks, sessionId, phase)
+        if (checks !== null && CHECKS.some((check) => checks.states[check] !== 'waiting')) blocks.push(...checkBlocks(checks, modDir, knowledge.version).slice(0, 1))
+      }
+      blocks.push({ heading: [{ text: `${at + 1} ${TITLES[phase]}` }, { text: 'working\u2026', tone: 'current' }], rows: attemptRows() })
+      // At Red a test that passes is no progress, so the line says how many fail.
+      const tests = attempt === null || attempt.passed === null || attempt.tests === null ? ''
+        : phase === 'red' ? ` \u00b7 ${attempt.tests - attempt.passed} of ${plural(attempt.tests, 'test', 'tests')} fail`
+          : ` \u00b7 ${attempt.passed} of ${plural(attempt.tests, 'test', 'tests')} pass`
+      status = `${lower}${tests}`
+      break
+    }
+  }
+  if (refused !== null && phase !== 'done') {
+    state = `${base} \u00b7 ${refused} \u00b7 phase ${TITLES[phase]}${notPassed === '' ? '' : ` \u00b7 ${notPassed}`}`
+    tone = notPassed === '' ? 'warning' : 'error'
+    if (!(status ?? '').includes(refused)) status = `${status} \u00b7 ${refused}`
+  }
+  return { header: { title, state, tone }, rail, isRailDim: false, blocks: blocks.filter((block) => block.heading.length > 0 || block.rows.length > 0 || block.markdown !== undefined), status }
 }
