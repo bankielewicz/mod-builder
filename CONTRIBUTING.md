@@ -28,5 +28,7 @@ The working rules are in the design record, [`docs/mod-builder/SPEC.md`](docs/mo
 
 ## Pull requests
 
-Changes reach `main` through a pull request. Say what the change does, how it was checked, and anything left
-undone.
+Changes reach `main` through a pull request; its template asks what the change does, who decided it, how it
+was checked, and what was left undone. A workflow (`.github/workflows/ci.yml`) validates the marketplace and
+the plugin and runs both test commands on Claude Code 2.1.322; it does not run the typecheck. Taking part is
+under the [code of conduct](CODE_OF_CONDUCT.md). The code is under the [MIT licence](LICENSE).

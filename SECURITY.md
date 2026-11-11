@@ -9,8 +9,9 @@ network) is in [docs/reference](docs/reference/README.md).
 
 ## Reporting a problem
 
-Report a security problem privately, not in a public issue: on the repository's GitHub page, open the
-**Security** tab and choose **Report a vulnerability**. Say what you ran, on which Claude Code version, and
+Report a security problem privately, not in a public issue. Private vulnerability reporting is on for this
+repository: open the **Security** tab and choose **Report a vulnerability**, or go to
+<https://github.com/bankielewicz/mod-builder/security/advisories/new>. Say what you ran, on which Claude Code version, and
 what happened.
 
 A known limit listed in [docs/limits](docs/limits/README.md) is not a vulnerability; a way around the guard or a
