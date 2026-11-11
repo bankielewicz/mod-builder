@@ -56,6 +56,8 @@ export async function startSite(pages, extraIndexLines = []) {
     answer(res, typeof page === 'string' ? { body: page } : page);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  // A test that fails before it closes its site must not keep its process alive: the site alone holds nothing open.
+  server.unref();
   site.origin = `http://127.0.0.1:${server.address().port}`;
   site.hold = (name) => {
     let arrive;
