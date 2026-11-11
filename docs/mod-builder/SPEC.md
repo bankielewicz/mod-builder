@@ -2627,3 +2627,27 @@ seven small folders of template files there. Nothing in the repository was touch
 did not delete them (outside the repository); it wrote the owner a script that removes each only when it
 holds a scaffolded mod and nothing else. Later readers and agents were told to `cd` to an absolute path in
 every command that writes.
+
+Added after the building session's own check of 9.16 against what the probe left [read in the built mod and
+in the gate's files]: the mod holds `types/index.d.ts`, named in its manifest; `tests/count.test.tsx` has six
+tests and `tests/pane.test.tsx` the template's two; and the `tsconfig.json` the last gate wrote names both
+test files under `files`, which is plan 37 on the real engine.
+
+**More that is known and left:**
+- Any file of a build that can't be read now stops the four gates that typecheck; before, only a file under
+  `tests/` could.
+- A link named as a test outside `tests/` is refused at Scaffold and Green; it goes away by a shell command
+  (no guarded tool removes a file).
+- A build opened by 0.2.0 that is still at Scaffold with a reshaped `hooks/` is refused by the new check, and
+  `--again` writes over what it reshaped.
+- The pane's table still says Scaffold may write "everything": true of the guard, and silent on what the
+  gate holds.
+
+**Not shown on the real engine:** a mod that is not a pane, replacing the template's tests at Red and its
+code at Green (the rule and a module test hold it; the skill now tells a model to do it); the refusals for
+an unreadable mod and a linked test file; a 0.2.0 record meeting the new checks.
+
+**Stale until the documents step** (9.8, step 7): `docs/limits` ("reshaped from it at Scaffold", "declare
+such things at Scaffold"), `CLAUDE.md` ("Scaffold may write everything"), `docs/reference` (the gate's new
+command, `bash scripts/scaffold.sh --check`). The build skill is at 194 lines against its own limit of
+under 200, with steps 3 to 5 still to add wording.
