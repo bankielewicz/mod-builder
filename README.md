@@ -114,6 +114,12 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
   back a phase at all; a refused validate, test run, typecheck or load is answered with the command's last 20
   lines (for validate, the last 20 before its plugin-directory section), so that it can be fixed before
   `hooks/` closes at Verify.
+- **A test can name only what Scaffold left.** Scaffold and Red each end on the typecheck, so that a file is
+  checked while it can still be changed. A test written at Red that names a type the contract does not
+  declare, or a value `hooks/` does not export yet, is a type error there; declare such things at Scaffold.
+- **A test that can never pass stops the build at Green**: tests are frozen at Red and nothing goes back.
+  So does a types file written by another session after Red that the frozen tests fail against (`SPEC.md`
+  7.10 lists these).
 - **Red accepts only failures that open with `AssertionError`.** A test that throws before its `expect` is
   refused, and the test has to be rewritten to drive the mod through its events.
 - **Native Windows paths are not judged**: the guard reads `/` paths only (WSL is unaffected). macOS is
