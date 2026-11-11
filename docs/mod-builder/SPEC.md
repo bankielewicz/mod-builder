@@ -1694,8 +1694,35 @@ the draft threw on damaged stored values, counted for every session of a folder,
 `_changes.md`. The second read the revision: 51 of 335 survived (about 15 equivalent), with control characters
 reaching the check rows and a doubled slash. The third read the hooks module's draft: 70 of 167 survived, with
 writes refused side by side each toasted and under-counted, check states of an earlier gate shown after a gate
-that refused early, and the stop above. Each defect was fixed and each gap that a test can reach was tested
-before its red commit.
+that refused early, and the stop above. Those defects were fixed before the red commits, with tests.
+
+**What stays untested or thin** (the third reader's 167 mutants, run again on `1735192`: 21 no longer apply,
+118 fail a test, 28 survive, 10 of which that reader judged equivalent):
+- A check's state between its own command and the gate's verdict (a mutant that marks it passed regardless
+  survives, because the gate marks the check it refused at); the load's state when its log does not show the
+  mod, apart from one case.
+- The test run a refusal carries at an edit's Red and at a skipped Red (only a build's and an edit's Green
+  are tested).
+- The bookkeeping's own failures: a state, a refused gate or a settled state that can't be written (the test
+  world has no failing store write), and the settle after a check that throws.
+- The redraws around a fetch, and the gaps between cells. The test world does not see `$.ui.invalidate`.
+- In the rules: the spec's markdown is not cut to the pane's rows (the engine cuts what it draws); several
+  tests pin the wording of the write tables by copying it.
+- The module test that no gate reads the pane's fields runs one passing Green gate; it does not run a refusing
+  gate, Spec, Verify or the guard with damaged values.
+
+**The stopped frame is not reached by `/mod-builder stop`.** The stop unbinds the session, so the pane then
+says "no build or edit in this session" and the status line is cleared (point 4 holds). The rule's drawing of a
+stopped record (header "stopped at <phase>", dim rail) is reached only when a record is stopped while the
+session is still bound to it, which the tests arrange by hand. For the driving session: leave it, or keep the
+session's last folder so the pane shows what was stopped.
+
+**Differences from the pictures that 8.18 did not list** (the second reader): Main draws "N changed, N added, N
+removed" where the picture has "N changed, N the same"; the approval time is said with "UTC"; Verify's "6 of
+6" and "0 errors" are not drawn (the gate records a count at its end, not per check); "Unchanged since their
+gates" is a fixed row that says what the gate compares, not a result. And 8.18's Guard row says the count of
+refusals is "in the record": it is beside it, under `refusals:<folder>`, so that the guard never writes the
+record.
 
 **Probed** [ran, 2.1.322, two interactive sessions in a terminal of 150 columns, the hooks module loaded with
 `--plugin-dir` (the second with the file plan 31 committed, by its sha256), each a real build of a small pane
@@ -1710,8 +1737,12 @@ mod in a scratch folder]:
   `verify · 1 of 4 checks passed · test running`.
 - Done: `hi-probe 0.1.0 · built and checked`, "6 files · 3 tests", the gate's "Built on" line, "Try it" with
   `/hi-probe`, and the status line cleared.
-- **Not seen:** the toasts (gone before a capture of the screen); an edit's frames, a repair and a stopped
-  record, which are held by module tests alone.
+- A headless session loads the committed module: `claude --plugin-dir plugins/mod-builder -p /cost
+  --debug-file <log>` exited 0, and the log holds `hooks module mod-builder@inline loaded` and no line that
+  says a hook was skipped or failed.
+- **Not seen:** the toasts (gone before a capture of the screen); "refreshing…" while a fetch runs, and writes
+  refused side by side (both rest on a variable of the module that only the test world has exercised); an
+  edit's frames, a repair and a stopped record, which are held by module tests alone.
 
 **Known and left** (limits; `docs/limits/README.md` is step 5's to update):
 - A gate call the engine cuts off leaves its check "running" until the next gate starts.
@@ -1729,5 +1760,8 @@ mod in a scratch folder]:
   `a.test.tsx` beside `a.test.ts`, go unchecked in a build. Leave it, or give builds the same rule.
 - **8.11's open points still stand:** a test file that typechecks but does not load at a repair's Red; the
   plugin's own source edited from an installed copy.
-- **The header's wording after a refused write** (above) changes an approved frame's text by adding the mod's
+- **The header's wording after a refused write** (8.20) changes an approved frame's text by adding the mod's
   name, and uses another noun in an edit.
+- **A gate has a new answer** (8.20): "was stopped or moved while this gate ran, so nothing was moved". It was
+  decided by the building session while fixing the stop defect, without the driving session.
+- **The stopped frame** (8.20): leave it unreachable by `/mod-builder stop`, or keep what was stopped in view.
