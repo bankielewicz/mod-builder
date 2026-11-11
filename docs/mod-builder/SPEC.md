@@ -3,8 +3,9 @@
 Status: **approved by the owner, 2026-11-10** ("Approve as written (Recommended)"; section 6 holds each
 decision). Built so far: steps 1 and 2 of section 7.1 (accepted, on `main`, the Red gate's fix of 7.3
 included, and step 3, the hooks module, 7.5), step 4, the `build` skill with what 7.5 settled, on
-`main` (7.7); and 7.7's decisions 1 and 2 with step 5, the demonstration and the README, on the branch
-`step-5-demo`, waiting for review (7.8). What waits until after the MVP is in `BACKLOG.md`.
+`main` (7.7); and 7.7's decisions 1 and 2 with step 5, the demonstration and the README (7.8), with what the
+driving session's demonstrations added (7.9 to 7.12), accepted by the owner and on `main`. The repository is
+on GitHub (7.13). What waits until after the MVP is in `BACKLOG.md`.
 
 Mockups of the whole flow, six frames: https://claude.ai/artifact/LYXSh2gSg17pD5C2MDiAGr
 (mockups, not captures; wording and numbers in them are placeholders).
@@ -1004,6 +1005,9 @@ switched off by `--settings`; a watch script chose option 2, "Approve", once, an
 - **Section 4's four points hold on the final code:** point 1 and 2 here and in 7.11; point 3 in 7.8 and by
   the refusal above; point 4 in 7.8. The MVP candidate works as section 4 defines it. Nothing is pushed.
 
+(Added later by the building session: "Nothing is pushed" was so when this section was written. The history
+was pushed afterwards, and its first pull request merged by the owner; 7.13.)
+
 ### 7.13 The history's author address, and the repository on GitHub (2026-11-10)
 
 The owner named `https://github.com/bankielewicz/mod-builder` as this repository's GitHub repository
@@ -1022,7 +1026,8 @@ every commit carried a personal address as author and committer.
   (`mod-builder-before-email-rewrite.bundle`, beside the repository's folder). It holds the personal address
   and is not pushed.
 - **Pushed:** `main` as rewritten, to give the pull request a branch to target; this section, the README's
-  two corrections and `CLAUDE.md` go in a pull request, which the building session does not merge.
+  two corrections and `CLAUDE.md` go in a pull request, which the building session does not merge. The owner
+  merged it (pull request 1, `8be9c4f`) [ran: `gh pr list --state all`].
 - **Where this file is.** In the same pull request the owner asked for this file and `BACKLOG.md` to be moved
   from the repository's top folder into `docs/mod-builder/` ("move backlog & spec into docs/<slug>/ folder");
   the folder's name was the building session's choice. `README.md` and `CLAUDE.md` name the new paths. In
