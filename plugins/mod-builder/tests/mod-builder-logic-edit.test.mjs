@@ -636,7 +636,9 @@ test('a new version that is not three numbers is refused, whatever the baseline 
 // --------------------------------------------------------------------------- the typecheck covers every test file
 
 test('the typecheck names each test file outside hooks/, tests/ and types/, and is as before with none', () => {
-  const included = (testFiles) => JSON.parse(typecheckConfig('/t/claude-code.d.ts', MOD, testFiles)).include;
+  // The folders the compiler is given, then the files it is named: SPEC.md 8.14 says under which key each goes.
+  const handed = (config) => [...config.include, ...(config.files ?? [])];
+  const included = (testFiles) => handed(JSON.parse(typecheckConfig('/t/claude-code.d.ts', MOD, testFiles)));
   const base = ['/t/claude-code.d.ts', '/work/mod/hooks', '/work/mod/tests', '/work/mod/types'];
   assert.equal(typecheckConfig('/t/claude-code.d.ts', MOD, []), typecheckConfig('/t/claude-code.d.ts', MOD));
   assert.deepEqual(JSON.parse(typecheckConfig('/t/claude-code.d.ts', MOD)).include, base);
@@ -719,7 +721,8 @@ test('the test files an error names are sorted, whatever order the compiler prin
 });
 
 test('the typecheck names a test file by its path made whole, once', () => {
-  const include = JSON.parse(typecheckConfig('/t/c.d.ts', MOD, ['./lib/y.test.tsx', 'lib//y.test.tsx', 'lib/x/../y.test.tsx', 'node_modules/dep/d.test.ts'])).include;
+  const config = JSON.parse(typecheckConfig('/t/c.d.ts', MOD, ['./lib/y.test.tsx', 'lib//y.test.tsx', 'lib/x/../y.test.tsx', 'node_modules/dep/d.test.ts']));
+  const include = [...config.include, ...(config.files ?? [])];
   assert.deepEqual(include.slice(4), ['/work/mod/lib/y.test.tsx']);
 });
 

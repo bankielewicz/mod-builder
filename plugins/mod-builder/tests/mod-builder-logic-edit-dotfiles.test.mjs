@@ -8,7 +8,10 @@ import { typecheckConfig } from '../hooks/mod-builder-logic.ts';
 
 const MOD = '/work/mod';
 const BASE = ['/t/claude-code.d.ts', '/work/mod/hooks', '/work/mod/tests', '/work/mod/types'];
-const included = (testFiles) => JSON.parse(typecheckConfig('/t/claude-code.d.ts', MOD, testFiles)).include;
+// What the compiler is handed: the folders it is given, then the files it is named (SPEC.md 8.14 says under which
+// key each goes; tests/mod-builder-logic-edit-file-roots.test.mjs holds that).
+const handed = (config) => [...config.include, ...(config.files ?? [])];
+const included = (testFiles) => handed(JSON.parse(typecheckConfig('/t/claude-code.d.ts', MOD, testFiles)));
 
 test('a test file whose name opens with a dot is named, though it lies in hooks/, tests/ or types/', () => {
   assert.deepEqual(included(['hooks/.test.ts']), [...BASE, '/work/mod/hooks/.test.ts']);
