@@ -2506,3 +2506,51 @@ Decided by the driving session ("corrections to the mechanism, mine to decide"),
    **the gate reads the verdict only from the record the mod wrote from `turn.complete`, never from
    anything the model passes, and the gate's input schema gains no field for it.** A test holds that.
 3. **Teammates** are refused at spawn by `isTeammate` (9.13, point 5).
+
+### 9.15 Step 2 as it will be built: how the gate knows what the scaffold laid (2026-11-11, before the plans)
+
+Decided by the building session where 9.4's letter can't be built; for the driving session to keep or
+change at its review of step 2.
+
+- **9.4 says "`scaffold.sh` records, in the build's record, the hash of every file it laid". It can't:**
+  the model runs the script through the Bash tool, and a script has no way into `$.store`; a hash the
+  model could hand over would be the model's word. **Instead the gate establishes it itself:** it runs the
+  same script, `scaffold.sh --check <mod folder> <name>`, through `$.process.run`. In that mode the script
+  writes nothing in the mod: it makes the template's files for that name in a temporary folder, as it does
+  when it lays them, and compares. One renderer, so the check can't drift from what is laid.
+- **The name** is the `name` in the mod's `.claude-plugin/plugin.json`, read by the gate. A manifest whose
+  name is not the one the scaffold was given makes `hooks/` differ, and is refused as such.
+- **The bytes of the template a build sets at Scaffold**, all from the mod's name, by the script's own
+  replacement before the comparison: in `hooks/register.tsx` the header comment, the command's name and its
+  description, the `command.run` matcher, the pane's `id`, its `title` (the name with its first letter
+  raised and hyphens as spaces) and the `ui.render` matcher's `requestId`; in `tests/pane.test.tsx` the
+  `plugin`, `requestId`, `title` and the command run. `hooks/hooks.json` has none. The author is in the
+  manifest only, which Scaffold may change. Nothing moves out of `hooks/`.
+- **What the check answers**, one line for each: `changed: <path>` (the file differs from the template's,
+  or is a link or no plain file), `missing: <path>`, `extra: <path>` (anything else under `hooks/` or
+  `tests/` that is not a folder). Exit 0 when there is none; the gate's refusal names them.
+- **The way back** (9.4: "run the scaffold again") did not exist: the script refuses a folder that holds
+  any of its files. A second mode, `scaffold.sh --again <mod folder> <name>`, writes the three files under
+  `hooks/` and `tests/` as the template has them, over what is there, leaves the manifest and everything
+  else, deletes nothing, and prints the extra files it found, which the model removes. Without a flag the
+  script is as it was.
+- **When it runs:** first in Scaffold's gate, so that a build that wrote ahead is told so before a failing
+  test tells it something else, and once more after the typecheck, so that what was checked is what closes.
+- **The guard's table is not changed:** Scaffold may still write everything (the manifest, `types/`, a
+  `README.md`, and the files it must be able to put back). The gate is what holds `hooks/` and `tests/`.
+- **Red may replace the template's tests.** Red's rule (more tests than at Scaffold, a new name failing by
+  assertion) does not ask that the template's two tests stay, so a mod that is not a pane rewrites
+  `tests/pane.test.tsx` at Red and `hooks/register.tsx` at Green. The build skill said to reshape both at
+  Scaffold and to leave the recorded tests alone; its wording changes with this step, though 9.8 names no
+  step for it, because the driving session's probe runs that skill.
+- **A limit this brings** (for `docs/limits`): `hooks/` is the template when Red's typecheck runs, so a
+  test written at Red can name only what the template's module exports (`register`) and what `types/`
+  declares (open at Scaffold). A test that imports a helper from `hooks/` can't typecheck at Red. Tests
+  drive the mod through its events.
+- **A build's typecheck names its test files** (9.7) at all four gates that typecheck (Scaffold, Red,
+  Green, Verify), by the rule an edit uses (8.14): every file under `tests/` and every file named as a
+  test, as root files. A build opened by 0.2.0 that is past Red meets the stricter check at Green with
+  its tests closed: a test file the old check passed over (`tests/.x.test.ts`, `a.test.tsx` beside
+  `a.test.ts`) that has a type error is refused there, and `/mod-builder stop` is the way out until 9.11
+  is built.
+- Two plans: the closed Scaffold; then the typecheck.
