@@ -13,7 +13,8 @@ dated copy of Anthropic's mod documentation, test-first, through eight guarded p
 phase guard) and the latest 7.x sections before changing behaviour. `docs/mod-builder/BACKLOG.md` holds what
 waits until after the MVP. Below, and in the code's comments, "`SPEC.md` 7.x" means that specification; a
 `SPEC.md` named among a mod's files (`tests/`, `hooks/`) is the spec of the mod being built, in its own folder.
-`README.md` lists the plugin's limits; a behaviour change usually changes a limit there too.
+`docs/limits/README.md` lists the plugin's limits; a behaviour change usually changes a limit there too.
+`README.md` is the short entry point for someone arriving from GitHub; the detail lives under `docs/`.
 
 ## Commands
 
@@ -30,7 +31,7 @@ node --test plugins/mod-builder/tests/mod-builder-logic-built.test.mjs   # one n
   sandbox; that changes neither their output nor their exit code.
 - The typecheck runs against the installed build's types, which Claude Code writes when its built-in
   `plugin-authoring` skill loads (load it once in a session first; the types are never copied into this
-  repository). `README.md`, "Its own tests and typecheck", has the full reproducible command: it writes a
+  repository). `docs/development/README.md` has the full reproducible command: it writes a
   `tsconfig.json` outside the repository that includes the types file, `hooks/` and `tests/`, and runs `tsc`.
 - To try the plugin: `claude --plugin-dir plugins/mod-builder`, then `/mod-builder:build <what the mod does>` in
   the folder the mod should be built under. To run a headless probe without the installed copy of mod-builder
