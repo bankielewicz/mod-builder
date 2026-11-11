@@ -2426,3 +2426,64 @@ Also from the probes, into the design (the driving session):
   refuses a test-writer or implementer spawn that is a teammate, with the reason.
 - The agents name no model; what they inherit is stated in `docs/limits`.
 
+### 9.13 The second probes, before the reader's plan (2026-11-11, the building session)
+
+[ran] as 9.10: 2.1.322, sonnet, the probe mod `ap` with a guard added (it refuses a call by one of its own
+agents to any tool but `Read`, `Grep`, `Glob`) and two more readers; four more sessions, two of them
+headless (`claude -p`). **Points 3 and 4 do not fit 9.12 as written; the building session stopped here for
+the driving session.**
+
+1. **`$.prompt.submit` while the main turn is still running is queued.** The main model was inside a
+   45-second foreground command when the reader ended. The hook's `$.prompt.submit` was logged at
+   17:03:56; the main turn was not interrupted and ended at 17:04:35; only then did the call resolve
+   (`{ text, origin: { kind: 'plugin', name: 'ap' } }`), and the prompt ran as a turn of its own ("Prompt
+   from the ap plugin") in which the model did what it said. So the call's promise stays open for as long
+   as the main turn runs: the hook must not `await` it before its other work (the record's write and the
+   redraw come first, then `void $.prompt.submit(...)` with a `.catch`). Two earlier tries are no evidence:
+   the model put its `sleep` in the background, and a plain `sleep 40` was blocked by the harness, so the
+   main turn had ended before the reader did.
+2. **The denied spawn, with the denied type really spawned** (9.10's point 2 is this run; an earlier one
+   had started the allowed type twice through a mistake in the probe): the other plugin's hook saw
+   `type=ap:reader2`, the spawning mod's own `agent.spawn` hook's `next` resolved to
+   `{"deny":"dn: no reader2 today"}`, and `$.agent.spawn` resolved to
+   `{"deny":"Subagent spawn denied by a plugin: dn: no reader2 today"}`.
+3. **The `advisor` tool can't be refused by the guard.** A reader told to call it did: its transcript has
+   a `server_tool_use` named `advisor` and its result, and the advice came back into its context. The call
+   never reached the mod's `tool.call` hook (the log has the reader's `Glob` and `Read` and no `advisor`).
+   The types say so: the API runs such a call itself, "no `tool.check` and no `tool.call` chain, so a hook
+   reads them here and cannot refuse or rewrite one" [types: `TurnStepInput`]. `disallowedTools:
+   ['advisor']` in the agent's registration did not remove it either: that reader also called it and
+   listed it. It is there because this machine's settings name an `advisorModel`. What it can do: read
+   the reader's conversation and answer with advice; it writes no file. So "must not be able to consult
+   anything" can't be held by the mod on a machine with an advisor set; "must not write" still holds.
+4. **Headless, the guard as decided breaks the reader.** In a `-p` run the engine tells a subagent to
+   deliver its report with a tool, `SubagentHandback` ("Only a SubagentHandback call reaches your caller as
+   your result"), which the agent has beside the three tools the mod named.
+   - With the guard refusing it: the reader was refused twice ("ap: a reader may call Read, Grep and Glob
+     only, not SubagentHandback"), the engine asked for it three more times, the run took 57 s, and the
+     `answer` the mod's `turn.complete` hook received was 732 characters of the agent explaining that it
+     would not call the tool again, not its report. `$.prompt.submit` then threw: "$.prompt.submit is not
+     available in this mode: no session is bound in this process".
+   - With the guard allowing `SubagentHandback` too: `turn.complete`'s `answer` was the handed-back
+     message, whole (5,017 characters, the same as the tool's `message`), 15 s after the tool call
+     returned; `$.prompt.submit` resolved, the prompt ran as a later turn in the same `-p` process ("The ap
+     plugin sent a message: ..."), and the model called the mod's tool. The process stayed until the
+     reader had ended in both runs (65 s and 37 s). One run each.
+   - In that second run the engine also gave the reader's report to the main model itself, as a
+     "[Subagent hand-back] ... final report of a subagent" message. So headless, the main model reads what
+     the reader wrote; the gate's verdict still comes from the record.
+   - In interactive sessions no reader was given or called `SubagentHandback`.
+   **Proposed, for the driving session:** the guard allows the reader `Read`, `Grep`, `Glob` and
+   `SubagentHandback` (which only ends its run with its report); the nudge is sent with a `.catch`; no
+   waiting inside the gate by `$.process.run` of a sleep is built, since a later turn does exist headless;
+   `docs/limits` says that headless rests on one run, that the main model sees the reader's report there,
+   and that when the prompt can't be submitted the build stays at Red until the gate is called again.
+5. **The spawn hook can tell a teammate.** Asked to start a teammate named `scout`, the model's Agent
+   call reached the mod's `agent.spawn` hook with `isTeammate: true` and `name: "scout"` (the other keys:
+   `tool_use_id`, `prompt`, `description`, `subagentType`, `provider`, `parentModel`, `permissionMode`,
+   `background`, `fork`), and `next` resolved to `{ model, agentId: "scout@session-b0935ee1", teammateId:
+   "scout@session-b0935ee1" }`. The teammate's `Write` made its file and **did not reach the mod's
+   `tool.call` hook**: 9.10's point 3 read this in the types and this shows it. So a refusal in
+   `agent.spawn` on `isTeammate` is possible and needed. The same input shows an agent's `permissionMode`
+   is the parent's (`acceptEdits` here).
+
