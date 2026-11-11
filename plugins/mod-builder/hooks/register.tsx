@@ -9,7 +9,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import {
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, phaseTitle, pluginFolderBeingMade, redGate,
-  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, validateLines, COMPILERS, verifyGate,
+  scaffoldGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
 import type { BuildRecord, Hashes, Phase, Run, SpecNow, TypesCandidate, Verdict } from './mod-builder-logic'
 
@@ -265,6 +265,42 @@ async function unchanged($: Engine, record: BuildRecord, withTests: boolean): Pr
 const validate = ($: Engine, modDir: string) => run($, ['claude', 'plugin', 'validate', '--strict', modDir], VALIDATE_MS)
 const test = ($: Engine, modDir: string) => run($, ['claude', 'plugin', 'test', modDir], TEST_MS)
 
+type Typecheck = Exclude<Awaited<ReturnType<typeof typecheckCommand>>, string>
+type TypesFile = { path: string; sha256: string }
+
+// The typecheck, once for each distinct types file, in the order of their hashes; it stops at the first that fails.
+// `against` is the types file of the last run: the one a failure is named for.
+async function typecheckEach($: Engine, typecheck: Typecheck, modDir: string): Promise<{ ran: Run & { errors: string }; against: TypesFile }> {
+  let ran: Run & { errors: string } = { exitCode: Number.NaN, output: '', errors: '' }
+  let against = typecheck.types[0] as TypesFile
+  for (const types of typecheck.types) {
+    against = types
+    await $.fs.write(typecheck.config, typecheckConfig(types.path, modDir))
+    ran = await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd)
+    if (ran.exitCode !== 0) break
+  }
+  return { ran, against }
+}
+
+// What a refused typecheck quotes: the compiler's last lines, and always the types file it failed against, though
+// the compiler printed nothing.
+function typecheckDetail(ran: Run & { errors: string }, against: TypesFile): string {
+  const lines = lastLines(said(ran))
+  const types = `the types file ${against.path} (sha256 ${against.sha256})`
+  return lines === '' ? `It printed nothing. It ran against ${types}.` : `The last lines of its output, against ${types}:\n${lines}`
+}
+
+// The typecheck as Scaffold and Red end on it (SPEC.md 7.10): the same one Green and Verify run, here while the
+// files it judges can still be changed. Answers the refusal, or the hashes of the types it passed against.
+async function typecheckNow($: Engine, modDir: string): Promise<Step | string[]> {
+  const typecheck = await typecheckCommand($, modDir)
+  if (typeof typecheck === 'string') return refuse(typecheck)
+  const { ran, against } = await typecheckEach($, typecheck, modDir)
+  const verdict = typecheckGate(ran)
+  if (!verdict.pass) return { verdict, detail: typecheckDetail(ran, against) }
+  return [...new Set(typecheck.types.map((one) => one.sha256))].sort()
+}
+
 // The four checks that end Green and end Verify, run in this order: `claude plugin validate --strict`, `claude
 // plugin test`, the typecheck, and a headless load read in its debug log; the tests' and SPEC.md's hashes are
 // compared before them and after. A failed typecheck or load is answered with the last lines of what it said.
@@ -300,15 +336,7 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
   await $.fs.write(log, '')
   const validated = await validate($, modDir)
   const tested = await test($, modDir)
-  // The typecheck, once for each distinct types file, in the order of their hashes; it stops at the first that fails.
-  let typechecked: Run & { errors: string } = { exitCode: Number.NaN, output: '', errors: '' }
-  let against = typecheck.types[0] as { path: string; sha256: string }
-  for (const types of typecheck.types) {
-    against = types
-    await $.fs.write(typecheck.config, typecheckConfig(types.path, modDir))
-    typechecked = await run($, typecheck.argv, TYPECHECK_MS, typecheck.cwd)
-    if (typechecked.exitCode !== 0) break
-  }
+  const { ran: typechecked, against } = await typecheckEach($, typecheck, modDir)
   // `/cost` is answered by Claude Code itself: the session loads the mod and makes no model call.
   const loaded = await run($, ['claude', '--plugin-dir', modDir, '-p', '/cost', '--debug-file', log], LOAD_MS)
   const logged = (await readText($, log)) ?? ''
@@ -319,12 +347,7 @@ async function fourChecks($: Engine, record: BuildRecord): Promise<Step> {
     const at = refusedAt(runs, record.testsAtRed as number)
     if (at === 'validate') return quoting(verdict, validateLines(said(validated)))
     if (at === 'test') return quoting(verdict, lastLines(said(tested)))
-    if (at === 'typecheck') {
-      // A failure always names the types file it failed against, though the compiler printed nothing.
-      const lines = lastLines(said(typechecked))
-      const types = `the types file ${against.path} (sha256 ${against.sha256})`
-      return { verdict, detail: lines === '' ? `It printed nothing. It ran against ${types}.` : `The last lines of its output, against ${types}:\n${lines}` }
-    }
+    if (at === 'typecheck') return { verdict, detail: typecheckDetail(typechecked, against) }
     // The load: the last lines of what the command said when it did not exit 0, and after them every line of its
     // log that says a hook of the mod was skipped, however many (the limit is the command's alone); with neither,
     // the last of the log's lines that name the mod.
@@ -379,9 +402,12 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       // A refused validate or test run is quoted as a refused typecheck is (SPEC.md 7.9): validate's own findings,
       // which stand before its plugin-directory section, or the last lines of the test run.
       if (!verdict.pass) return quoting(verdict, validated.exitCode !== 0 ? validateLines(said(validated)) : lastLines(said(tests)))
+      // The typecheck too (SPEC.md 7.10): hooks/ and types/ close when Scaffold passes, and Red ends on a typecheck.
+      const types = await typecheckNow($, modDir)
+      if (!Array.isArray(types)) return types
       return {
         verdict,
-        evidence: `claude plugin validate --strict exited 0; ${verdict.tests} tests ran`,
+        evidence: `claude plugin validate --strict exited 0; ${verdict.tests} tests ran; the typecheck passes (types sha256 ${types.join(', ')})`,
         change: { testsAtScaffold: verdict.tests as number, namesAtScaffold: testNames(tests.output) },
       }
     }
@@ -395,6 +421,11 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       const tested = await test($, modDir)
       const verdict = redGate(tested, record.testsAtScaffold as number, record.namesAtScaffold as string[])
       if (!verdict.pass) return quoting(verdict, lastLines(said(tested)))
+      // The typecheck, after the test run's verdict (SPEC.md 7.10): tests/ closes when Red passes, so a test that
+      // does not typecheck is refused here, while it can still be changed. It runs before the tests are hashed
+      // again, so what is recorded is what was typechecked.
+      const types = await typecheckNow($, modDir)
+      if (!Array.isArray(types)) return types
       const testHashes = await hashTests($, modDir)
       if (before === null || testHashes === null) return refuse('the files under tests/ could not be read')
       const same = hashGate(before, testHashes)
@@ -403,7 +434,7 @@ async function check($: Engine, record: BuildRecord): Promise<Step> {
       if (!still.pass) return { verdict: still }
       return {
         verdict,
-        evidence: `${verdict.tests} tests ran, the new ones failing by assertion; ${Object.keys(testHashes).length} files under tests/ hashed`,
+        evidence: `${verdict.tests} tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${types.join(', ')}); ${Object.keys(testHashes).length} files under tests/ hashed`,
         change: { testsAtRed: verdict.tests as number, testHashes },
       }
     }

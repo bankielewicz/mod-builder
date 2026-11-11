@@ -24,7 +24,7 @@ const ENDS_WHEN: Record<Phase, string> = {
   describe: 'the model has read the pages that bear on the request (no gate)',
   spec: 'the person approves the spec',
   scaffold: '`claude plugin validate --strict` passes',
-  red: 'a new test fails by assertion',
+  red: 'a new test fails by assertion and the mod, its tests included, typechecks',
   green: 'every test passes',
   verify: 'validate, test, the typecheck and the headless load all pass',
   done: 'the build is over',
@@ -263,6 +263,15 @@ export function scaffoldGate(validate: Run, test: Run): Verdict {
   const run = parseTestRun(test.output)
   if (run === null) return { pass: false, reason: NO_COUNT }
   return { pass: true, tests: run.tests }
+}
+
+// The typecheck alone, as Scaffold and Red end on it (SPEC.md 7.10): it ran to an exit code, and that code is 0.
+// Green and Verify judge theirs among the four checks, in verifyGate.
+export function typecheckGate(typecheck: Run): Verdict {
+  const check = ended(typecheck, 'the typecheck')
+  if (!check.pass) return check
+  if (typecheck.exitCode !== 0) return { pass: false, reason: `the typecheck exited ${typecheck.exitCode}` }
+  return { pass: true }
 }
 
 // Whether a "(fail)" block opens with an assertion error: the first line under the test starts with

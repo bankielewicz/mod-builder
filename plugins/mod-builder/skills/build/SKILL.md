@@ -64,8 +64,8 @@ name, and nothing else, then call the gate again. The pane beside the chat shows
 | 1 | Knowledge | nothing in the mod | a snapshot exists |
 | 2 | Describe | nothing in the mod | (always) |
 | 3 | Spec | `SPEC.md` | the person approves the spec |
-| 4 | Scaffold | everything (`SPEC.md` stays as approved) | `claude plugin validate --strict` passes and the tests run |
-| 5 | Red | `tests/` | more tests than at Scaffold, a new one failing on an assertion |
+| 4 | Scaffold | everything (`SPEC.md` stays as approved) | validate passes, the tests run, the typecheck passes |
+| 5 | Red | `tests/` | more tests than at Scaffold, a new one failing on an assertion; the typecheck passes |
 | 6 | Green | anything but `tests/` and `SPEC.md` | validate, the tests, the typecheck and a headless load all pass |
 | 7 | Verify | anything but `tests/`, `hooks/` and the approved part of `SPEC.md` | the same four pass again |
 | 8 | Done | anything but `tests/` and `hooks/` | (no gate) |
@@ -82,8 +82,8 @@ reports if it exists.
 ### 2. Describe
 
 Load the built-in `plugin-authoring` skill with the Skill tool. It puts this build's API reference in front of
-you and writes this build's types to the path it names; phase 7's typecheck needs that file to exist. (Its
-folder rule does not apply here, as said above.)
+you and writes this build's types to the path it names; the typecheck that ends phases 4 to 7 needs that file to
+exist. (Its folder rule does not apply here, as said above.)
 
 Read `docs-index.txt`, then use the lookup for every part of the request: the surface (a pane, a band, a
 status line), each event the mod must hear, each `$` call it must make. Keep the `page:line` of each fact you
@@ -121,8 +121,11 @@ aside without asking the person. Set the manifest's `description` to the mod's o
 scaffold needs to be the right shape (a contract in `types/` if the mod keeps `$.state`, for example), checked
 against the build's types; behaviour comes in phases 5 and 6. The template is a pane with a command; when the
 mod is another shape (a band, a status line), reshape `hooks/register.tsx` and `tests/pane.test.tsx` here,
-keeping at least one passing test. Then call the gate, which runs the validator and the tests and records the
-tests that exist now.
+keeping at least one passing test. Then call the gate, which runs the validator and the tests, records the
+tests that exist now, and typechecks the mod against this build's types. Everything but `tests/` closes when
+Scaffold passes and opens again only at Green, and Red ends on the same typecheck: declare here whatever the
+tests of phase 5 will name (a type in the contract, a value the module exports), because a test can't typecheck
+against what is not there.
 
 ### 5. Red
 
@@ -133,8 +136,10 @@ when the run holds more tests than at Scaffold, every failure opens with `Assert
 `expect(...)`), and at least one failing test has a new name. A file that fails to load does not count, and
 neither does a test that throws before its `expect` (a `TypeError` from code that is not written yet): drive
 the mod through its events, as the template's tests do, so that a missing behaviour shows as a failed
-`expect`. Then call the gate. It hashes every file under `tests/`; from here a changed test stops the build at
-the next gate, whatever tool changed it.
+`expect`. Then call the gate. After the test run it typechecks the mod, tests included, against this build's
+types: `tests/` closes for good when Red passes, so a test that does not typecheck is refused here, with the
+compiler's last lines, while you can still change it. Then it hashes every file under `tests/`; from here a
+changed test stops the build at the next gate, whatever tool changed it.
 
 ### 6. Green
 
