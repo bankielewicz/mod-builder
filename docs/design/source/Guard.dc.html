@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The phase guard refuses an early edit</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+body{margin:0}
+a{color:#7db4ff}a:hover{color:#a9ccff}
+</style>
+</helmet>
+<div style="width: 960px; height: 620px; box-sizing: border-box; padding: 28px 32px; background: #14161a; color: #d6d9de; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 14px; line-height: 22px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; flex-direction: column; gap: 2px; white-space: pre-wrap">
+<div style="color: #a3abb5">Claude starts on the code before the spec is approved:</div>
+<div>● Write(mods/turn-counter/hooks/register.tsx)</div>
+<div style="color: #f0b46a">  ⎿  Refused by mod-builder</div>
+<div style="color: #f0b46a">     The build of turn-counter is at Spec, waiting for approval.</div>
+<div style="color: #f0b46a">     hooks/ opens at Scaffold. Until then only SPEC.md can be written.</div>
+<div style="color: #f0b46a">     Next: ask for approval, then continue.</div>
+<div style="padding-top: 6px">● I'll ask for approval of the spec first.</div>
+</div>
+<div style="border: 1px solid #3a4150; border-radius: 6px; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; flex-grow: 1">
+<div style="display: flex; justify-content: space-between">
+<div style="font-weight: 700; letter-spacing: 3px">MOD BUILDER</div>
+<div style="color: #f0b46a">1 edit refused · phase Spec</div>
+</div>
+<div style="display: flex; gap: 14px; flex-wrap: wrap">
+<span style="color: #8fd0a0">1 Knowledge ✓</span>
+<span style="color: #8fd0a0">2 Describe ✓</span>
+<span style="color: #14161a; background: #7db4ff; padding: 0 8px; border-radius: 3px; font-weight: 700">3 Spec</span>
+<span style="color: #a3abb5">4 Scaffold</span>
+<span style="color: #a3abb5">5 Red</span>
+<span style="color: #a3abb5">6 Green</span>
+<span style="color: #a3abb5">7 Verify</span>
+<span style="color: #a3abb5">8 Done</span>
+</div>
+<div style="border-top: 1px solid #3a4150; padding-top: 10px; display: flex; flex-direction: column; gap: 4px; white-space: pre-wrap">
+<div style="font-weight: 700">What each phase may write, under mods/turn-counter/</div>
+<div>  3 Spec       SPEC.md                         <span style="color: #7db4ff">now</span></div>
+<div>  4 Scaffold   everything, from the template   <span style="color: #a3abb5">opens when you approve</span></div>
+<div>  5 Red        tests/ only                     <span style="color: #a3abb5">opens when the scaffold validates</span></div>
+<div>  6 Green      all but tests/ and SPEC.md      <span style="color: #a3abb5">opens when a new test fails by assertion</span></div>
+<div>  7 Verify     docs, and SPEC.md's Built block  <span style="color: #a3abb5">opens when every test passes</span></div>
+<div style="color: #a3abb5; padding-top: 6px">A phase opens on what mod-builder observes (your answer, a command's result), never on Claude saying so.</div>
+<div style="color: #a3abb5">It checks the tool and the path, and compares SPEC.md and tests/ by hash at each gate. Not a sandbox.</div>
+</div>
+</div>
+<div style="color: #a3abb5">mod-builder: spec · 1 edit refused · waiting for your approval</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":620}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

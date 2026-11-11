@@ -1,0 +1,21 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-11-10T15:30:00Z" },
+  "title": "mod-builder: a mod built from scratch",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": { "x": 0, "y": 0, "w": 960, "h": 620, "title": "1 · Launch and knowledge refresh" },
+    "Spec.dc.html": { "x": 1040, "y": 0, "w": 960, "h": 620, "title": "2 · Describe, spec and approval" },
+    "Guard.dc.html": { "x": 2080, "y": 0, "w": 960, "h": 620, "title": "3 · The phase guard refuses an early edit" },
+    "Build.dc.html": { "x": 0, "y": 740, "w": 960, "h": 620, "title": "4 · Scaffold, red, green" },
+    "Verify.dc.html": { "x": 1040, "y": 740, "w": 960, "h": 620, "title": "5 · Validate, test, typecheck, live load" },
+    "Done.dc.html": { "x": 2080, "y": 740, "w": 960, "h": 620, "title": "6 · Done" }
+  },
+  "order": ["Main.dc.html", "Spec.dc.html", "Guard.dc.html", "Build.dc.html", "Verify.dc.html", "Done.dc.html"],
+  "notes": {
+    "flow": { "x": 0, "y": -300, "text": "mod-builder: one mod, from /mod-builder to a loaded, tested mod", "kind": "title1", "maxW": 3040 },
+    "caveat": { "x": 3120, "y": 0, "w": 360, "text": "Mockups, not captures. Every surface drawn here is one Anthropic's mod pages document: a pane with a band, a status line, a toast, and the question dialog. The wording and numbers are placeholders for the MVP.", "fill": "gray" }
+  },
+  "designSystems": []
+}
