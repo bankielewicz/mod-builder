@@ -858,7 +858,7 @@ open the first time it judged them):
 | validate | Scaffold | the manifest, `hooks/`, `types/` (not `tests/`: a test file that does not parse leaves validate at exit 0 [ran]) | yes |
 | the test run, as a count and names | Scaffold | `tests/`, `hooks/` | yes |
 | the typecheck | Scaffold (this change) | `hooks/`, `types/`, `tests/` | yes |
-| new tests failing by assertion | Red | `tests/` | yes |
+| new tests failing by assertion, and no other failure | Red | `tests/` against `hooks/` | `tests/` yes, **`hooks/` no** |
 | the typecheck of the new tests | Red (this change) | `tests/` | yes |
 | every test passes | Green | `hooks/` against `tests/` | `hooks/` yes, **`tests/` no** |
 | the headless load | Green | the manifest, `hooks/` | yes |
@@ -873,25 +873,34 @@ owner to decide:
    for), is first shown wrong at Green, where `tests/` is closed. No check at Red can find it: the code does
    not exist yet. The skill tells the model to stop and tell the person. The remedy would be a way back to Red.
 2. **A types file that appears later.** The typecheck runs against every distinct types file there is when
-   the gate runs. Another session that loads plugin-authoring after Red (or after Green) can write a types
-   file with other content; the next gate's typecheck then runs for the first time against that content, on
-   `tests/` (or `hooks/`) already closed. 7.9's facts show two contents for one build; the tests and code of
+   the gate runs. Another session that loads plugin-authoring after Scaffold, after Red or after Green can
+   write a types file with other content; the next gate's typecheck then runs for the first time against
+   that content, on files already closed (`hooks/` and `types/` at Red, `tests/` at Green, both at Verify). 7.9's facts show two contents for one build; the tests and code of
    a mod would have to differ in what they need from the two for this to bite.
 3. **A Claude Code update during a build.** The gate reads the session's version each time: a session
    resumed on a newer build typechecks, validates and loads against that build, with files closed under the
    older one.
 4. **The compiler npx downloads.** With no compiler installed, `npx -y -p typescript tsc` takes the newest
    TypeScript at each gate; a release between two gates could refuse what the earlier one passed.
-5. **A phase that can't go back in general** (README): what Red finds wrong in `hooks/` or `types/` beyond a
-   type error, such as a test that needs a hook the scaffold does not register, is written at Green, so it is
-   no dead end; what Green finds wrong in `tests/` is (item 1).
+5. **A scaffold whose tests already fail.** Scaffold's gate reads the test run for its count and its names,
+   never for its exit code. A scaffold whose module throws as it loads fails both of the template's tests
+   (`HooksError: turn-counter: hooks module did not load: boom at load`, exit 1) and still passed Scaffold,
+   validate and the typecheck included [ran: the built code with one added command, headless, a `throw` put
+   at the top of the scaffold's `register`]. Red then requires every failure to open with `AssertionError`:
+   the old tests' failures do not, and `hooks/` is closed at Red. That is Red's rule first judging `hooks/`
+   after it closed. The remedy would be for Scaffold to require the test run to exit 0.
+6. **What is no dead end:** a test at Red that needs a hook the scaffold does not register fails by
+   assertion when it drives the mod through its events, and the hook is written at Green.
 
 **The tightening of `4855cb3`** (`2117929`, a commit of its own): that commit made the shared helper of
 `gate.test.ts` answer the first line of the gate's answer, which loosened every exact comparison in the file.
 The helper answers the whole text again; the twelve exact comparisons whose answer is one line now say that
 nothing follows it, and the ten whose answer goes on (quoted lines, the "Built on" line) take its first line
 by name, with what follows tested in `decisions.test.ts` and `built.test.ts`. The file's unanchored pattern
-matches are as they were before `4855cb3`.
+matches are as they were before `4855cb3`. Read again in that commit's diff [read]: its other loosenings
+are two comparisons of `decisions.test.ts` (a passed Green and a passed Verify, now by their first line
+because the "Built on" line follows; `built.test.ts` compares that line) and one of `gate.test.ts` (a refused
+typecheck at Verify, by its first line; `typecheck.test.ts` compares its quoted lines whole). They are left.
 
 **Not done, or swapped:** the five tests the reader of this change asked for (the typecheck not run for any
 refusal of the test run, at Red or at Scaffold; an exit 0 that wrote to standard error still passes; the
