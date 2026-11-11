@@ -1857,3 +1857,65 @@ building session records it here before building it.
   `tsconfig.json` that holds only `{ "extends": "./.claude-plugin/types/tsconfig.json" }`. A person trying
   the mod during an edit makes these. So the list leaves out everything under `.claude-plugin/types/`, and a
   top-level `tsconfig.json` that was not there at the baseline and holds exactly that.
+
+### 8.24 The question of a skipped Red, as built (2026-11-11, at `f56401d`)
+
+Plan 33: `b05d648` (existing tests), `4e8148e` red, `f56401d` green; verifier PASS with 23 mutants; 370 module tests, 570
+node tests. Built as 8.23 says, with these decisions and corrections by the building session:
+
+- **The options and the approving answer are 8.4's**: "Not yet", then "Go on with these changes". The
+  question's header is "Changes".
+- **Correction to 8.23, point 5 and its third fact.** The first draft left out everything under
+  `.claude-plugin/types/`. The independent reader showed that code put there would then never be listed.
+  Left out now are only the files the engine is known to write: `.claude-plugin/types/tsconfig.json`, the
+  `.gitignore` there, one `index.d.ts` in each folder there (a declaration file holds no behaviour), and a
+  top-level `tsconfig.json` that was not there at the baseline and holds only the line that extends the
+  types' own. Any other file there is listed.
+- **What validate said is kept without its "(via ...)" tails.** On a larger module validate prints each call
+  with the functions it is made through (`$.fs.read (via readText, hashUnder)`); kept whole, every refactor
+  that moved a call would have read as a difference, on the very route this guards (the reader ran it on
+  this plugin). Every line that names a module's file is kept: what it hooks, the command it answers, its
+  gating hooks, its calls, and what it reads and writes of the environment.
+- **The mod is hashed three times around the question.** Before the four checks, when the person is asked
+  (a file written while the checks ran refuses with "ask again", and nobody is asked), and after the answer
+  (a file changed while the question was open is not agreed to).
+- **At Verify** the question is asked only when a file is not as agreed at Green; a record at Verify that
+  holds no agreement (one made before this rule) is asked as at Green. Lines are always counted against the
+  restore point's copy, and the question says so when it is asked again.
+- **Correction to 8.23, point 4.** "Those files can still be written at Verify" does not hold for `hooks/`,
+  which is closed there. A change to `hooks/` found at Verify came from outside the guard (a shell command,
+  or the person's own editor); after "Not yet" it goes back the same way, or the edit is stopped (8.5).
+- A file whose copy can't be read as text is listed as changed with "its lines can't be compared".
+- **In the pane** the answer is a row of a block "What the person agreed to" in the Verify frame, and of
+  "What was checked" at Done; 8.4's answer at Red is shown the same way. Before this, neither frame showed
+  Red's or Green's evidence, so the row 8.4 promised was only visible while the edit was at Green.
+- **At Done the table of what each phase may write is drawn last** (8.22's finding).
+
+**The independent reader** ran 77 mutants on the first draft (53 failed a test) and found the two corrections
+above, that Red's answer row never matched, and that a file written during the checks was agreed to
+unchecked; each is fixed and tested.
+
+**Probed** [ran, 2.1.322, an interactive session, the hooks module of `f56401d` with the `edit` skill's
+draft, an edit of a real mod asked for as "move the word shown into a named constant. No behaviour change."]:
+- The skill called the gate with `no_behaviour_change`, and the Spec dialog offered "Approve: no behaviour
+  change" third; picking it skipped Red (the rail: "4 Red skipped: no behaviour change").
+- At Green, after the four checks, the dialog "Changes" asked: the two changed files with their line counts
+  (`.claude-plugin/plugin.json: 1 line added, 1 line removed`, `hooks/register.tsx: 4 lines added, 1 line
+  removed`), "The 3 tests the mod had before this edit are held unchanged and pass: they are the only check
+  of behaviour.", the restore point's path, "Not yet" first.
+- "Not yet" answered: "still at phase 5 (Green). Not passed: the person has not agreed to the changes made
+  with Red skipped (answer: "Not yet")."
+- Asked again and answered "Go on with these changes": Green passed with the answer in its evidence; Verify
+  passed with nothing asked; Done's "What was checked" shows the answer's row.
+- **Not probed by the building session:** an edit that adds behaviour while the old tests pass; a change
+  made at Verify being asked about again; a file the engine wrote being left out (this session loaded
+  mod-builder, not the mod, so the engine wrote nothing into it). Each is held by a module test, and the
+  driving session's own probe covers them.
+
+**Limits** (also in `docs/limits/README.md`):
+- The question is the person's judgement of a list of files and line counts. It is no proof that behaviour is
+  unchanged, and it shows no content: the person opens the files, or the restore point, to see.
+- A write by a shell command is outside the phase guard as before; it does show in this list, which is made
+  from hashes.
+- `node_modules` at the mod's top is in no hash (8.19), so a change there is not listed. A link in the mod is
+  listed each time, since its content is never read.
