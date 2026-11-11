@@ -1441,3 +1441,39 @@ colour; the tests now pass `--pretty false`.
 **Still not checked, as in 8.13:** a declaration file under `tests/` (`skipLibCheck`), and a name that holds
 a backslash. A build's typecheck names no file, so in a build `tests/.x.test.ts`, and `tests/a.test.tsx`
 beside `tests/a.test.ts`, are not typechecked: 0.1.0's gap, for the owner to weigh with step 2.
+
+### 8.15 Step 1 accepted; an edit no test can see takes a refactor route (2026-11-11)
+
+**Step 1 is accepted** by the driving session at `c5a9e60` (8.12 to 8.14 included), on its own run (400
+rules tests passing and 2 skipped for want of a compiler, 216 of 216 module tests, validate) and its own
+probe on real `claude plugin test` output from a copy of `scratch/mydemo3/tool-log` [ran, by the driving
+session, 2.1.322]: a changed expectation passes `editRedGate` only when its file is handed in as changed,
+and `testFilesToAsk` names the file; a new `lib/extra.test.ts` that throws `new Error('AssertionError:
+pretend')` is refused as not failing by assertion (the engine printed `Error: AssertionError: pretend`); a
+stray test file reusing a baseline name passes only through the changed file, and the engine runs it;
+`tests/../hooks/register.tsx` is refused at Red and `lib/X.TEST.TS` at Green; `1.2.10` is greater than
+`1.2.3`, and `1.2.4-rc1`, `v1.2.4`, the number `1.3` and `0.1.1` with a line end after it are refused. "Your
+decisions listed in 8.11 'for review' stand as written."
+
+Seen in that probe, not a defect: a test turned off with `test.skip(` shows in 8.4's question only as line
+counts, because the removed line holds no `expect`. Left to the building session, which decides it in step
+2's plan; a removed line quoted for opening a test counts inside the same 20.
+
+**The refactor route.** 8.11 left open an edit that changes nothing a test can see (a tidy-up, a manifest
+description, a README), which can never leave Red. The owner, asked in the driving session what such an
+edit should do: "Refactor route (Recommended)".
+
+- The gate's call that asks for Spec's approval may say the change is "no behaviour change". The approval
+  question then says so in its text and offers three options: "Not yet" first, then the usual approving
+  option, then one that approves it as a change with no behaviour change. Only that third answer takes the
+  route; the usual approving answer sends the edit to Red as normal.
+- On the route Red is skipped (`RedMode` `skipped`, as in a repair whose test files fit). From Green on
+  every test file is held to the baseline's hashes.
+- Green ends when the four checks pass, the test run shows the baseline's count and the baseline's names
+  with none failing, and the version is greater. Verify and Done are as in any edit.
+- It is not offered when the baseline has no test file or its test run showed no count: such a mod enters
+  Red (8.10, answer 1). So the null count of 8.11 can't arise on this route; for a repair whose Red was
+  skipped, step 2's plan proposes the comparison.
+- No phase is widened: this is the refactor step of test-first work, with the tests closed and passing.
+- The section appended to the mod's `SPEC.md` says "No behaviour change" in its first line, so the record
+  shows which route the edit took. The pane shows Red as skipped, with the reason.
