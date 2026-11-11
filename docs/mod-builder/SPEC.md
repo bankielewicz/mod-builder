@@ -1122,13 +1122,20 @@ skill opens a pending edit, exactly as `build` does (3.3). The gate's first call
   one that holds only this section.
 - **The pane** shows the edit's phases and evidence as it shows a build's, and names it an edit.
 
-### 8.4 Tests that are changed or gone
+### 8.4 Test files that are changed or gone
 
-An edit may change what an existing test expects, which is also how a test is loosened. At Red's gate
-the mod compares the test names it runs with the baseline's. When a name the baseline had is gone, the
-gate asks the person, with the names: "These tests no longer exist: … Go on without them?", "Not yet"
-first. A test file whose content changed is listed in the gate's answer and the pane's evidence, by
-path. The owner: "Ask me at the gate (Recommended)".
+An edit may change what an existing test expects, which is also how a test is loosened. **At Red's gate of
+an edit or a repair the mod asks the person when any test file that existed at the baseline has changed or
+is gone**, not only when a test name is gone. The question names each such file with the lines added and
+removed against the baseline copy in the restore point, and quotes every removed line that holds `expect`
+(at most 20 lines in all, then "and N more"); test names that are gone are listed too. "Not yet" is first;
+any answer but the approving one keeps the edit at Red. A test file that is new since the baseline raises
+no question. The answer and the files it covered are recorded in the gate's evidence and shown in the pane.
+
+The owner: "Ask me at the gate (Recommended)". As first written, this section asked only when a test name
+was gone and listed a changed file in the answer; a side agent raised that a test kept by name but weakened
+was then only listed, never asked about, and the driving session gave the rule above as the owner's answer
+applied to that case (2026-11-11).
 
 ### 8.5 A restore point, and a stop
 
@@ -1210,3 +1217,71 @@ is accepted, and commits without a `Co-Authored-By` line (7.14). Steps:
 4. **The demonstration** of 8.7 by the building session, then by the driving session.
 5. **The documents**: `docs/limits`, `docs/how-it-works`, the README's commands table, `CHANGELOG.md`,
    both manifests at 0.2.0, and `BACKLOG.md` with items 15, 21 and 22 struck and 18 cut to what is left.
+
+
+### 8.10 The audit before step 1, and what it changed (2026-11-11)
+
+Before the rules were planned the building session ran 7.10's audit for every edit, repair and stop gate
+(which closed files does each check judge?) and probed what it could on 2.1.322.
+
+**Probed** [ran, 2.1.322, on a scaffolded pane mod]:
+- Fact 1 of 8.2 holds: each test file's path is on a line of its own (`tests/more.test.ts:`), from the mod's
+  folder, before that file's `(pass)` and `(fail)` lines. A file that does not load shows as `(fail) the
+  file did not load` under its path, and counts as one test in the last line.
+- A mod with no test file: `claude plugin test` exits 1 and prints `claude plugin test: no *.test.ts or
+  *.test.tsx under <mod>`, with a `tests/` folder that is empty or with none.
+- Test files anywhere in the mod are run: `hooks/x.test.ts` and `lib/y.test.ts` ran beside
+  `tests/pane.test.tsx`.
+- A manifest with no `version` fails `claude plugin validate --strict` (exit 1, a warning under
+  `--strict`); one with `"version": "banana"` passes it (exit 0).
+- The typecheck prints an error's path from the compiler's own folder, not the mod's
+  (`../two/hooks/register.tsx(28,7): error TS2322: …`, `../two/tests/broken.test.ts(2,25): error TS2307:
+  …`), one line for each error, for errors in `hooks/` and in `tests/` in the same run.
+- Fact 5 of 8.2 could be read only on the pane template: `scratch/mydemo3` and `scratch/mydemo4` are not in
+  the building session's checkout.
+
+**Three findings that changed the rules, and the answers.** Each was asked with its evidence; the answer came
+as text pasted into the building session, the driving session's recommendation with its reasons ("option 1
+on all three"). Whether the owner typed it is not known to the building session.
+
+1. **A mod with no tests.** By 8.6 its baseline fails (the test run exits 1), so it is a repair; its tests
+   "fit", there being none, so Red is skipped; Green then needs a passing test run with the tests closed and
+   can never end. Answer, "Enter Red": a mod with no test file always enters Red, tests only. Red ends when
+   a test file exists and the test files typecheck; when the baseline's other checks all pass, it ends as in
+   any edit, on a test failing by assertion.
+2. **Test files outside `tests/`.** By 8.3's table such a file is closed at Red and open at Green, so a test
+   could be written with the code. Answer, "Tests by name": in an edit, any `*.test.ts` or `*.test.tsx`
+   anywhere in the mod is a test file, as everything under `tests/` is: written at Red only, closed from
+   Green on, hashed, and covered by 8.4's question. A build keeps its rule. The driving session added that
+   the typecheck must then cover every test file, so that none is frozen unchecked: the typecheck's
+   configuration names each test file outside `hooks/`, `tests/` and `types/`.
+3. **The version.** Answer, "Any x.y.z passes": when the baseline has no version, or one that is not three
+   numbers as in `1.2.3`, Green requires the new one to be three numbers and nothing more; otherwise the new
+   one must be greater, compared number by number. A version with anything after the third number is not
+   three numbers.
+
+**Decided by the building session where section 8 is silent, for review:**
+- **Whether the tests fit is read from the typecheck's error lines**, not its exit code: the one typecheck
+  also judges `hooks/`, closed at Red, and 8.7's item 6 needs a type error in `hooks/` to skip Red. The test
+  files fit when, for every types file, no error line names a test file and no error line names no file at
+  all; a typecheck that exits non-zero and shows no error line is not read as fitting. Repair Red ends on
+  the same reading.
+- When Red is skipped the test files are held to the baseline's hashes from Green on, as Red's are in a
+  build.
+- A stopped record is not a phase: it is a mark on the record, and a stopped record, like a Done one, does
+  not hold its folder against another session.
+
+**Checks that first judge files already closed, none built:**
+- 7.10's items 2 to 4 hold for an edit as for a build (a types file that appears later, a Claude Code
+  update during the edit, the compiler `npx` downloads). In an edit a types file that appears between the
+  baseline and Red is first judged against `hooks/` while it is closed.
+- At a repair's Red the test run is not read (the mod already fails), so a test file that typechecks and
+  then does not load, or a test no honest code can pass, first shows at Green with the test files closed.
+  8.6 names the second; the remedy for both is the stop.
+- Green's version rule is not judged again at Verify, where `plugin.json` is still open. Step 2 can run it
+  there too; nothing closes it.
+- The stop judges no file. Putting a mod back leaves out `.git` and `node_modules` (8.5), so a mod that is
+  a git repository comes back without its `.git`, which stays in the `.stopped-` folder. For the owner to
+  weigh before step 2.
+- The folder a gate may name is refused by path when it is this plugin's own. The plugin's source, edited
+  from an installed copy of the plugin, is another path and is not refused.
