@@ -2554,3 +2554,11 @@ change at its review of step 2.
   `a.test.ts`) that has a type error is refused there, and `/mod-builder stop` is the way out until 9.11
   is built.
 - Two plans: the closed Scaffold; then the typecheck.
+- **A limit, from a side agent's note (2026-11-11):** the comparison runs in Scaffold's gate only. When
+  Scaffold has passed, the guard refuses a guarded write under `hooks/` until Green, but not a shell
+  command, and `hooks/` is not hashed: code written there by a shell command before Red is not noticed.
+  It is the limit `docs/limits` already states for every phase ("it is not a sandbox"). Running the check
+  again in Red's gate would judge files that are closed there (7.10), and the script's way back would
+  write over the tests Red has just written; so it is not built in this step, and is put to the driving
+  session with step 2: leave it as a limit, or have Red's gate refuse a `hooks/` that is not as laid, with
+  a way back that lays `hooks/` alone.
