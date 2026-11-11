@@ -1285,3 +1285,56 @@ on all three"). Whether the owner typed it is not known to the building session.
   weigh before step 2.
 - The folder a gate may name is refused by path when it is this plugin's own. The plugin's source, edited
   from an installed copy of the plugin, is another path and is not refused.
+
+### 8.11 Step 1, the rules, as built (2026-11-11, at `83955b5`)
+
+**Built** (`fc3f407` red, `83955b5` green; no existing test changed) [ran]: the rules of an edit as pure
+functions in `hooks/mod-builder-logic.ts`, under one new section, with 78 logic tests in
+`tests/mod-builder-logic-edit.test.mjs`. An edit's phases, numbers and labels (`phasesOf`, `phaseNumberOf`,
+`phaseLabelOf`, `nextPhaseOf`); what each may write and the refusal's words (`isTestPath`, `mayWriteIn`,
+`writeVerdictIn`, and `guardVerdict` judging by the record's kind); the record's kind and whether it still
+holds its folder (`recordKind`, `isOpenRecord`); the folder a gate may name (`editFolderVerdict`); the
+baseline (`typecheckErrors`, `testsFit`, `baselineVerdict`); Red (`failuresByFile`, `editRedGate`,
+`repairRedGate`); 8.4's question (`testHashesOf`, `testFilesToAsk`, `testFilesChanged`, `namesGone`,
+`lineChanges`, `testChangeQuestion`, `testChangeOptions`, `testChangeGate`, `testChangeEvidence`); the version
+(`versionGate`); and `typecheckConfig` naming test files outside its three folders. The hooks module calls
+none of the new rules yet: that is step 2.
+
+**Run** [ran]: 380 of 380 rules, validate and script tests; 216 of 216 module tests; `claude plugin validate
+--strict`; the typecheck; the verifier's PASS, with 19 mutants each failing its named test. On real output
+[ran, 2.1.322 and a downloaded TypeScript]: `failuresByFile` tied `the file did not load` to
+`tests/broken.test.ts` and `a new one fails` to `tests/more.test.ts`; `editRedGate` refused that run as "not
+failing by assertion: the file did not load"; `typecheckErrors` placed one error in `tests/broken.test.ts`
+and one elsewhere from the compiler's `../two/…` paths; `baselineVerdict` read a mod with no test file and
+nothing else failing as an edit whose Red is entered.
+
+**The independent read** of the first 60 tests (an agent that did not write them, about 170 mutants and a
+fuzz of every new rule) found 18 mutants no test failed and four defects, all mended before the red commit,
+with 18 tests added: a folder named through a path that climbs above the root passed as not this plugin's;
+the guard went on judging a stopped record's own folder by its old phase; the 20-line cap and the question's
+other words were pinned loosely; the comparison's table could exhaust memory on a very long test file (two
+files past 4,000,000 cells are now compared without regard to order). A probe it prompted [ran]: `claude
+plugin test` runs `hooks/.test.ts`, and runs neither `node_modules/dep/d.test.ts` nor `lib/U.TEST.TS`; the
+rule for a test file by name follows that.
+
+**Decided in the plan where the words were silent, beyond 8.10's list, for review:** a stopped record lets
+every write pass, under its own folder too ("the folder is no longer bound to the session"); a version's
+numbers may open with a zero and are compared exactly whatever their size; the question ends "and N more
+removed lines that hold "expect"" where 8.4 says "and N more", and a line is quoted when it holds the letters
+`expect` as written; a failing block that no path line precedes is never taken as changed; `isBuildRecord`
+does not check the record's `red` field.
+
+**Found and not built, for the owner before step 2:**
+- **An edit that changes nothing a test can see can't leave Red** (a side agent's note, and the audit's own
+  reading): a tidy-up of the code, a manifest description, a README. Red ends only on a failing test, as in
+  a build. The ways out today are the stop and a hand edit. Refuse such an edit up front, give it a route
+  of its own, or leave it: the owner's to decide.
+- Green in an edit whose Red was skipped needs a test count to hold the run to; the baseline's is recorded
+  (`tests`, null when its run showed none). Step 2 decides what Green compares with when it is null.
+- `guardVerdict` handed no input at all throws, as it did before this change; the hooks module always hands
+  it one.
+
+**Not done, or swapped:** the 18 added tests were not read a second time by another agent; the driving
+session's own probe of this step (8.9) is still owed; fact 5 of 8.2 was read on the pane template only;
+macOS stays unverified. The typecheck naming stray test files was built on the driving session's stated
+intent to ask for it, before the ask itself arrived.
