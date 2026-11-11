@@ -2651,3 +2651,38 @@ an unreadable mod and a linked test file; a 0.2.0 record meeting the new checks.
 such things at Scaffold"), `CLAUDE.md` ("Scaffold may write everything"), `docs/reference` (the gate's new
 command, `bash scripts/scaffold.sh --check`). The build skill is at 194 lines against its own limit of
 under 200, with steps 3 to 5 still to add wording.
+
+### 9.17 Step 2 accepted; Red's gate holds the template too; agents' fixtures stay in the scratchpad (2026-11-11)
+
+From the driving session's file, which accepted step 2 at `7cb6c9f` on its own run (635 node tests pass and
+2 skip, 399 of 399 module tests, validate passes) and its own probe of `scaffold.sh` on a folder with a
+space in its name (`--check` as laid; after a change, a removal, two added files and a link, each named and
+exit 1; `--again` wrote the three files and named the extras; a second `--check` still exit 1 on them). The
+building session's change to 9.4 (the gate runs `scaffold.sh --check` itself, twice) stands: "it is what
+the mod observes".
+
+1. **A stray error line** in that probe: `sort: cannot read: <temporary folder>/.found: No such file or
+   directory` on standard error. **Reproduced by the building session** [ran]: `scaffold.sh --again <mod>
+   <name> | head -2`, 57 of 60 runs (also `rm: cannot remove ...: Directory not empty`, and a redirect to a
+   file that was gone); 0 of 60 for `--check ... | head -3` and `| head -1`, though the same fault is in
+   it. The cause: the script lists the extra files in a process that runs beside the main one; when the
+   reader closes the pipe the main one ends, removes its temporary folder, and the other is still using
+   it. The driving session: "the gate reads this script's output, so it must not depend on its reader or
+   leave its temporary folder half-used". Fixed through the plan that builds point 2, with a test.
+2. **Red's gate holds the template too** (the open choice of 9.15, decided by the driving session as the
+   owner's choice applied: "The owner chose 'Template only' over guarding by path precisely because a shell
+   command can change `hooks/` unseen"). Red's gate of a build refuses a `hooks/` that is not as laid,
+   naming the files; the way back is `scaffold.sh --again` for `hooks/` alone, a shell command, so the
+   closed folder can be mended and nothing strands (7.10). `tests/` is Red's to change and is not compared
+   there. As it will be built: two more modes of the script, `--check-hooks` and `--again-hooks`, which
+   are `--check` and `--again` for `hooks/hooks.json` and `hooks/register.tsx` and nothing under `tests/`;
+   Red's gate asks first, before the test run, and once more before it passes. An edit has no template and
+   is not asked.
+3. **Agents' fixtures stay in the scratchpad.** A reader made seven folders in the owner's home folder
+   (9.16). From now on every plan and every reader's brief says: make test folders only under your
+   scratchpad, by absolute path, never under the home folder or the repository; names with shell
+   metacharacters are made and removed with quoted paths. The owner decides about the seven folders; the
+   building session does not run the cleanup.
+
+Then step 3, the reader, with the build skill's limit of under 200 lines kept: wording moves into a
+reference file the skill names.
