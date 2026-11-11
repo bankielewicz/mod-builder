@@ -1366,3 +1366,39 @@ and the engine does not run it (8.11).
 **Left, for the owner:** a build's typecheck has the same blind spot for `tests/.x.test.ts`, since a build
 names no test file; 0.1.0 is unchanged here. The compiler reads a named path as a pattern, so a test file
 whose name holds `*` or `?` also draws in its siblings; they are test files too.
+
+### 8.13 Every test file is named: the stop-time review's second finding (2026-11-11, at `f8e1d16`)
+
+**The finding** (Codex's stop-time review of 8.12): "The typecheck coverage fix still silently omits test
+files." 8.12 named the test files a folder does not reach by listing what the compiler passes over; the list
+was short. In a folder it is given the compiler also passes over `bower_components` and `jspm_packages`
+[ran: `tests/bower_components/b/b.test.ts` and `tests/jspm_packages/j/j.test.ts`, each holding a type error,
+were not reported; named, they were]. Which files a folder reaches is the compiler's own list, and a rule
+that copies it is wrong whenever the list is longer than the copy.
+
+**Built** (`64fe551`, the three existing tests that said a reached file is not named, in a commit of their
+own; `8655f55` red; `f8e1d16` green) [ran]: `typecheckConfig` names every test file of the edit that is
+source the compiler reads when named (`.ts`, `.tsx`, `.mts`, `.cts`), wherever it lies, after the types file
+and the three folders. 7 logic tests; 396 of 396 rules, validate and script tests, 216 of 216 module tests,
+validate and the typecheck pass; the verifier's PASS with 6 mutants. With the real compiler and the
+configuration the built rule writes, the seven probe files' errors are all reported [ran].
+
+**The independent read** tried, with the real compiler, every kind of path it could think of named in
+`include` [ran, by that agent]: spaces, `*`, `?`, brackets and braces in names, a folder named `**`,
+`node_modules`, `bower_components`, `jspm_packages` and dot folders at several depths, folders named `out`
+and `dist`, a 376-character path, a linked file and a linked folder. Each was checked. It added three tests
+(the order of names that differ in letter case, 300 names, a name that is a test's only in other letter
+case).
+
+**What is still not checked, known and left:**
+- A declaration file named as a test (`tests/e.test.d.ts`): the gate's typecheck runs with `skipLibCheck`
+  (8.2, fact 6), which passes over every declaration file, named or not. `claude plugin test` was not seen
+  to run one.
+- A file whose name holds a backslash: the compiler reads the backslash as a folder separator.
+- A file named in upper case (`u.test.TS`): the compiler reads it neither in a folder nor when named, and
+  the engine does not run it (8.11).
+
+**What it costs:** everything under `tests/` is a test file of an edit, so source under
+`tests/node_modules/` is now typechecked, where the compiler used to pass it over. A dependency kept there
+that does not typecheck refuses Red while `tests/` is open. The named files are in `include`, not `files`,
+so one that is gone when the compiler runs is passed over rather than stopping the check.
