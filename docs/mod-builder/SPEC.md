@@ -2686,3 +2686,8 @@ the mod observes".
 
 Then step 3, the reader, with the build skill's limit of under 200 lines kept: wording moves into a
 reference file the skill names.
+
+**A collision with 9.11, noted before point 2 is built:** after a return from Green to Red, `hooks/` holds
+the code written at Green, which 9.11 keeps. Red's check of `hooks/` would refuse every such Red, and
+`--again-hooks` would write over that code. So point 2's check is for a Red entered from Scaffold; the
+step that builds the way back (9.8, step 4) owes the exception, and a test for it.
