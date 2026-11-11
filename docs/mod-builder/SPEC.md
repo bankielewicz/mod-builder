@@ -2949,3 +2949,39 @@ text addresses the reader and says what verdict to give, so it is itself a findi
 if it were absent"); the earlier one mentioned it last. A side agent's note, passed on by the owner,
 asked for this trial. It is one blunt attempt on one model: it shows the wording is read, not that a
 reader can't be persuaded.
+
+### 9.22 What the readers of step 3's drafts found, and three decisions that follow (2026-11-11, before the plans)
+
+**The tests that leave nothing** (9.21), read by an agent that did not write them: 46 mutants, 6 survived
+(3 real, 1 optional, 2 equivalent). Corrected before the red commit: no test brought the opening of closed
+folders to a link, so a link followed there went unseen (the plain removal took the link away first); an
+answer to the process's end added on every call went unseen; a child that does not end on a signal hung
+its test; a coloured report broke one assertion. The stated limit (a process killed outright leaves its one
+folder) now has a test. Run as root, the closed-folder case shows nothing, and the file says so.
+
+**The reader's hooks module**, read by another such agent: 92 mutants, 32 survived, among them one fault
+and two questions. The building session's answers, **for the driving session to keep or change**:
+
+1. **A fault:** an edit whose test files are all unchanged since the baseline (a repair that mends what is
+   outside `tests/`) started a reader on an empty list, and its `VERDICT: PASS` would have passed Red with
+   nothing read. Now, when no test file is new or changed, the reader is given every test file.
+2. **The second nudge** (9.12, point 5, against 9.19's "an answer that is stored and still unread is
+   nudged once more"): when the reader ends while the main turn still runs, the first prompt is queued
+   (9.13), the answer is still unread when that turn ends, and the model would be prompted twice, the
+   second time after Red had passed. 9.12 is kept to its letter: the main turn's end nudges again only
+   when the first `$.prompt.submit` was refused (it rejected), once, and never a third time. A prompt
+   dropped without a rejection is not seen; the gate call that reads the answer is then the model's or
+   the person's (9.12, point 3).
+3. **A superseded reader is no round** (the question left open in 9.19 and 9.21, where the draft counted
+   it): tests changed while a reader read start a new reading and count nothing. A round is a reading
+   that ended for the tests as they are without a pass: findings, no verdict, ten minutes, a spawn denied
+   or failed. So one call of the gate adds at most one round, and the person is asked only after two
+   readings that did not pass. The cost: a model that keeps changing its tests while a reader reads
+   starts a reader each time; it never passes Red that way.
+
+Tests were added for what no test held: 8.4's agreement kept by hashes across the two calls, and through
+a denied spawn; tests changed after the answer (Red's other checks run on them before a new reader);
+`SPEC.md` changed after the reader started; tests changed while the person is asked; the withheld type,
+asked of the engine; the turn-end hook's guards (another session's record, an id the session did not
+start, a turn that ended with no answer, a teammate's turn); a record stopped, moved or taken while the
+gate ran; a registration that fails. Not provoked in the test world: the hook rethrowing.
