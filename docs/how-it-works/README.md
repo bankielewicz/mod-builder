@@ -21,8 +21,10 @@ can't be skipped by saying it was done.
   the current phase does not allow. One tool, `mod_builder_gate`, is the only way to the next phase, and it
   runs each phase's check itself: the person's approval of the spec (asked by the mod, "Not yet" first),
   `claude plugin validate --strict`, `claude plugin test`, a typecheck against the build's own types, and a
-  headless load read in its debug log. The spec is hashed at approval and the tests at Red; a later gate refuses
-  when one of them changed, by any tool.
+  headless load read in its debug log. Scaffold ends on validate, a passing test run and the typecheck; Red on
+  new tests failing by assertion and the typecheck; Green and Verify on validate, the tests, the typecheck and
+  the load. The spec is hashed at approval and the tests at Red; a later gate refuses when one of them changed,
+  by any tool.
 - **Shows where the build stands** in a pane: the phase strip, what the last gate saw, and the snapshot in use.
 
 The rules each phase and gate follows, and how each was decided, are in the design record:
