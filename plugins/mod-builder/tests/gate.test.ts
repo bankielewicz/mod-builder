@@ -187,8 +187,8 @@ test('Scaffold to Red runs validate --strict and the tests itself, and records t
   await walk($, w, 'scaffold')
   w.ran.length = 0
   // The typecheck that follows them (SPEC.md 7.10) has its tests in early-typecheck.test.ts.
-  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Scaffold\) passed \(claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes \(types sha256 [0-9a-f]{64}\)\)\. The build is now at phase 5 \(Red\)\.$/)
-  expect(w.ran.slice(0, 2)).toEqual([['claude', 'plugin', 'validate', '--strict', MOD], ['claude', 'plugin', 'test', MOD]])
+  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Scaffold\) passed \(hooks\/ and tests\/ are as the scaffold laid them; claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes \(types sha256 [0-9a-f]{64}\)\)\. The build is now at phase 5 \(Red\)\.$/)
+  expect(w.ran.slice(1, 3)).toEqual([['claude', 'plugin', 'validate', '--strict', MOD], ['claude', 'plugin', 'test', MOD]])
   expect(kept(w).testsAtScaffold).toBe(2)
   expect(kept(w).namesAtScaffold).toEqual(['draws the pane', 'opens on command'])
 })

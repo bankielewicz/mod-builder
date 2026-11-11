@@ -65,7 +65,7 @@ test('at Scaffold the test run is judged after validate and before the typecheck
   w.runs.test = { exitCode: 1, stdout: failing(['draws the pane'], ['opens on command']) }
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2322\n' }
   expect((await gate($)).split('\n')[0]).toBe(REFUSED)
-  expect(w.ran.map(word)).toEqual(['validate', 'test'])
+  expect(w.ran.map(word)).toEqual(['--check', 'validate', 'test'])
   w.runs.validate = { exitCode: 1, stdout: 'validate says no\n' }
   expect(await gate($)).toBe(`mod-builder: still at phase 4 (Scaffold). Not passed: claude plugin validate --strict exited 1.\n${HEADING}\nvalidate says no`)
 })
@@ -84,7 +84,7 @@ test('a build refused at Scaffold for its tests can still write hooks/, and pass
   await gate($)
   expect(await write($, `${MOD}/hooks/register.tsx`)).toBeUndefined()
   w.runs.test = { exitCode: 0, stdout: passing(2, ['draws the pane', 'opens on command']) }
-  expect(await gate($)).toBe(`mod-builder: phase 4 (Scaffold) passed (claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes (types sha256 ${TYPES_SHA})). The build is now at phase 5 (Red).`)
+  expect(await gate($)).toBe(`mod-builder: phase 4 (Scaffold) passed (hooks/ and tests/ are as the scaffold laid them; claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes (types sha256 ${TYPES_SHA})). The build is now at phase 5 (Red).`)
   expect(kept(w).testsAtScaffold).toBe(2)
   expect(kept(w).namesAtScaffold).toEqual(['draws the pane', 'opens on command'])
 })

@@ -174,8 +174,8 @@ test('the pane shows Red\'s evidence with the types hash once Red has passed', a
 
 test('Scaffold passes when validate, the tests and the typecheck pass, run in that order, and its evidence carries the types hash', async ($, on) => {
   const w = await standing(on, 'scaffold')
-  expect(await gate($)).toBe(`mod-builder: phase 4 (Scaffold) passed (claude plugin validate --strict exited 0; 1 tests ran; the typecheck passes (types sha256 ${TYPES_SHA})). The build is now at phase 5 (Red).`)
-  expect(w.ran.map(word)).toEqual(['validate', 'test', 'compiler?', 'typecheck'])
+  expect(await gate($)).toBe(`mod-builder: phase 4 (Scaffold) passed (hooks/ and tests/ are as the scaffold laid them; claude plugin validate --strict exited 0; 1 tests ran; the typecheck passes (types sha256 ${TYPES_SHA})). The build is now at phase 5 (Red).`)
+  expect(w.ran.map(word)).toEqual(['--check', 'validate', 'test', 'compiler?', 'typecheck', '--check'])
   expect(kept(w).testsAtScaffold).toBe(1)
 })
 
@@ -196,7 +196,7 @@ test('at Scaffold the typecheck is not run when validate or the tests refuse, an
   w.runs.validate = { exitCode: 1, stdout: 'validate says no\n' }
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2322\n' }
   expect(await gate($)).toBe('mod-builder: still at phase 4 (Scaffold). Not passed: claude plugin validate --strict exited 1.\nThe last lines of its output:\nvalidate says no')
-  expect(w.ran.map(word)).toEqual(['validate', 'test'])
+  expect(w.ran.map(word)).toEqual(['--check', 'validate', 'test'])
 })
 
 test('at Scaffold the typecheck runs against each distinct types file, and a failure against one names it', async ($, on) => {
@@ -204,7 +204,7 @@ test('at Scaffold the typecheck runs against each distinct types file, and a fai
   const against = watched(w)
   const other = await sha256(SANDBOXED_TEXT)
   const order = [[TYPES_SHA, TYPES], [other, SANDBOXED]].sort((one, two) => ((one[0] as string) < (two[0] as string) ? -1 : 1))
-  expect(await gate($)).toBe(`mod-builder: phase 4 (Scaffold) passed (claude plugin validate --strict exited 0; 1 tests ran; the typecheck passes (types sha256 ${order.map((one) => one[0]).join(', ')})). The build is now at phase 5 (Red).`)
+  expect(await gate($)).toBe(`mod-builder: phase 4 (Scaffold) passed (hooks/ and tests/ are as the scaffold laid them; claude plugin validate --strict exited 0; 1 tests ran; the typecheck passes (types sha256 ${order.map((one) => one[0]).join(', ')})). The build is now at phase 5 (Red).`)
   expect(against).toEqual(order.map((one) => one[1]))
   w.ran.length = 0
   w.store[`build:${MOD}`] = { ...kept(w), phase: 'scaffold', testsAtScaffold: null, namesAtScaffold: null }
@@ -255,7 +255,7 @@ test('at Scaffold the typecheck is not run when the test run refuses, though val
   w.runs.test = { exitCode: 0, stdout: 'no count here\n' }
   w.runs.tsc = { exitCode: 2, stdout: 'error TS2322\n' }
   expect((await gate($)).split('\n')[0]).toBe("mod-builder: still at phase 4 (Scaffold). Not passed: the test run's last line reports no test count.")
-  expect(w.ran.map(word)).toEqual(['validate', 'test'])
+  expect(w.ran.map(word)).toEqual(['--check', 'validate', 'test'])
 })
 
 test('at Red the typecheck is not run for any refusal of the test run', async ($, on) => {

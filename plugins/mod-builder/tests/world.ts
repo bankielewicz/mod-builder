@@ -84,6 +84,8 @@ export type World = {
 }
 
 const ok = (stdout = ''): Ran => ({ exitCode: 0, stdout })
+// What `scaffold.sh --check` prints for a mod whose hooks/ and tests/ are as the template laid them.
+export const AS_LAID: Ran = ok('as laid: hooks/hooks.json hooks/register.tsx tests/pane.test.tsx\n')
 
 export function passing(count: number, names: string[] = []): string {
   const shown = names.length > 0 ? names : Array.from({ length: count }, (_, i) => `test ${i + 1}`)
@@ -227,11 +229,12 @@ export function world(on: On, start: Partial<World> = {}): World {
     w.ranIn.push(init?.cwd)
     if (argv[0] === 'id') return w.runs.id === undefined || w.runs.id === 'never starts' ? deny('failed to start') : value({ exitCode: w.runs.id.exitCode, stdout: w.runs.id.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
     const fetcher = argv.some((one) => one.endsWith('/refresh-docs.sh'))
-    const script = ['restore-point.sh', 'put-back.sh'].find((name) => argv.some((one) => one.endsWith(`/${name}`)))
-    const word = fetcher ? 'refresh' : script === 'restore-point.sh' ? 'restore' : script === 'put-back.sh' ? 'putback' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
+    const script = ['restore-point.sh', 'put-back.sh', 'scaffold.sh'].find((name) => argv.some((one) => one.endsWith(`/${name}`)))
+    const word = fetcher ? 'refresh' : script === 'restore-point.sh' ? 'restore' : script === 'put-back.sh' ? 'putback' : script === 'scaffold.sh' ? 'scaffold' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
     // A compiler asked for its version answers by its own command; any other run, by the word it holds.
     const asked = argv.at(-1) === '-v' ? w.compilers[argv.slice(0, -1).join(' ')] : undefined
-    const ran = asked !== undefined ? asked : word === undefined ? undefined : w.runs[word]
+    // The scaffold's own check (SPEC.md 9.15) answers "as laid" unless a test says otherwise under `scaffold`.
+    const ran = asked !== undefined ? asked : word === undefined ? undefined : word === 'scaffold' && w.runs.scaffold === undefined ? AS_LAID : w.runs[word]
     if (ran === undefined || ran === 'never starts') return deny('failed to start')
     w.whileRunning([...argv])
     if (fetcher && w.fetchHeld !== null) await w.fetchHeld
