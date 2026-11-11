@@ -2099,3 +2099,21 @@ phase, and a retry count per phase", 8.5's words).
 
 After the changes: 373 module tests, 599 node tests (2 skipped where no TypeScript compiler is named), and
 validate passes for the plugin and the marketplace [ran].
+
+### 8.29 0.2.0 accepted by the driving session; the owner approves the push and the pull request (2026-11-11, at `f7014e9`)
+
+From the driving session's file to the building session:
+
+- **The owner**, asked whether the building session should push the branch and open a pull request on
+  `bankielewicz/mod-builder`: "Push and open the PR (Recommended)". Nothing is merged by either session.
+- **The driving session's run at `f7014e9`:** 597 node tests pass and 2 skip, 373 of 373 module tests,
+  validate passes for the plugin and the marketplace. The building session's choices where 8.9 was silent
+  (8.28) stand; the two pane findings of 8.27 stay as limits.
+- **The driving session's demonstration of 8.7 item 1** (sonnet, 2.1.322, a copy of `tool-log`):
+  `/mod-builder:edit tool-log cut each row by display width…` reached Done through Red with one approval.
+  Outside the session: `validate --strict` passes, 15 of 15 tests pass, `version` went from 0.1.0 to 0.1.1,
+  `SPEC.md` begins with its former bytes and ends with the change and its "Built" lines, and a headless load
+  logs "hooks module tool-log@inline loaded".
+- **8.7 item 2** (`prompt-count` through Red) was not run by the driving session: the building session's
+  probe of an edit that changes an existing test (8.27, point 4, on a copy of `hi-probe`) stands for it.
+- The switch of the worktree to `main` at 15:09 UTC (8.26) is still unexplained.
