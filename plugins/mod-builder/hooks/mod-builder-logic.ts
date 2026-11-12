@@ -720,6 +720,7 @@ export type BuildRecord = {
   readerRounds?: number // the rounds of the test reader that ended without a pass
   readerLast?: ReaderRound | null // the last such round: the test files it was about, and what it found
   testsAgreed?: Hashes // an edit's Red: the changed test files the person's answer to 8.4's question covered
+  readerStarts?: number // SPEC.md 9.24: the test readers started in this Red, those left behind by changed tests included
 }
 
 export function sessionKey(sessionId: string): string {
@@ -2599,4 +2600,31 @@ export function readerEvidence(passed: { by: 'reader'; round: number } | { by: '
   if (passed.by === 'reader') return `the test reader passed the tests (round ${passed.round})`
   const last = passed.findings === null || passed.findings.length === 0 ? 'no verdict' : `${passed.findings.length} finding${passed.findings.length === 1 ? '' : 's'}`
   return `the person answered "${GO_ON_TESTS}" after ${passed.rounds} rounds of the test reader (the last: ${last})`
+}
+
+// How many test readers one Red may start (SPEC.md 9.24, the driving session's ruling): every reader started is
+// counted, one left behind by changed tests included, since such a reader is no round and a model could
+// otherwise have the tests read as often as it changes them. When one more would be started, the person is asked.
+export const READER_STARTS = 3
+
+// What follows when Red's gate would start a reader, by how many this Red has started: one more, or the question.
+export function startsEnd(starts: unknown): 'start' | 'ask' {
+  return typeof starts === 'number' && Number.isInteger(starts) && starts >= READER_STARTS ? 'ask' : 'start'
+}
+
+// The question asked in place of a reader that would be one too many: how many were started, that the tests kept
+// changing, what the last reading that ended found (when one did), and the same last line and options as
+// readerQuestion: "Not yet" first, and readerGate judges the answer.
+export function readerStartsQuestion(starts: number, findings: readonly string[] | null): string {
+  const count = Number.isInteger(starts) && starts >= 0 ? starts : 0
+  const head = `The test reader was started ${count} times in this Red and the tests kept changing, so it is not started again.`
+  const found = findings === null || !Array.isArray(findings) || findings.length === 0
+    ? ['No reading of the tests as they are now has ended.']
+    : ['The last reading that ended found behaviours of the spec that no test would catch:', ...findingLines(findings)]
+  return [head, ...found, 'The code is written next, to these tests. Go on with these tests?'].join('\n')
+}
+
+// Red's evidence when the person's answer to that question passed the tests.
+export function readerStartsEvidence(starts: number): string {
+  return `the person answered "${GO_ON_TESTS}" after ${Number.isInteger(starts) && starts >= 0 ? starts : 0} readings of the test reader were started and the tests kept changing`
 }
