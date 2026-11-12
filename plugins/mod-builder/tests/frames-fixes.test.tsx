@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, ROOT, TYPES, TYPES_TEXT, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, ROOT, TYPES, TYPES_TEXT, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const DOT = String.fromCharCode(0xb7)
@@ -58,7 +58,7 @@ const standing = async (on: Parameters<typeof world>[0], phase: string, more: Pa
     store: { 'session:s1': { modDir: MOD }, [KEY]: kept, ...more.store },
   })
 }
-const gate = async ($: Engine, more: Record<string, unknown> = {}) => String((await $.tool.call({ tool: GATE, ...more } as never)).result)
+const gate = async ($: Engine, more: Record<string, unknown> = {}) => readerDone($, String((await $.tool.call({ tool: GATE, ...more } as never)).result))
 const said = async ($: Engine, args: string) => (await $.command.run({ command: 'mod-builder', args } as never)).text
 const write = async ($: Engine, path: string) => (await $.tool.call({ tool: 'Write', file_path: path, content: 'x' } as never)) as { deny?: string }
 const kept = (w: World) => w.store[KEY] as Record<string, unknown> & { phase: string }

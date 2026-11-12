@@ -13,6 +13,24 @@ claude plugin test plugins/mod-builder
 node --test --test-timeout=120000 plugins/mod-builder/tests/*.test.mjs plugins/mod-builder/scripts/*.test.mjs
 ```
 
+Set `TMPDIR` to a folder of the run's own for the node tests, so that nothing is left in the system's:
+
+```bash
+export TMPDIR=$(mktemp -d)
+```
+
+Each test file makes its temporary folders through `tempDir` (`scripts/test-helpers.mjs`), under one
+`mod-builder-run-*` folder for its process, and removes that folder when it ends, pass or fail; one test
+(`scripts/leaves-nothing.test.mjs`) runs every other node test file and fails when a run leaves anything, so it
+also fails whenever another node test fails. A new test that needs a temporary folder uses `tempDir`, never
+`mkdtemp` on the bare temporary folder.
+
+A long `TMPDIR` breaks the command sandbox of a `claude` session started under it ("Failed to create bridge
+sockets"): start a live session to try the plugin with `TMPDIR` unset (`env -u TMPDIR claude --plugin-dir ...`).
+
+A helper in a test file that checks a state uses an assertion (`expect` or `assert`), never a thrown `Error`:
+Red means "fails by assertion", and a helper that throws makes that untrue (`SPEC.md` 9.32).
+
 Two of the rules tests run a real TypeScript compiler on the `tsconfig.json` the plugin writes for an edit's
 test files (`tests/mod-builder-logic-edit-file-roots.test.mjs`). They use the compiler the environment variable
 `MOD_BUILDER_TSC` names, else `tsc` when it is on the path, and are reported as skipped when there is neither.

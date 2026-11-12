@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.3.0 - 2026-11-12
+
+The plugin's own agents, a closed Scaffold and a way back to Red
+([`docs/mod-builder/SPEC.md`](docs/mod-builder/SPEC.md), section 9).
+
+### Added
+
+- A test reader at every Red, in a build and in an edit: an agent the plugin itself starts, with `Read`,
+  `Grep` and `Glob` only, that reads the tests against the spec and says which behaviours no test would
+  catch. Its findings hold Red; a rule reads the verdict from the first line of the answer the plugin stored.
+  After two rounds that do not pass, the person is asked, "Not yet" first; tests that changed after the second
+  are read once more as they stand; once three rounds did not pass, no reading is started before the person
+  has answered "Not yet".
+  The model is prompted once for a reading, only while its answer is unread at Red.
+- Test files closed to guarded writes while the reader reads; tests that changed during a reading count as a
+  round and are read again.
+- A way back from Green to Red: after Green's test run has failed twice in a row the gate offers
+  `back_to_red`, and the person's "Go back to Red" reopens the tests. The code stays as it is, closed; returns
+  are counted and shown.
+- `--agents` as the first word of `/mod-builder:build` or `/mod-builder:edit`: the plugin's test-writer writes
+  the tests at Red and its implementer the code at Green and Verify, and the guard refuses those writes from
+  anyone else. Neither agent has a shell; a teammate of either type is refused at its spawn.
+- Three reference files the skills name: `reference/test-reader.md`, `reference/back-to-red.md`,
+  `reference/agents.md`.
+- The pane's rows for the reader's rounds and findings, a return from Green, and a build that uses agents.
+
+### Changed
+
+- Scaffold holds the template and nothing else: its gate refuses a file under `hooks/` or `tests/` that is
+  changed, missing or extra, and Red's gate holds `hooks/` to the template too. `scaffold.sh --check` and
+  `--again` serve it.
+- Before Green a build may hold no source file outside `hooks/` and `tests/`.
+- A build's typecheck names its test files, as an edit's does.
+- A session refused a folder that another session holds is told that session's id and how to release it:
+  resume it and run `/mod-builder stop` there.
+- The plugin's node tests make their temporary folders under one folder for the run and remove it when they
+  end.
+
 ## 0.2.0 - 2026-11-11
 
 Changing a finished mod ([`docs/mod-builder/SPEC.md`](docs/mod-builder/SPEC.md), section 8).

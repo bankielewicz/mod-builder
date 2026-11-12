@@ -30,7 +30,15 @@ jobs:
         run: claude plugin validate --strict .
       - name: Validate the plugin
         run: claude plugin validate --strict plugins/mod-builder
+      # Each test step has a limit of its own, under the job's 15 minutes, so that a run that hangs ends and
+      # names its step: both runs take well under a minute. The node tests make their temporary folders under
+      # TMPDIR and remove them (docs/development/README.md).
       - name: Module tests
+        timeout-minutes: 5
         run: claude plugin test plugins/mod-builder
       - name: Rules, validate and script tests
-        run: node --test --test-timeout=120000 plugins/mod-builder/tests/*.test.mjs plugins/mod-builder/scripts/*.test.mjs
+        timeout-minutes: 8
+        run: |
+          export TMPDIR="$RUNNER_TEMP/mod-builder-tests"
+          mkdir -p "$TMPDIR"
+          node --test --test-timeout=120000 plugins/mod-builder/tests/*.test.mjs plugins/mod-builder/scripts/*.test.mjs

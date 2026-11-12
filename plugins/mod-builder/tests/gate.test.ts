@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world, readerDone } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -17,7 +17,7 @@ const MANIFEST = `{ "name": "${NAME}" }`
 const gate = async ($: Engine, modDir?: string) => {
   const answer = await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)
   // The whole answer: a test that compares it says that nothing follows its one line.
-  return String(answer.result)
+  return readerDone($, String(answer.result))
 }
 // The first line of an answer that goes on: what a refusal quotes beneath it, and the line a passed Green or Verify
 // adds, have tests of their own (decisions.test.ts, built.test.ts).
@@ -57,7 +57,7 @@ const walk = async ($: Engine, w: World, to: 'spec' | 'scaffold' | 'red' | 'gree
     }
     if (now === 'green') w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
     const answer = await gate($)
-    if (phase(w) === now) throw new Error(`the walk stopped at ${now}: ${answer}`)
+    expect(phase(w) === now ? `the walk stopped at ${now}: ${answer}` : 'moved on').toBe('moved on')
     // At Verify the "Built" block is written, with the hash of the types the gate checks against.
     if (phase(w) === 'verify') w.files[SPEC] = `${w.files[SPEC]}${BUILT}`
   }
@@ -108,7 +108,7 @@ test('a folder another session is building can\'t be named; one it finished can'
   const w = fresh(on)
   w.store[`build:${MOD}`] = { modDir: MOD, sessionId: 's2', phase: 'red' }
   await $.skill.prompt(BUILD)
-  expect(await gate($, MOD)).toBe(`mod-builder: ${MOD} is being built by another session (it is at phase 5 (Red)). Name another folder.`)
+  expect(await gate($, MOD)).toBe(`mod-builder: ${MOD} is being built by another session (s2; it is at phase 5 (Red)). If that session is gone, resume it with claude --resume s2 and run /mod-builder stop there; or name another folder.`)
   expect(w.store['session:s1']).toEqual({ modDir: null })
   w.store[`build:${MOD}`] = { modDir: MOD, sessionId: 's2', phase: 'done' }
   await gate($, MOD)
@@ -187,8 +187,8 @@ test('Scaffold to Red runs validate --strict and the tests itself, and records t
   await walk($, w, 'scaffold')
   w.ran.length = 0
   // The typecheck that follows them (SPEC.md 7.10) has its tests in early-typecheck.test.ts.
-  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Scaffold\) passed \(claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes \(types sha256 [0-9a-f]{64}\)\)\. The build is now at phase 5 \(Red\)\.$/)
-  expect(w.ran.slice(0, 2)).toEqual([['claude', 'plugin', 'validate', '--strict', MOD], ['claude', 'plugin', 'test', MOD]])
+  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Scaffold\) passed \(hooks\/ and tests\/ are as the scaffold laid them; claude plugin validate --strict exited 0; 2 tests ran; the typecheck passes \(types sha256 [0-9a-f]{64}\)\)\. The build is now at phase 5 \(Red\)\.$/)
+  expect(w.ran.slice(1, 3)).toEqual([['claude', 'plugin', 'validate', '--strict', MOD], ['claude', 'plugin', 'test', MOD]])
   expect(kept(w).testsAtScaffold).toBe(2)
   expect(kept(w).namesAtScaffold).toEqual(['draws the pane', 'opens on command'])
 })
@@ -209,7 +209,7 @@ test('Red to Green passes when a test new since Scaffold fails by assertion, and
   w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test'
   w.files[`${MOD}/tests/deep/more.test.tsx`] = 'another'
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed\)\. The build is now at phase 6 \(Green\)\.$/)
+  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(hooks\/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed; the test reader passed the tests \(round 1\)\)\. The build is now at phase 6 \(Green\)\.$/)
   expect(kept(w).testsAtRed).toBe(2)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['tests/counts.test.tsx', 'tests/deep/more.test.tsx', 'tests/pane.test.tsx'])
 })
@@ -396,8 +396,9 @@ test('a test file changed while the tests ran is not recorded as what ran: Red s
   await walk($, w, 'red')
   w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test'
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  w.whileRunning = () => {
-    w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test, swapped while it ran'
+  // While the test run is under way, not while Red's check of hooks/ before it is (SPEC.md 9.17).
+  w.whileRunning = (argv) => {
+    if (argv.includes('test')) w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test, swapped while it ran'
   }
   expect(await gate($)).toMatch(/Not passed: tests\/ changed while the tests ran \(not as recorded: tests\/counts\.test\.tsx \(changed\)\): ask again/)
   expect(phase(w)).toBe('red')
@@ -410,7 +411,8 @@ test('Green stays when a test still fails, and when a test went missing from the
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
   expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: claude plugin test exited 1: not every test passes.')
   w.runs.test = { exitCode: 0, stdout: passing(1) }
-  expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: the run has 1 test, fewer than the 2 at Red.')
+  // The second refusal in a row for the test run: the way back to Red is offered (SPEC.md 9.30).
+  expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: the run has 1 test, fewer than the 2 at Red. If a test is what is wrong, call the gate with back_to_red: true: mod-builder then asks the person whether to go back to Red and change the tests.')
   w.runs.test = 'never starts'
   expect(await gate($)).toMatch(/Not passed: claude plugin test ended with no exit code/)
   expect(phase(w)).toBe('green')

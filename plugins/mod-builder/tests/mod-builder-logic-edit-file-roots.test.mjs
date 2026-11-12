@@ -5,9 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tempDir } from '../scripts/test-helpers.mjs';
 import { typecheckConfig, typecheckErrors, testsFit } from '../hooks/mod-builder-logic.ts';
 
 const MOD = '/work/mod';
@@ -52,7 +52,7 @@ const WRONG = "const wrong: number = 'not a number'\nexport {}\n";
 // Lays a mod whose test files each hold one type error, writes the configuration the rule gives beside it, runs
 // the compiler there, and answers what the rules read from its output.
 function typecheck(command, testFiles) {
-  const top = mkdtempSync(join(tmpdir(), 'mod-builder-roots-'));
+  const top = tempDir('mod-builder-roots-');
   try {
     const mod = join(top, 'mod');
     const outside = join(top, 'check');

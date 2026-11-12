@@ -1,7 +1,7 @@
 ---
 name: build
 description: Builds a Claude Code mod (a pane, panel or other change to Claude Code's own interface, made as a plugin with a hooks module) from a dated copy of Anthropic's mod documentation, test-first, through eight guarded phases. Use when the person runs /mod-builder:build with what the mod should do, or asks mod-builder to build, make or scaffold a mod.
-argument-hint: <what the mod should do>
+argument-hint: [--agents] <what the mod should do>
 ---
  # Build a mod
 
@@ -9,7 +9,9 @@ The person asked for this mod:
 
 > $ARGUMENTS
 
-If nothing is written above, ask what the mod should do before anything else.
+If nothing is written above, ask what the mod should do first. A leading `--agents` asks for the plugin's agents:
+read `${CLAUDE_PLUGIN_ROOT}/reference/agents.md` before Red. The guard watches the file-editing tools only, so a
+shell command could still write a test or code: don't.
 
 ## Three things that make this build different
 
@@ -102,11 +104,10 @@ Write `<mod>/SPEC.md`. It is what the person approves, so write it for them, sho
 - **Its tests**: the behaviours phase 5 will write tests for, one line each.
 
 Call the gate. It asks the person, and "Not yet" is its first option on purpose. On "Not yet", ask what should
-change, change the spec, and call the gate again. When the person picks "See it first: draw mockups with
-/design" (offered only when a `design` skill is listed in this session), draw them with that skill, which
-keeps them in its own place (this phase can write nothing in the mod but `SPEC.md`), then call the gate again.
-After approval the spec is fixed: its text is hashed, and a later change to the approved part stops every
-gate.
+change, change the spec, and call the gate again. When the person picks "See it first: draw mockups with /design"
+(offered only when a `design` skill is listed in this session), draw them with that skill, which keeps them in its
+own place (this phase can write nothing in the mod but `SPEC.md`), then call the gate again. After approval the
+spec is fixed: its text is hashed, and a later change to the approved part stops every gate.
 
 ### 4. Scaffold
 
@@ -117,44 +118,51 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.sh" <mod folder> <mod-name>
 Give the folder as the same absolute path the gate answered with in phase 1. It lays the `pane` template:
 `.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/register.tsx` and `tests/pane.test.tsx`, under the
 mod's name, and refuses to write over a file that is there: if it refuses, read its message and move nothing
-aside without asking the person. Set the manifest's `description` to the mod's own. Make only the changes the
-scaffold needs to be the right shape (a contract in `types/` if the mod keeps `$.state`, for example), checked
-against the build's types; behaviour comes in phases 5 and 6. The template is a pane with a command; when the
-mod is another shape (a band, a status line), reshape `hooks/register.tsx` and `tests/pane.test.tsx` here,
-with every test passing. Then call the gate, which runs the validator and the tests, records the tests that
-exist now, and typechecks the mod against this build's types. Every test has to pass here: a test that fails at
-Scaffold, or a module that throws as it loads, is refused with the test run's last lines. Everything but
-`tests/` closes when Scaffold passes and opens again only at Green, and Red ends on the same typecheck: declare
-here whatever the tests of phase 5 will name (a type in the contract, a value the module exports), because a
-test can't typecheck against what is not there.
+aside without asking the person. Set the manifest's `description` to the mod's own, and add what only declares:
+a contract in `types/` if the mod keeps `$.state`, checked against the build's types. Leave `hooks/` and
+`tests/` exactly as the script laid them: at Scaffold they hold the template and nothing else, and the gate
+refuses a file there that is changed, missing or extra, and names it. The mod's behaviour comes in phases 5 and
+6, tests first. That holds for a mod of another shape than a pane with a command too (a band, a status line):
+its tests replace the template's at Red and its code the template's at Green. When the gate names a file, lay
+the three again with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.sh" --again <mod folder> <mod-name>`, which
+writes over them and deletes nothing, and remove each file it lists as extra. Then call the gate, which runs the
+validator and the tests, records the tests that exist now, and typechecks the mod against this build's types.
+Every test has to pass here: a test that fails at Scaffold, or a module that throws as it loads, is refused with
+the test run's last lines. Everything but `tests/` closes when Scaffold passes and opens again only at Green,
+and Red ends on the same typecheck: a test of phase 5 can name only what is there then, the template's module
+and what `types/` declares. So declare here a type the tests will name, and drive the mod through its events.
 
 ### 5. Red
 
-Write tests only, under `tests/`, for the behaviours the spec lists. Model them on `tests/pane.test.tsx` and
-the `plugin-authoring` skill's example test. Add tests to the scaffold's; leave the ones recorded at Scaffold
-as they are. Run `claude plugin test <mod folder>` yourself and look at the failures: the gate passes only
-when the run holds more tests than at Scaffold, every failure opens with `AssertionError` (a failed
-`expect(...)`), and at least one failing test has a new name. A file that fails to load does not count, and
-neither does a test that throws before its `expect` (a `TypeError` from code that is not written yet): drive
-the mod through its events, as the template's tests do, so that a missing behaviour shows as a failed
-`expect`. Then call the gate. After the test run it typechecks the mod, tests included, against this build's
-types: `tests/` closes for good when Red passes, so a test that does not typecheck is refused here, with the
-compiler's last lines, while you can still change it. Then it hashes every file under `tests/`; from here a
-changed test stops the build at the next gate, whatever tool changed it.
+Write tests only, under `tests/`, for the behaviours the spec lists. Model them on `tests/pane.test.tsx` and the
+`plugin-authoring` skill's example test. Add tests to the scaffold's; when the mod is no pane with a command,
+replace the template's two tests with the mod's own. Run `claude plugin test <mod folder>` yourself and look at the
+failures: the gate passes only when the run holds more tests than at Scaffold, every failure opens with
+`AssertionError` (a failed `expect(...)`), and at least one failing test has a new name. A file that fails to load
+does not count, and neither does a test that throws before its `expect` (a `TypeError` from code that is not
+written yet): drive the mod through its events, as the template's tests do, so that a missing behaviour shows as a
+failed `expect`. Then call the gate. It first checks that `hooks/` is still as the scaffold laid it, and again
+before it passes: if it names a file there, lay `hooks/` alone again with `scaffold.sh --again-hooks <mod folder>
+<mod-name>` (the script of phase 4) and remove each file it lists as extra. After the test run it typechecks the
+mod, tests included, against this build's types: `tests/` closes for good when Red passes, so a test that does not
+typecheck is refused here, with the compiler's last lines, while you can still change it. Then it hashes every file
+under `tests/`; from here a changed test stops the build at the next gate, whatever tool changed it. When Red's
+other checks pass, the gate starts mod-builder's test reader and tells you to end your turn: read
+`${CLAUDE_PLUGIN_ROOT}/reference/test-reader.md` before your first call of Red's gate, and do what it says.
 
 ### 6. Green
 
-Write the code, under `hooks/` (and `types/` when needed), until every test passes. Tests are frozen: if one
-turns out wrong, stop and say so to the person instead of changing it; the build can't go back to Red.
+Write the code, under `hooks/` (and `types/` when needed), until every test passes. Tests are frozen: if one turns
+out wrong, stop and say so to the person instead of changing it. The gate offers a way back to Red after Green's
+tests fail twice running: read `${CLAUDE_PLUGIN_ROOT}/reference/back-to-red.md` when it does.
 
-Then call the gate. It runs the validator, the tests, a typecheck against this build's types and a headless
-load of the mod: the same four checks Verify ends on, run here because `hooks/` closes when Green passes and
-anything they find has to be found while the code can still be changed. When it refuses for the typecheck or
-the load, its answer carries the last lines the command printed: fix what they name and call the gate again.
-If it says the types are not written yet, load `plugin-authoring` again and ask again. The typecheck runs
-against every distinct types file that names itself this build's (they differ between sessions of one build),
-and a failure names the file it failed against. When Green passes, its answer ends with the "Built on" line
-for phase 7: keep it.
+Then call the gate. It runs the validator, the tests, a typecheck against this build's types and a headless load of
+the mod: the same four checks Verify ends on, run here because `hooks/` closes when Green passes and anything they
+find has to be found while the code can still be changed. When it refuses for the typecheck or the load, its answer
+carries the last lines the command printed: fix what they name and call the gate again. If it says the types are
+not written yet, load `plugin-authoring` again and ask again. The typecheck runs against every distinct types file
+that names itself this build's (they differ between sessions of one build), and a failure names the file it failed
+against. When Green passes, its answer ends with the "Built on" line for phase 7: keep it.
 
 ### 7. Verify
 
@@ -186,6 +194,5 @@ and the `plugin-authoring` skill's offer to share the mod as a GitHub repository
 
 ## Handing a phase to a subagent
 
-Red and Green may each be given to a subagent you start with the Agent tool, with the spec's path, the mod's
-folder and this rule: the same phase limits apply to its writes, because the hook sees them too. You still
-call the gate yourself.
+Red and Green may each be given to a subagent, with the spec's path, the mod's folder and this rule: the same phase
+limits apply to its writes, because the hook sees them too. You still call the gate yourself.

@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { GATE, HOME, MOD, NAME, ROOT, passing, world } from './world'
+import { GATE, HOME, MOD, NAME, ROOT, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -16,7 +16,7 @@ const KEEP = 'Keep the mod as it is now'
 const PUT_BACK = 'Put it back as it was before this edit'
 const OTHER = '/work/other-plugin'
 
-const gate = async ($: Engine, more: Record<string, unknown> = {}) => String((await $.tool.call({ tool: GATE, ...more } as never)).result)
+const gate = async ($: Engine, more: Record<string, unknown> = {}) => readerDone($, String((await $.tool.call({ tool: GATE, ...more } as never)).result))
 const said = async ($: Engine, args: string) => (await $.command.run({ command: 'mod-builder', args } as never)).text
 const write = async ($: Engine, path: string) => (await $.tool.call({ tool: 'Write', file_path: path, content: 'x' } as never)) as { deny?: string }
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown> & { phase: string }

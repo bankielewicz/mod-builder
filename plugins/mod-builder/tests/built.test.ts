@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -54,7 +54,7 @@ const standing = async (on: Parameters<typeof world>[0], at: 'scaffold' | 'red' 
   }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const phase = (w: World) => (w.store[`build:${MOD}`] as { phase: string }).phase
 const typechecks = (w: World) => w.ran.filter((argv) => argv.includes('--noEmit'))
 // The types file each typecheck ran against, read from the tsconfig as it stood while that run was under way.

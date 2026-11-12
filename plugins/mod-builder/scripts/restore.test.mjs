@@ -5,10 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { utimesSync } from 'node:fs';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { run } from './test-helpers.mjs';
+import { run, tempDir } from './test-helpers.mjs';
 
 const FILES = {
   '.claude-plugin/plugin.json': '{ "name": "tool-log", "version": "0.1.0" }\n',
@@ -27,7 +26,7 @@ const OWN = ['.git/HEAD', '.git/objects/ab/cdef', 'node_modules/dep/index.js'];
 
 // A mod in a throwaway folder, with a git folder and a node_modules folder of its own; `name` may hold a space.
 function newMod(name = 'tool-log') {
-  const top = mkdtempSync(join(tmpdir(), 'mod-builder-restore-'));
+  const top = tempDir('mod-builder-restore-');
   const mod = join(top, name);
   for (const [path, text] of Object.entries(FILES)) {
     mkdirSync(join(mod, path, '..'), { recursive: true });

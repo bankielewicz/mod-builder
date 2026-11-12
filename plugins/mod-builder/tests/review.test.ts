@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -19,7 +19,7 @@ const FILES = {
 }
 
 const write = ($: Engine, file_path: string) => $.tool.call({ tool: 'Write', file_path, content: 'x' })
-const gate = async ($: Engine, modDir?: string) => String((await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)).result)
+const gate = async ($: Engine, modDir?: string) => readerDone($, String((await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)).result))
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
 const record = (phase: string) => ({
   modDir: MOD, sessionId: 's1', phase, specApprovedAt: null, spec: null, testsAtScaffold: null, namesAtScaffold: null, testsAtRed: null, testHashes: null, evidence: {},
@@ -35,7 +35,7 @@ const walk = async ($: Engine, w: World, to: string) => {
     }
     if (now === 'green') w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
     const answer = await gate($)
-    if (kept(w).phase === now) throw new Error(`the walk stopped at ${now}: ${answer}`)
+    expect(kept(w).phase === now ? `the walk stopped at ${now}: ${answer}` : 'moved on').toBe('moved on')
     // At Verify the "Built" block is written, with the hash of the types the gate checks against.
     if (kept(w).phase === 'verify') w.files[`${MOD}/SPEC.md`] = `${w.files[`${MOD}/SPEC.md`]}${BUILT}`
   }

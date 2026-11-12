@@ -30,7 +30,9 @@ test('Done still says what to tell the person, and never to push', () => {
 
 test('Scaffold says every test has to pass there, and what is refused', () => {
   const scaffold = section(4);
-  assert.match(scaffold, /reshape `hooks\/register\.tsx` and `tests\/pane\.test\.tsx` here, with every test passing\./);
+  // The template's files are no longer reshaped at Scaffold (SPEC.md 9.4): a mod of another shape replaces them later.
+  assert.doesNotMatch(scaffold, /reshape/);
+  assert.match(scaffold, /its tests replace the template's at Red and its code the template's at Green\./);
   assert.match(scaffold, /Every test has to pass here: a test that fails at Scaffold, or a module that throws as it loads, is refused with the test run's last lines\./);
   assert.doesNotMatch(scaffold, /at least one passing test/);
 });

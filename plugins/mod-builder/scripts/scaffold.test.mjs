@@ -4,18 +4,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { userInfo } from 'node:os';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { run, scriptsDir } from './test-helpers.mjs';
+import { run, scriptsDir, tempDir } from './test-helpers.mjs';
 import { scaffoldGate, testNames } from '../hooks/mod-builder-logic.ts';
 
 const FILES = ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'tests/pane.test.tsx'];
 const TEMPLATE = join(scriptsDir, '..', 'skills', 'build', 'templates', 'pane');
 
-const newMod = (name = 'turn-counter') => join(mkdtempSync(join(tmpdir(), 'mod-builder-scaffold-')), name);
+const newMod = (name = 'turn-counter') => join(tempDir('mod-builder-scaffold-'), name);
 const scaffold = (...args) => run('scaffold.sh', args);
 // The script run from a folder of the test's choosing, with an environment of its choosing.
 const scaffoldIn = (cwd, env, ...args) => new Promise((resolve) => {
@@ -80,9 +79,9 @@ test('the author is written into the manifest as given, whatever characters it h
 });
 
 test('with no author given, the author is git\'s user.name; with none set there, the login name', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'mod-builder-home-'));
+  const home = tempDir('mod-builder-home-');
   const env = { HOME: home, GIT_CONFIG_GLOBAL: join(home, '.gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
-  const outside = mkdtempSync(join(tmpdir(), 'mod-builder-cwd-'));
+  const outside = tempDir('mod-builder-cwd-');
   const unnamed = newMod();
   assert.equal((await scaffoldIn(outside, env, unnamed, 'turn-counter')).code, 0);
   assert.deepEqual(JSON.parse(read(unnamed, '.claude-plugin/plugin.json')).author, { name: userInfo().username });
@@ -103,14 +102,14 @@ test('an author that holds a tab or a line break is refused before anything is w
 });
 
 test('a mod folder given from the folder the script is run in is laid there, not beside the script', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mod-builder-cwd-'));
+  const cwd = tempDir('mod-builder-cwd-');
   const ran = await scaffoldIn(cwd, {}, 'made/turn-counter', 'turn-counter', 'Ada');
   assert.equal(ran.code, 0, ran.stderr);
   assert.deepEqual(listed(join(cwd, 'made', 'turn-counter')), [...FILES].sort());
 });
 
 test('a mod folder whose name starts with a hyphen or holds a space is laid like any other', async () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'mod-builder-cwd-'));
+  const cwd = tempDir('mod-builder-cwd-');
   for (const folder of ['-n', 'my mods/turn counter']) {
     const ran = await scaffoldIn(cwd, {}, folder, 'turn-counter', 'Ada');
     assert.equal(ran.code, 0, ran.stderr);

@@ -2,6 +2,7 @@
 // the person's answer, all in memory. Each test builds one with `world(on, { ... })` and reads back what the
 // plugin did to it. Nothing here is the plugin's code.
 import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
 
 export const GATE = 'mcp__mod-builder__mod_builder_gate'
 export const MOD = '/work/turn-counter'
@@ -81,9 +82,32 @@ export type World = {
   whileRunning: (argv: string[]) => void
   // When set, the docs fetcher does not answer until this resolves: a fetch still under way.
   fetchHeld: Promise<void> | null
+  // The test reader (SPEC.md 9.3). What the plugin registered and withheld; each reader it started, with the id
+  // the world gave it; what a spawn answers when it is not a start ({ deny } or 'throws'); what the plugin
+  // submitted as a prompt; and the answer a reader's turn ends with when readerDone ends it, or null for a test
+  // that ends the reader's turn itself.
+  agents: { name: string; tools?: string[]; omitClaudeMd?: unknown; prompt?: string }[]
+  spawned: { agentId: string; subagentType: string; prompt: string }[]
+  spawnAnswer: { deny: string } | 'throws' | null
+  prompts: string[]
+  promptFails: boolean
+  // When a text, the prompt does not enter: the engine answers `drop` with it, as it does for a hook's refusal.
+  promptDrops: string | null
+  readerAnswer: string | null
+  // When true, the engine has no way to register an agent type: the call fails.
+  agentRegisterFails: boolean
+  // The waits the plugin asked the clock for, in milliseconds (SPEC.md 9.37); and, when set, what a wait does
+  // not end before: a test resolves it to let the wait elapse. With none a wait ends at once.
+  slept: number[]
+  sleepHeld: Promise<void> | null
+  // When set, a read of that key of the store does not answer before `until` resolves: two things the plugin
+  // does side by side then both wait at the same read.
+  storeHeld: { key: string; until: Promise<void> } | null
 }
 
 const ok = (stdout = ''): Ran => ({ exitCode: 0, stdout })
+// What `scaffold.sh --check` prints for a mod whose hooks/ and tests/ are as the template laid them.
+export const AS_LAID: Ran = ok('as laid: hooks/hooks.json hooks/register.tsx tests/pane.test.tsx\n')
 
 export function passing(count: number, names: string[] = []): string {
   const shown = names.length > 0 ? names : Array.from({ length: count }, (_, i) => `test ${i + 1}`)
@@ -97,6 +121,34 @@ export function failing(passed: string[], failed: string[], firstLine = 'Asserti
     ...failed.flatMap((name) => [`(fail) ${name} [0.40ms]`, `  ${firstLine}`]),
     '', ` ${passed.length} pass`, ` ${failed.length} fail`, `Ran ${total} tests across 1 file. [0.20s]`, '',
   ].join('\n')
+}
+
+// The world the running test built: a test builds one.
+let latest: World | null = null
+
+// What the plugin does without waiting for it (the wait after a reader's end, the prompt, the mark of one that
+// failed) has finished when this returns: calls nothing refuses, sent through the engine, let it run.
+export async function settled($: Engine): Promise<void> {
+  for (let round = 0; round < 8; round += 1) await $.tool.call({ tool: 'Read', file_path: '/work/nothing-to-read' } as never)
+}
+
+// Ends a reader's turn as the engine does, with `answer` (the world's own when none is given) and why it ended.
+// The plugin prompts the main model a short wait after that (SPEC.md 9.37), without the turn's end waiting for
+// it: unless the world holds the wait, the prompt has been submitted when this returns.
+export async function endReader($: Engine, agentId: string, answer?: string, reason = 'answer'): Promise<void> {
+  await $.turn.complete({ agentId, answer: answer ?? latest?.readerAnswer ?? '', reason, turnId: `turn-of-${agentId}`, durationMs: 1, isAborted: false } as never)
+  if (latest === null || latest.sleepHeld === null) await settled($)
+}
+
+// What a session does after the gate has started the test reader: the reader's turn ends, the plugin nudges, and
+// the model calls the gate again. `answer` is what the gate just said; when it started a reader and the world has
+// an answer for it, the reader's turn is ended with that and the gate asked again, and its second answer is the
+// result. So a test that is not about the reader sees Red pass as one step.
+export async function readerDone($: Engine, answer: string): Promise<string> {
+  const w = latest
+  if (w === null || w.readerAnswer === null || !answer.includes('the test reader is reading the tests against the spec')) return answer
+  await endReader($, (w.spawned.at(-1) as { agentId: string }).agentId)
+  return String((await $.tool.call({ tool: GATE } as never)).result)
 }
 
 export function world(on: On, start: Partial<World> = {}): World {
@@ -133,8 +185,20 @@ export function world(on: On, start: Partial<World> = {}): World {
     whileAsked: () => {},
     whileRunning: () => {},
     fetchHeld: null,
+    agents: [],
+    spawned: [],
+    spawnAnswer: null,
+    prompts: [],
+    promptFails: false,
+    promptDrops: null,
+    readerAnswer: 'VERDICT: PASS',
+    agentRegisterFails: false,
+    slept: [],
+    sleepHeld: null,
+    storeHeld: null,
     ...start,
   }
+  latest = w
   // The build's types are written, as after the plugin-authoring skill loaded, unless the test's files say otherwise.
   if (!Object.keys(w.files).some((file) => file.startsWith(`${TMP}/`))) w.files[TYPES] = TYPES_TEXT
   const value = <T>(answer: T) => ({ value: answer }) as never
@@ -157,6 +221,39 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))
   on('skill.prompt', (_, e) => ({ text: e.text }))
   on('clock.now', () => value(w.now))
+  on('clock.sleep', async (_, e) => {
+    w.slept.push((e as { ms: number }).ms)
+    if (w.sleepHeld !== null) await w.sleepHeld
+    return value(undefined)
+  })
+  on('agent.register', (_, e) => {
+    if (w.agentRegisterFails) return deny('this build registers no agent types')
+    w.agents.push(e as never)
+    return value({ agent: `mod-builder:${(e as { name: string }).name}` })
+  })
+  on('agent.offer', () => ({ isOffered: true }) as never)
+  on('agent.spawn', (_, e) => {
+    if (w.spawnAnswer === 'throws') throw new Error('the engine could not start an agent')
+    if (w.spawnAnswer !== null) return w.spawnAnswer as never
+    // Beneath the plugins a spawn is the Agent tool's own call, and its answer the started agent's record.
+    // A spawn a test raises itself, as the model's Agent call, arrives as the event's own input (subagentType).
+    const { subagent_type: named, subagentType: typed, prompt } = e as unknown as { subagent_type?: string; subagentType?: string; prompt: string }
+    const subagentType = named ?? typed ?? ''
+    // The test reader's ids are reader-1, reader-2, ...; any other type's are agent-1, agent-2, ..., counted together.
+    const agentId = `${subagentType === 'mod-builder:test-reader' ? 'reader' : 'agent'}-${w.spawned.length + 1}`
+    w.spawned.push({ agentId, subagentType, prompt })
+    // A hook's `next` resolves to the started agent with its id beside the model, as on the real engine (SPEC.md
+    // 9.33, probe 3); the plugin's own `$.agent.spawn` reads the tool's result.
+    return { model: 'the-session-model', agentId, result: { agentId, resolvedModel: 'the-session-model' } } as never
+  })
+  on('prompt.submit', (_, e) => {
+    if (w.promptFails) throw new Error('no session is bound in this process')
+    if (w.promptDrops !== null) return { drop: w.promptDrops } as never
+    w.prompts.push((e as { text: string }).text)
+    return { text: (e as { text: string }).text } as never
+  })
+  on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }) as never)
+  on('turn.complete', (_, e) => ({ text: String((e as { answer?: unknown }).answer ?? '') }) as never)
   on('env.get', (_, e) => value(w.env[(e as { name: string }).name]))
   on('command.list', () => value(w.commands.map((name) => ({ name }))))
   on('command.register', (_, e) => {
@@ -174,12 +271,15 @@ export function world(on: On, start: Partial<World> = {}): World {
     return value(undefined)
   })
 
-  on('store.get', (_, e) => {
+  on('store.get', async (_, e) => {
     const { key } = e as { key: string }
     if (w.unreadable.includes(key)) return deny('the store can not be read')
+    if (w.storeHeld !== null && w.storeHeld.key === key) await w.storeHeld.until
     // A copy, as the engine hands one out: changing what was read changes nothing that is kept.
     return value(w.store[key] === undefined ? undefined : JSON.parse(JSON.stringify(w.store[key])))
   })
+  // The keys can't be listed when a test names 'the keys' among what can't be read.
+  on('store.keys', () => (w.unreadable.includes('the keys') ? deny('the store can not be listed') : value(Object.keys(w.store))))
   on('store.set', (_, e) => {
     const { key, value: stored } = e as { key: string; value: unknown }
     w.store[key] = JSON.parse(JSON.stringify(stored))
@@ -227,11 +327,12 @@ export function world(on: On, start: Partial<World> = {}): World {
     w.ranIn.push(init?.cwd)
     if (argv[0] === 'id') return w.runs.id === undefined || w.runs.id === 'never starts' ? deny('failed to start') : value({ exitCode: w.runs.id.exitCode, stdout: w.runs.id.stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
     const fetcher = argv.some((one) => one.endsWith('/refresh-docs.sh'))
-    const script = ['restore-point.sh', 'put-back.sh'].find((name) => argv.some((one) => one.endsWith(`/${name}`)))
-    const word = fetcher ? 'refresh' : script === 'restore-point.sh' ? 'restore' : script === 'put-back.sh' ? 'putback' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
+    const script = ['restore-point.sh', 'put-back.sh', 'scaffold.sh'].find((name) => argv.some((one) => one.endsWith(`/${name}`)))
+    const word = fetcher ? 'refresh' : script === 'restore-point.sh' ? 'restore' : script === 'put-back.sh' ? 'putback' : script === 'scaffold.sh' ? 'scaffold' : ['validate', 'test', 'tsc', '--plugin-dir'].find((one) => argv.includes(one))
     // A compiler asked for its version answers by its own command; any other run, by the word it holds.
     const asked = argv.at(-1) === '-v' ? w.compilers[argv.slice(0, -1).join(' ')] : undefined
-    const ran = asked !== undefined ? asked : word === undefined ? undefined : w.runs[word]
+    // The scaffold's own check (SPEC.md 9.15) answers "as laid" unless a test says otherwise under `scaffold`.
+    const ran = asked !== undefined ? asked : word === undefined ? undefined : word === 'scaffold' && w.runs.scaffold === undefined ? AS_LAID : w.runs[word]
     if (ran === undefined || ran === 'never starts') return deny('failed to start')
     w.whileRunning([...argv])
     if (fetcher && w.fetchHeld !== null) await w.fetchHeld

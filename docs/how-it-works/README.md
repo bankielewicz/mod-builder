@@ -23,8 +23,37 @@ can't be skipped by saying it was done.
   `claude plugin validate --strict`, `claude plugin test`, a typecheck against the build's own types, and a
   headless load read in its debug log. Scaffold ends on validate, a passing test run and the typecheck; Red on
   new tests failing by assertion and the typecheck; Green and Verify on validate, the tests, the typecheck and
-  the load. The spec is hashed at approval and the tests at Red; a later gate refuses when one of them changed,
-  by any tool.
+  the load. The typecheck names the mod's test files, in a build as in an edit. The spec is hashed at approval
+  and the tests at Red; a later gate refuses when one of them changed, by any tool.
+- **Keeps Scaffold to the template.** Scaffold's gate asks the scaffold script whether `hooks/` and `tests/`
+  are as it laid them, and refuses a file there that is changed, missing or extra, naming it; laying the
+  template again (`scaffold.sh --again`) mends it. Red's gate holds `hooks/` to the template the same way.
+  Both refuse a build that holds a source file outside `hooks/` and `tests/`. So a mod's behaviour is written
+  as tests at Red and as code at Green, never ahead of its tests.
+- **Has the tests read at every Red**, in a build and in an edit. When Red's other checks pass, the mod
+  itself starts a test reader: an agent with `Read`, `Grep` and `Glob` only, whose type the model is not
+  offered. It reads the tests against the spec and answers in a fixed form; a rule reads the verdict from
+  the first line of the answer the mod stored, never from what the model says. While it reads, the test
+  files are closed to every guarded write. Findings hold Red; each reading that does not pass is a round,
+  and after two the person is asked, "Not yet" first and "Go on with these tests" second. Tests that
+  changed while they were read, or after the report, count as a round; after the second they are read once
+  more as they stand, where a pass goes on and anything else asks the person; once three rounds did not
+  pass, no reading is started before the person has answered "Not yet". The model is prompted to call the gate once for a reading, and
+  only while the reader's answer is unread at Red.
+- **Offers one way back, from Green to Red.** After Green's gate has refused twice in a row for the test
+  run, its answer says the gate can be called with `back_to_red: true`. The mod then asks the person; only
+  "Go back to Red" goes back. Test files open again and everything else closes; nothing in the mod is
+  changed. That Red ends when a test file has changed, the run passes or fails by assertion, the test files
+  typecheck, the person has agreed to every earlier test that changed or is gone, and the reader has read
+  the changed tests. Returns are counted and shown.
+- **Can hand the writing to two agents of its own**, when the request opens with `--agents`
+  (`/mod-builder:build --agents ...`, `/mod-builder:edit --agents <mod folder> ...`). The mod reads the word
+  from the skill's text itself. It registers a test-writer and an implementer (`Read`, `Grep`, `Glob`,
+  `Write`, `Edit`; no shell) and offers the first at Red and the second at Green and Verify. The guard then
+  refuses a write of a test at Red unless a test-writer makes it, and a write under `hooks/` or of a source
+  file at Green (a source file at Verify) unless an implementer does. A teammate of either type is refused
+  at its spawn, because a teammate's writes never reach the guard. The main model keeps the phases, the
+  spec and the gate.
 - **Changes or repairs a finished mod** with `/mod-builder:edit <mod folder> <what to change>`, in seven
   phases: Knowledge, Describe, Spec, Red, Green, Verify, Done (there is no Scaffold).
   - The gate's first call names the mod, runs its four checks as it stands (the baseline) and copies the folder,
@@ -52,8 +81,11 @@ can't be skipped by saying it was done.
 - **Shows where the build or edit stands** in a pane: the phases with the current one marked; for each phase
   passed, what its gate saw; at the current phase, what it may write, its checks with their results and how
   often a write was refused there; the baseline and restore point of an edit; what the person agreed to; at
-  Done, what was built and how to try it; after a stop, what was stopped and where both folders are. The
+  Done, what was built and how to try it; after a stop, what was stopped and where both folders are; at Red,
+  the test reader's rounds and findings; a return from Green; that the work uses agents. The
   status line under the prompt names the phase, and a toast says when a write was refused or the work is done.
 
 The rules each phase and gate follows, and how each was decided, are in the design record:
-[`../mod-builder/SPEC.md`](../mod-builder/SPEC.md), section 3.3 for a build and section 8 for an edit. What it can't do is in [Limits](../limits/README.md).
+[`../mod-builder/SPEC.md`](../mod-builder/SPEC.md), section 3.3 for a build, section 8 for an edit, and
+section 9 for the test reader, the closed Scaffold, the way back to Red and the agents. What it can't do is in
+[Limits](../limits/README.md).

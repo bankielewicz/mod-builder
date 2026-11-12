@@ -21,10 +21,10 @@ test('the table of phases says Scaffold and Red each pass only when the typechec
   assert.equal(row(5)[4], 'more tests than at Scaffold, a new one failing on an assertion; the typecheck passes');
 });
 
-test('Scaffold says its gate typechecks the mod, why, and to declare there what the tests of phase 5 will name', () => {
+test('Scaffold says its gate typechecks the mod, why, and what a test of phase 5 can name', () => {
   const scaffold = section(4);
   assert.match(scaffold, /Then call the gate, which runs the validator and the tests, records the tests that exist now, and typechecks the mod against this build's types\./);
-  assert.match(scaffold, /Everything but `tests\/` closes when Scaffold passes and opens again only at Green, and Red ends on the same typecheck: declare here whatever the tests of phase 5 will name \(a type in the contract, a value the module exports\), because a test can't typecheck against what is not there\./);
+  assert.match(scaffold, /Everything but `tests\/` closes when Scaffold passes and opens again only at Green, and Red ends on the same typecheck: a test of phase 5 can name only what is there then, the template's module and what `types\/` declares\. So declare here a type the tests will name, and drive the mod through its events\./);
 });
 
 test('Red says its gate typechecks the tests after the test run, why, and that a refusal carries the compiler\'s last lines', () => {
