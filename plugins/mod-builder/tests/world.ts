@@ -96,6 +96,13 @@ export type World = {
   readerAnswer: string | null
   // When true, the engine has no way to register an agent type: the call fails.
   agentRegisterFails: boolean
+  // The waits the plugin asked the clock for, in milliseconds (SPEC.md 9.37); and, when set, what a wait does
+  // not end before: a test resolves it to let the wait elapse. With none a wait ends at once.
+  slept: number[]
+  sleepHeld: Promise<void> | null
+  // When set, a read of that key of the store does not answer before `until` resolves: two things the plugin
+  // does side by side then both wait at the same read.
+  storeHeld: { key: string; until: Promise<void> } | null
 }
 
 const ok = (stdout = ''): Ran => ({ exitCode: 0, stdout })
@@ -119,9 +126,18 @@ export function failing(passed: string[], failed: string[], firstLine = 'Asserti
 // The world the running test built: a test builds one.
 let latest: World | null = null
 
+// What the plugin does without waiting for it (the wait after a reader's end, the prompt, the mark of one that
+// failed) has finished when this returns: calls nothing refuses, sent through the engine, let it run.
+export async function settled($: Engine): Promise<void> {
+  for (let round = 0; round < 8; round += 1) await $.tool.call({ tool: 'Read', file_path: '/work/nothing-to-read' } as never)
+}
+
 // Ends a reader's turn as the engine does, with `answer` (the world's own when none is given) and why it ended.
+// The plugin prompts the main model a short wait after that (SPEC.md 9.37), without the turn's end waiting for
+// it: unless the world holds the wait, the prompt has been submitted when this returns.
 export async function endReader($: Engine, agentId: string, answer?: string, reason = 'answer'): Promise<void> {
   await $.turn.complete({ agentId, answer: answer ?? latest?.readerAnswer ?? '', reason, turnId: `turn-of-${agentId}`, durationMs: 1, isAborted: false } as never)
+  if (latest === null || latest.sleepHeld === null) await settled($)
 }
 
 // What a session does after the gate has started the test reader: the reader's turn ends, the plugin nudges, and
@@ -177,6 +193,9 @@ export function world(on: On, start: Partial<World> = {}): World {
     promptDrops: null,
     readerAnswer: 'VERDICT: PASS',
     agentRegisterFails: false,
+    slept: [],
+    sleepHeld: null,
+    storeHeld: null,
     ...start,
   }
   latest = w
@@ -202,6 +221,11 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))
   on('skill.prompt', (_, e) => ({ text: e.text }))
   on('clock.now', () => value(w.now))
+  on('clock.sleep', async (_, e) => {
+    w.slept.push((e as { ms: number }).ms)
+    if (w.sleepHeld !== null) await w.sleepHeld
+    return value(undefined)
+  })
   on('agent.register', (_, e) => {
     if (w.agentRegisterFails) return deny('this build registers no agent types')
     w.agents.push(e as never)
@@ -228,6 +252,7 @@ export function world(on: On, start: Partial<World> = {}): World {
     w.prompts.push((e as { text: string }).text)
     return { text: (e as { text: string }).text } as never
   })
+  on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }) as never)
   on('turn.complete', (_, e) => ({ text: String((e as { answer?: unknown }).answer ?? '') }) as never)
   on('env.get', (_, e) => value(w.env[(e as { name: string }).name]))
   on('command.list', () => value(w.commands.map((name) => ({ name }))))
@@ -246,9 +271,10 @@ export function world(on: On, start: Partial<World> = {}): World {
     return value(undefined)
   })
 
-  on('store.get', (_, e) => {
+  on('store.get', async (_, e) => {
     const { key } = e as { key: string }
     if (w.unreadable.includes(key)) return deny('the store can not be read')
+    if (w.storeHeld !== null && w.storeHeld.key === key) await w.storeHeld.until
     // A copy, as the engine hands one out: changing what was read changes nothing that is kept.
     return value(w.store[key] === undefined ? undefined : JSON.parse(JSON.stringify(w.store[key])))
   })

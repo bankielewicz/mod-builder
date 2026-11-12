@@ -168,7 +168,7 @@ test('a stored answer is read with how often it was nudged and whether the last 
   for (const odd of [-1, 1.5, '1', null]) assert.equal(rules.readReaderAnswer({ answer: 'x', nudges: odd }).nudges, 0);
   for (const odd of [undefined, null, 'VERDICT: PASS', [], { nudges: 1 }, { answer: 7 }]) assert.equal(rules.readReaderAnswer(odd), null);
   assert.equal(rules.READER_NUDGES, 2);
-  assert.equal(rules.READER_NUDGE, 'mod-builder: the test reader has reported. Call mod_builder_gate.');
+  assert.equal(rules.READER_NUDGE, 'mod-builder: the test reader has reported. If the build is still at Red, call mod_builder_gate; if it has moved on, do nothing.');
 });
 
 test('with no reader out and no round about these tests, a reader is started', () => {
@@ -243,8 +243,8 @@ test('only a wait answers before any test or compiler runs, and says for how lon
 });
 
 test('the gate\'s words while the reader is out tell the model to end its turn and not to call again', () => {
-  assert.equal(rules.READER_STARTED, 'the test reader is reading the tests against the spec. End your turn now: mod-builder will prompt you when it has reported. Do not call the gate again before that');
-  assert.equal(rules.readerReading(12), 'the test reader is still reading (12 s). End your turn: mod-builder will prompt you when it has reported');
+  assert.equal(rules.READER_STARTED, 'the test reader is reading the tests against the spec. End your turn now: its report is handed back to you, or mod-builder prompts you. Call the gate then, and not before');
+  assert.equal(rules.readerReading(12), 'the test reader is still reading (12 s). End your turn: its report is handed back to you, or mod-builder prompts you');
   for (const odd of [-1, 1.5, undefined]) assert.match(rules.readerReading(odd), /still reading \(0 s\)/);
 });
 

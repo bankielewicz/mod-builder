@@ -13,10 +13,10 @@ const SPEC = `${MOD}/SPEC.md`
 const APPROVED = '# turn-counter\n'
 const PANE = `${MOD}/tests/pane.test.tsx`
 const AT_RED = 'mod-builder: still at phase 5 (Red)'
-const READING = 'the test reader is reading the tests against the spec. End your turn now: mod-builder will prompt you when it has reported. Do not call the gate again before that.'
+const READING = 'the test reader is reading the tests against the spec. End your turn now: its report is handed back to you, or mod-builder prompts you. Call the gate then, and not before.'
 const STARTED = `${AT_RED}: ${READING}`
 const CLOSED = 'mod-builder: tests/pane.test.tsx can\'t be written: the test reader is reading these tests; wait for its report.'
-const NUDGE = 'mod-builder: the test reader has reported. Call mod_builder_gate.'
+const NUDGE = 'mod-builder: the test reader has reported. If the build is still at Red, call mod_builder_gate; if it has moved on, do nothing.'
 const FIRST = 'VERDICT: FINDINGS\n- tests/pane.test.tsx: no test counts a second turn\n'
 const SECOND = 'VERDICT: FINDINGS\n- SPEC.md: the reset on /clear is never tested\n'
 const THIRD = 'VERDICT: FINDINGS\n- tests/pane.test.tsx: the empty log is never drawn\n'
@@ -240,7 +240,7 @@ test('an answer of a reader the record no longer names is stored as left behind 
   expect((await gate($)).includes('the test reader passed the tests (round 2)')).toBe(true)
 })
 
-test('a reading left behind twice and then a pass passes Red as round 3: a new reading is started whatever the count, and the person is not asked', async ($, on) => {
+test('a reading left behind twice and then a pass passes Red as round 3: after two such rounds the tests are read once more, and the person is not asked', async ($, on) => {
   const w = await atRed(on, { answer: 'Go on with these tests' })
   await gate($)
   byShell(w, 'changed once')
@@ -437,4 +437,69 @@ test('the same record without that mark is a round about these tests: the person
   await gate($)
   expect(w.spawned.length).toBe(1)
   expect(w.asked.length).toBe(1)
+})
+
+// ------------------------------------------------- after two rounds, one more reading (SPEC.md 9.36: what held before it)
+
+const LAST_LINE = 'The code is written next, to these tests. Go on with these tests?'
+// The tests are changed, as a model mends them after it was handed a report: before it calls the gate.
+const mend = byShell
+const question = (w: World, index: number) => (w.asked[index] as { question: string } | undefined)?.question ?? ''
+// Two rounds that did not pass, each counted because the tests were mended after its report, and a third reading
+// started: what a model does that is handed every report.
+const twoRoundsMended = async ($: Engine, w: World) => {
+  await gate($)
+  await endReader($, 'reader-1', FIRST)
+  mend(w, 'mended after the first report')
+  await gate($)
+  await endReader($, 'reader-2', SECOND)
+  mend(w, 'mended after the second report')
+
+  return gate($)
+}
+
+test('tests mended after the first and after the second report are each read again in the same call, and nobody is asked', async ($, on) => {
+  const w = await atRed(on, { answer: 'Not yet' })
+  await gate($)
+  await endReader($, 'reader-1', FIRST)
+  mend(w, 'mended after the first report')
+  expect(await gate($)).toBe(`${AT_RED}: the tests changed after the test reader reported on them: that reading did not pass and counts as round 1; ${READING}`)
+  expect(w.spawned.length).toBe(2)
+  await endReader($, 'reader-2', SECOND)
+  mend(w, 'mended after the second report')
+  expect(await gate($)).toBe(`${AT_RED}: the tests changed after the test reader reported on them: that reading did not pass and counts as round 2; ${READING}`)
+  expect(w.spawned.length).toBe(3)
+  expect(w.asked).toEqual([])
+  expect(kept(w).readerRounds).toBe(2)
+})
+
+test('a third reading that passes goes on: Red passes as round 3 and nobody is asked', async ($, on) => {
+  const w = await atRed(on, { answer: 'Not yet' })
+  await twoRoundsMended($, w)
+  await endReader($, 'reader-3', 'VERDICT: PASS')
+  expect((await gate($)).includes('the test reader passed the tests (round 3)')).toBe(true)
+  expect(w.asked).toEqual([])
+  expect(kept(w).phase).toBe('green')
+})
+
+test('a third reading with findings, read for the tests as they are, asks the person and starts no fourth', async ($, on) => {
+  const w = await atRed(on, { answer: 'Not yet' })
+  await twoRoundsMended($, w)
+  await endReader($, 'reader-3', THIRD)
+  expect(await gate($)).toBe(`${AT_RED}. Not passed: the person has not agreed to go on with these tests (answer: "Not yet").`)
+  expect(w.asked.length).toBe(1)
+  expect(question(w, 0)).toBe(['The test reader has read the tests 3 times. The last time it found behaviours of the spec that no test would catch:', '- tests/pane.test.tsx: the empty log is never drawn', LAST_LINE].join('\n'))
+  expect(w.spawned.length).toBe(3)
+  expect(kept(w).phase).toBe('red')
+})
+
+test('a pass that is out of date as a third reading counts for nothing: the tests are read again and nobody is asked', async ($, on) => {
+  const w = await atRed(on, { answer: 'Not yet' })
+  await twoRoundsMended($, w)
+  await endReader($, 'reader-3', 'VERDICT: PASS')
+  mend(w, 'changed after the pass')
+  expect(await gate($)).toBe(`${AT_RED}: the tests changed after the test reader passed them, so that pass is not theirs; ${READING}`)
+  expect(w.spawned.length).toBe(4)
+  expect(w.asked).toEqual([])
+  expect(kept(w).readerRounds).toBe(2)
 })

@@ -50,7 +50,7 @@ test('both skills stay under 200 lines with the sentence in them', () => {
 test('the reference file is there, short, plain and ends with one newline', () => {
   assert.equal(existsSync(file), true);
   const lines = text.split('\n');
-  assert.equal(lines.length < 60, true);
+  assert.equal(lines.length < 64, true);
   assert.deepEqual(lines.filter((line) => line.length > 115), []);
   assert.deepEqual(lines.filter((line) => line !== line.trimEnd()), []);
   assert.equal(/^[\x20-\x7E\n]*$/.test(text), true);
@@ -71,10 +71,10 @@ test('it quotes the gate\'s words while the reader is out, the prompt, and the a
   assert.equal(flat.includes(`"${rules.READER_STARTED}"`), true);
   assert.equal(flat.includes(`"${rules.READER_NUDGE}"`), true);
   assert.equal(flat.includes(`"${rules.readerReading(7).replace('(7 s)', '(N s)')}"`), true);
-  assert.equal(flat.includes(`**End your turn.** Don't call the gate. While it reads, the test files are closed: any guarded write (Write, Edit, MultiEdit, NotebookEdit), by any agent, is refused with "${rules.READER_CLOSED}". They open again when it has reported, or after ${rules.READER_MS / 60000} minutes. 2. mod-builder prompts you`), true);
+  assert.equal(flat.includes(`**End your turn.** Don't call the gate. While it reads, the test files are closed: any guarded write (Write, Edit, MultiEdit, NotebookEdit), by any agent, is refused with "${rules.READER_CLOSED}". They open again when it has reported, or after ${rules.READER_MS / 60000} minutes. 2. Its report is handed to you, or mod-builder prompts you: "${rules.READER_NUDGE}" Call the gate, once. The prompt is sent only while the report is unread at Red: none comes when you have called the gate already. 3. A call while it still reads`), true);
   // One sentence follows "End your turn again." in its step, what to do when no prompt comes; then the heading
   // of the answers.
-  assert.match(flat, /prompt you when it has reported", and runs nothing\. End your turn again\. If no prompt comes, call the gate\. ## What the gate answers after the reader /);
+  assert.match(flat, /or mod-builder prompts you", and runs nothing\. End your turn again\. If no prompt comes, call the gate\. ## What the gate answers after the reader /);
 });
 
 test('it says the three answers after the reader in the rules\' words: a pass, findings, no verdict', () => {
@@ -93,7 +93,7 @@ test('it says when the person is asked and which answer passes, with the rules\'
   assert.equal(flat.includes(`After ${rules.READER_ROUNDS} rounds that did not pass, the gate asks the person, showing the last round's findings.`), true);
   assert.equal(flat.includes(`"${rules.NOT_YET}" comes first; only "${rules.GO_ON_TESTS}" passes Red.`), true);
   assert.deepEqual(rules.readerOptions(), [rules.NOT_YET, rules.GO_ON_TESTS]);
-  assert.equal(flat.includes(`passes Red. The person is only ever asked about a reading of the tests as they are, also one that gave no verdict: tests changed since the last reading are read first. Every later round that does not pass ends with the person asked again, and so does a call with the tests unchanged after "${rules.NOT_YET}". Don't argue a finding in the tests: fix the tests, or let the person decide. ## What never helps `), true);
+  assert.equal(flat.includes(`passes Red. Tests changed after the second such round are read once more as they are: a pass goes on, anything else asks the person. Once ${rules.READER_ROUNDS + 1} rounds did not pass, no reading is started before the person has answered "${rules.NOT_YET}": for tests changed since the last reading, the question says they were not read as they are now. Every later round that does not pass ends with the person asked again, and so does a call with the tests unchanged after "${rules.NOT_YET}". Don't argue a finding in the tests: fix the tests, or let the person decide. ## What never helps `), true);
 });
 
 test('it says never to write to the reader in a test file or the spec, and why', () => {
