@@ -55,7 +55,7 @@ test('the edit skill is lean: under 200 lines, with no line over 115 characters 
 
 test('every file of the plugin the skill sends the model to is there, and it never sends it to the scaffold', () => {
   const named = [...body.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z0-9_./-]+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(named)].sort(), ['scripts/lookup.sh']);
+  assert.deepEqual([...new Set(named)].sort(), ['reference/test-reader.md', 'scripts/lookup.sh']);
   for (const path of named) assert.equal(existsSync(join(plugin, path)), true, path);
   assert.doesNotMatch(body, /scaffold\.sh|restore-point\.sh|put-back\.sh/);
 });

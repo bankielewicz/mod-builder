@@ -38,7 +38,7 @@ test('the skill is lean: under 200 lines, with no line over 115 characters outsi
 
 test('every file of the plugin the skill sends the model to is there', () => {
   const named = [...body.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z0-9_./-]+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(named)].sort(), ['scripts/lookup.sh', 'scripts/scaffold.sh']);
+  assert.deepEqual([...new Set(named)].sort(), ['reference/test-reader.md', 'scripts/lookup.sh', 'scripts/scaffold.sh']);
   for (const path of named) assert.equal(existsSync(join(plugin, path)), true, path);
 });
 
