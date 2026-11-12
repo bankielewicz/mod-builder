@@ -3354,3 +3354,57 @@ the way out is) [ran, 2.1.322, at `e82b387`]:
   In 0.3.0, through a plan with the way back to Red: the gate's refusal for a folder another session
   holds also gives that session's id and says to resume it (`claude --resume`) and run `/mod-builder
   stop` there; and `docs/limits` says the same.
+
+### 9.30 Step 4, the way back to Red, as it will be built; and the refusal for a held folder (2026-11-12, before its plans)
+
+The driving session accepted the correction at `cd73b47` ("on my test run and your live check; my own live
+run of it comes with the demonstration step") and said: "Go on with the way back to Red (9.11), with the
+held-folder refusal wording in the same step". 9.11 is the owner's rule. Decided by the building session
+where 9.11 is silent or leaves the rule to the plan, for the driving session to keep or change:
+
+- **The gate's input** gains one field, `back_to_red` (a boolean). It carries no verdict (9.14): it only
+  asks the mod to put the question.
+- **When it is offered.** The record counts Green's refusals in a row whose reason is the test run (it
+  exited other than 0, or ran fewer or other tests than Red's). Any other outcome of Green's gate sets
+  the count to 0. From the second on, the refusal ends: "If a test is what is wrong, call the gate with
+  back_to_red: true: mod-builder then asks the person whether to go back to Red and change the tests."
+- **The call.** At another phase, or before it was offered, `back_to_red: true` is refused and says
+  when it is offered; nobody is asked. When offered, the mod checks first that the test files are still
+  those hashed at Red (a changed test is Green's own refusal, as now), then asks: "Go back to Red to
+  change the tests? Green's test run failed N times in a row. Failing: <up to ten names>." with "Not yet"
+  first and "Go back to Red". From the third return on the question opens "This build has gone back to
+  Red N times already." Any other answer, or nobody to ask, keeps Green.
+- **Going back.** The phase is Red; the count of returns rises; the reader's rounds and its last round
+  are cleared, and 8.4's agreement too. The test files' text at that moment (they are the ones hashed
+  when Red last passed) is kept in the store under a key of its own, as the copy 8.4's question compares
+  against. Nothing in the mod is written, deleted or reverted. The guard follows the phase: tests open,
+  the rest closed.
+- **How a returned Red ends** (9.11 leaves the rule to the plan):
+  1. at least one test file differs from the hashes of the Red that passed before (else: "no test file
+     has changed since Red passed");
+  2. the test run is judged: it may pass, or fail by assertion; it is refused when a test file does not
+     load, or when tests fail and none of them by assertion (the tests are then broken, not strict). Why:
+     the code exists now, so a corrected test may simply pass; a run where every failure is a thrown
+     error says nothing about the behaviour;
+  3. the typecheck of the test files, as at any Red;
+  4. every test file that the Red before held and that is changed or gone is asked about as in 8.4, in a
+     build as in an edit, against the kept copy, "Not yet" first;
+  5. the reader reads the test files that are new or changed since the Red before (9.3, 9.28); then the
+     hashes, the count of tests and their names are taken again, and Green opens.
+  The checks of `hooks/` against the template and of source outside `hooks/` and `tests/` (9.17, 9.18)
+  are not run at a returned Red: the code is there by then. A test holds that exception.
+- **A Red that was skipped** (an edit's refactor route, a repair whose tests fit) may be gone back to as
+  well: it is then entered for the first time, and ends as an edit's or a repair's entered Red does, with
+  point 1 judged against the baseline's hashes.
+- **Shown:** Red's evidence on a return ends "back from Green (return N)"; the pane's Red block and the
+  status line say "back from Green · return N", and Done's "What was checked" keeps the count.
+- **What the model is told:** the gate's own answers carry it. Each skill's Green section gets one line
+  that names a second reference file, `reference/back-to-red.md`; each skill stays under 200 lines.
+
+**The refusal for a folder another session holds** (the owner's decision, 9.29): "... is being edited by
+another session (<its id>; it is at phase N). If that session is gone, resume it with claude --resume
+<its id> and run /mod-builder stop there; or name another folder." The same for a build. `docs/limits`
+says so, and that nothing expires and no other session can release it in 0.3.0.
+
+**Two plans:** the rules, the hooks module and the pane for the way back; then the wording: the reference
+file, both skills' line, the refusal for a held folder and `docs/limits`.
