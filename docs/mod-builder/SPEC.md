@@ -3953,3 +3953,12 @@ names under `TMPDIR` that are a tool's and not a test's become a rule of `script
 holds it (red), the helper is written (green), and then the whole-run test asks the helper in place of
 its own pattern. That last change is to an existing test and depends on the helper, so its commit comes
 after the green one and not before the red one; it says why.
+
+**Plan 50, as built** (2026-11-12): `a73b42d` red, `65f6cfe` green (`toolsFolder` in
+`scripts/test-helpers.mjs`), then the whole-run test asking the helper, in a commit of its own after the green one, as said
+above; verifier PASS, every point reproduced and 8 mutants each failing a named test; 672 module tests and
+895 node tests pass, and validate [ran, by the implementer, the verifier and, with the existing test
+changed, the building session]. Read by an agent that did not write the tests, before the red commit: 4
+mutants, 3 survived, all on the pattern for Claude Code's folder (a multi-line flag, a trim, trailing
+white space); the rule was right and the test's list of near misses was extended. CI's second run is
+reported to the driving session with the push; a result after this commit is not recorded here.
