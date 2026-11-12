@@ -3931,3 +3931,25 @@ The driving session's own runs, in its words to the building session:
 
 `CHANGELOG.md` dates 0.3.0 as 2026-11-12, the day of this push; the merge corrects it if it is later.
 CI's `TMPDIR` line and its step limits run on GitHub for the first time with this pull request.
+
+### 9.40 The pull request, CI's first run, and its one failure (2026-11-12, before the plan)
+
+Pushed at `6e16abb`; pull request 5, `agents-0.3.0` into `main`, not merged. **CI failed** (run
+43281956526, 1 m 25 s): validate of the marketplace and of the plugin passed, the module tests passed, and
+of 891 node tests 890 passed. The one failure is the whole-run test of `scripts/leaves-nothing.test.mjs`,
+on its first run on GitHub: "actual: [ 'node-compile-cache' ], expected: []". The step limits and the
+`TMPDIR` line of the workflow ran and are not the cause: that test gives its inner run a `TMPDIR` of its
+own.
+
+**The cause** [ran]: a Node process that turns on its compile cache makes `node-compile-cache` under
+`TMPDIR` (`TMPDIR=<empty folder> node -e "require('node:module').enableCompileCache()"` left exactly that
+folder here). On GitHub Claude Code is the npm package and runs on Node; on the building session's
+machine `claude` is a native program, so the folder was never made. It is a tool's folder, as
+`claude-<user id>` is, which the test already sets aside; no test of the plugin makes it.
+
+**As it will be built** (one small plan; the driving session: "Fix a CI failure through a plan"): the
+names under `TMPDIR` that are a tool's and not a test's become a rule of `scripts/test-helpers.mjs`,
+`toolsFolder(name)`: `claude-<digits>` and `node-compile-cache`, each as the whole name. A new test file
+holds it (red), the helper is written (green), and then the whole-run test asks the helper in place of
+its own pattern. That last change is to an existing test and depends on the helper, so its commit comes
+after the green one and not before the red one; it says why.
