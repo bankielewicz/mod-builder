@@ -1,7 +1,7 @@
 ---
 name: build
 description: Builds a Claude Code mod (a pane, panel or other change to Claude Code's own interface, made as a plugin with a hooks module) from a dated copy of Anthropic's mod documentation, test-first, through eight guarded phases. Use when the person runs /mod-builder:build with what the mod should do, or asks mod-builder to build, make or scaffold a mod.
-argument-hint: <what the mod should do>
+argument-hint: [--agents] <what the mod should do>
 ---
  # Build a mod
 
@@ -9,7 +9,9 @@ The person asked for this mod:
 
 > $ARGUMENTS
 
-If nothing is written above, ask what the mod should do before anything else.
+If nothing is written above, ask what the mod should do first. A leading `--agents` asks for the plugin's agents:
+read `${CLAUDE_PLUGIN_ROOT}/reference/agents.md` before Red. The guard watches the file-editing tools only, so a
+shell command could still write a test or code: don't.
 
 ## Three things that make this build different
 
@@ -102,11 +104,10 @@ Write `<mod>/SPEC.md`. It is what the person approves, so write it for them, sho
 - **Its tests**: the behaviours phase 5 will write tests for, one line each.
 
 Call the gate. It asks the person, and "Not yet" is its first option on purpose. On "Not yet", ask what should
-change, change the spec, and call the gate again. When the person picks "See it first: draw mockups with
-/design" (offered only when a `design` skill is listed in this session), draw them with that skill, which
-keeps them in its own place (this phase can write nothing in the mod but `SPEC.md`), then call the gate again.
-After approval the spec is fixed: its text is hashed, and a later change to the approved part stops every
-gate.
+change, change the spec, and call the gate again. When the person picks "See it first: draw mockups with /design"
+(offered only when a `design` skill is listed in this session), draw them with that skill, which keeps them in its
+own place (this phase can write nothing in the mod but `SPEC.md`), then call the gate again. After approval the
+spec is fixed: its text is hashed, and a later change to the approved part stops every gate.
 
 ### 4. Scaffold
 
@@ -193,6 +194,5 @@ and the `plugin-authoring` skill's offer to share the mod as a GitHub repository
 
 ## Handing a phase to a subagent
 
-Red and Green may each be given to a subagent you start with the Agent tool, with the spec's path, the mod's
-folder and this rule: the same phase limits apply to its writes, because the hook sees them too. You still
-call the gate yourself.
+Red and Green may each be given to a subagent, with the spec's path, the mod's folder and this rule: the same phase
+limits apply to its writes, because the hook sees them too. You still call the gate yourself.

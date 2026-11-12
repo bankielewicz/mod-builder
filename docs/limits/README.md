@@ -95,6 +95,23 @@ their line counts, and with what differs in what the mod hooks, answers and call
   stays as it is, closed. A returned Red does not hold `hooks/` to the template or look for source outside
   `hooks/` and `tests/`, and its test run may pass (`SPEC.md` 9.30).
 
+## The plugin's own agents (0.3.0, not released)
+
+- **The guard watches the file-editing tools only.** In a build or edit started with `--agents`, the guard
+  refuses the main model's `Write`, `Edit`, `MultiEdit` and `NotebookEdit` of a test at Red and of code at Green,
+  and lets only the test-writer or the implementer through. A shell command is not one of those tools: the main
+  model could still write a test or code through one, and mod-builder does not see who a shell command wrote
+  for. The two agents themselves have no shell.
+- **What an agent is asked is the main model's prompt.** mod-builder sees which agent wrote a file, not what it
+  was told to write: a prompt that dictates the tests makes the test-writer a typist.
+- **A teammate is refused only for these two types.** A teammate's writes never reach the guard, so a
+  test-writer or implementer started as one is refused at its spawn; a teammate of any other type, and the
+  advisor, stay outside the guard.
+- **Another plugin can deny or rewrite a spawn**, and the agents run on the model the session gives them: none
+  is named. A build with `--agents` was not run headless.
+- **At Verify a source file outside `hooks/` is still the implementer's**; once the build is Done no agent can
+  be started, so such a file can't be written until the build is replaced or stopped (`SPEC.md` 9.33).
+
 ## The test reader (0.3.0, not released)
 
 - **The reader is a model reading text the judged model wrote.** At Red mod-builder starts an agent that

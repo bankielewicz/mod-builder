@@ -1,7 +1,7 @@
 ---
 name: edit
 description: Changes or repairs a finished Claude Code mod (a plugin with a hooks module, built by mod-builder or by hand) through guarded test-first phases, with a restore point taken before anything is written. Use when the person runs /mod-builder:edit with a mod's folder and what to change, or asks mod-builder to edit, change, fix, update or repair a mod that already exists, including one that no longer typechecks or loads on this Claude Code.
-argument-hint: <mod folder> <what to change>
+argument-hint: [--agents] <mod folder> <what to change>
 ---
 # Edit a mod
 
@@ -9,8 +9,10 @@ The person asked for this:
 
 > $ARGUMENTS
 
-The first word is the mod's folder; the rest is the change. If the folder or the change is missing, ask for it
-before anything else.
+The mod's folder comes first and the change after it; if either is missing, ask for it before anything else. A
+leading `--agents`, before the folder, asks for the plugin's agents: read
+`${CLAUDE_PLUGIN_ROOT}/reference/agents.md` before Red. The guard watches the file-editing tools only, so a shell
+command could still write a test or code: don't.
 
 ## Three things that make an edit different from editing files
 
@@ -142,11 +144,10 @@ Then call the gate. It runs the validator, the tests, a typecheck against this b
 included) and a headless load. When it refuses, its answer carries the last lines of the command that failed.
 When Green passes, its answer ends with the "Built on" line for phase 6: keep it.
 
-**When Red was skipped, the gate then asks the person,** because no new test covers what you changed. It shows
-them every file changed, added or gone since the baseline with its line counts, and "Not yet" is first. On "Not
-yet" the edit stays at Green with the code still open: ask what should change. Say beforehand, in the spec's
-section, what you will touch, so the list does not surprise them. A file changed after they agree is asked about
-again at Verify.
+**When Red was skipped, the gate then asks the person,** because no new test covers what you changed. It shows them
+every file changed, added or gone since the baseline with its line counts, and "Not yet" is first. On "Not yet" the
+edit stays at Green with the code still open: ask what should change. Say beforehand, in the spec's section, what
+you will touch, so the list does not surprise them. A file changed after they agree is asked about again at Verify.
 
 ### 6. Verify
 
@@ -193,6 +194,5 @@ Never restore files from the restore point yourself, and never delete it.
 
 ## Handing a phase to a subagent
 
-Red and Green may each be given to a subagent you start with the Agent tool, with the spec's path, the mod's
-folder and this rule: the same phase limits apply to its writes, because the hook sees them too. You still call
-the gate yourself.
+Red and Green may each be given to a subagent, with the spec's path, the mod's folder and this rule: the same phase
+limits apply to its writes, because the hook sees them too. You still call the gate yourself.
