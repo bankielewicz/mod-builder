@@ -720,6 +720,10 @@ export type BuildRecord = {
   readerRounds?: number // the rounds of the test reader that ended without a pass
   readerLast?: ReaderRound | null // the last such round: the test files it was about, and what it found
   testsAgreed?: Hashes // an edit's Red: the changed test files the person's answer to 8.4's question covered
+  greenTestRefusals?: number // SPEC.md 9.30: Green's refusals in a row that were for the test run
+  returns?: number // how often this build or edit went back from Green to Red (SPEC.md 9.11)
+  redBefore?: Hashes // after a return: the test files as hashed when Red last passed (an edit whose Red was skipped: at the baseline)
+  namesAtRed?: string[] // the names the test run had when Red last passed: what a returned Red says is gone
 }
 
 export function sessionKey(sessionId: string): string {
@@ -1295,11 +1299,13 @@ export function testChangeOptions(): string[] {
 // 8.4's question, or null when no earlier test file changed or is gone: each file with the lines added and
 // removed against its baseline copy; under it every removed line that holds "expect" or opens a test, at most
 // QUOTED_LINES in all, then how many more; then the test names that are gone.
-export function testChangeQuestion(files: readonly AskedFile[], gone: readonly string[]): string | null {
+// `since` is what the files are compared with: the mod before this edit, or, at a Red the work came back to
+// (SPEC.md 9.30), the tests as they were when Red passed.
+export function testChangeQuestion(files: readonly AskedFile[], gone: readonly string[], since: 'edit' | 'red' = 'edit'): string | null {
   const asked = Array.isArray(files) ? files.filter((file) => typeof file === 'object' && file !== null && typeof file.path === 'string') : []
   if (asked.length === 0) return null
   const said = (count: number) => (count === 1 ? '1 line' : `${count} lines`)
-  const text = ['These test files are not as they were before this edit:']
+  const text = [since === 'red' ? 'These test files are not as they were when Red passed:' : 'These test files are not as they were before this edit:']
   let quoted = 0
   let more = 0
   for (const file of [...asked].sort((one, other) => (one.path < other.path ? -1 : one.path > other.path ? 1 : 0))) {
@@ -2319,10 +2325,11 @@ export function paneModel(input: PaneInput): PaneModel {
         ],
       })
       const total = phases.reduce((sum, one) => sum + (refusals.counts[one] ?? 0), 0)
+      const went = wentBack(own.returns)
       const where = phases.filter((one) => (refusals.counts[one] ?? 0) > 0).map((one) => TITLES[one])
       blocks.push({
         heading: heading('What was checked'),
-        rows: [...(seen('verify') === '' ? [row('  validate, the tests, the typecheck and a headless load')] : evidenceRows(seen('verify'))), ...agreedRows('red', 'green'), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
+        rows: [...(seen('verify') === '' ? [row('  validate, the tests, the typecheck and a headless load')] : evidenceRows(seen('verify'))), ...agreedRows('red', 'green'), ...(went === '' ? [] : [row({ text: `  ${went}`, tone: 'dim' })]), ...(total === 0 ? [] : [row({ text: `  ${plural(total, noun[0], noun[1])} refused along the way, at ${where.join(', ')}`, tone: 'dim' })])],
       })
       blocks.push({ heading: heading('Try it'), rows: [row(`  claude --plugin-dir ${modDir}`, ...(finished.command === null ? [] : [{ text: 'then', tone: 'dim' as Tone }, `/${finished.command}`]))] })
       if (refused !== null) blocks.push(writeTable(kind, phase, red, modDir))
@@ -2344,12 +2351,14 @@ export function paneModel(input: PaneInput): PaneModel {
       // Just above Red's own block: each finding of the reader's last round (SPEC.md 9.19).
       const found = phase === 'red' ? readerBlock(own.reader, own.readerLast) : null
       if (found !== null) blocks.push(found)
-      blocks.push({ heading: [{ text: `${at + 1} ${TITLES[phase]}` }, { text: 'working\u2026', tone: 'current' }], rows: attemptRows() })
+      // A Red the work came back to from Green says so (SPEC.md 9.11): the count of returns is shown.
+      const back = phase === 'red' ? backFromGreenShort(own.returns) : ''
+      blocks.push({ heading: [{ text: `${at + 1} ${TITLES[phase]}` }, { text: 'working\u2026', tone: 'current' }, ...(back === '' ? [] : [{ text: back, tone: 'warning' as Tone }])], rows: attemptRows() })
       // At Red a test that passes is no progress, so the line says how many fail.
       const tests = attempt === null || attempt.passed === null || attempt.tests === null ? ''
         : phase === 'red' ? ` \u00b7 ${attempt.tests - attempt.passed} of ${plural(attempt.tests, 'test', 'tests')} fail`
           : ` \u00b7 ${attempt.passed} of ${plural(attempt.tests, 'test', 'tests')} pass`
-      status = `${lower}${tests}${phase === 'red' ? readerStatus(own.reader, own.readerLast, own.readerRounds, given.readerAnswered === true) : ''}`
+      status = `${lower}${tests}${phase === 'red' ? readerStatus(own.reader, own.readerLast, own.readerRounds, given.readerAnswered === true) : ''}${back === '' ? '' : ` \u00b7 ${back}`}`
       break
     }
   }
@@ -2689,4 +2698,127 @@ export function readerBlock(out: unknown, last: unknown): PaneBlock | null {
 export function readerStatus(out: unknown, last: unknown, rounds: unknown, hasAnswered: boolean): string {
   if (isReaderOut(out)) return hasAnswered === true ? ' \u00b7 test reader reported: call the gate' : ' \u00b7 test reader reading'
   return isReaderRound(last) ? ` \u00b7 test reader: round ${roundOf(rounds)} did not pass \u00b7 ${roundCame(last)}` : ''
+}
+
+// ------------------------------------------------------------------- the way back to Red (SPEC.md 9.11, 9.30)
+
+// A count the record holds, read as far as it can be: a whole number above 0, else 0.
+function countOf(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0
+}
+
+// How many of Green's refusals in a row, each for the test run, it takes before the way back is offered.
+export const BACK_TO_RED_AFTER = 2
+
+// What Green's refusal ends with from then on. The way back is never taken without that call and the person's
+// answer (SPEC.md 9.11).
+export const BACK_TO_RED_OFFER = 'If a test is what is wrong, call the gate with back_to_red: true: mod-builder then asks the person whether to go back to Red and change the tests'
+
+// Green's refusals in a row for the test run, after a gate of Green: one more when this one refused for the test
+// run, none after any other outcome (a pass, or a refusal for validate, the typecheck, the load or the version).
+export function greenTestRefusals(before: unknown, refusedForTests: boolean): number {
+  return refusedForTests === true ? countOf(before) + 1 : 0
+}
+
+export function backToRedOffered(refusals: unknown): boolean {
+  return countOf(refusals) >= BACK_TO_RED_AFTER
+}
+
+// What a call with back_to_red answers when the way back is not offered: at another phase, or before Green's
+// test run failed twice in a row. Nobody is asked.
+export const BACK_NOT_OFFERED = `back_to_red is offered only at Green, after its test run has failed ${BACK_TO_RED_AFTER} times in a row: nobody was asked, and nothing was moved`
+
+export const GO_BACK = 'Go back to Red'
+
+// "Not yet" first: an answer given in haste keeps the work at Green.
+export function backToRedOptions(): string[] {
+  return [NOT_YET, GO_BACK]
+}
+
+// How many failing tests the question names.
+export const BACK_NAMED = 10
+
+// The question the mod asks (SPEC.md 9.11): the tests that fail, how often Green's run failed in a row, and, from
+// the third return on, how often the work went back already. `failing` are the names the last refused run gave.
+export function backToRedQuestion(failing: readonly string[], refusals: unknown, returns: unknown, kind: Kind = 'build'): string {
+  const names = (Array.isArray(failing) ? failing : []).filter((name) => typeof name === 'string').map((name) => shown(name)).filter((name) => name !== '')
+  const named = names.length === 0
+    ? 'The last run named no failing test.'
+    : `Failing: ${names.slice(0, BACK_NAMED).join('; ')}${names.length > BACK_NAMED ? `; and ${names.length - BACK_NAMED} more` : ''}.`
+  const been = countOf(returns)
+  const already = been >= 2 ? `This ${kind === 'edit' ? 'edit' : 'build'} has gone back to Red ${been} times already. ` : ''
+  return `${already}Go back to Red to change the tests? Green's test run failed ${countOf(refusals)} times in a row. ${named}`
+}
+
+// Only the approving label goes back; any other answer, and none, keeps Green.
+export function backToRedGate(answer: string | null | undefined): Verdict {
+  if (answer === GO_BACK) return { pass: true }
+  return { pass: false, reason: `the person has not agreed to go back to Red (answer: ${answer == null ? 'none' : JSON.stringify(answer)})` }
+}
+
+// The count of returns after one more.
+export function returnsAfter(returns: unknown): number {
+  return countOf(returns) + 1
+}
+
+export function isReturned(returns: unknown): boolean {
+  return countOf(returns) > 0
+}
+
+// The store's key for the test files' text as it was when the work went back: what 8.4's question at the
+// returned Red compares against. Apart from the record, which the gate rewrites.
+export function redCopyKey(modDir: string): string {
+  return `redcopy:${modDir}`
+}
+
+// What Red's evidence ends with on a return, and what the pane says of it.
+export function backFromGreen(returns: unknown): string {
+  return `back from Green (return ${countOf(returns)})`
+}
+
+export function backFromGreenShort(returns: unknown): string {
+  return isReturned(returns) ? `back from Green \u00b7 return ${countOf(returns)}` : ''
+}
+
+// What Done's "What was checked" keeps of it.
+export function wentBack(returns: unknown): string {
+  const count = countOf(returns)
+  return count === 0 ? '' : `went back from Green to Red ${count === 1 ? 'once' : `${count} times`}`
+}
+
+// The gate's answer when the work has gone back.
+export function wentBackAnswer(returns: unknown): string {
+  return `the person answered "${GO_BACK}" (return ${countOf(returns)}). Test files are open again and everything else is closed; nothing in the mod was changed. Change the tests that are wrong, then call the gate`
+}
+
+// A returned Red, point 1 (SPEC.md 9.30): at least one test file is not as hashed when Red passed before.
+export function returnedRedChanged(before: Hashes, now: Hashes): Verdict {
+  if (!isHashes(before) || !isHashes(now)) return { pass: false, reason: 'the test files could not be compared with those of the Red before' }
+  if (changedFiles(before, now).length === 0) return { pass: false, reason: 'no test file has changed since Red passed: the work came back to change a test' }
+  return { pass: true }
+}
+
+// A returned Red, point 2: the run is judged, but need not fail. The code exists by now, so a corrected test
+// may simply pass. It is refused when a test file does not load, and when tests fail and none of them by
+// assertion: a run where every failure is a thrown error says nothing about the behaviour.
+export function returnedRedGate(test: Run): Verdict {
+  const check = ended(test, TEST)
+  if (!check.pass) return check
+  const run = parseTestRun(test.output)
+  if (run === null) return { pass: false, reason: NO_COUNT }
+  const failures = failuresByFile(test.output)
+  if (run.tests === 0) return { pass: false, reason: 'the test run ran no test' }
+  if (test.exitCode !== 0 && failures.length === 0) return { pass: false, reason: 'claude plugin test failed, but its output holds no (fail) block' }
+  if (failures.some((failure) => failure.name === DID_NOT_LOAD)) return { pass: false, reason: 'a test file did not load' }
+  if (failures.length > 0 && !failures.some((failure) => opensWithAssertion(failure.body))) {
+    return { pass: false, reason: `no failing test fails by assertion: ${failures.map((failure) => failure.name).join('; ')}` }
+  }
+  return { pass: true, tests: run.tests }
+}
+
+// What the returned Red's evidence says of its run.
+export function returnedRedRan(test: Run): string {
+  const run = parseTestRun(test.output)
+  if (run === null) return 'the tests ran'
+  return `${run.tests} tests ran, ${run.failures.length === 0 ? 'all passing' : `${run.failures.length} failing`}`
 }
