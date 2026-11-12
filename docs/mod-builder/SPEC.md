@@ -3692,3 +3692,58 @@ was written after its red and green checks, and the verifier's PASS covers the m
 refusal in the live build is the main model's quote of the implementer's report, supported by the pane's
 count; the skills' wording followed `skill-creator`'s writing guidance (say why, no shouting, a reference
 file for detail), with no evaluation runs.
+
+### 9.35 Step 5 accepted; the demonstration and the documents (2026-11-12)
+
+The driving session: "Step five is accepted at 4e7f180 on my test run (866 node pass, 2 skip; 629 module;
+validate) and your live runs; your four choices stand." It allowed the building session to end its old
+test processes, "only those whose command line names your own scratchpad path": 87 `node --test`
+processes were ended, each with that path on its command line and more than an hour old; none was left.
+Then, in its words, the demonstration of "what 9.9 lists and your runs have not shown", and the documents.
+
+**The demonstration** [ran, 2.1.322, sonnet, the plugin at `4e7f180` with `--plugin-dir`, the installed
+copy switched off, agent teams off, the building session answering the dialogs]:
+1. **A new build refused at Scaffold, then to Done, without `--agents`** (9.9, items 4 and 6). Told to
+   write its hook's behaviour at Scaffold, the model did; the gate: "still at phase 4 (Scaffold). Not
+   passed: hooks/ and tests/ are not as the scaffold laid them (changed: hooks/register.tsx): at Scaffold
+   they hold the template and nothing else, and the mod's behaviour is written at Red (tests) and Green
+   (code). Put them back with: bash ".../scripts/scaffold.sh" --again ...". It ran that, and Scaffold
+   passed. At Red the tests changed twice after the reader had reported ("that reading did not pass and
+   counts as round 1", then 2), the third reading passed ("the test reader passed the tests (round 3)"),
+   and the build reached Done: 15 tests, validate, the typecheck and the headless load pass.
+2. **A record stored by 0.2.0 still reads and runs** (item 7). A build was started with the plugin of
+   `main` (`8c6ed44`, 0.2.0) and stopped by the model at Red; its record in the store held 0.2.0's ten
+   keys and no other (`evidence`, `modDir`, `namesAtScaffold`, `phase`, `sessionId`, `spec`,
+   `specApprovedAt`, `testHashes`, `testsAtRed`, `testsAtScaffold`). The session was resumed with the
+   plugin at `4e7f180`: the gate went on at Red, started the reader, and the build reached Done (11 tests,
+   the four checks pass).
+3. **Two rounds, then the question; "Not yet", then "Go on"** (item 2, in that same build). After two
+   readings that did not pass and a third that still had a finding, the mod asked: "The test reader has
+   read the tests 3 times. The last time it found behaviours of the spec that no test would catch: ... Go
+   on with these tests?". "Not yet": "still at phase 5 (Red). Not passed: the person has not agreed to go
+   on with these tests (answer: "Not yet")." The gate called again with the tests unchanged asked again;
+   "Go on with these tests": "...; the person answered "Go on with these tests" after 3 rounds of the test
+   reader (the last: 1 finding)). The build is now at phase 6 (Green)."
+4. **An edit without `--agents` to Done** (item 6), of the mod from point 1: one reader's round that did
+   not pass, 8.4's question for a changed test file, asked again when the tests changed again, "Go on
+   with these changes", the reader's pass in round 2, Done with 21 tests and version 0.2.0 after 0.1.0.
+**9.9 after the demonstration:** items 1, 2, 4, 5, 6, 7 and 8 are shown on the real engine, and of 3 the
+new read after changed tests. **Never shown live:** a reader that gives no verdict line (the rule and the
+hooks module hold it in tests); headless; a way back to Red in a build or with agents; a full build with
+`--agents` and agent teams off. The driving session runs its own demonstration.
+
+**The documents** (`59491eb`, `99b37fe`; written by a fork of the building session, read by it before the
+commit): both manifests at 0.3.0; `README.md`, `docs/how-it-works`, `docs/reference`, `docs/limits`,
+`docs/development`, `CHANGELOG.md` (0.3.0, dated 2026-11-12 as 0.2.0's entry was at its documents commit;
+the date is the merge's to correct), `CLAUDE.md`; `BACKLOG.md`: item 1 struck with what was built in its
+place, item 18 cut to the retry count, item 24 (a mutant report after Green, for information only, 9.6),
+item 25 under 17, low priority, the owner's (`/mod-builder stop <folder>` from another session, 9.29).
+`docs/limits` also corrects five older statements that 0.3.0 made false. **CI:** the job had an overall
+limit of 15 minutes already (`00f1001`); each test step now has its own (5 and 8 minutes), and the node
+tests run with a `TMPDIR` of their own under the runner's temporary folder; that line has not run on
+GitHub. No test pins the version, and no existing test changed. At `99b37fe`: 629 module tests, 868 node
+tests (none skipped here), validate of the plugin and of the marketplace, and the typecheck pass [ran].
+
+Left outside the repository by the live runs and untouched: restore points under
+`~/.claude/mod-builder-data/v2/restore/`, the store files of mod-builder and of the probe mod `ag` under
+`~/.claude/plugins/store/`. Nothing is pushed.
