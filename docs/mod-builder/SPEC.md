@@ -3284,3 +3284,73 @@ session to keep or change):
   block with each finding stays above Red's own.
 - **Known and stated:** a model that changes tests by shell command during every reading starts a reader
   each time and never passes Red; nothing counts those against a limit now.
+
+### 9.29 The correction as built (plan 44) and on the real engine; the held folder; the driving session's answers (2026-11-12, at `d9ae146`)
+
+**Plan 44** (9.28): `d603752` (existing tests: the tests of the count removed, one file whole by `git rm`;
+three tests of a reading left behind now expect a round; the pane's and the reference file's pins),
+`66b2745` red, `d9ae146` green; verifier PASS, every check reproduced and 22 mutants each failing its named
+test; 524 module tests, 782 node tests, validate and the typecheck pass [ran, by the implementer and the
+verifier]. Read by an agent that did not write it before the red commit (40 mutants, 14 survived; 4 real
+gaps and 3 smaller ones, now tested; five sentences of the reference file corrected).
+
+As built, beyond 9.28's "As it will be built":
+- **A report the gate never read** (the building session's decision; the driving session, on resuming:
+  it "stands"): tests changed after the reader reported and before the gate was called make that report
+  one the gate never read. Findings or no verdict still count as a round; a pass counts for nothing; the
+  tests are read anew. Without it, mending after each report would have the tests read again with the
+  person never asked.
+- An answer marked as left behind reopens the tests, like any stored answer; a stopped record closes
+  nothing; a reading left behind and a new reader that can't be started, in one call, are two rounds, and
+  the person is asked there with "the reader gave no verdict".
+- When the test files can't be read at the moment a reader ends, its answer is stored as an ordinary one
+  and the model is prompted; the gate judges.
+- The reference file says: a guarded write to a test file is refused while the reader reads; if no prompt
+  comes, call the gate; tests changed by a shell command while they are read cost a round; the person is
+  only ever asked about a reading of the tests as they are.
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `d9ae146` with `--plugin-dir`, the installed
+copy switched off, the building session answering the dialogs]: an edit of a copy of `tool-log` 0.1.0 with
+three thin tests.
+- Told to try an Edit of its test file while the first reader read: "mod-builder:
+  tests/width.test.tsx can't be written: the test reader is reading these tests; wait for its report."
+  The file was unchanged; the status line counted "1 write refused".
+- Round 1: three findings; the pane's row "Test reader  round 1 did not pass  3 findings" and the status
+  line "red · test reader: round 1 did not pass · 3 findings".
+- The model added tests and called the gate (a second reader), then, as told, appended a line to the test
+  file by a shell command while that reader read, and called the gate: "still at phase 4 (Red): the tests
+  changed while the test reader read them, which counts as round 2; the test reader is reading the tests
+  against the spec. End your turn now: ...". A third reader was started in that call.
+- The debug log holds the prompt "the test reader has reported" twice for three readers: the one left
+  behind prompted nobody.
+- The third reading passed: "phase 4 (Red) passed (24 tests ran, a new or changed one failing by
+  assertion; ...; the test reader passed the tests (round 3))".
+**Not shown in that run:** the question (the third reading passed), so "the question shows only findings
+about the tests as they are" is held by tests alone; the ten-minute reopening; an answer arriving after
+the person answered.
+
+**A folder held by a session that is gone** (the driving session asked what a new session sees and what
+the way out is) [ran, 2.1.322, at `e82b387`]:
+- A new session that names the folder: "no edit was opened: <folder> is being edited by another session
+  (it is at phase 2 (Describe)). Name another folder."
+- `/mod-builder stop` in the new session: "no build or edit is open in this session, so there is nothing
+  to stop." It can't clear another session's record; nothing expires; nothing takes over.
+- The way out today: `claude --resume <the gone session's id>`, then `/mod-builder stop` there (it asks
+  what becomes of the mod, as any stop of an edit does); or editing the plugin's store file under
+  `~/.claude/plugins/store/` by hand.
+- **A slip to record:** checking this, the building session opened that stop dialog in the resumed
+  session and pressed Escape; a dismissed question there counts as "keep the mod as it is", so the edit
+  was stopped and the hold on its own scratch copy was released, though the driving session had said to
+  touch none of it. The mod's files and the restore point were not changed.
+
+**Decided, from the driving session on resuming and after:**
+- The step order is 9.8's: the way back to Red (9.11) is next, then the opt-in agents.
+- The owner removed the seven folders in the home folder and the 19 `/tmp/mod-builder-test-*` folders;
+  the restore points under `~/.claude/mod-builder-data/` stay as they are.
+- **The held folder (the owner's decision, passed on by the driving session):** "the takeover is not
+  built in 0.3.0. The owner: add it to the backlog as low priority." At the documents step: a
+  `BACKLOG.md` item under item 17, marked low priority: "`/mod-builder stop <folder>` from another
+  session, which asks the person to confirm before releasing a build or edit that a dead session holds".
+  In 0.3.0, through a plan with the way back to Red: the gate's refusal for a folder another session
+  holds also gives that session's id and says to resume it (`claude --resume`) and run `/mod-builder
+  stop` there; and `docs/limits` says the same.
