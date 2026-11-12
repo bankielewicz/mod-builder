@@ -3408,3 +3408,68 @@ says so, and that nothing expires and no other session can release it in 0.3.0.
 
 **Two plans:** the rules, the hooks module and the pane for the way back; then the wording: the reference
 file, both skills' line, the refusal for a held folder and `docs/limits`.
+
+### 9.31 Step 4 as built: the way back to Red, its wording, the refusal for a held folder; and on the real engine (2026-11-12, at `542a333`)
+
+**Plan 45, the way back** (9.11, 9.30): `f5f714e` (existing tests: Green's second refusal ends with the
+offer; the gate's input has one more key), `35aedfa` red, `f6288d2` green; 571 module tests, 798 node
+tests, validate and the typecheck pass [ran, by the implementer and the verifier]. **The verifier's
+verdict is FAIL, on one line only:** every numbered point of the red result, the five verification
+commands, the paths, the criteria and the 26 mutants reproduced; the plan's prose said the new tests fail
+"on an assertion, or where they call a rule not built yet", and 24 of the 41 new module tests fail at the
+test file's own helper, which throws "the work did not go back" while the build is still at Green. The
+building session, as the plan's author, counts that as the required red (the helper's error is the test's
+own check that the phase went back) and had told the verifier so; a note can't change a plan, so the
+verdict stands as given, **for the driving session to accept or not**. The next plan's prose says a
+helper's error counts.
+**Plan 46, the wording**: `30bf780` (existing tests), `8d49b15` red, `542a333` green; verifier PASS with 10
+mutants; 575 module tests, 815 node tests, validate and the typecheck pass.
+
+**Read by an agent that did not write them, before the red commits** (44 mutants, 29 survived): the draft
+was weakest where a test can be weakened. Fixed in code: the names said to be gone come from the Red
+before or, after a skipped Red, from the baseline, and are taken again; a run of no test is refused; 8.4's
+question at a returned Red says "as they were when Red passed". Given tests: the question's removed
+lines come from the kept copy and not from the disk; a dismissed question holds Red; `SPEC.md` changed at
+a returned Red refuses; a test edited again is asked about again; the offer is Green's only. Five
+statements of the reference file were corrected (the person sees counts, the removed lines that hold an
+`expect` or open a test, and the names of tests that are gone: not every removed line). The reader found
+no path where the phase goes back without the call and the person's "Go back to Red".
+
+As built, beyond 9.30:
+- A skipped Red that is gone back to uses the returned Red's rules; its record becomes an entered Red.
+- The names of the tests are recorded whenever Red passes.
+- Each skill had said a build or an edit "can't go back to Red"; that clause is replaced by the sentence
+  that names `reference/back-to-red.md` (38 lines). Both skills stay at 198 lines.
+- The refusal for a held folder: "<folder> is being edited by another session (<its id>; it is at
+  phase N). If that session is gone, resume it with claude --resume <its id> and run /mod-builder stop
+  there; or name another folder." `docs/limits` has it, and a section on the way back.
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `542a333` with `--plugin-dir`, the installed
+copy switched off, the building session answering the dialogs] (9.9, item 8, in an edit): an edit of a
+copy of `tool-log` 0.1.0, the model told to write one test that is wrong on purpose (it expects a cut row
+to end with three dots; the spec says the ellipsis character) and not to bend the code to it.
+- The reader named that test in both of its rounds ("A correct build fails this test, and a build that
+  cuts with three dots passes it"); the person was asked, and answered "Go on with these tests" for the
+  demonstration.
+- Green's gate refused twice for the test run; the second refusal ended "If a test is what is wrong, call
+  the gate with back_to_red: true: ...". The model called it.
+- "Go back to Red to change the tests? Green's test run failed 2 times in a row. Failing: a cut row ends
+  with the ellipsis, written as three dots." "Not yet": "still at phase 5 (Green). Not passed: the person
+  has not agreed to go back to Red (answer: "Not yet")." Asked again, "Go back to Red": "back at phase 4
+  (Red): the person answered "Go back to Red" (return 1). Test files are open again and everything else
+  is closed; nothing in the mod was changed. Change the tests that are wrong, then call the gate."
+- The model corrected the test. The returned Red asked: "These test files are not as they were when Red
+  passed: - tests/width.test.tsx: 4 lines added, 2 lines removed / removed: test('a cut row ends with the
+  ellipsis, written as three dots', ... / removed: expect(row.endsWith('...')).toBe(true) / These tests
+  no longer exist: a cut row ends with the ellipsis, written as three dots / Go on with these changes?"
+  The test was changed once more and the question came again for the new change (11 added, 3 removed).
+- Red passed: "...; 3 test files hashed, not as at the Red before: tests/width.test.tsx; the person
+  answered "Go on with these changes" for: tests/width.test.tsx (changed); the test reader passed the
+  tests (round 2); back from Green (return 1)". The edit reached Done (4 of 4 checks), and Done's pane
+  says "went back from Green to Red once".
+**Not shown live:** a build's way back (its returned Red skips the checks of `hooks/` and source); a
+second and third return; a skipped Red gone back to; the refusal for a held folder with the new words.
+
+**9.9 after step 4:** items 1, 2, 6 and 8 are shown on the real engine; of 3, the new read after changed
+tests (9.27, 9.29); 4 was shown at step 2 (9.16). Still to show: a reader with no verdict line, 5 (the
+opt-in agents, not built), 7 (a 0.2.0 record), headless.
