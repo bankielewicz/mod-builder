@@ -3764,3 +3764,43 @@ Left outside the repository by the live runs and untouched: restore points under
   23 already stands under 19; a renderer that renumbers a list shows other numbers.
 - `docs/limits` still heads its 0.3.0 sections "(0.3.0, not released)", which tests pin; that is true until
   the merge, and changing it then needs those tests changed first.
+
+### 9.36 A third reading that does not pass asks the person; what lies outside the mod's folder (2026-11-12, before the plan)
+
+The driving session, on 9.35: "the reading after two failed rounds is as I decided: if the tests changed,
+they are read once more as they stand; a pass goes on, findings raise the question. Confirm with a test
+(add one through a plan if none holds it) that a third reading with findings asks the person and never
+starts a fourth, and correct the documents' sentence from 'after two rounds' to say exactly that." And,
+from a side agent's note on the Scaffold demonstration (the model kept its early code outside the mod's
+folder and wrote it back at Green): "mod-builder cannot see outside the mod's folder; say so in
+docs/limits beside the closed Scaffold, in one sentence."
+
+**What the code does at `8df70ba`** [read, and run in the kit by the existing tests]: a reading whose
+tests are unchanged when the gate reads it and that does not pass asks the person from the second round
+on; that holds a third reading too (9.35, point 3). But a reading whose tests changed before the gate
+read its report (while it read, or after it reported) is counted as a round and a new reading is started
+"whatever the count" (`tests/reader-closed.test.ts`, 9.28). The main model sees the report as a hand-back
+and mends the tests before it calls the gate (9.35), so a third reading with findings can be followed by
+a fourth, unseen, and so on. No test holds what the driving session states, and the code does not do it.
+
+**As it will be built** (one plan; the building session's wording, for the driving session to keep or
+change):
+- A reading left behind or out of date that is counted as round 1 or 2 is followed by a new reading in the
+  same call, as now. Counted as **round 3 or later**, it starts nothing: the person is asked. A pass that
+  is out of date still counts for nothing and the tests are read again.
+- The question then says what is true of it: the reader's findings of that reading (or that it gave no
+  verdict), and "The tests have changed since that reading and have not been read as they are now." with
+  "Not yet" first and "Go on with these tests". This is the one case where the person is asked about
+  findings of tests that are no longer the ones on disk (against 9.28's "only ever asked about a reading
+  of the test files as they are"): the other way to hold "never a fourth" would be to refuse without a
+  question, which strands Red.
+- "Go on with these tests" passes Red with the tests as they are when the question is answered, and the
+  evidence says they were not read as they are. "Not yet" holds Red; the next call of the gate starts a
+  reading of the tests as they stand, and every later round ends with the question, as now.
+- **The documents' sentence:** "After two rounds that do not pass you are asked; when the tests changed
+  after the second, they are read once more as they stand: a pass goes on, and anything else asks you. A
+  fourth reading is never started before you have answered." in the README, `reference/test-reader.md`,
+  `docs/limits`, how-it-works, the changelog and `CLAUDE.md`, each in its own voice.
+- **`docs/limits`, beside the closed Scaffold:** "mod-builder sees only the mod's folder: code written
+  ahead and kept anywhere else (a scratch file, the conversation itself) is not seen, and can be written
+  into `hooks/` at Green."
