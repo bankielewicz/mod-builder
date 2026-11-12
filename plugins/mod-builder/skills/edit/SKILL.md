@@ -82,8 +82,7 @@ nothing was written and its answer says why; the session then waits for a folder
 closed, until you call the gate with one or the person runs `/mod-builder stop`.
 
 Tell the person what the baseline found, the version the mod has, and where the restore point is. Then call the
-gate again to pass the phase; if it answers that no snapshot exists, ask the person to run `/mod-builder
-refresh`.
+gate again to pass the phase; if it answers that no snapshot exists, ask the person to run `/mod-builder refresh`.
 
 ### 2. Describe
 
@@ -119,18 +118,19 @@ what the mod does: such a change gets a test.
 ### 4. Red
 
 Write tests only: new test files, or changes to the ones there, each a real file and no link. Run `claude plugin
-test <mod folder>` yourself and look at the failures. The gate passes only when the run fails, every failure
-opens with `AssertionError` (a failed `expect(...)`), and at least one failing test is new by name or sits in a
-test file you changed. A test that throws before its `expect` (a `TypeError` from code that is not written yet)
-does not count: drive the mod through its events, so that a missing behaviour shows as a failed `expect`. A test
-that names something the mod does not declare yet is refused by the typecheck; a change to the mod's contract in
-`types/` is made at Green, with the code, so write the test against the events. Then call the gate.
+test <mod folder>` yourself and look at the failures. The gate passes only when the run fails, every failure opens
+with `AssertionError` (a failed `expect(...)`), and at least one failing test is new by name or sits in a test file
+you changed. A test that throws before its `expect` (a `TypeError` from code that is not written yet) does not
+count: drive the mod through its events, so that a missing behaviour shows as a failed `expect`. A test that names
+something the mod does not declare yet is refused by the typecheck; a change to the mod's contract in `types/` is
+made at Green, with the code, so write the test against the events. Read
+`${CLAUDE_PLUGIN_ROOT}/reference/test-reader.md` before your first call of Red's gate. Then call the gate.
 
-**When you changed or removed a test file the mod already had, the gate asks the person.** It shows them each
-such file with the lines added and removed, and quotes removed lines that hold an `expect` or open a test,
-because that is also how a test is loosened. Say in the spec's section why each one changes, so the question does
-not surprise them. Any answer but the approving one keeps the edit at Red. When Red passes, every test file is
-hashed; from here a changed test stops the edit at the next gate, whatever changed it.
+**When you changed or removed a test file the mod already had, the gate asks the person.** It shows them each such
+file with the lines added and removed, and quotes removed lines that hold an `expect` or open a test, because that
+is also how a test is loosened. Say in the spec's section why each one changes, so the question does not surprise
+them. Any answer but the approving one keeps the edit at Red. When Red passes, every test file is hashed; from here
+a changed test stops the edit at the next gate, whatever changed it.
 
 ### 5. Green
 

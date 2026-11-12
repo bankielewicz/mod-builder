@@ -2029,6 +2029,7 @@ export type PaneInput = {
   spec: string | null // the mod's SPEC.md, read at Spec
   name?: string | null // the mod's own name, from its plugin.json
   stopped?: unknown // the store's value under buildKey of the folder kept under stoppedKey(sessionId)
+  readerAnswered?: boolean // whether the store holds an answer under readerKey of the record's reader (SPEC.md 9.19)
 }
 
 const heading = (text: string): Cell[] => [{ text }]
@@ -2338,12 +2339,15 @@ export function paneModel(input: PaneInput): PaneModel {
         const checks = readChecks(given.checks, sessionId, phase)
         if (checks !== null && CHECKS.some((check) => checks.states[check] !== 'waiting')) blocks.push(...checkBlocks(checks, modDir, knowledge.version).slice(0, 1))
       }
+      // At Red, the test reader: reading, reported, or what its last round found (SPEC.md 9.19).
+      const reading = phase === 'red' ? readerBlock(own.reader, own.readerLast, own.readerRounds, given.readerAnswered === true, own.readerStarts) : null
+      if (reading !== null) blocks.push(reading)
       blocks.push({ heading: [{ text: `${at + 1} ${TITLES[phase]}` }, { text: 'working\u2026', tone: 'current' }], rows: attemptRows() })
       // At Red a test that passes is no progress, so the line says how many fail.
       const tests = attempt === null || attempt.passed === null || attempt.tests === null ? ''
         : phase === 'red' ? ` \u00b7 ${attempt.tests - attempt.passed} of ${plural(attempt.tests, 'test', 'tests')} fail`
           : ` \u00b7 ${attempt.passed} of ${plural(attempt.tests, 'test', 'tests')} pass`
-      status = `${lower}${tests}`
+      status = `${lower}${tests}${phase === 'red' ? readerStatus(own.reader, own.readerLast, own.readerRounds, given.readerAnswered === true) : ''}`
       break
     }
   }
@@ -2600,6 +2604,41 @@ export function readerEvidence(passed: { by: 'reader'; round: number } | { by: '
   if (passed.by === 'reader') return `the test reader passed the tests (round ${passed.round})`
   const last = passed.findings === null || passed.findings.length === 0 ? 'no verdict' : `${passed.findings.length} finding${passed.findings.length === 1 ? '' : 's'}`
   return `the person answered "${GO_ON_TESTS}" after ${passed.rounds} rounds of the test reader (the last: ${last})`
+}
+
+// The round a last reading that did not pass was: the count of such rounds, at least 1.
+function roundOf(rounds: unknown): number {
+  return typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 1 ? rounds : 1
+}
+
+// The pane's block for the test reader at Red (SPEC.md 9.19), from what the record holds: `out` its reader, `last`
+// its last round that did not pass, `rounds` how many such rounds; and whether the store holds the answer of the
+// reader that is out. A reader that is out comes first: reading, or reported and waiting for the gate to be
+// called (SPEC.md 9.24: said plainly, since the prompt that says so may never arrive). With none out, the last
+// round and what it found. `starts` is how many readers this Red has started: from the second on it is a row of
+// its own, since the fourth is not started and the person is asked instead. Null when there is nothing to show.
+export const READER_REPORTED = 'has reported: the gate is waiting to be called'
+
+export function readerBlock(out: unknown, last: unknown, rounds: unknown, hasAnswered: boolean, starts?: unknown): PaneBlock | null {
+  const count = typeof starts === 'number' && Number.isInteger(starts) && starts >= 2 ? [row({ text: `  ${starts} readings started`, tone: 'dim' })] : []
+  if (isReaderOut(out)) {
+    if (hasAnswered === true) return { heading: heading('Test reader'), rows: [row({ text: `  ${READER_REPORTED}`, tone: 'current' }), ...count] }
+    const started = clockOf(out.startedAt)
+    return { heading: heading('Test reader'), rows: [row({ text: '  reading the tests against the spec', tone: 'current' }, ...(started === null ? [] : [{ text: `started ${started}`, tone: 'dim' as Tone }])), ...count] }
+  }
+  if (!isReaderRound(last)) return count.length === 0 ? null : { heading: heading('Test reader'), rows: count }
+  const found = last.findings === null ? [] : last.findings.map((one) => shown(one)).filter((one) => one !== '')
+  return {
+    heading: heading('Test reader'),
+    rows: [row({ text: `  round ${roundOf(rounds)} did not pass`, tone: 'warning' }), ...(found.length === 0 ? [row(`  ${NO_VERDICT}`)] : found.map((one) => row(`  - ${one}`))), ...count],
+  }
+}
+
+// What the status line says of the test reader at Red, after the phase and the tests: nothing when there is
+// nothing of it to show.
+export function readerStatus(out: unknown, last: unknown, rounds: unknown, hasAnswered: boolean): string {
+  if (isReaderOut(out)) return hasAnswered === true ? ' \u00b7 test reader reported: call the gate' : ' \u00b7 test reader reading'
+  return isReaderRound(last) ? ` \u00b7 test reader: round ${roundOf(rounds)} did not pass` : ''
 }
 
 // How many test readers one Red may start (SPEC.md 9.24, the driving session's ruling): every reader started is

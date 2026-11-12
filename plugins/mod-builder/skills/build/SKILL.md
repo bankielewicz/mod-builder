@@ -133,20 +133,21 @@ and what `types/` declares. So declare here a type the tests will name, and driv
 
 ### 5. Red
 
-Write tests only, under `tests/`, for the behaviours the spec lists. Model them on `tests/pane.test.tsx` and
-the `plugin-authoring` skill's example test. Add tests to the scaffold's; when the mod is no pane with a
-command, replace the template's two tests with the mod's own. Run `claude plugin test <mod folder>` yourself
-and look at the failures: the gate passes only when the run holds more tests than at Scaffold, every failure
-opens with `AssertionError` (a failed `expect(...)`), and at least one failing test has a new name. A file
-that fails to load does not count, and neither does a test that throws before its `expect` (a `TypeError` from
-code that is not written yet): drive the mod through its events, as the template's tests do, so that a missing
-behaviour shows as a failed `expect`. Then call the gate. It first checks that `hooks/` is still as the
-scaffold laid it, and again before it passes: if it names a file there, lay `hooks/` alone again with
-`scaffold.sh --again-hooks <mod folder> <mod-name>` (the script of phase 4) and remove each file it lists as
-extra. After the test run it typechecks the mod, tests included, against this build's types: `tests/` closes
-for good when Red passes, so a test that does not typecheck is refused here, with the compiler's last lines,
-while you can still change it. Then it hashes every file under `tests/`; from here a changed test stops the
-build at the next gate, whatever tool changed it.
+Write tests only, under `tests/`, for the behaviours the spec lists. Model them on `tests/pane.test.tsx` and the
+`plugin-authoring` skill's example test. Add tests to the scaffold's; when the mod is no pane with a command,
+replace the template's two tests with the mod's own. Run `claude plugin test <mod folder>` yourself and look at the
+failures: the gate passes only when the run holds more tests than at Scaffold, every failure opens with
+`AssertionError` (a failed `expect(...)`), and at least one failing test has a new name. A file that fails to load
+does not count, and neither does a test that throws before its `expect` (a `TypeError` from code that is not
+written yet): drive the mod through its events, as the template's tests do, so that a missing behaviour shows as a
+failed `expect`. Then call the gate. It first checks that `hooks/` is still as the scaffold laid it, and again
+before it passes: if it names a file there, lay `hooks/` alone again with `scaffold.sh --again-hooks <mod folder>
+<mod-name>` (the script of phase 4) and remove each file it lists as extra. After the test run it typechecks the
+mod, tests included, against this build's types: `tests/` closes for good when Red passes, so a test that does not
+typecheck is refused here, with the compiler's last lines, while you can still change it. Then it hashes every file
+under `tests/`; from here a changed test stops the build at the next gate, whatever tool changed it. When Red's
+other checks pass, the gate starts mod-builder's test reader and tells you to end your turn: read
+`${CLAUDE_PLUGIN_ROOT}/reference/test-reader.md` before your first call of Red's gate, and do what it says.
 
 ### 6. Green
 

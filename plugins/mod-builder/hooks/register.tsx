@@ -271,8 +271,11 @@ async function paneInput($: Engine): Promise<PaneInput> {
   // With nothing open, what this session stopped last stays in view (SPEC.md 8.18, "Stopped").
   const last = isSessionEntry(entry) ? undefined : await $.store.get(stoppedKey(sessionId))
   const stopped = typeof last === 'string' ? await $.store.get(buildKey(last)) : undefined
+  // Whether the reader that is out has answered: its answer is under a key of its own (SPEC.md 9.19).
+  const out = isBuildRecord(record) ? record.reader : null
+  const readerAnswered = out !== undefined && out !== null && typeof out.agentId === 'string' && readReaderAnswer(await $.store.get(readerKey(out.agentId))) !== null
   return {
-    sessionId, entry, record, refusals, checks, spec, name, stopped,
+    sessionId, entry, record, refusals, checks, spec, name, stopped, readerAnswered,
     knowledge: {
       latest, checked: await word('checked'), pages: pagesIn(await inLatest('manifest.tsv')), changes: changesIn(await inLatest('_changes.md')),
       isRefreshing: fetching > 0, version: (await $.session.version()).version, now: await $.clock.now(),
