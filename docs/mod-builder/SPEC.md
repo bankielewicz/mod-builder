@@ -3226,3 +3226,61 @@ waits for the documents step.
 
 **Still not shown on the real engine:** the reader's tool guard refusing a call; a reader that gives no
 verdict line; headless.
+
+### 9.28 Step 3 reviewed; ruling 1 of 9.24 replaced: tests are closed while a reader reads (2026-11-11, the driving session)
+
+From the driving session's file, on its review at `db06b85` (its own run: 777 node tests pass and 2 skip,
+501 of 501 module tests, validate passes; with `TMPDIR` set the node run left nothing but an empty
+`claude-<user id>` folder). Its live probe held 9.9's item 1 (five findings naming the untested ranges; a
+second call with unchanged tests started no reading; the status line's three states). **What went wrong
+there:** told to add the missing tests, the model changed tests while readers were reading; three readers
+were started, and the question then said "started 3 times ... the tests kept changing" and showed round
+1's findings, "about the one-character test that no longer existed. No reading of the tests as they stood
+ever reached the person. After "Not yet" a late reader's nudge still arrived."
+
+**The correction, in its words: "it replaces my ruling 1 in 9.24; record it as mine. A count with a
+question on stale findings is the wrong guard. Close the cause instead":**
+1. "While a reader is reading, test files are closed. The guard refuses a write to a test file by anyone,
+   with the reason "the test reader is reading these tests; wait for its report", from the gate call that
+   starts a reader until its answer is stored or it times out. Tests reopen then. 7.10 holds: nothing is
+   judged while closed that could not be changed after the report."
+2. "So a reading is only left behind by a shell write. Such a reading counts as a round with the result
+   "the tests changed while they were read", and the next gate call starts a reading of the tests as they
+   are."
+3. "Rounds are counted as 9.3 says: after two rounds that did not pass, the person is asked, and the
+   question shows the findings of a reading of the tests as they stand at that moment. If the last
+   reading is not of the current hashes, the gate starts one (tests closed) and asks only when it has
+   reported. The question never quotes findings about tests that have since changed."
+4. "A reader's answer that arrives for hashes that are no longer current, or after the person has
+   answered, is stored as left behind and sends no nudge."
+5. "The pane's Red block shows the round, and the findings' count, not only the status line: in my
+   captures the body showed only the Baseline block while Red was held."
+
+Also decided there: the main model seeing the reader's report in every session "is accepted as the
+stated limit"; the rule on source outside `hooks/` and `tests/` (9.20) "stands"; the two wording notes on
+the reference file are folded in with this change; CI gets an overall time limit at the documents step.
+Outside the repository everything is the owner's to decide, and the building session touches none of it.
+
+**As it will be built** (the building session's reading where the ruling is silent, for the driving
+session to keep or change):
+- The count of readers started (`readerStarts`, `READER_STARTS`, the starts question and its evidence)
+  goes; so does 9.22's third decision (a superseded reader was no round).
+- **Closed:** while the record names a reader whose answer the mod has not stored and which started less
+  than ten minutes ago, the guard refuses every write Red would otherwise allow, by any agent, with the
+  ruling's reason. A shell command is not seen by the guard, as everywhere (3.3).
+- **A reading left behind:** at a gate call, a reader out for other hashes than the tests' now is a round
+  that did not pass, kept as "the tests changed while they were read"; Red's other checks then run on
+  the tests as they are, and a new reading is started in the same call, whatever the count of rounds:
+  the answer is the reader-is-reading one, and says that the earlier reading was left behind.
+- **The question** is only ever asked in the call that reads a reading of the tests as they are at that
+  call (two or more rounds, the last of them this reading), or again for those same tests. Tests changed
+  since the last reading are read first. So an honest Red is not capped: each change of the tests earns
+  a reading, and the person is asked after each one that does not pass from the second round on.
+- **An answer that arrives late:** when a reader ends, the tests are hashed; if they are not the ones it
+  was started on, or the record no longer names it, its answer is stored marked as left behind, the pane
+  is redrawn, and no prompt is sent. The gate never reads an answer so marked as a verdict.
+- **The pane at Red** opens with one row for the reader, above the Baseline: reading; reported; or "round
+  N did not pass · K findings" (or "no verdict", or "the tests changed while they were read"), and the
+  block with each finding stays above Red's own.
+- **Known and stated:** a model that changes tests by shell command during every reading starts a reader
+  each time and never passes Red; nothing counts those against a limit now.
