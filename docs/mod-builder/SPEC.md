@@ -3473,3 +3473,17 @@ second and third return; a skipped Red gone back to; the refusal for a held fold
 **9.9 after step 4:** items 1, 2, 6 and 8 are shown on the real engine; of 3, the new read after changed
 tests (9.27, 9.29); 4 was shown at step 2 (9.16). Still to show: a reader with no verdict line, 5 (the
 opt-in agents, not built), 7 (a 0.2.0 record), headless.
+
+### 9.32 Step 4 accepted; a rule for test helpers (2026-11-12, the driving session)
+
+The driving session: "Step four is accepted at 6bbbbc7 on my test run and your live run; your four
+choices in 9.30 stand, and so does your ruling on the verifier's FAIL, with one rule from now on: a test
+helper that checks something uses an assertion, not a thrown error, so that fails-by-assertion holds
+literally." Next, in its words: "the opt-in agents (9.5 with 9.12 to 9.14)", with a stop at the end of
+that step.
+
+The rule applies to every test written from here on, the plugin's own first: a helper of a test file
+that checks a state (for example that a build went back, or that a reader was started) does so with
+`expect(...)` or `assert`, and never with `throw new Error(...)`. The helper `wentBack` of
+`tests/back-to-red.test.ts` throws; it is changed to an assertion in the existing-tests commit of the
+next plan that touches that file, or at the documents step at the latest.
