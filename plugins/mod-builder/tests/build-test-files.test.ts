@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_TEXT, failing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_TEXT, failing, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -41,7 +41,7 @@ const standing = async (on: Parameters<typeof world>[0], at: 'scaffold' | 'red' 
   }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const phase = (w: World) => (w.store[`build:${MOD}`] as { phase: string }).phase
 // The files the typecheck named, read from the tsconfig as it stood while each run was under way.
 const watched = (w: World) => {

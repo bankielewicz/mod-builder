@@ -2,6 +2,7 @@
 // the person's answer, all in memory. Each test builds one with `world(on, { ... })` and reads back what the
 // plugin did to it. Nothing here is the plugin's code.
 import type { On } from 'claude-code'
+import type { Engine } from 'claude-code/testing'
 
 export const GATE = 'mcp__mod-builder__mod_builder_gate'
 export const MOD = '/work/turn-counter'
@@ -81,6 +82,20 @@ export type World = {
   whileRunning: (argv: string[]) => void
   // When set, the docs fetcher does not answer until this resolves: a fetch still under way.
   fetchHeld: Promise<void> | null
+  // The test reader (SPEC.md 9.3). What the plugin registered and withheld; each reader it started, with the id
+  // the world gave it; what a spawn answers when it is not a start ({ deny } or 'throws'); what the plugin
+  // submitted as a prompt; and the answer a reader's turn ends with when readerDone ends it, or null for a test
+  // that ends the reader's turn itself.
+  agents: { name: string; tools?: string[]; omitClaudeMd?: unknown; prompt?: string }[]
+  spawned: { agentId: string; subagentType: string; prompt: string }[]
+  spawnAnswer: { deny: string } | 'throws' | null
+  prompts: string[]
+  promptFails: boolean
+  // When a text, the prompt does not enter: the engine answers `drop` with it, as it does for a hook's refusal.
+  promptDrops: string | null
+  readerAnswer: string | null
+  // When true, the engine has no way to register an agent type: the call fails.
+  agentRegisterFails: boolean
 }
 
 const ok = (stdout = ''): Ran => ({ exitCode: 0, stdout })
@@ -99,6 +114,25 @@ export function failing(passed: string[], failed: string[], firstLine = 'Asserti
     ...failed.flatMap((name) => [`(fail) ${name} [0.40ms]`, `  ${firstLine}`]),
     '', ` ${passed.length} pass`, ` ${failed.length} fail`, `Ran ${total} tests across 1 file. [0.20s]`, '',
   ].join('\n')
+}
+
+// The world the running test built: a test builds one.
+let latest: World | null = null
+
+// Ends a reader's turn as the engine does, with `answer` (the world's own when none is given) and why it ended.
+export async function endReader($: Engine, agentId: string, answer?: string, reason = 'answer'): Promise<void> {
+  await $.turn.complete({ agentId, answer: answer ?? latest?.readerAnswer ?? '', reason, turnId: `turn-of-${agentId}`, durationMs: 1, isAborted: false } as never)
+}
+
+// What a session does after the gate has started the test reader: the reader's turn ends, the plugin nudges, and
+// the model calls the gate again. `answer` is what the gate just said; when it started a reader and the world has
+// an answer for it, the reader's turn is ended with that and the gate asked again, and its second answer is the
+// result. So a test that is not about the reader sees Red pass as one step.
+export async function readerDone($: Engine, answer: string): Promise<string> {
+  const w = latest
+  if (w === null || w.readerAnswer === null || !answer.includes('the test reader is reading the tests against the spec')) return answer
+  await endReader($, (w.spawned.at(-1) as { agentId: string }).agentId)
+  return String((await $.tool.call({ tool: GATE } as never)).result)
 }
 
 export function world(on: On, start: Partial<World> = {}): World {
@@ -135,8 +169,17 @@ export function world(on: On, start: Partial<World> = {}): World {
     whileAsked: () => {},
     whileRunning: () => {},
     fetchHeld: null,
+    agents: [],
+    spawned: [],
+    spawnAnswer: null,
+    prompts: [],
+    promptFails: false,
+    promptDrops: null,
+    readerAnswer: 'VERDICT: PASS',
+    agentRegisterFails: false,
     ...start,
   }
+  latest = w
   // The build's types are written, as after the plugin-authoring skill loaded, unless the test's files say otherwise.
   if (!Object.keys(w.files).some((file) => file.startsWith(`${TMP}/`))) w.files[TYPES] = TYPES_TEXT
   const value = <T>(answer: T) => ({ value: answer }) as never
@@ -159,6 +202,28 @@ export function world(on: On, start: Partial<World> = {}): World {
   on('session.cwd', () => (w.cwd === null ? deny('the session has no folder') : value(w.cwd)))
   on('skill.prompt', (_, e) => ({ text: e.text }))
   on('clock.now', () => value(w.now))
+  on('agent.register', (_, e) => {
+    if (w.agentRegisterFails) return deny('this build registers no agent types')
+    w.agents.push(e as never)
+    return value({ agent: `mod-builder:${(e as { name: string }).name}` })
+  })
+  on('agent.offer', () => ({ isOffered: true }) as never)
+  on('agent.spawn', (_, e) => {
+    if (w.spawnAnswer === 'throws') throw new Error('the engine could not start an agent')
+    if (w.spawnAnswer !== null) return w.spawnAnswer as never
+    // Beneath the plugins a spawn is the Agent tool's own call, and its answer the started agent's record.
+    const { subagent_type: subagentType, prompt } = e as unknown as { subagent_type: string; prompt: string }
+    const agentId = `reader-${w.spawned.length + 1}`
+    w.spawned.push({ agentId, subagentType, prompt })
+    return { model: 'the-session-model', result: { agentId, resolvedModel: 'the-session-model' } } as never
+  })
+  on('prompt.submit', (_, e) => {
+    if (w.promptFails) throw new Error('no session is bound in this process')
+    if (w.promptDrops !== null) return { drop: w.promptDrops } as never
+    w.prompts.push((e as { text: string }).text)
+    return { text: (e as { text: string }).text } as never
+  })
+  on('turn.complete', (_, e) => ({ text: String((e as { answer?: unknown }).answer ?? '') }) as never)
   on('env.get', (_, e) => value(w.env[(e as { name: string }).name]))
   on('command.list', () => value(w.commands.map((name) => ({ name }))))
   on('command.register', (_, e) => {

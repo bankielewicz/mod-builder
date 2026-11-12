@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -48,7 +48,7 @@ const standing = async (on: Parameters<typeof world>[0], at: 'green' | 'verify',
   }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const phase = (w: World) => (w.store[`build:${MOD}`] as { phase: string }).phase
 const evidence = (w: World) => (w.store[`build:${MOD}`] as { evidence: Record<string, string> }).evidence
 // The commands run, without the compiler being asked for its version.

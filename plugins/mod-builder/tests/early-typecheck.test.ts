@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { DOWNLOADED, GATE, HOME, INSTALLED, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, failing, passing, world } from './world'
+import { DOWNLOADED, GATE, HOME, INSTALLED, MOD, NAME, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -43,7 +43,7 @@ const standing = async (on: Parameters<typeof world>[0], at: 'scaffold' | 'red',
   if (at === 'red') w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
 const typechecks = (w: World) => w.ran.filter((argv) => argv.includes('--noEmit'))
 const word = (argv: string[]) => (argv.includes('--noEmit') ? 'typecheck' : argv.at(-1) === '-v' ? 'compiler?' : (argv[2] as string))
@@ -75,7 +75,7 @@ test('a build refused at Red for the typecheck can still change its tests, and p
   expect(await write($, NEW_TEST)).toBeUndefined()
   expect(await write($, `${MOD}/hooks/register.tsx`)).toMatch(/phase 5 \(Red\)/)
   w.runs.tsc = { exitCode: 0, stdout: '' }
-  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${TYPES_SHA}); 2 files under tests/ hashed). The build is now at phase 6 (Green).`)
+  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${TYPES_SHA}); 2 files under tests/ hashed; the test reader passed the tests (round 1)). The build is now at phase 6 (Green).`)
   expect(kept(w).testsAtRed).toBe(2)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['tests/counts.test.tsx', 'tests/pane.test.tsx'])
 })
@@ -83,9 +83,10 @@ test('a build refused at Red for the typecheck can still change its tests, and p
 test('at Red the typecheck runs after the test run, in the tsconfig\'s folder, and not at all when the test run is refused', async ($, on) => {
   const w = await standing(on, 'red')
   await gate($)
-  expect(w.ran.map(word)).toEqual(['--check-hooks', 'test', 'compiler?', 'typecheck', '--check-hooks'])
-  // The run before the last: Red's second check of hooks/ follows the typecheck (SPEC.md 9.17).
-  expect(w.ranIn.at(-2)).toBe(CONFIG.slice(0, CONFIG.lastIndexOf('/')))
+  // Then the reader's turn ends and the gate is asked again: it asks about hooks/ once more and runs nothing else (SPEC.md 9.19).
+  expect(w.ran.map(word)).toEqual(['--check-hooks', 'test', 'compiler?', 'typecheck', '--check-hooks', '--check-hooks'])
+  // Two runs follow the typecheck: Red's second check of hooks/ (SPEC.md 9.17), and the one of the call that reads the reader's answer.
+  expect(w.ranIn.at(-3)).toBe(CONFIG.slice(0, CONFIG.lastIndexOf('/')))
   w.ran.length = 0
   w.store[`build:${MOD}`] = { ...kept(w), phase: 'red', testsAtRed: null, testHashes: null }
   w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
@@ -105,7 +106,7 @@ test('at Red the typecheck runs once against each distinct types file, in the or
   const against = watched(w)
   const other = await sha256(SANDBOXED_TEXT)
   const order = [[TYPES_SHA, TYPES], [other, SANDBOXED]].sort((one, two) => ((one[0] as string) < (two[0] as string) ? -1 : 1))
-  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${order.map((one) => one[0]).join(', ')}); 2 files under tests/ hashed). The build is now at phase 6 (Green).`)
+  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${order.map((one) => one[0]).join(', ')}); 2 files under tests/ hashed; the test reader passed the tests (round 1)). The build is now at phase 6 (Green).`)
   expect(typechecks(w).length).toBe(2)
   expect(against).toEqual(order.map((one) => one[1]))
 })

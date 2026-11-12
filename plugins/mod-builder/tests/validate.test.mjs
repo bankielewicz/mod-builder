@@ -25,5 +25,6 @@ test('validate passes, and reports no gating hook without a .catch handler', asy
 test('validate names the gate tool\'s hook and the guard\'s hook as gating hooks with a .catch handler', async () => {
   const report = await validate();
   const withCatch = report.lines.filter((line) => line.includes('gating hook with .catch:')).map((line) => line.split('gating hook with .catch: ')[1]);
-  assert.deepEqual(withCatch.sort(), ['tool.call', GATE_HOOK].sort());
+  // And the hook that withholds the test reader from the model (SPEC.md 9.3): it decides what is offered.
+  assert.deepEqual(withCatch.sort(), ['tool.call', GATE_HOOK, 'agent.offer{agent=mod-builder:test-reader}'].sort());
 });

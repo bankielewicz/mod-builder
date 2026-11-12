@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, ROOT, TMP, TYPES, TYPES_FOLDER, TYPES_TEXT, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, ROOT, TMP, TYPES, TYPES_FOLDER, TYPES_TEXT, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const EDIT = { skill: 'edit', text: 'the phases of an edit', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -26,7 +26,7 @@ const ERR_TESTS = `${MOD}/tests/pane.test.tsx(2,9): error TS2307: Cannot find mo
 const GO_ON = 'Go on with these changes'
 const APPROVE_NO_CHANGE = 'Approve: no behaviour change'
 
-const gate = async ($: Engine, more: Record<string, unknown> = {}) => String((await $.tool.call({ tool: GATE, ...more } as never)).result)
+const gate = async ($: Engine, more: Record<string, unknown> = {}) => readerDone($, String((await $.tool.call({ tool: GATE, ...more } as never)).result))
 const first = (answer: string) => answer.split('\n')[0] as string
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown> & { phase: string; baseline: Record<string, unknown>; evidence: Record<string, string> }
 const write = async ($: Engine, path: string) => (await $.tool.call({ tool: 'Write', file_path: path, content: 'x' } as never)) as { deny?: string }
@@ -299,7 +299,7 @@ test('Red ends on a new test failing by assertion and the typecheck; the test fi
   w.files[`${MOD}/tests/width.test.ts`] = 'the new test'
   w.files[`${MOD}/lib/y.test.tsx`] = 'a stray new test'
   w.runs.test = { exitCode: 1, stdout: failing(NAMES, ['cuts by width']) }
-  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Red\) passed \(3 tests ran, a new or changed one failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 test files hashed, not as at the baseline: lib\/y\.test\.tsx, tests\/width\.test\.ts\)\. The edit is now at phase 5 \(Green\)\.$/)
+  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Red\) passed \(3 tests ran, a new or changed one failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 test files hashed, not as at the baseline: lib\/y\.test\.tsx, tests\/width\.test\.ts; the test reader passed the tests \(round 1\)\)\. The edit is now at phase 5 \(Green\)\.$/)
   expect(w.asked.length).toBe(1)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['lib/y.test.tsx', 'tests/pane.test.tsx', 'tests/width.test.ts'])
   // An edit has no template: its Red never asks the scaffold script about hooks/ (SPEC.md 9.17).
@@ -347,7 +347,7 @@ test('a test file the baseline had that changed raises the question, with what i
   })
   expect(kept(w).phase).toBe('red')
   w.answer = GO_ON
-  expect(await gate($)).toMatch(/phase 4 \(Red\) passed \(.*; the person answered "Go on with these changes" for: tests\/pane\.test\.tsx \(changed\)\)\. The edit is now at phase 5 \(Green\)\.$/)
+  expect(await gate($)).toMatch(/phase 4 \(Red\) passed \(.*; the person answered "Go on with these changes" for: tests\/pane\.test\.tsx \(changed\); the test reader passed the tests \(round 1\)\)\. The edit is now at phase 5 \(Green\)\.$/)
   expect(kept(w).evidence.red).toContain('the person answered "Go on with these changes" for: tests/pane.test.tsx (changed)')
 })
 
@@ -444,7 +444,7 @@ test('a repair\'s Red ends when the test files typecheck, whatever the code stil
   w.files[TEST] = 'the first test, mended'
   w.runs.tsc = { exitCode: 1, stdout: ERR_HOOKS }
   w.answer = GO_ON
-  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Red\) passed \(the test files typecheck \(types sha256 [0-9a-f]{64}\); 1 test files hashed, not as at the baseline: tests\/pane\.test\.tsx; the person answered "Go on with these changes" for: tests\/pane\.test\.tsx \(changed\)\)\. The edit is now at phase 5 \(Green\)\.$/)
+  expect(await gate($)).toMatch(/^mod-builder: phase 4 \(Red\) passed \(the test files typecheck \(types sha256 [0-9a-f]{64}\); 1 test files hashed, not as at the baseline: tests\/pane\.test\.tsx; the person answered "Go on with these changes" for: tests\/pane\.test\.tsx \(changed\); the test reader passed the tests \(round 1\)\)\. The edit is now at phase 5 \(Green\)\.$/)
   // No test run is read at a repair's Red: the mod already fails.
   expect(words(w).slice(-3).includes('test')).toBe(false)
 })

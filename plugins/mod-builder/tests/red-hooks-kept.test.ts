@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { GATE, MOD, NAME, TYPES, TYPES_SHA, TYPES_TEXT, failing, world } from './world'
+import { GATE, MOD, NAME, TYPES, TYPES_SHA, TYPES_TEXT, failing, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -35,7 +35,7 @@ const atRed = async (on: Parameters<typeof world>[0]) => {
   }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
 const asked = (w: World) => w.ran.filter((argv) => argv.some((one) => one.endsWith('/scripts/scaffold.sh')))
 const word = (argv: string[]) => (argv.includes('--noEmit') ? 'typecheck' : argv.at(-1) === '-v' ? 'compiler?' : (argv[2] as string))
@@ -45,9 +45,10 @@ const REFUSES = '. When that command refuses, a link or a folder stands where a 
 
 test('Red asks the scaffold script for hooks/ alone, with the mod folder and the manifest\'s name, before the tests run and once more at the end', async ($, on) => {
   const w = await atRed(on)
-  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${TYPES_SHA}); 1 files under tests/ hashed). The build is now at phase 6 (Green).`)
-  expect(asked(w).map((argv) => argv.slice(2))).toEqual([['--check-hooks', MOD, NAME], ['--check-hooks', MOD, NAME]])
-  expect(w.ran.map(word)).toEqual(['--check-hooks', 'test', 'compiler?', 'typecheck', '--check-hooks'])
+  expect(await gate($)).toBe(`mod-builder: phase 5 (Red) passed (hooks/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes (types sha256 ${TYPES_SHA}); 1 files under tests/ hashed; the test reader passed the tests (round 1)). The build is now at phase 6 (Green).`)
+  // And a third time on the call that reads the test reader's answer, which runs nothing else (SPEC.md 9.19).
+  expect(asked(w).map((argv) => argv.slice(2))).toEqual([['--check-hooks', MOD, NAME], ['--check-hooks', MOD, NAME], ['--check-hooks', MOD, NAME]])
+  expect(w.ran.map(word)).toEqual(['--check-hooks', 'test', 'compiler?', 'typecheck', '--check-hooks', '--check-hooks'])
 })
 
 test('code written under hooks/ before Red refuses Red before the tests are run, and the answer names the file and how hooks/ alone is laid again', async ($, on) => {

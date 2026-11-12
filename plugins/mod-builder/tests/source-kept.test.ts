@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { GATE, MOD, NAME, TYPES, TYPES_TEXT, failing, world } from './world'
+import { GATE, MOD, NAME, TYPES, TYPES_TEXT, failing, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -29,7 +29,7 @@ const standing = async (on: Parameters<typeof world>[0], phase: 'scaffold' | 're
   }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
 const word = (argv: string[]) => (argv.includes('--noEmit') ? 'typecheck' : argv.at(-1) === '-v' ? 'compiler?' : (argv[2] as string))
 

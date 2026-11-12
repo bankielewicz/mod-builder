@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const EDIT = { skill: 'edit', text: 'the phases of an edit', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -29,7 +29,7 @@ const CALLS = './register.tsx calls: $.ui.open, $.ui.resolve'
 const validated = (...lines: string[]) => `Validating hooks\n\n${lines.map((line) => `  ${MARK} ${line}`).join('\n')}\n\nValidation passed\n`
 const ENGINE_TSCONFIG = '{\n  "extends": "./.claude-plugin/types/tsconfig.json"\n}\n'
 
-const gate = async ($: Engine, more: Record<string, unknown> = {}) => String((await $.tool.call({ tool: GATE, ...more } as never)).result)
+const gate = async ($: Engine, more: Record<string, unknown> = {}) => readerDone($, String((await $.tool.call({ tool: GATE, ...more } as never)).result))
 const first = (answer: string) => answer.split('\n')[0] as string
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown> & { phase: string; baseline: Record<string, unknown>; evidence: Record<string, string>; agreed?: Record<string, string> }
 const write = async ($: Engine, path: string) => (await $.tool.call({ tool: 'Write', file_path: path, content: 'x' } as never)) as { deny?: string }

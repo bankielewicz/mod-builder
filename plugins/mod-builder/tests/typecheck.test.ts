@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, DOWNLOADED, GATE, HOME, INSTALLED, MOD, NAME, TMP, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, world } from './world'
+import { BUILT, DOWNLOADED, GATE, HOME, INSTALLED, MOD, NAME, TMP, TYPES, TYPES_FOLDER, TYPES_SHA, TYPES_TEXT, readerDone, world } from './world'
 import type { World } from './world'
 
 const SPEC = `${MOD}/SPEC.md`
@@ -41,7 +41,7 @@ const atVerify = async (on: Parameters<typeof world>[0], more: Partial<World> = 
   }
   return w
 }
-const gate = async ($: Engine) => String((await $.tool.call({ tool: GATE } as never)).result)
+const gate = async ($: Engine) => readerDone($, String((await $.tool.call({ tool: GATE } as never)).result))
 const phase = (w: World) => (w.store[`build:${MOD}`] as { phase: string }).phase
 const typechecks = (w: World) => w.ran.filter((argv) => argv.includes('--noEmit'))
 const config = (w: World) => JSON.parse(w.files[CONFIG] ?? 'null') as { compilerOptions: unknown; include: string[] } | null

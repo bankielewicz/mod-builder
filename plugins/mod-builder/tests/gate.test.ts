@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world, readerDone } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -17,7 +17,7 @@ const MANIFEST = `{ "name": "${NAME}" }`
 const gate = async ($: Engine, modDir?: string) => {
   const answer = await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)
   // The whole answer: a test that compares it says that nothing follows its one line.
-  return String(answer.result)
+  return readerDone($, String(answer.result))
 }
 // The first line of an answer that goes on: what a refusal quotes beneath it, and the line a passed Green or Verify
 // adds, have tests of their own (decisions.test.ts, built.test.ts).
@@ -209,7 +209,7 @@ test('Red to Green passes when a test new since Scaffold fails by assertion, and
   w.files[`${MOD}/tests/counts.test.tsx`] = 'the new test'
   w.files[`${MOD}/tests/deep/more.test.tsx`] = 'another'
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
-  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(hooks\/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed\)\. The build is now at phase 6 \(Green\)\.$/)
+  expect(await gate($)).toMatch(/^mod-builder: phase 5 \(Red\) passed \(hooks\/ is as the scaffold laid it; 2 tests ran, the new ones failing by assertion; the typecheck passes \(types sha256 [0-9a-f]{64}\); 3 files under tests\/ hashed; the test reader passed the tests \(round 1\)\)\. The build is now at phase 6 \(Green\)\.$/)
   expect(kept(w).testsAtRed).toBe(2)
   expect(Object.keys(kept(w).testHashes as object).sort()).toEqual(['tests/counts.test.tsx', 'tests/deep/more.test.tsx', 'tests/pane.test.tsx'])
 })

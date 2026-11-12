@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BUILT, GATE, HOME, MOD, NAME, failing, passing, world } from './world'
+import { BUILT, GATE, HOME, MOD, NAME, failing, passing, readerDone, world } from './world'
 import type { World } from './world'
 
 const BUILD = { skill: 'build', text: 'the eight phases', source: 'plugin', pluginName: 'mod-builder', frontmatter: {} } as const
@@ -19,7 +19,7 @@ const FILES = {
 }
 
 const write = ($: Engine, file_path: string) => $.tool.call({ tool: 'Write', file_path, content: 'x' })
-const gate = async ($: Engine, modDir?: string) => String((await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)).result)
+const gate = async ($: Engine, modDir?: string) => readerDone($, String((await $.tool.call({ tool: GATE, ...(modDir === undefined ? {} : { mod_dir: modDir }) } as never)).result))
 const kept = (w: World) => w.store[`build:${MOD}`] as Record<string, unknown>
 const record = (phase: string) => ({
   modDir: MOD, sessionId: 's1', phase, specApprovedAt: null, spec: null, testsAtScaffold: null, namesAtScaffold: null, testsAtRed: null, testHashes: null, evidence: {},
