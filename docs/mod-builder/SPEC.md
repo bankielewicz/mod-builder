@@ -3679,3 +3679,16 @@ mod `ag` under `~/.claude/plugins/store/`. Neither was touched.
 
 **9.9 after step 5:** items 1, 2, 4, 5, 6 and 8 are shown on the real engine, and of 3 the new read after
 changed tests. Still to show: a reader with no verdict line, 7 (a 0.2.0 record), headless.
+
+**Two things checked after the record above was written** (the building session, on an adviser's read of
+it). The seven shell commands of the live edit's main model, read whole in its transcript: a listing,
+two lookups of the snapshot and the types, two runs of `claude plugin test`, a `tail` of `SPEC.md`, and
+`git rev-parse`; none writes a file. And every run above had agent teams switched on, so the probe of
+9.33's point 3 was run again with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` unset [ran]: the spawn hook saw
+`ag:writer`, `next` gave the `agentId`, and the agent's `Write` and its `SubagentHandback` reached the
+`tool.call` hook with that id. A build with the shipped plugin and teams off is not shown live.
+Also for the record: plan 47's generator log was lost (its mutant run outlasted the time given; the plan
+was written after its red and green checks, and the verifier's PASS covers the mutants); the implementer's
+refusal in the live build is the main model's quote of the implementer's report, supported by the pane's
+count; the skills' wording followed `skill-creator`'s writing guidance (say why, no shouting, a reference
+file for detail), with no evaluation runs.
