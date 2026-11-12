@@ -3804,3 +3804,44 @@ change):
 - **`docs/limits`, beside the closed Scaffold:** "mod-builder sees only the mod's folder: code written
   ahead and kept anywhere else (a scratch file, the conversation itself) is not seen, and can be written
   into `hooks/` at Green."
+
+### 9.37 One prompt for a reading, and none that is stale (2026-11-12, before the plan)
+
+The driving session, after its own demonstration (a new build at `6dcfe95` to Done: Scaffold as laid, the
+question after two rounds, "Go on with these tests", 14 tests, the four checks): "the test reader has
+reported. Call mod_builder_gate." arrived more than once for one reading (two in a row), and again after
+the build was Done ... Each stale prompt costs the person a turn." It asked for the cause, reproduced on
+the real engine, and gave the rule: "one prompt per reading, sent only if that reading's answer is still
+unread in the record when it is sent; none once the gate has read it, once the person has answered, or
+once the record has left Red. A queued prompt cannot be recalled, so its text should let the model drop it
+without a tool call when the build has moved on: say "if the build is still at Red"."
+
+**The cause** [ran: the transcripts of the building session's five live runs of 9.34 and 9.35, each
+reading's hand-back, gate answers and prompts in order of time]: **queued prompts delivered late.** It
+is neither a second nudge (9.12, point 5; no prompt failed) nor two prompts for one reader's end: every
+reading brought exactly one prompt. But the reader's report also reaches the main model as a hand-back
+(9.26), which starts a main turn at once; the prompt, submitted in the same moment, is queued until that
+turn ends (9.13, point 1). In that turn the model already calls the gate, or mends the tests so that a new
+reading starts, or goes on through Green and Verify. The prompt then arrives stale: after the gate read
+the answer (9 to 20 s late in two runs), beside the next reading's prompt ("two in a row": 17 s apart in
+one run), or after Done (33 and 36 s after Green passed in two runs, answered "nothing follows phase 8").
+**Probed for the fix** [ran, 2.1.322, the probe mod `ag`, agent teams off]: `turn.start` reaches a mod's
+hook for the main loop with no `agentId`; a mod-started agent's `turn.complete` came first, and 25 ms
+later the main loop's `turn.start`, whose text opens `<agent-message from="<the agent's id>">` and
+`[Subagent hand-back]`; 3 s after the agent's end a continuation of the hook still ran.
+
+**As it will be built** (in the plan of 9.36; the building session's, for the driving session to keep or
+change):
+- The reader's `turn.complete` stores the answer and submits nothing.
+- The mod keeps whether a main turn is running (`turn.start` and `turn.complete` with no `agentId`).
+  A short wait after the reader's end (2 s), **when no main turn is running**, the prompt is submitted,
+  if the answer is still unread: the record is open, at Red, and still names that reader.
+- **When a main turn is running** (the hand-back's, or one the model never ended), nothing is submitted
+  then. When that main turn ends, the prompt is submitted if the answer is still unread by the same test.
+  So a model that calls the gate in the hand-back's turn gets no prompt at all.
+- One prompt per reading: the stored answer counts it before the submit. A prompt that was refused or
+  could not be submitted is tried once more at a main turn's end, under the same test (9.12, point 5).
+- The text: "mod-builder: the test reader has reported. If the build is still at Red, call
+  mod_builder_gate; if it has moved on, do nothing."
+- What is known of a running turn is lost when the mod reloads; a prompt may then be sent while a turn
+  runs and arrive late, which the text allows for.
