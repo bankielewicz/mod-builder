@@ -38,13 +38,13 @@ test('the skill is where the mod looks for it, named edit, with a description th
   assert.match(frontmatter.description, /edit, change, fix, update or repair a mod that already exists/);
   assert.match(frontmatter.description, /no longer typechecks or loads/);
   assert.equal(frontmatter.description.length <= 1024, true);
-  assert.equal(frontmatter['argument-hint'], '<mod folder> <what to change>');
+  assert.equal(frontmatter['argument-hint'], '[--agents] <mod folder> <what to change>');
   assert.equal(isEditSkill({ skill: 'edit', source: 'plugin', pluginName: 'mod-builder' }, 'mod-builder', plugin), true);
 });
 
 test('the skill takes what the person typed, and asks when the folder or the change is missing', () => {
   assert.equal(body.split('$ARGUMENTS').length, 2, '$ARGUMENTS is in the body once');
-  assert.match(flat, /The first word is the mod's folder; the rest is the change\. If the folder or the change is missing, ask for it before anything else\./);
+  assert.match(flat, /The mod's folder comes first and the change after it; if either is missing, ask for it before anything else\./);
 });
 
 test('the edit skill is lean: under 200 lines, with no line over 115 characters outside its frontmatter', () => {
@@ -55,7 +55,7 @@ test('the edit skill is lean: under 200 lines, with no line over 115 characters 
 
 test('every file of the plugin the skill sends the model to is there, and it never sends it to the scaffold', () => {
   const named = [...body.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z0-9_./-]+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(named)].sort(), ['reference/back-to-red.md', 'reference/test-reader.md', 'scripts/lookup.sh']);
+  assert.deepEqual([...new Set(named)].sort(), ['reference/agents.md', 'reference/back-to-red.md', 'reference/test-reader.md', 'scripts/lookup.sh']);
   for (const path of named) assert.equal(existsSync(join(plugin, path)), true, path);
   assert.doesNotMatch(body, /scaffold\.sh|restore-point\.sh|put-back\.sh/);
 });
