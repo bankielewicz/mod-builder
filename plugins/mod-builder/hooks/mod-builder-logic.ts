@@ -720,7 +720,6 @@ export type BuildRecord = {
   readerRounds?: number // the rounds of the test reader that ended without a pass
   readerLast?: ReaderRound | null // the last such round: the test files it was about, and what it found
   testsAgreed?: Hashes // an edit's Red: the changed test files the person's answer to 8.4's question covered
-  readerStarts?: number // SPEC.md 9.24: the test readers started in this Red, those left behind by changed tests included
 }
 
 export function sessionKey(sessionId: string): string {
@@ -2334,14 +2333,17 @@ export function paneModel(input: PaneInput): PaneModel {
       // Scaffold, Red and Green: each passed phase with what its gate saw, then the phase the work is in.
       const approved = clockOf(own.specApprovedAt)
       state = `${base}${approved === null ? '' : ` \u00b7 approved ${approved}`} \u00b7 ${kind === 'edit' ? 'editing' : 'building'}`
+      // At Red, the test reader first, in one row: reading, reported, or what its last round came to (SPEC.md 9.28).
+      const reader = phase === 'red' ? readerRow(own.reader, own.readerLast, own.readerRounds, given.readerAnswered === true) : null
+      if (reader !== null) blocks.push(reader)
       blocks.push(...baselineBlock(), ...passedBlocks())
       if (phase === 'green') {
         const checks = readChecks(given.checks, sessionId, phase)
         if (checks !== null && CHECKS.some((check) => checks.states[check] !== 'waiting')) blocks.push(...checkBlocks(checks, modDir, knowledge.version).slice(0, 1))
       }
-      // At Red, the test reader: reading, reported, or what its last round found (SPEC.md 9.19).
-      const reading = phase === 'red' ? readerBlock(own.reader, own.readerLast, own.readerRounds, given.readerAnswered === true, own.readerStarts) : null
-      if (reading !== null) blocks.push(reading)
+      // Just above Red's own block: each finding of the reader's last round (SPEC.md 9.19).
+      const found = phase === 'red' ? readerBlock(own.reader, own.readerLast) : null
+      if (found !== null) blocks.push(found)
       blocks.push({ heading: [{ text: `${at + 1} ${TITLES[phase]}` }, { text: 'working\u2026', tone: 'current' }], rows: attemptRows() })
       // At Red a test that passes is no progress, so the line says how many fail.
       const tests = attempt === null || attempt.passed === null || attempt.tests === null ? ''
@@ -2471,13 +2473,15 @@ export function readersKey(sessionId: string): string {
 
 // What the hook stores for a reader that ended: its answer (empty when its turn ended otherwise than by an
 // answer), how often the main model was nudged about it, and whether the last nudge could not be sent.
-export type ReaderAnswer = { answer: string; nudges: number; failed: boolean }
+// `leftBehind` marks an answer that arrived for tests that were no longer the ones the reader was started on, or
+// for a reader the record no longer named (SPEC.md 9.28): it is never read as a verdict, and nobody is nudged.
+export type ReaderAnswer = { answer: string; nudges: number; failed: boolean; leftBehind?: true }
 
 export function readReaderAnswer(value: unknown): ReaderAnswer | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
-  const { answer, nudges, failed } = value as { answer?: unknown; nudges?: unknown; failed?: unknown }
+  const { answer, nudges, failed, leftBehind } = value as { answer?: unknown; nudges?: unknown; failed?: unknown; leftBehind?: unknown }
   if (typeof answer !== 'string') return null
-  return { answer, nudges: Number.isInteger(nudges) && (nudges as number) >= 0 ? (nudges as number) : 0, failed: failed === true }
+  return { answer, nudges: Number.isInteger(nudges) && (nudges as number) >= 0 ? (nudges as number) : 0, failed: failed === true, ...(leftBehind === true ? { leftBehind: true as const } : {}) }
 }
 
 // How often the main model is nudged about one answer at most: when it arrives, and once more when that nudge
@@ -2486,11 +2490,12 @@ export const READER_NUDGES = 2
 export const READER_NUDGE = 'mod-builder: the test reader has reported. Call mod_builder_gate.'
 
 // The reader that is out, as the record holds it, and the last round that ended, with what it found (null: no
-// verdict). `hashes` are the test files' the reader was started on.
+// verdict). `hashes` are the test files' the reader was started on. `changed` marks a round that ended because
+// the tests changed while they were read (SPEC.md 9.28): such a round says nothing about any tests.
 // `evidence` and `change` are what Red's other checks had answered when it was started: when its answer is read
 // for the same test files, those checks are not run again, and a pass is answered with what they saw then.
 export type ReaderOut = { agentId: string; startedAt: number; hashes: Hashes; evidence?: string; change?: Record<string, unknown> }
-export type ReaderRound = { hashes: Hashes; findings: string[] | null }
+export type ReaderRound = { hashes: Hashes; findings: string[] | null; changed?: true }
 
 function isReaderOut(value: unknown): value is ReaderOut {
   if (typeof value !== 'object' || value === null) return false
@@ -2519,8 +2524,10 @@ export const READER_ROUNDS = 2
 //   again    the last round was about these very hashes and did not pass, and fewer than READER_ROUNDS rounds
 //            have ended so: its findings are given again, and the tests have to change for a new round;
 //   ask      the same, with READER_ROUNDS rounds or more ended: the person is asked;
-//   start    anything else: a reader is started for these hashes (one that is out for other hashes is left
-//            behind: its answer is never read, and it is no round).
+//   start    anything else: a reader is started for these hashes. A reader that is out for other hashes was
+//            left behind by changed tests: the hooks module counts that as a round of its own first (9.28). A
+//            last round that ended so says nothing about these tests, whatever its hashes: it is never given
+//            again and never asked about.
 // `answer` is the stored answer of the reader the record names, or undefined when none is stored.
 export type ReaderStep =
   | { do: 'wait'; seconds: number }
@@ -2536,7 +2543,7 @@ export function readerStep(out: unknown, last: unknown, rounds: unknown, hashes:
     const waited = now - out.startedAt
     return waited >= 0 && waited < READER_MS ? { do: 'wait', seconds: Math.floor(waited / 1000) } : { do: 'timeout' }
   }
-  if (isReaderRound(last) && sameHashes(last.hashes, hashes)) {
+  if (isReaderRound(last) && last.changed !== true && sameHashes(last.hashes, hashes)) {
     return { do: roundEnds(rounds), findings: last.findings }
   }
   return { do: 'start' }
@@ -2561,6 +2568,39 @@ export const READER_STARTED = 'the test reader is reading the tests against the 
 
 export function readerReading(seconds: number): string {
   return `the test reader is still reading (${Number.isInteger(seconds) && seconds >= 0 ? seconds : 0} s). End your turn: mod-builder will prompt you when it has reported`
+}
+
+// While a reader reads, the test files are closed (SPEC.md 9.28, the driving session): from the call of the gate
+// that started it until its answer is stored or its time is up, the guard refuses every write Red would allow,
+// by anyone. So a reading is only left behind by a shell command, which no guard sees. `hasAnswered` is whether
+// the store holds an answer for the reader the record names, a left-behind one included.
+export const READER_CLOSED = 'the test reader is reading these tests; wait for its report'
+
+export function readerCloses(out: unknown, hasAnswered: boolean, now: number): boolean {
+  if (!isReaderOut(out) || hasAnswered === true || typeof now !== 'number' || !Number.isFinite(now)) return false
+  const waited = now - out.startedAt
+  return waited >= 0 && waited < READER_MS
+}
+
+export function readerClosedRefusal(path: string): string {
+  return `mod-builder: ${path === '' ? 'the mod folder' : path} can't be written: ${READER_CLOSED}.`
+}
+
+// A reading left behind: the tests changed while they were read, which only a shell command can do. It counts as
+// a round that did not pass, with this as its result, and the tests as they are now are read next.
+export const TESTS_CHANGED = 'the tests changed while they were read'
+
+export function readerLeftBehind(round: number): string {
+  return `the tests changed while the test reader read them, which counts as round ${Number.isInteger(round) && round >= 1 ? round : 1}`
+}
+
+// A report the gate never read, because the tests changed after it arrived (they are open again then): what it
+// said is about other tests. Findings or no verdict are still a round that did not pass, `round`; a pass counts
+// for nothing (null). Either way the tests as they are now are read next.
+export function readerOutdated(round: number | null): string {
+  return round === null
+    ? 'the tests changed after the test reader passed them, so that pass is not theirs'
+    : `the tests changed after the test reader reported on them: that reading did not pass and counts as round ${Number.isInteger(round) && round >= 1 ? round : 1}`
 }
 
 // A round's findings as lines, or the one line that says there was no verdict.
@@ -2611,59 +2651,42 @@ function roundOf(rounds: unknown): number {
   return typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 1 ? rounds : 1
 }
 
-// The pane's block for the test reader at Red (SPEC.md 9.19), from what the record holds: `out` its reader, `last`
-// its last round that did not pass, `rounds` how many such rounds; and whether the store holds the answer of the
-// reader that is out. A reader that is out comes first: reading, or reported and waiting for the gate to be
-// called (SPEC.md 9.24: said plainly, since the prompt that says so may never arrive). With none out, the last
-// round and what it found. `starts` is how many readers this Red has started: from the second on it is a row of
-// its own, since the fourth is not started and the person is asked instead. Null when there is nothing to show.
+// What the last round that did not pass came to, in a few words: how many findings, that there was no verdict,
+// or that the tests changed while they were read.
+function roundCame(last: ReaderRound): string {
+  if (last.changed === true) return TESTS_CHANGED
+  const found = last.findings === null ? 0 : last.findings.map((one) => shown(one)).filter((one) => one !== '').length
+  return found === 0 ? 'no verdict' : plural(found, 'finding', 'findings')
+}
+
+// The pane's first row at Red, above everything else (SPEC.md 9.28, point 5): the test reader in one line, from
+// what the record holds: `out` its reader, `last` its last round that did not pass, `rounds` how many such
+// rounds; and whether the store holds the answer of the reader that is out. A reader that is out comes first:
+// reading, or reported and waiting for the gate to be called (SPEC.md 9.24: said plainly, since the prompt that
+// says so may never arrive). With none out, the round and what it came to. Null when there is nothing to show.
 export const READER_REPORTED = 'has reported: the gate is waiting to be called'
 
-export function readerBlock(out: unknown, last: unknown, rounds: unknown, hasAnswered: boolean, starts?: unknown): PaneBlock | null {
-  const count = typeof starts === 'number' && Number.isInteger(starts) && starts >= 2 ? [row({ text: `  ${starts} readings started`, tone: 'dim' })] : []
+export function readerRow(out: unknown, last: unknown, rounds: unknown, hasAnswered: boolean): PaneBlock | null {
   if (isReaderOut(out)) {
-    if (hasAnswered === true) return { heading: heading('Test reader'), rows: [row({ text: `  ${READER_REPORTED}`, tone: 'current' }), ...count] }
+    if (hasAnswered === true) return { heading: [{ text: 'Test reader' }, { text: READER_REPORTED, tone: 'current' }], rows: [] }
     const started = clockOf(out.startedAt)
-    return { heading: heading('Test reader'), rows: [row({ text: '  reading the tests against the spec', tone: 'current' }, ...(started === null ? [] : [{ text: `started ${started}`, tone: 'dim' as Tone }])), ...count] }
+    return { heading: [{ text: 'Test reader' }, { text: 'reading the tests against the spec', tone: 'current' }, ...(started === null ? [] : [{ text: `started ${started}`, tone: 'dim' as Tone }])], rows: [] }
   }
-  if (!isReaderRound(last)) return count.length === 0 ? null : { heading: heading('Test reader'), rows: count }
-  const found = last.findings === null ? [] : last.findings.map((one) => shown(one)).filter((one) => one !== '')
-  return {
-    heading: heading('Test reader'),
-    rows: [row({ text: `  round ${roundOf(rounds)} did not pass`, tone: 'warning' }), ...(found.length === 0 ? [row(`  ${NO_VERDICT}`)] : found.map((one) => row(`  - ${one}`))), ...count],
-  }
+  if (!isReaderRound(last)) return null
+  return { heading: [{ text: 'Test reader' }, { text: `round ${roundOf(rounds)} did not pass`, tone: 'warning' }, { text: roundCame(last), tone: 'dim' }], rows: [] }
+}
+
+// The pane's block of what the last round found, just above Red's own: one row for each finding, on one line.
+// Null while a reader is out, and for a round that found nothing to list (no verdict, or changed tests).
+export function readerBlock(out: unknown, last: unknown): PaneBlock | null {
+  if (isReaderOut(out) || !isReaderRound(last) || last.changed === true || last.findings === null) return null
+  const found = last.findings.map((one) => shown(one)).filter((one) => one !== '')
+  return found.length === 0 ? null : { heading: heading('What the test reader found'), rows: found.map((one) => row(`  - ${one}`)) }
 }
 
 // What the status line says of the test reader at Red, after the phase and the tests: nothing when there is
 // nothing of it to show.
 export function readerStatus(out: unknown, last: unknown, rounds: unknown, hasAnswered: boolean): string {
   if (isReaderOut(out)) return hasAnswered === true ? ' \u00b7 test reader reported: call the gate' : ' \u00b7 test reader reading'
-  return isReaderRound(last) ? ` \u00b7 test reader: round ${roundOf(rounds)} did not pass` : ''
-}
-
-// How many test readers one Red may start (SPEC.md 9.24, the driving session's ruling): every reader started is
-// counted, one left behind by changed tests included, since such a reader is no round and a model could
-// otherwise have the tests read as often as it changes them. When one more would be started, the person is asked.
-export const READER_STARTS = 3
-
-// What follows when Red's gate would start a reader, by how many this Red has started: one more, or the question.
-export function startsEnd(starts: unknown): 'start' | 'ask' {
-  return typeof starts === 'number' && Number.isInteger(starts) && starts >= READER_STARTS ? 'ask' : 'start'
-}
-
-// The question asked in place of a reader that would be one too many: how many were started, that the tests kept
-// changing, what the last reading that ended found (when one did), and the same last line and options as
-// readerQuestion: "Not yet" first, and readerGate judges the answer.
-export function readerStartsQuestion(starts: number, findings: readonly string[] | null): string {
-  const count = Number.isInteger(starts) && starts >= 0 ? starts : 0
-  const head = `The test reader was started ${count} times in this Red and the tests kept changing, so it is not started again.`
-  const found = findings === null || !Array.isArray(findings) || findings.length === 0
-    ? ['No reading of the tests as they are now has ended.']
-    : ['The last reading that ended found behaviours of the spec that no test would catch:', ...findingLines(findings)]
-  return [head, ...found, 'The code is written next, to these tests. Go on with these tests?'].join('\n')
-}
-
-// Red's evidence when the person's answer to that question passed the tests.
-export function readerStartsEvidence(starts: number): string {
-  return `the person answered "${GO_ON_TESTS}" after ${Number.isInteger(starts) && starts >= 0 ? starts : 0} readings of the test reader were started and the tests kept changing`
+  return isReaderRound(last) ? ` \u00b7 test reader: round ${roundOf(rounds)} did not pass \u00b7 ${roundCame(last)}` : ''
 }

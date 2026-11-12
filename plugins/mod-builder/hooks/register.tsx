@@ -14,8 +14,9 @@ import {
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, pluginFolderBeingMade, redGate,
   GO_ON, READER, READER_DESCRIPTION, READER_NAME, READER_NUDGE, READER_NUDGES, READER_PROMPT, READER_STARTED, READER_TOOLS, findingLines, readReaderAnswer, readVerdict, readerEvidence,
-  readerGate, readerKey, readerMayCall, readerMessage, readerOptions, readerQuestion, readerReading, readerRefusal, readerStartsEvidence, readerStartsQuestion, readerStep, readerWaits,
-  readersKey, roundEnds, sectionLine, startsEnd, unnameable,
+  readerClosedRefusal, readerCloses, readerGate, readerKey, readerLeftBehind, readerMayCall, readerMessage, readerOptions, readerOutdated, readerQuestion, readerReading, readerRefusal,
+  readerStep,
+  readerWaits, readersKey, roundEnds, sectionLine, unnameable,
   scaffoldGate, scaffoldKeptGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
 import type { UntestedFile, AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
@@ -708,7 +709,8 @@ async function testHashesNow($: Engine, modDir: string): Promise<Hashes | null> 
 // files as they are now. While it has not answered and its time is not up, the answer is "still reading": no
 // test and no compiler is run. When its answer is stored, Red's other checks are not run again for the same test
 // files: the reader's verdict is read, and a pass is answered with what those checks saw when it was started.
-// Null in every other case: Red runs all its checks.
+// Null in every other case: Red runs all its checks. An answer marked as left behind is one of them (9.28): the
+// tests changed while they were read, so they are checked and read anew.
 async function readerOut($: Engine, record: BuildRecord): Promise<Step | null> {
   const out = record.reader
   if (out === undefined || out === null) return null
@@ -717,7 +719,7 @@ async function readerOut($: Engine, record: BuildRecord): Promise<Step | null> {
   const stored = readReaderAnswer(await $.store.get(readerKey(out.agentId)))
   const seconds = readerWaits(out, hashes, await $.clock.now(), stored?.answer)
   if (seconds !== null) return { verdict: { pass: false, reason: readerReading(seconds) }, wait: readerReading(seconds) }
-  if (stored === null || !hashGate(out.hashes, hashes).pass || !hashGate(hashes, out.hashes).pass || out.evidence === undefined) return null
+  if (stored === null || stored.leftBehind === true || !hashGate(out.hashes, hashes).pass || !hashGate(hashes, out.hashes).pass || out.evidence === undefined) return null
   return readTests($, record, hashes, [], null, { verdict: { pass: true }, evidence: out.evidence, change: (out.change ?? {}) as Partial<BuildRecord> })
 }
 
@@ -728,31 +730,54 @@ async function readerOut($: Engine, record: BuildRecord): Promise<Step | null> {
 // under the id its own spawn returned, never from anything the model passes.
 async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: readonly string[], fromLine: number | null, passing: Step): Promise<Step> {
   const sessionId = await $.session.id()
-  const out = record.reader ?? null
-  const stored = out === null ? null : readReaderAnswer(await $.store.get(readerKey(out.agentId)))
+  const named = record.reader ?? null
+  const answered = named === null ? null : readReaderAnswer(await $.store.get(readerKey(named.agentId)))
   const now = await $.clock.now()
   let rounds = Number.isInteger(record.readerRounds) ? (record.readerRounds as number) : 0
   let last = record.readerLast ?? null
-  // Every reader this Red started, those left behind by changed tests included (SPEC.md 9.24).
-  const starts = Number.isInteger(record.readerStarts) && (record.readerStarts as number) >= 0 ? (record.readerStarts as number) : 0
+  // A reading left behind (SPEC.md 9.28): the reader the record names was started on other test files than
+  // these, or its answer arrived when they had changed. While it read, the guard closed the test files, so only
+  // a shell command did that. It is a round that did not pass, which says nothing about any tests, and the
+  // tests as they are now are read next, in this same call, whatever the count of rounds.
+  // A report that arrived for the tests it was started on, which changed before the gate read it (they are
+  // open again once it is stored), is about other tests too: findings or no verdict are a round all the same,
+  // so that mending after each report can't have the tests read for ever unseen; a pass counts for nothing.
+  const isLeft = named !== null && (answered?.leftBehind === true || !hashGate(named.hashes, hashes).pass || !hashGate(hashes, named.hashes).pass)
+  let left = ''
+  if (named !== null && isLeft) {
+    const told = answered === null || answered.leftBehind === true ? null : readVerdict(answered.answer)
+    if (told === null) {
+      rounds += 1
+      last = { hashes: named.hashes, findings: null, changed: true }
+      left = readerLeftBehind(rounds)
+    } else if (told.verdict === 'pass') {
+      left = readerOutdated(null)
+    } else {
+      rounds += 1
+      last = { hashes: named.hashes, findings: told.verdict === 'findings' ? told.findings : null }
+      left = readerOutdated(rounds)
+    }
+  }
+  const out = isLeft ? null : named
+  const stored = isLeft ? null : answered
   const step = readerStep(out, last, rounds, hashes, now, stored?.answer)
   // What a call that does not pass still keeps of Red's other checks: the person's agreement to changed test
   // files alone. What they counted and hashed is written when Red passes, and not before.
   const keeps: Partial<BuildRecord> = passing.change?.testsAgreed === undefined ? {} : { testsAgreed: passing.change.testsAgreed }
   const passed = (evidence: string): Step => ({
-    ...passing, evidence: `${passing.evidence ?? ''}; ${evidence}`, change: { ...passing.change, reader: null, readerRounds: rounds, readerLast: last, readerStarts: 0 },
+    ...passing, evidence: `${passing.evidence ?? ''}; ${evidence}`, change: { ...passing.change, reader: null, readerRounds: rounds, readerLast: last },
   })
   const held = (findings: string[] | null, more = ''): Step => ({
     verdict: { pass: false, reason: `${readerRefusal(findings, rounds)}${more}` },
     ...(findings === null || findings.length === 0 ? {} : { detail: findingLines(findings).join('\n') }),
     change: { ...keeps, reader: null, readerRounds: rounds, readerLast: last },
   })
-  // `question` and `evidence` are the rounds' own unless the question is asked in place of one reader too many.
-  const ask = async (findings: string[] | null, question = readerQuestion(findings, rounds), evidence = readerEvidence({ by: 'person', rounds, findings })): Promise<Step> => {
+  // The person is only ever asked about a reading of the test files as they are in this call (SPEC.md 9.28).
+  const ask = async (findings: string[] | null): Promise<Step> => {
     const change = { ...keeps, reader: null, readerRounds: rounds, readerLast: last }
     let answer: string | null = null
     try {
-      answer = await $.ui.ask(question, { options: readerOptions(), header: 'Tests' })
+      answer = await $.ui.ask(readerQuestion(findings, rounds), { options: readerOptions(), header: 'Tests' })
     } catch {
       return { verdict: { pass: false, reason: 'the person could not be asked whether to go on with these tests (the question was dismissed, or nobody is at this session)' }, change }
     }
@@ -761,7 +786,7 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
     // What the person agreed to is the tests as they were when the question was asked.
     const after = await testHashesNow($, record.modDir)
     if (after === null || !hashGate(hashes, after).pass) return { verdict: { pass: false, reason: 'the test files changed while the person was being asked: ask again' }, change }
-    return passed(evidence)
+    return passed(readerEvidence({ by: 'person', rounds, findings }))
   }
   // A round that has just ended without a pass: its findings hold Red, or, from the second on, the person is asked.
   const ended = (findings: string[] | null, more = ''): Promise<Step> | Step => {
@@ -769,8 +794,7 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
     last = { hashes, findings }
     return roundEnds(rounds) === 'ask' ? ask(findings) : held(findings, more)
   }
-  // A reader left behind by changed tests is no round: it ended nothing, and its answer is never read. So one
-  // call of the gate adds one round at most.
+  // One call of the gate adds one round, or two: a reading left behind, and a reader that then can't be started.
   switch (step.do) {
     case 'wait':
       return { verdict: { pass: false, reason: readerReading(step.seconds) }, wait: readerReading(step.seconds), change: keeps }
@@ -789,8 +813,6 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
     case 'ask':
       return ask(step.findings)
     case 'start': {
-      // One reader too many for this Red: the person is asked instead, and nothing is started (SPEC.md 9.24).
-      if (startsEnd(starts) === 'ask') return ask(last === null ? null : last.findings, readerStartsQuestion(starts, last === null ? null : last.findings), readerStartsEvidence(starts))
       const odd = unnameable(record.modDir, files)
       const message = readerMessage(record.modDir, fromLine, files)
       if (odd.length > 0 || message === null) {
@@ -806,22 +828,25 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
         why = `it could not be started (${String(error)})`
       }
       // A reader that did not start is a round with no verdict (SPEC.md 9.3).
+      // After a reading left behind this is the second round of the call: it ends with the person asked.
       if (agentId === null) return ended(null, `. The reader was not started: ${why}`)
       const known = await $.store.get(readersKey(sessionId))
       await $.store.set(readersKey(sessionId), [...(Array.isArray(known) ? known.filter((one) => typeof one === 'string') : []), agentId])
       return {
-        verdict: { pass: false, reason: READER_STARTED }, wait: READER_STARTED,
-        change: { ...keeps, reader: { agentId, startedAt: now, hashes, evidence: passing.evidence ?? '', change: { ...passing.change } }, readerRounds: rounds, readerLast: last, readerStarts: starts + 1 },
+        verdict: { pass: false, reason: `${left === '' ? '' : `${left}; `}${READER_STARTED}` }, wait: `${left === '' ? '' : `${left}; `}${READER_STARTED}`,
+        change: { ...keeps, reader: { agentId, startedAt: now, hashes, evidence: passing.evidence ?? '', change: { ...passing.change } }, readerRounds: rounds, readerLast: last },
       }
     }
   }
 }
 
-// A turn has ended (SPEC.md 9.12, 9.19). When it is a test reader's of this session, and the session's open
-// record names that reader, its answer is stored under the reader's own key, the pane is redrawn, and the main
-// model is nudged to call the gate; the nudge is not waited for, since it resolves only when the main turn has
-// ended. When it is the main session's own turn and the nudge for an unread answer could not be sent, it is sent
-// once more.
+// A turn has ended (SPEC.md 9.12, 9.19, 9.28). When it is a test reader's of this session, and the session's open
+// record names that reader for the test files as they still are, its answer is stored under the reader's own key,
+// the pane is redrawn, and the main model is nudged to call the gate; the nudge is not waited for, since it
+// resolves only when the main turn has ended. An answer that arrives late (the test files are no longer the
+// ones it was started on, or the record names another reader or none: it was left behind, the person has
+// answered, the phase moved on) is stored marked as left behind, and nobody is nudged. When it is the main
+// session's own turn and the nudge for an unread answer could not be sent, it is sent once more.
 // The verdict is never read here, and nothing the reader wrote is in the nudge.
 async function turnEnded($: Engine, e: { agentId?: unknown; answer?: unknown; reason?: unknown }): Promise<void> {
   const sessionId = await $.session.id()
@@ -829,39 +854,51 @@ async function turnEnded($: Engine, e: { agentId?: unknown; answer?: unknown; re
   if (!isSessionEntry(entry) || entry.modDir === null) return
   const record = await $.store.get(buildKey(entry.modDir))
   if (!isOpenRecord(record) || (record as BuildRecord).sessionId !== sessionId) return
-  const out = (record as BuildRecord).reader
-  if (out === undefined || out === null) return
+  const out = (record as BuildRecord).reader ?? null
   // The nudge is not waited for. One that did not enter is marked on the stored answer, which stays for the next
   // call of the gate to find: the main session's own next turn end then tries once more (SPEC.md 9.12, point 5).
   // A prompt another plugin's hook or the engine refuses does not reject: it resolves with `drop` (9.24, as run);
   // with no session bound it rejects. Both are marked.
-  const mark = async () => {
-    try {
-      const stored = readReaderAnswer(await $.store.get(readerKey(out.agentId)))
-      if (stored !== null) await $.store.set(readerKey(out.agentId), { answer: stored.answer, nudges: stored.nudges, failed: true })
-    } catch {
-      // Nothing more to do: the answer itself is stored.
+  const nudge = (agentId: string) => {
+    const mark = async () => {
+      try {
+        const stored = readReaderAnswer(await $.store.get(readerKey(agentId)))
+        if (stored !== null) await $.store.set(readerKey(agentId), { answer: stored.answer, nudges: stored.nudges, failed: true })
+      } catch {
+        // Nothing more to do: the answer itself is stored.
+      }
     }
-  }
-  const nudge = () => {
     void $.prompt.submit({ text: READER_NUDGE }).then((sent) => (typeof (sent as { drop?: unknown } | undefined)?.drop === 'string' ? mark() : undefined), mark)
   }
   if (e.agentId === undefined) {
-    // A nudge that was sent is queued until this turn ends (9.13): only one that failed is sent again.
+    if (out === null) return
+    // A nudge that was sent is queued until this turn ends (9.13): only one that failed is sent again, and none
+    // for an answer that was left behind.
     const stored = readReaderAnswer(await $.store.get(readerKey(out.agentId)))
-    if (stored === null || !stored.failed || stored.nudges >= READER_NUDGES) return
+    if (stored === null || stored.leftBehind === true || !stored.failed || stored.nudges >= READER_NUDGES) return
     await $.store.set(readerKey(out.agentId), { answer: stored.answer, nudges: stored.nudges + 1 })
-    nudge()
+    nudge(out.agentId)
     return
   }
-  if (e.agentId !== out.agentId) return
+  if (typeof e.agentId !== 'string') return
   const known = await $.store.get(readersKey(sessionId))
-  if (!Array.isArray(known) || !known.includes(out.agentId)) return
+  if (!Array.isArray(known) || !known.includes(e.agentId)) return
   // The first answer under an id stands.
-  if (readReaderAnswer(await $.store.get(readerKey(out.agentId))) !== null) return
-  await $.store.set(readerKey(out.agentId), { answer: e.reason === 'answer' && typeof e.answer === 'string' ? e.answer : '', nudges: 1 })
+  if (readReaderAnswer(await $.store.get(readerKey(e.agentId))) !== null) return
+  const answer = e.reason === 'answer' && typeof e.answer === 'string' ? e.answer : ''
+  let isLeft = out === null || out.agentId !== e.agentId
+  if (out !== null && !isLeft) {
+    const hashes = await testHashesNow($, (record as BuildRecord).modDir)
+    isLeft = hashes !== null && (!hashGate(out.hashes, hashes).pass || !hashGate(hashes, out.hashes).pass)
+  }
+  if (isLeft) {
+    await $.store.set(readerKey(e.agentId), { answer, nudges: 0, failed: false, leftBehind: true })
+    await redraw($)
+    return
+  }
+  await $.store.set(readerKey(e.agentId), { answer, nudges: 1 })
   await redraw($)
-  nudge()
+  nudge(e.agentId)
 }
 
 // Whether a tool call is one a test reader of this session may not make (SPEC.md 9.12, 9.14): its loop reaches
@@ -1529,7 +1566,17 @@ export const register: Register = (on, options) => {
     // The plugins the path lies in: while a build is open, another plugin's folder is closed (pending or named).
     const pluginFolders = await pluginFoldersAbove($, path, cwd)
     const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
-    const verdict = guardVerdict({ tool, path, cwd, sessionId, entry, record, pluginFolders })
+    let verdict = guardVerdict({ tool, path, cwd, sessionId, entry, record, pluginFolders })
+    // While a test reader reads, the mod's files that Red may write, its test files, are closed to everyone
+    // (SPEC.md 9.28): they reopen when its answer is stored or its time is up. A write Red refuses anyway keeps
+    // its own reason.
+    if (verdict.allowed && isBuildRecord(record) && isOpenRecord(record) && record.sessionId === sessionId && record.phase === 'red' && record.reader !== undefined && record.reader !== null) {
+      const whole = absolutePath(path, cwd) ?? path
+      if (whole === record.modDir || whole.startsWith(`${record.modDir}/`)) {
+        const hasAnswered = readReaderAnswer(await $.store.get(readerKey(record.reader.agentId))) !== null
+        if (readerCloses(record.reader, hasAnswered, await $.clock.now())) verdict = { allowed: false, reason: readerClosedRefusal(whole === record.modDir ? '' : whole.slice(record.modDir.length + 1)) }
+      }
+    }
     if (verdict.allowed) return next(e)
     // A refused write is counted for the pane, beside the record and never in it (SPEC.md 8.18): the toast comes
     // once for each phase. A count that can't be kept changes nothing about the refusal.

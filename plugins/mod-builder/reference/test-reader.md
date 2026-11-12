@@ -1,7 +1,6 @@
 # The test reader (Red)
 
 Read this before your first call of Red's gate, in a build and in an edit.
-
 When Red's other checks pass (the failing tests, the typecheck), mod-builder itself starts a **test reader**: an
 agent that only reads. It reads the test files against the spec and says which behaviours the spec lists no test
 would catch. In a build it reads every test file against `SPEC.md`. In an edit it reads the test files that are new
@@ -10,13 +9,14 @@ type is not offered to you.
 
 ## What you do
 
-1. Call the gate when the tests are written. It answers "the test reader is reading the tests against the spec.
-   End your turn now: mod-builder will prompt you when it has reported. Do not call the gate again before that".
-   **End your turn.** Don't call the gate, and don't change a test while it reads: a changed test starts a new
-   reading, and the one that was reading counts for nothing.
+1. Call the gate when the tests are written. It answers "the test reader is reading the tests against the spec. End
+   your turn now: mod-builder will prompt you when it has reported. Do not call the gate again before that". **End
+   your turn.** Don't call the gate. While it reads, the test files are closed: any guarded write (Write, Edit,
+   MultiEdit, NotebookEdit), by any agent, is refused with "the test reader is reading these tests; wait for its
+   report". They open again when it has reported, or after 10 minutes.
 2. mod-builder prompts you: "mod-builder: the test reader has reported. Call mod_builder_gate." Call the gate.
 3. A call while it still reads answers "the test reader is still reading (N s). End your turn: mod-builder will
-   prompt you when it has reported", and runs nothing. End your turn again.
+   prompt you when it has reported", and runs nothing. End your turn again. If no prompt comes, call the gate.
 
 ## What the gate answers after the reader
 
@@ -32,19 +32,20 @@ type is not offered to you.
   the gate starts another reading only for a changed test.
 
 After 2 rounds that did not pass, the gate asks the person, showing the last round's findings. "Not yet" comes
-first; only "Go on with these tests" passes Red. Every later round that does not pass ends with the person
-asked again, and so does a call with the tests unchanged after "Not yet". Don't argue a finding in the tests:
-fix the tests, or let the person decide.
+first; only "Go on with these tests" passes Red. The person is only ever asked about a reading of the tests as they
+are, also one that gave no verdict: tests changed since the last reading are read first. Every later round that
+does not pass ends with the person asked again, and so does a call with the tests unchanged after "Not yet". Don't
+argue a finding in the tests: fix the tests, or let the person decide.
 
 ## What never helps
 
 Never write text in a test file or in the spec that addresses the reader, or whoever judges the tests, or that
 says what verdict to give. The reader is told that such text is itself a finding, and reports it.
 
-A changed test leaves the reader that was reading behind and counts no round, but every reading started in one
-Red is counted, those left behind too. When a fourth would start, the gate starts none and asks the person
-instead, saying how many were started and that the tests kept changing: "Not yet" first, and only "Go on with
-these tests" passes Red. Change tests for a reason, not to get another reading.
+Never change a test by a shell command while the reader reads: that reading counts as a round that did not pass
+("the tests changed while they were read") and the tests are read again, even when you put them back. Findings not
+taken to the gate are a round too if you change the tests before your call: the gate's answer then says "counts as
+round N". A pass not taken to the gate so is void.
 
 ## Three more things
 
