@@ -6,7 +6,8 @@ Everything mod-builder is known not to do, or to do in a way worth knowing first
 
 - **It is not a sandbox.** The guard reads a tool's name and a path prefix, and the gates compare hashes. It
   catches a skipped step and a changed test or spec. A shell command can still write any file; what it changed
-  under `tests/` or in `SPEC.md` stops the next gate, and `hooks/` is not hashed.
+  under `tests/` or in `SPEC.md` stops the next gate. `hooks/` is held to the template at a build's Scaffold
+  and Red, and is not hashed after that.
 - **While a build or an edit is open, no other plugin's folder can be written** in that session, until it is
   Done or ended with `/mod-builder stop`.
 - **A session that ends mid-build leaves its folder bound to it**: no other session can name that folder.
@@ -21,16 +22,18 @@ Everything mod-builder is known not to do, or to do in a way worth knowing first
   each. The mod can't prove who wrote a file: a planted one can make the check stricter or fail it, never
   make a failing mod pass, because the genuine files must pass too. Every hash, sorted, is in the gate's
   evidence, in the pane and in the mod's "Built on" line.
-- **A `SPEC.md` changed after approval stops every later gate**, with no way back to Spec. A build can't go
-  back a phase at all; a refused validate, test run, typecheck or load is answered with the command's last 20
-  lines (for validate, the last 20 before its plugin-directory section), so that it can be fixed while
+- **A `SPEC.md` changed after approval stops every later gate**, with no way back to Spec. The one way back a
+  build has is from Green to Red (below). A refused validate, test run, typecheck or load is answered with
+  the command's last 20 lines (for validate, the last 20 before its plugin-directory section), so that it can be fixed while
   the files it judges can still be changed: `tests/` closes at the end of Red and `hooks/` at Verify.
-- **A test can name only what Scaffold left.** Scaffold and Red each end on the typecheck, so that a file is
-  checked while it can still be changed. A test written at Red that names a type the contract does not
-  declare, or a value `hooks/` does not export yet, is a type error there; declare such things at Scaffold.
-- **A test that can never pass stops the build at Green**: tests are frozen at Red and nothing goes back.
-  So does a types file written by another session after Red that the frozen tests fail against (this
-  repository's specification, 7.10, lists these).
+- **A test can name only what Scaffold left**: the template's module and what `types/` declares. Scaffold and
+  Red each end on the typecheck, so that a file is checked while it can still be changed. A test written at
+  Red that names a type the contract does not declare, or a value `hooks/` does not export, is a type error
+  there; declare a type at Scaffold, in `types/`, and drive the mod through its events.
+- **A test that can never pass holds the build at Green** until the person agrees to go back to Red: tests
+  are frozen at Red, and the way back is offered only after Green's test run has failed twice in a row.
+  A types file written by another session after Red that the frozen tests fail against stops it the same
+  way (this repository's specification, 7.10, lists these).
 - **Red accepts only failures that open with `AssertionError`.** A test that throws before its `expect` is
   refused, and the test has to be rewritten to drive the mod through its events.
 - **The "Built on" line is checked for its types hashes only.** The gate prints the exact line at Green and
@@ -65,8 +68,9 @@ their line counts, and with what differs in what the mod hooks, answers and call
 
 ## An edit
 
-- **An edit can't go back a phase either.** `/mod-builder stop` with "Put it back" is the way out: it returns
-  the mod to its restore point and keeps the stopped work beside it as `<mod>.stopped-<stamp>`.
+- **An edit can't go back a phase either, but for the way back to Red.** Otherwise `/mod-builder stop` with
+  "Put it back" is the way out: it returns the mod to its restore point and keeps the stopped work beside it
+  as `<mod>.stopped-<stamp>`.
 - **The restore point leaves out `.git` and `node_modules` at the mod's top.** Putting a mod back moves those
   two from the stopped folder into the restored one, so the mod's git history is as it is at the stop, not as
   it was before the edit.
@@ -123,7 +127,34 @@ their line counts, and with what differs in what the mod hooks, answers and call
   VERDICT: PASS" and none followed it (`SPEC.md` 9.21, 9.26); that is a few attempts on one model.
 - **The main model sees the reader's report**, as a hand-back message, in every session. The gate does not
   read it: only the answer the mod itself stored counts.
-- The rest of 0.3.0's limits are written at its documents step (`SPEC.md` 9.19, 9.24, 9.26).
+- **The reader's judgement is not proof.** It reads tests before the code exists: it can pass tests that
+  catch little and flag tests that are fine. After two rounds that do not pass, the person's answer is the
+  last word, and "Go on with these tests" passes Red with the findings as they are.
+- **Another plugin can deny the reader's spawn, rewrite its prompt or refuse its reads.** A reader that could
+  not be started, gave no verdict line, or took over 10 minutes counts as a round with no verdict, never as a
+  pass.
+- **On a machine whose settings name an advisor model, the reader may consult it.** A server-side tool never
+  reaches a mod's hooks, so the guard can't refuse it; it writes no file.
+- **While the reader reads, the test files are closed to guarded writes only.** A shell command can still
+  change them; that reading then counts as a round that did not pass, and the tests are read again.
+- **The gate has to be called after the reader ends.** mod-builder prompts the model then; when that prompt
+  can't be sent, or the session ended meanwhile, the build stays at Red until the gate is called, which reads
+  the stored answer.
+- **Headless (`claude -p`) rests on one run of a probe and a reading of the code**: the reader's report came
+  back to the main model as a hand-back there, the prompt may not arrive, and nobody can be asked after two
+  rounds, so Red stays (`SPEC.md` 9.13, 9.14, 9.24).
+
+## Scaffold and the template (0.3.0, not released)
+
+- **At Scaffold a build's `hooks/` and `tests/` hold the template and nothing else**, and Red holds `hooks/`
+  the same way: a file there that is changed, missing or extra is refused and named. A mod of another shape
+  than the template's replaces the template's tests at Red and its code at Green; nothing is written ahead.
+- **Before Green a build holds no source file outside `hooks/` and `tests/`** (a `.ts`, `.tsx`, `.js`, `.jsx`,
+  `.mjs`, `.cjs`, `.mts` or `.cts` file that is not a declaration under `types/`). The gate names each; it is
+  removed with a shell command, and mod-builder keeps or copies nothing. What a test needs to name is declared
+  in `types/`. An edit is not asked (`SPEC.md` 9.20).
+- **The check is the scaffold script's, run by the gate**: a link is never followed, so a link in place of a
+  laid file counts as changed.
 
 ## The pane
 
@@ -145,11 +176,13 @@ their line counts, and with what differs in what the mod hooks, answers and call
 ## Not built yet
 
 - **No sharing step yet.**
-- **No going back one phase, and no limit on retries**: the pane counts refused writes, and nothing stops a
-  build or an edit after a number of them.
-- **One template**, `pane`. A mod of another shape is reshaped from it at Scaffold, where every test has to
-  pass before Red opens: a scaffold whose tests fail, or whose module throws as it loads, is refused there.
+- **No going back but from Green to Red, and no limit on retries**: the pane counts refused writes and
+  returns to Red, and nothing stops a build or an edit after a number of them.
+- **One template**, `pane`. A mod of another shape starts from it all the same: its tests replace the
+  template's at Red and its code the template's at Green.
+- **No way to release a folder from another session**, and no report of mutants after Green: both wait in the
+  backlog.
 
 What waits until after the MVP is in [`docs/mod-builder/BACKLOG.md`](../mod-builder/BACKLOG.md); how each of
 these was found is in this repository's specification,
-[`docs/mod-builder/SPEC.md`](../mod-builder/SPEC.md), sections 7 and 8.
+[`docs/mod-builder/SPEC.md`](../mod-builder/SPEC.md), sections 7, 8 and 9.

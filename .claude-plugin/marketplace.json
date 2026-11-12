@@ -7,7 +7,7 @@
     {
       "name": "mod-builder",
       "source": "./plugins/mod-builder",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "description": "Builds Claude Code mods from a dated copy of Anthropic's mod documentation, test-first, through guarded phases."
     }
   ],

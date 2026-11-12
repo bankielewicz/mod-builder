@@ -5,10 +5,14 @@ suggestion, not a commitment.
 
 ## Decided by the owner for after the MVP
 
-1. **Ship the three TDD agents with the plugin** (`tdd-test-writer`, `tdd-implementer`, `tdd-verifier`), so
+1. ~~**Ship the three TDD agents with the plugin** (`tdd-test-writer`, `tdd-implementer`, `tdd-verifier`), so
    every mod it builds goes through a written plan, a red commit, a green commit and a fresh-context
    verification with a mutant. The owner, 2026-11-10: "option 1 for MVP. option 2 post mvp." The skill
-   then has to write the plan document each agent checks for.
+   then has to write the plan document each agent checks for.~~
+   Built in 0.3.0 in another form (`SPEC.md` section 9): a test reader at every Red, and a test-writer and an
+   implementer asked for with `--agents`. They make no commits and need no plan document: the gates' hashes
+   are the record that tests came first. The verifier is not shipped, since Verify's gate does its checks;
+   its mutants are item 24.
 2. **Logging for diagnostics.** The owner, 2026-11-10: "logging for diagnostics, etc." A log under the
    plugin's data folder: each gate's command, exit code and decision; each refusal with its phase and path;
    each refresh with what changed. A `/mod-builder log` view, and a setting for how much is kept.
@@ -34,6 +38,9 @@ suggestion, not a commitment.
 13. Coverage of changed logic lines as a gate in Verify.
 14. A check of the hook's refusals against Bash: at least a warning when a shell command names a path the
     phase doesn't allow.
+24. A mutant report after Green, for information only: which changes to the code no test catches. Not a gate:
+    the code exists only after the tests are closed, so a gate on it would judge files that can no longer be
+    changed (`SPEC.md` 9.6).
 
 ## Building and changing mods
 
@@ -41,8 +48,11 @@ suggestion, not a commitment.
     Built in 0.2.0 (`SPEC.md` section 8).
 16. More templates than `pane`: a command, a tool-call guard, a status line, a tool.
 17. A resume after a session ends mid-build, and a hand-off of a build to another session.
-18. Going back one phase, and a retry count per phase. (The stop command, `/mod-builder stop`, was built in
-    0.2.0: `SPEC.md` 8.5.)
+25. **Low priority** (the owner, 2026-11-12, `SPEC.md` 9.29): `/mod-builder stop <folder>` from another
+    session, which asks the person to confirm before releasing a build or edit that a dead session holds.
+    In 0.3.0 the refusal names the holding session and says to resume it and stop there.
+18. A retry count per phase. (The stop command, `/mod-builder stop`, was built in 0.2.0: `SPEC.md` 8.5. Going
+    back from Green to Red, with the person's approval, was built in 0.3.0: `SPEC.md` 9.11.)
 19. Suggesting `/design` mockups for more than panes: bands, transcript rows, dialogs.
 23. A band above the prompt for mod-builder (`{ component: 'AbovePrompt' }`): one line that says where the
     build stands when the pane is waiting for a wider terminal. Left out of 0.2.0 (`SPEC.md` 8.18, point 2).

@@ -39,7 +39,26 @@ What you see, in order:
 2. At Spec, mod-builder asks you to approve the mod's `SPEC.md`. "Not yet" is the first option, so a stray
    Enter can't approve; choose "Approve" when the spec is right.
 3. The build goes on through Scaffold, Red, Green and Verify; each phase ends on checks the plugin runs itself.
-4. The mod is built in `./<mod-name>/`. Load it with `claude --plugin-dir ./<mod-name>`.
+   Scaffold holds the template and nothing else: the mod's behaviour is written as tests at Red and as code at
+   Green.
+4. At Red, mod-builder starts a test reader, an agent that only reads: it says which behaviours of the spec no
+   test would catch, and its findings hold Red. After two rounds that do not pass, you are asked whether to
+   go on with these tests; "Not yet" is the first option.
+5. The mod is built in `./<mod-name>/`. Load it with `claude --plugin-dir ./<mod-name>`.
+
+When Green's test run fails twice in a row, the gate offers a way back to Red for a test that is itself
+wrong; it is taken only on your answer "Go back to Red".
+
+To have the tests and the code written by two agents of the plugin instead of the main model, start with
+`--agents`:
+
+```text
+/mod-builder:build --agents a pane that counts the turns in this session
+```
+
+The test-writer then writes the tests at Red and the implementer the code at Green; the main model keeps the
+phases, the spec and the gate. The guard watches the file-editing tools only, so this does not stop a shell
+command (see [Limits](docs/limits/README.md)).
 
 To change the finished mod, or to repair it when a Claude Code update broke it:
 
@@ -59,6 +78,7 @@ earlier test is changed or removed, mod-builder shows you which and asks before 
 |---|---|
 | `/mod-builder:build <what the mod should do>` | starts a build |
 | `/mod-builder:edit <mod folder> <what to change>` | starts an edit, or a repair, of a finished mod |
+| `--agents` as the first word of either | the plugin's test-writer writes the tests and its implementer the code |
 | `/mod-builder` | opens the pane and says where the build or edit stands |
 | `/mod-builder refresh` | fetches the documentation now |
 | `/mod-builder stop` | ends this session's build or edit; for an edit, asks whether to put the mod back |
@@ -68,7 +88,11 @@ earlier test is changed or removed, mod-builder shows you which and asks before 
 ## Limits you will meet first
 
 - It is not a sandbox: the guard catches a skipped step and a changed test or spec, not a shell command.
-- A build or an edit can't go back a phase: the spec is fixed at approval and the tests at Red.
+- A build or an edit can't go back a phase, with one exception: from Green to Red, on your answer, after
+  Green's test run failed twice. The spec is fixed at approval.
+- The test reader is a model's judgement of tests the judged model wrote: it lowers the risk of tests that
+  catch little and does not remove it.
+- A build or an edit that a session left open holds its folder until that session stops it.
 - An edit that skips Red (no behaviour change, or a repair whose tests still fit) rests on the tests the mod
   already had and on your answer to a list of what changed.
 - One template, `pane`; there is no sharing step yet.
@@ -77,7 +101,8 @@ The full list is in [Limits](docs/limits/README.md).
 
 ## Documentation
 
-- [How it works](docs/how-it-works/README.md): the phases, the guard and the gate, an edit, the documentation cache
+- [How it works](docs/how-it-works/README.md): the phases, the guard and the gate, the test reader, the way back
+  to Red, the plugin's agents, an edit, the documentation cache
 - [Reference](docs/reference/README.md): what it reaches (hooks, API calls, files, commands, network), "Built on"
 - [Limits](docs/limits/README.md): the full list
 - [Development](docs/development/README.md): the plugin's own tests and typecheck
