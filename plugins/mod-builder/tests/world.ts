@@ -212,10 +212,15 @@ export function world(on: On, start: Partial<World> = {}): World {
     if (w.spawnAnswer === 'throws') throw new Error('the engine could not start an agent')
     if (w.spawnAnswer !== null) return w.spawnAnswer as never
     // Beneath the plugins a spawn is the Agent tool's own call, and its answer the started agent's record.
-    const { subagent_type: subagentType, prompt } = e as unknown as { subagent_type: string; prompt: string }
-    const agentId = `reader-${w.spawned.length + 1}`
+    // A spawn a test raises itself, as the model's Agent call, arrives as the event's own input (subagentType).
+    const { subagent_type: named, subagentType: typed, prompt } = e as unknown as { subagent_type?: string; subagentType?: string; prompt: string }
+    const subagentType = named ?? typed ?? ''
+    // The test reader's ids are reader-1, reader-2, ...; any other type's are agent-1, agent-2, ..., counted together.
+    const agentId = `${subagentType === 'mod-builder:test-reader' ? 'reader' : 'agent'}-${w.spawned.length + 1}`
     w.spawned.push({ agentId, subagentType, prompt })
-    return { model: 'the-session-model', result: { agentId, resolvedModel: 'the-session-model' } } as never
+    // A hook's `next` resolves to the started agent with its id beside the model, as on the real engine (SPEC.md
+    // 9.33, probe 3); the plugin's own `$.agent.spawn` reads the tool's result.
+    return { model: 'the-session-model', agentId, result: { agentId, resolvedModel: 'the-session-model' } } as never
   })
   on('prompt.submit', (_, e) => {
     if (w.promptFails) throw new Error('no session is bound in this process')
@@ -247,6 +252,8 @@ export function world(on: On, start: Partial<World> = {}): World {
     // A copy, as the engine hands one out: changing what was read changes nothing that is kept.
     return value(w.store[key] === undefined ? undefined : JSON.parse(JSON.stringify(w.store[key])))
   })
+  // The keys can't be listed when a test names 'the keys' among what can't be read.
+  on('store.keys', () => (w.unreadable.includes('the keys') ? deny('the store can not be listed') : value(Object.keys(w.store))))
   on('store.set', (_, e) => {
     const { key, value: stored } = e as { key: string; value: unknown }
     w.store[key] = JSON.parse(JSON.stringify(stored))

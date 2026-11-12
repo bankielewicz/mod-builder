@@ -57,7 +57,7 @@ const walk = async ($: Engine, w: World, to: 'spec' | 'scaffold' | 'red' | 'gree
     }
     if (now === 'green') w.runs.test = { exitCode: 0, stdout: passing(2, ['test 1', 'counts a turn']) }
     const answer = await gate($)
-    if (phase(w) === now) throw new Error(`the walk stopped at ${now}: ${answer}`)
+    expect(phase(w) === now ? `the walk stopped at ${now}: ${answer}` : 'moved on').toBe('moved on')
     // At Verify the "Built" block is written, with the hash of the types the gate checks against.
     if (phase(w) === 'verify') w.files[SPEC] = `${w.files[SPEC]}${BUILT}`
   }

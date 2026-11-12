@@ -66,8 +66,8 @@ const mend = (w: World, text: string) => {
 test('the mod registers the test reader with three tools and no CLAUDE.md, and names no model', async ($, on) => {
   const w = world(on)
   await start($)
-  expect(w.agents.length).toBe(1)
-  const reader = w.agents[0] as unknown as Record<string, unknown>
+  expect(w.agents.filter((agent) => agent.name === 'test-reader').length).toBe(1)
+  const reader = w.agents.find((agent) => agent.name === 'test-reader') as unknown as Record<string, unknown>
   expect(reader.name).toBe('test-reader')
   expect(reader.tools).toEqual(['Read', 'Grep', 'Glob'])
   expect(reader.omitClaudeMd).toBe(true)

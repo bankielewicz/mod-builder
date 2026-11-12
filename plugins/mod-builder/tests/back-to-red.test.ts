@@ -49,7 +49,7 @@ const toGreen = async ($: Engine, w: World, newTest = 'the new test') => {
       w.runs.test = FAILS
     }
     const answer = await gate($)
-    if (kept(w).phase === now) throw new Error(`the walk stopped at ${now}: ${answer}`)
+    expect(kept(w).phase === now ? `the walk stopped at ${now}: ${answer}` : 'moved on').toBe('moved on')
   }
   w.files[CODE] = 'the code written at Green'
   w.answer = later
@@ -69,7 +69,7 @@ const wentBack = async ($: Engine, w: World) => {
   const later = w.answer
   w.answer = 'Go back to Red'
   const answer = await gate($, { back_to_red: true })
-  if (kept(w).phase !== 'red') throw new Error(`the work did not go back: ${answer}`)
+  expect(kept(w).phase === 'red' ? 'went back' : `the work did not go back: ${answer}`).toBe('went back')
   w.answer = later
 }
 
