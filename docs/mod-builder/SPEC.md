@@ -3014,3 +3014,51 @@ leaning on the order of lines in another file, is corrected.
 **Left as it is:** the tests that open a site before their `try`; an overall time limit on a test run in
 CI (the repository's workflow is not changed in 0.3.0; `docs/development` will say to set `TMPDIR` and to
 give a run a limit, at the documents step).
+
+### 9.24 Two rulings of the driving session for step 3; a refused prompt, as run; plans 40b and 41 as built (2026-11-11)
+
+**Plan 40b** (9.23): `3e59297` red, `a3cc6a5` green; verifier PASS with 2 mutants; 412 module tests and
+700 node tests pass. A test file whose temporary folder can't be made now fails within a second.
+**Plan 41**, the reader's rules: `26b112a` red, `ce010c4` green; verifier PASS, every check reproduced and
+12 mutants each failing its named test; 412 module tests, 738 node tests, validate and the typecheck pass
+[ran, by the implementers and the verifiers]. From plan 40 on, a new node test that fails also fails the
+test that runs every other node test file; each plan's red says so.
+
+**The last plan's draft, read by an agent that did not write it** (52 mutants, 12 survived): five
+statements of the reference file the skills name were false or misleading (it said a call after findings
+always starts another reading: unchanged tests get the findings again), and four cases of the pane had no
+test. Corrected. It also named a hazard of 9.22's third decision: since changed tests count no round, a
+model could have the tests read again and again by editing them.
+
+**Ruling 1 (the driving session):** "a warning in a file is not a guard against re-rolling the reader.
+Count every reader started in one Red, superseded ones included; when the fourth would start, the gate
+asks the person instead (the same question, saying how many readings were started and that the tests kept
+changing), Not yet first." As built: the record counts the readers started in this Red; three may start;
+where a fourth would, the gate starts none and asks "The test reader was started N times in this Red and
+the tests kept changing, so it is not started again." with the last round's findings, or that no reading
+of the tests as they are has ended. "Not yet" is first; only "Go on with these tests" passes, for the
+tests as they are when asked; the evidence says so. A spawn that is denied or fails is a round, as
+before, and no start. A pass ends the count with the phase. 9.22's third decision stands beside it: a
+superseded reader is no round.
+
+**Ruling 2 (the driving session):** "the retry of a refused reader-has-reported prompt must rest on a
+run, not a guess: probe a refused submit on the real engine before the hooks plan; whatever it shows, a
+later gate call or the person saying continue must still find the answer in the record, and the pane
+must say plainly that the reader has reported and the gate is waiting to be called."
+**The run** [ran, 2.1.322, sonnet, the probe mod and a second mod whose `prompt.submit` hook answers
+`{ drop }` for the first one's prompt]: the reader ended after the main turn had; the first mod's
+`$.prompt.submit` **did not reject: it resolved within 3 ms with `{"drop":"apdrop: refused by the
+probe"}`**; the debug log says "prompt.submit: dropped (...)", and the person saw "Prompt dropped by a
+hook: apdrop: refused by the probe". No turn followed. So 9.22's second decision, as drafted (a nudge
+that rejects is marked), would have missed every refusal by a hook: the types say the same of a settings
+hook's block and of the engine's own (`drop: string`). As built: a nudge that resolves with a `drop`, or
+rejects (headless with no session bound, 9.13), marks the stored answer; the main session's next turn
+end tries once more, and never a third time. When no turn follows, nothing retries: the answer stays in
+the store, the pane's row reads "has reported: the gate is waiting to be called" and the status line
+"test reader reported: call the gate", and the next call of the gate, the model's or after the person
+says "continue", reads it. A test holds that Red passes on the stored answer whether or not any nudge
+arrived.
+
+**Headless, stated as not run:** the reference file's sentences on `claude -p` (the report may come back
+as a hand-back; nobody can be asked after two rounds, so Red stays) rest on 9.13's one run and a reading
+of the code.
