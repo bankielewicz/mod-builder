@@ -3747,3 +3747,20 @@ tests (none skipped here), validate of the plugin and of the marketplace, and th
 Left outside the repository by the live runs and untouched: restore points under
 `~/.claude/mod-builder-data/v2/restore/`, the store files of mod-builder and of the probe mod `ag` under
 `~/.claude/plugins/store/`. Nothing is pushed.
+
+**Added after an adviser's read of the record above** (the building session):
+- The documents were read in two parts: six of the eleven files before the commit, and `docs/how-it-works`,
+  `docs/reference`, `docs/development` and `CLAUDE.md` after it, against this section; nothing false was
+  found, and no independent agent read them.
+- **When the question comes.** In point 1 two rounds did not pass and nobody was asked: each time the
+  tests had changed after the reader's report, which counts the round and starts a new reading in the same
+  call (9.28), and the third reading passed. In point 3 the question came after the third reading. So the
+  person is asked when a reading of the tests as they stand does not pass and two rounds or more are
+  counted; a model that changes the tests after every report is read again each time, with no bound but
+  the reader's pass. That is 9.28 as decided; the documents say "after two rounds".
+- In all four runs the reader's report reached the main model as a hand-back message before the gate was
+  called, and the model acted on it; this is the limit recorded in 9.26 and accepted in 9.28.
+- `BACKLOG.md`'s new items carry the next free numbers, 24 and 25, and stand under items 14 and 17, as item
+  23 already stands under 19; a renderer that renumbers a list shows other numbers.
+- `docs/limits` still heads its 0.3.0 sections "(0.3.0, not released)", which tests pin; that is true until
+  the merge, and changing it then needs those tests changed first.
