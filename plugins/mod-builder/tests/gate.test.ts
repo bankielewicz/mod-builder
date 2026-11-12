@@ -108,7 +108,7 @@ test('a folder another session is building can\'t be named; one it finished can'
   const w = fresh(on)
   w.store[`build:${MOD}`] = { modDir: MOD, sessionId: 's2', phase: 'red' }
   await $.skill.prompt(BUILD)
-  expect(await gate($, MOD)).toBe(`mod-builder: ${MOD} is being built by another session (it is at phase 5 (Red)). Name another folder.`)
+  expect(await gate($, MOD)).toBe(`mod-builder: ${MOD} is being built by another session (s2; it is at phase 5 (Red)). If that session is gone, resume it with claude --resume s2 and run /mod-builder stop there; or name another folder.`)
   expect(w.store['session:s1']).toEqual({ modDir: null })
   w.store[`build:${MOD}`] = { modDir: MOD, sessionId: 's2', phase: 'done' }
   await gate($, MOD)

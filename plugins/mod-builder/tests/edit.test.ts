@@ -102,7 +102,7 @@ test('a folder that is no mod, this plugin\'s own, or another session\'s is refu
   expect(await gate($, { mod_dir: ROOT })).toBe(`mod-builder: no edit was opened: ${ROOT} is this plugin's own folder: mod-builder does not edit itself.`)
   w.files[`${MOD}/hooks/hooks.json`] = '{ "modules": [] }'
   w.store[`build:${MOD}`] = { modDir: MOD, sessionId: 's2', phase: 'green', specApprovedAt: null, spec: null, testsAtScaffold: null, namesAtScaffold: null, testsAtRed: null, testHashes: null, evidence: {} }
-  expect(await gate($, { mod_dir: 'turn-counter' })).toBe(`mod-builder: no edit was opened: ${MOD} is being built by another session (it is at phase 6 (Green)). Name another folder.`)
+  expect(await gate($, { mod_dir: 'turn-counter' })).toBe(`mod-builder: no edit was opened: ${MOD} is being built by another session (s2; it is at phase 6 (Green)). If that session is gone, resume it with claude --resume s2 and run /mod-builder stop there; or name another folder.`)
   expect(w.ran).toEqual([])
   expect(w.store['session:s1']).toEqual({ modDir: null, kind: 'edit' })
 })

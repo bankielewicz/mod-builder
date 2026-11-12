@@ -55,7 +55,7 @@ test('the edit skill is lean: under 200 lines, with no line over 115 characters 
 
 test('every file of the plugin the skill sends the model to is there, and it never sends it to the scaffold', () => {
   const named = [...body.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z0-9_./-]+)/g)].map((match) => match[1]);
-  assert.deepEqual([...new Set(named)].sort(), ['reference/test-reader.md', 'scripts/lookup.sh']);
+  assert.deepEqual([...new Set(named)].sort(), ['reference/back-to-red.md', 'reference/test-reader.md', 'scripts/lookup.sh']);
   for (const path of named) assert.equal(existsSync(join(plugin, path)), true, path);
   assert.doesNotMatch(body, /scaffold\.sh|restore-point\.sh|put-back\.sh/);
 });
@@ -185,7 +185,7 @@ test('Green: the code and a greater version, tests frozen, and the four checks',
   assert.deepEqual(versionGate('0.1.0', '0.1.1'), { pass: true });
   assert.equal(versionGate('0.1.0', '0.1.0').pass, false);
   assert.equal(versionGate('0.1.0', 'v0.1.1').pass, false);
-  assert.match(green, /Tests are frozen: if one turns out wrong, stop and say so to the person; the edit can't go back to Red\./);
+  assert.match(green, /Tests are frozen: if one turns out wrong, stop and say so to the person\. The gate offers a way back to Red after Green's tests fail twice running: /);
   assert.match(green, /It runs the validator, the tests, a typecheck against this build's types \(the test files included\) and a headless load\./);
   assert.match(green, /its answer ends with the "Built on" line for phase 6: keep it/);
   // SPEC.md 8.23: with Red skipped, Green asks the person about what changed.

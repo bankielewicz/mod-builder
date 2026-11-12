@@ -291,8 +291,8 @@ test('this plugin\'s own folder, and any folder inside it, can\'t be named, even
 
 test('a folder another session\'s unfinished build or edit holds is refused, with its kind and phase', () => {
   const theirs = (phase, more = {}) => ({ ...newRecord(MOD, 's2'), phase, ...more });
-  assert.deepEqual(editFolderVerdict(folder({ kept: theirs('green') })), { pass: false, reason: '/work/mod is being built by another session (it is at phase 6 (Green)). Name another folder.' });
-  assert.deepEqual(editFolderVerdict(folder({ kept: theirs('green', { kind: 'edit' }) })), { pass: false, reason: '/work/mod is being edited by another session (it is at phase 5 (Green)). Name another folder.' });
+  assert.deepEqual(editFolderVerdict(folder({ kept: theirs('green') })), { pass: false, reason: '/work/mod is being built by another session (s2; it is at phase 6 (Green)). If that session is gone, resume it with claude --resume s2 and run /mod-builder stop there; or name another folder.' });
+  assert.deepEqual(editFolderVerdict(folder({ kept: theirs('green', { kind: 'edit' }) })), { pass: false, reason: '/work/mod is being edited by another session (s2; it is at phase 5 (Green)). If that session is gone, resume it with claude --resume s2 and run /mod-builder stop there; or name another folder.' });
   // Done, stopped, this session's own, or no record: nothing holds it.
   assert.deepEqual(editFolderVerdict(folder({ kept: theirs('done') })), { pass: true });
   assert.deepEqual(editFolderVerdict(folder({ kept: theirs('green', { kind: 'edit', stopped: true }) })), { pass: true });
