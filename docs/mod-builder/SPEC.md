@@ -3576,3 +3576,106 @@ to keep or change:
 **Two plans:** the rules, the hooks module and the pane's row; then the wording: the reference file and
 both skills' sentence. The helper `wentBack` (9.32) becomes an assertion in the first plan's existing-tests
 commit.
+
+### 9.34 Step 5 as built: the opt-in agents and their wording; and on the real engine (2026-11-12, at `8df70ba`)
+
+**The driving session, while the step was built:** "the --agents wording in the skills and docs/limits must
+say plainly that the guard watches the file-editing tools only, so the main model could still write
+through a shell command." It is in both skills, the reference file and `docs/limits` (below), each held
+by a test.
+
+**Plan 47, the rules, the hooks module and the pane's row** (9.33): `0b6d6ad` (existing tests: three walk
+helpers assert instead of throwing, `wentBack` among them, 9.32; the reader is found by its name; validate
+expects three more gating hooks with a catch; the test world answers a model-started agent, a listing of
+keys and a spawn's type), `675e762` red, `239448c` green; verifier PASS, every point reproduced and 51
+mutants each failing a named test; 629 module tests, 851 node tests, validate and the typecheck pass [ran,
+by the implementer and the verifier].
+**Plan 48, the wording:** `88ba0bd` (existing tests: both skills name a third reference file; the edit
+skill's hint and its sentence on the order of its words), `d1fdba8` red, `8df70ba` green; 629 module
+tests, 868 node tests, validate and the typecheck pass [ran, by the implementer and the verifier];
+verifier PASS, every point reproduced and 25 mutants each failing a named test.
+
+**Read by agents that did not write them, before the red commits.** The rules and hooks: 38 mutants, 14
+survived; no way was found for the main model, the wrong agent or another session's agent to write a
+test at Red or code at Green with the write tools (relative and `..` paths, `MultiEdit`, `NotebookEdit`,
+other letter case, damaged kept values and other sessions' ids were all refused). The survivors were gaps
+in the tests and are closed: paths given relative, `Hooks/hooks.json`, a folder beside the mod, a second
+session, the implementer's offer when the store can't be read, a build or edit that goes on, a teammate's
+reason, a stop while the store fails. The wording: 17 mutants, 8 survived; five statements of the
+reference file were corrected, and **the skills' sentence had said only that the guard watches the
+file-editing tools; it now also says what follows from it**.
+One question of that reader was probed [ran, 2.1.322, the probe mod `ag`]: a tool argument named
+`agentId` does not reach a hook as the call's agent. For the mod's own tool called with `agentId:
+"<a kept id>"` the hook saw `agentId` undefined (the event's keys: `note`, `tool`, `tool_use_id`,
+`$shadowed`); `Write` with that extra argument reached the hook with `agentId` undefined and was then
+refused by the engine ("An unexpected parameter agentId was provided").
+
+**As built, beyond 9.33 or against it** (the building session's, for the driving session to keep or
+change):
+- **Verify.** In a record that uses agents a source file outside `hooks/` is the implementer's at Verify
+  too, and the implementer is offered at Green and at Verify. 9.33 had left Verify "as without agents";
+  the reader showed that the main model could then write `lib/x.ts` there. `hooks/` and the tests stay
+  closed to everyone at Verify. Done keeps Verify's rule and offers nothing: "<path> can't be written:
+  this build used mod-builder's agents and is Done. A source file was the implementer's to write, and
+  none can be started now."
+- **Source, corrected.** 9.33 said "no declaration file"; the rule is the script's (9.20): a `.d.ts`,
+  `.d.mts` or `.d.cts` file is no source only under `types/` or `.claude-plugin/types/`; `lib/x.d.ts`
+  is source. A test runs the rule and `scaffold.sh` over the same 28 paths. The rule alone is stricter in
+  two ways: an ending counts in any letter case, and the mod's own `.git` and `node_modules` are not
+  exempt.
+- **A kept id** is `{ role, modDir }` under `agent:<session>:<agentId>`, and the guard wants the same mod.
+  The ids are cleared on `/mod-builder stop` and when Verify passes to Done, through `$.store.keys()`.
+- A resumed spawn is judged as a new one; an empty id names nobody; `agents: null` makes an entry
+  unreadable; an agent's refused call is written to the debug log.
+- **The gate's sentences** ("build" reads "edit" in an edit). First answer: " It uses mod-builder's
+  agents (--agents): at Red the tests are the test-writer's to write, at Green the code is the
+  implementer's." Opening Red, and a returned Red: " This build uses mod-builder's agents: the tests are
+  the test-writer's to write, not yours. Start it with the Agent tool (subagent_type
+  "mod-builder:test-writer"), as a plain subagent." Opening Green the same for the code and the
+  implementer; opening Verify: "... a source file is still the implementer's to write, not yours. ...".
+- **The guard's refusals:** "mod-builder: <path> is the test-writer's to write: this build uses
+  mod-builder's agents, and at Red only the test-writer writes the tests. Start it with the Agent tool
+  (subagent_type "mod-builder:test-writer"), as a plain subagent."; at Green "... is the implementer's to
+  write: ... at Green only the implementer writes the code (hooks/ and every source file). ...".
+- **The pane's row:** "With agents: the test-writer writes the tests, the implementer the code", under the
+  reader's row at Red and first otherwise.
+- **The wording.** `reference/agents.md` (61 lines). Each skill's sentence under the request, the build's:
+  "A leading `--agents` asks for the plugin's agents: read `${CLAUDE_PLUGIN_ROOT}/reference/agents.md`
+  before Red. The guard watches the file-editing tools only, so a shell command could still write a test
+  or code: don't." Both skills stay at 198 lines: the paragraph on handing a phase to a subagent lost "you
+  start with the Agent tool", and the build skill's "before anything else" became "first". `docs/limits`
+  has a section "The plugin's own agents (0.3.0, not released)" whose first point is: "**The guard watches
+  the file-editing tools only.** In a build or edit started with `--agents`, the guard refuses the main
+  model's `Write`, `Edit`, `MultiEdit` and `NotebookEdit` of a test at Red and of code at Green, and lets
+  only the test-writer or the implementer through. A shell command is not one of those tools: the main
+  model could still write a test or code through one, and mod-builder does not see who a shell command
+  wrote for. The two agents themselves have no shell."
+
+**On the real engine** [ran, 2.1.322, sonnet, `--plugin-dir`, the installed copy switched off, agent
+teams switched on, the building session answering the dialogs and asking for the refused writes].
+*A build with `--agents`*, the plugin at `239448c` (9.9, item 5):
+- the gate's first answer and the pane's row said the build uses agents;
+- at Red the main model's own `Write` of `tests/probe.test.ts` was refused with the refusal above; it
+  started `mod-builder:test-writer`, which wrote the tests; the reader held Red in round 1 on two
+  findings, the test-writer added tests, and round 2 passed;
+- at Green the implementer, asked to try, was refused a test file by the phase's own rule ("tests/
+  probe2.test.ts can't be written in phase 6 (Green), ..."; quoted by the main model from the
+  implementer's report, and the pane counts "2 edits refused along the way, at Red, Green");
+- the build reached Done: 15 tests, validate, the typecheck and the headless load pass; both kept ids
+  were cleared in the store.
+*An edit with `--agents`*, the plugin at `8df70ba`, of that mod:
+- the main model read `reference/agents.md`;
+- a teammate named `scout` of the test-writer's type was refused at its spawn: "Subagent spawn denied by
+  a plugin: mod-builder: the test-writer can't be started as a teammate: a teammate's writes do not pass
+  mod-builder's guard. Start it with the Agent tool ...";
+- the main model's own `Write` of a test at Red and its own `Edit` of `hooks/register.tsx` at Green were
+  refused with the two refusals above;
+- the edit reached Done: 20 tests, version 0.2.0 after 0.1.0, "2 writes refused along the way, at Red,
+  Green". The main model's seven shell commands in that session wrote no test and no code.
+**Not shown live:** a way back to Red with agents; an agent calling a tool it may not; an agent kept for
+another mod or session; a source file at Verify; a second session; headless. The edit's restore point is
+under `~/.claude/mod-builder-data/v2/restore/`, the owner's; the probes left a store file for the probe
+mod `ag` under `~/.claude/plugins/store/`. Neither was touched.
+
+**9.9 after step 5:** items 1, 2, 4, 5, 6 and 8 are shown on the real engine, and of 3 the new read after
+changed tests. Still to show: a reader with no verdict line, 7 (a 0.2.0 record), headless.
