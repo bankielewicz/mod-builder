@@ -114,6 +114,13 @@ export function tempDir(prefix) {
   return mkdtempSync(join(ofThisRun(), prefix));
 }
 
+// Whether a name directly under TMPDIR is a folder a tool makes there, and so not one a test left (SPEC.md 9.40):
+// `claude-<user id>`, which Claude Code makes, and `node-compile-cache`, which a Node process makes when its
+// compile cache is on (the npm Claude Code on CI is one). Each is the whole name; anything else is not a tool's.
+export function toolsFolder(name) {
+  return typeof name === 'string' && (/^claude-\d+$/.test(name) || name === 'node-compile-cache');
+}
+
 export function newCache() {
   return tempDir('mod-builder-test-');
 }
