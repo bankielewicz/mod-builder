@@ -3102,8 +3102,8 @@ display-width cutting, the model told to write three tests that use one wide cha
   tests/width.test.tsx; the person answered "Go on with these tests" after 3 rounds of the test reader
   (the last: 2 findings))".
 - The edit reached Done: validate, 14 tests, the typecheck and a headless load pass; version 0.2.0.
-The reader's two refused calls in that run are in the debug log ("refused the test reader's call to
-..."): it tried a tool it may not use, and went on.
+The debug log of that run holds the nudge twice ("the test reader has reported") and no refused call of
+a reader: the guard on its tools was not exercised live.
 
 **Two things the run showed that are not the plugin's own:** a session that was ended while it held an
 edit left the folder "being edited by another session" (0.2.0's behaviour, 8.20; the run used a copy);
