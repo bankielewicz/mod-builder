@@ -63,7 +63,8 @@ Everything is under `plugins/mod-builder/`.
     `$.store` only on what they show;
   - the agents (`SPEC.md` section 9): three types registered at `session.start`, each with an `agent.offer`
     hook whose `.catch` withholds. The gate starts the test reader at Red and returns at once (a hook has 10
-    seconds); a `turn.complete` hook stores its answer and prompts the model to call the gate, which reads the
+    seconds); a `turn.complete` hook stores its answer, and the model is prompted once, only while that answer is unread
+    at Red and no main turn runs (`turn.start` tells; `SPEC.md` 9.37), to call the gate, which reads the
     verdict from the store only. An `agent.spawn` hook keeps the ids of a started test-writer or implementer
     and refuses a teammate; the guard asks who writes in a record that uses agents;
   - the pane (`ui.render`), the `/mod-builder` command, and the documentation refresh.
@@ -95,7 +96,9 @@ changes follow: **a check runs while the files it judges can still be changed** 
 Scaffold may write everything; Red only `tests/`; Green anything but `tests/` and `SPEC.md`; Verify anything but
 `tests/`, `hooks/` and the approved part of `SPEC.md`. So Scaffold ends on validate, a passing test run and the
 typecheck, with `hooks/` and `tests/` as the template laid them; Red on new tests failing by assertion, the
-typecheck and the test reader's pass (or the person's answer after two rounds); Green and Verify on the same
+typecheck and the test reader's pass (or the person's answer: asked after two rounds that did not pass, or
+after a third reading when the tests changed after the second; once three rounds did not pass, no reading
+starts before the person's "Not yet"); Green and Verify on the same
 four checks. No phase goes back, with one exception: from Green to Red, offered after Green's test run failed
 twice and taken only on the person's answer (`SPEC.md` 9.11, 9.30). `SPEC.md` and `tests/` are hashed (at approval, at Red) and a later gate refuses when one
 changed, by any tool. Before adding a check to a gate, ask which files it judges and whether they are open

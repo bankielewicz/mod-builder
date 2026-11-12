@@ -42,8 +42,10 @@ What you see, in order:
    Scaffold holds the template and nothing else: the mod's behaviour is written as tests at Red and as code at
    Green.
 4. At Red, mod-builder starts a test reader, an agent that only reads: it says which behaviours of the spec no
-   test would catch, and its findings hold Red. After two rounds that do not pass, you are asked whether to
-   go on with these tests; "Not yet" is the first option.
+   test would catch, and its findings hold Red. After two rounds that do not pass you are asked whether to
+   go on with these tests, "Not yet" first; when the tests changed after the second, they are read once more
+   as they stand: a pass goes on, and anything else asks you. Once three rounds did not pass, no reading is
+   started before you have answered "Not yet".
 5. The mod is built in `./<mod-name>/`. Load it with `claude --plugin-dir ./<mod-name>`.
 
 When Green's test run fails twice in a row, the gate offers a way back to Red for a test that is itself

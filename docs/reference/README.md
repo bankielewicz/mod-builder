@@ -6,11 +6,11 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
 
 - **Hooks:** `session.start`, `skill.prompt`, `tool.call` (every call; it judges the four write tools, and
   every call of an agent it started or kept), `tool.call` for its own gate tool, `agent.offer` for each of its
-  three agent types, `agent.spawn`, `turn.complete`, `command.run` for `/mod-builder`, `ui.render` for its
+  three agent types, `agent.spawn`, `turn.start`, `turn.complete`, `command.run` for `/mod-builder`, `ui.render` for its
   pane. The six hooks that can refuse (the two `tool.call` hooks, the three `agent.offer` hooks and
   `agent.spawn`) each have a `.catch` handler, so a hook that fails refuses or withholds instead of being
   skipped.
-- **Calls:** `$.agent.register`, `$.agent.spawn`, `$.clock.now`, `$.command.list`, `$.command.register`,
+- **Calls:** `$.agent.register`, `$.agent.spawn`, `$.clock.now`, `$.clock.sleep`, `$.command.list`, `$.command.register`,
   `$.env.get`, `$.fs.exists`, `$.fs.list`, `$.fs.read`, `$.fs.write`, `$.process.run`, `$.prompt.submit`,
   `$.session.cwd`, `$.session.id`, `$.session.version`, `$.store.get`, `$.store.keys`, `$.store.set`,
   `$.tool.register`, `$.ui.ask`, `$.ui.invalidate`, `$.ui.log`, `$.ui.open`, `$.ui.resolve`, `$.ui.status`,
@@ -18,8 +18,10 @@ From `claude plugin validate --strict plugins/mod-builder` on 2.1.322:
 - **Agents it registers:** `mod-builder:test-reader` (`Read`, `Grep`, `Glob`; never offered to the model,
   started by the gate at Red), and `mod-builder:test-writer` and `mod-builder:implementer` (`Read`, `Grep`,
   `Glob`, `Write`, `Edit`; offered only while a build or edit asked for with `--agents` is at Red, or at Green
-  or Verify). Each is registered without CLAUDE.md and names no model. When the reader has reported, the mod
-  submits one fixed prompt: "mod-builder: the test reader has reported. Call mod_builder_gate."
+  or Verify). Each is registered without CLAUDE.md and names no model. For a reader that has reported, the mod
+  submits one fixed prompt, once, and only while that answer is unread at Red: 2 seconds after the reader's
+  end when no main turn is running, else when that turn ends: "mod-builder: the test reader has reported. If
+  the build is still at Red, call mod_builder_gate; if it has moved on, do nothing."
 - **The gate tool's input:** `mod_dir` (the first call), `no_behaviour_change` (an edit, at Spec),
   `back_to_red` (at Green, once the gate has offered it). None carries a verdict: each only asks the mod to
   run a check or put a question to the person.

@@ -14,7 +14,10 @@ The plugin's own agents, a closed Scaffold and a way back to Red
 - A test reader at every Red, in a build and in an edit: an agent the plugin itself starts, with `Read`,
   `Grep` and `Glob` only, that reads the tests against the spec and says which behaviours no test would
   catch. Its findings hold Red; a rule reads the verdict from the first line of the answer the plugin stored.
-  After two rounds that do not pass, the person is asked, "Not yet" first.
+  After two rounds that do not pass, the person is asked, "Not yet" first; tests that changed after the second
+  are read once more as they stand; once three rounds did not pass, no reading is started before the person
+  has answered "Not yet".
+  The model is prompted once for a reading, only while its answer is unread at Red.
 - Test files closed to guarded writes while the reader reads; tests that changed during a reading count as a
   round and are read again.
 - A way back from Green to Red: after Green's test run has failed twice in a row the gate offers

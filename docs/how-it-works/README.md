@@ -36,7 +36,10 @@ can't be skipped by saying it was done.
   the first line of the answer the mod stored, never from what the model says. While it reads, the test
   files are closed to every guarded write. Findings hold Red; each reading that does not pass is a round,
   and after two the person is asked, "Not yet" first and "Go on with these tests" second. Tests that
-  changed while they were read count as a round and are read again.
+  changed while they were read, or after the report, count as a round; after the second they are read once
+  more as they stand, where a pass goes on and anything else asks the person; once three rounds did not
+  pass, no reading is started before the person has answered "Not yet". The model is prompted to call the gate once for a reading, and
+  only while the reader's answer is unread at Red.
 - **Offers one way back, from Green to Red.** After Green's gate has refused twice in a row for the test
   run, its answer says the gate can be called with `back_to_red: true`. The mod then asks the person; only
   "Go back to Red" goes back. Test files open again and everything else closes; nothing in the mod is
