@@ -13,9 +13,9 @@ import {
   restoreFolder, stopOptions, stoppedFolder, stoppedRecord, testChangeEvidence, testChangeGate, testChangeOptions, testChangeQuestion, testFilesChanged, testFilesToAsk, testHashesOf, versionGate,
   APPROVE, GATE_TOOL, PHASES, absolutePath, approvalOptions, buildKey, foldersAbove, greenGate, guardVerdict,
   hashGate, isBuildRecord, isBuildSkill, isCacheStale, isCompiler, isGuardedTool, isSessionEntry, loadShown, newRecord, nextPhase, phaseLabel, phaseNumber, pluginFolderBeingMade, redGate,
-  GO_ON, READER, READER_DESCRIPTION, READER_NAME, READER_NUDGE, READER_NUDGES, READER_PROMPT, READER_STARTED, READER_TOOLS, findingLines, readReaderAnswer, readVerdict, readerEvidence,
+  GO_ON, READ_AS_THEY_ARE, READER, READER_DESCRIPTION, READER_NAME, READER_NUDGE, READER_NUDGE_WAIT_MS, READER_PROMPT, READER_STARTED, READER_TOOLS, findingLines, readReaderAnswer, readVerdict, readerEvidence,
   readerClosedRefusal, readerCloses, readerGate, readerKey, readerLeftBehind, readerMayCall, readerMessage, readerOptions, readerOutdated, readerQuestion, readerReading, readerRefusal,
-  readerStep,
+  readerStep, readerMayStart, readerNudgeDue, readerPassedQuestion, NOT_YET,
   readerWaits, readersKey, roundEnds, sectionLine, unnameable,
   BACK_NOT_OFFERED, BACK_TO_RED_OFFER, backFromGreen, backToRedGate, backToRedOffered, backToRedOptions, backToRedQuestion, changedFiles, greenTestRefusals, isReturned, redCopyKey,
   returnedRedChanged, returnedRedGate, returnedRedRan, returnsAfter, wentBackAnswer, heldByAnother,
@@ -742,13 +742,19 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
   let last = record.readerLast ?? null
   // A reading left behind (SPEC.md 9.28): the reader the record names was started on other test files than
   // these, or its answer arrived when they had changed. While it read, the guard closed the test files, so only
-  // a shell command did that. It is a round that did not pass, which says nothing about any tests, and the
-  // tests as they are now are read next, in this same call, whatever the count of rounds.
+  // a shell command did that. It is a round that did not pass, which says nothing about any tests.
   // A report that arrived for the tests it was started on, which changed before the gate read it (they are
   // open again once it is stored), is about other tests too: findings or no verdict are a round all the same,
   // so that mending after each report can't have the tests read for ever unseen; a pass counts for nothing.
+  // As round 1 or 2 such a reading is followed by one of the tests as they are now, in this same call. Once
+  // three rounds are counted a reading is started only when the person has answered "Not yet" since the last
+  // round ended (SPEC.md 9.36: readerMayStart, asked where the step is 'start'); otherwise the person is asked,
+  // and told that the tests have changed since. Nothing of that is written down until the person has answered: a
+  // question that could not be put leaves the record as it was, so the next call asks again and starts nothing.
   const isLeft = named !== null && (answered?.leftBehind === true || !hashGate(named.hashes, hashes).pass || !hashGate(hashes, named.hashes).pass)
   let left = ''
+  // Whether the reader the record names passed tests that have changed since: that pass counts for nothing.
+  let passedBefore = false
   if (named !== null && isLeft) {
     const told = answered === null || answered.leftBehind === true ? null : readVerdict(answered.answer)
     if (told === null) {
@@ -757,6 +763,7 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
       left = readerLeftBehind(rounds)
     } else if (told.verdict === 'pass') {
       left = readerOutdated(null)
+      passedBefore = true
     } else {
       rounds += 1
       last = { hashes: named.hashes, findings: told.verdict === 'findings' ? told.findings : null }
@@ -772,28 +779,37 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
   // A Red the work came back to from Green says so last (SPEC.md 9.30).
   const back = isReturned(record.returns) ? `; ${backFromGreen(record.returns)}` : ''
   const passed = (evidence: string): Step => ({
-    ...passing, evidence: `${passing.evidence ?? ''}; ${evidence}${back}`, change: { ...passing.change, reader: null, readerRounds: rounds, readerLast: last },
+    ...passing, evidence: `${passing.evidence ?? ''}; ${evidence}${back}`, change: { ...passing.change, reader: null, readerRounds: rounds, readerLast: last, readerAnswered: false },
   })
   const held = (findings: string[] | null, more = ''): Step => ({
     verdict: { pass: false, reason: `${readerRefusal(findings, rounds)}${more}` },
     ...(findings === null || findings.length === 0 ? {} : { detail: findingLines(findings).join('\n') }),
     change: { ...keeps, reader: null, readerRounds: rounds, readerLast: last },
   })
-  // The person is only ever asked about a reading of the test files as they are in this call (SPEC.md 9.28).
-  const ask = async (findings: string[] | null): Promise<Step> => {
+  // The person is asked about a reading of the test files as they are in this call (SPEC.md 9.28), with one
+  // exception (9.36): where a reading may not be started before the person has answered, and the tests are not
+  // the ones the last reading read (`changedSince`), the question says so; `passedIt` when that reading passed
+  // them as they were. "Not yet" is written down: it is what lets the next call start a reading.
+  const ask = async (findings: string[] | null, changedSince = false, passedIt = false): Promise<Step> => {
     const change = { ...keeps, reader: null, readerRounds: rounds, readerLast: last }
     let answer: string | null = null
     try {
-      answer = await $.ui.ask(readerQuestion(findings, rounds), { options: readerOptions(), header: 'Tests' })
+      answer = await $.ui.ask(passedIt ? readerPassedQuestion(rounds) : readerQuestion(findings, rounds, changedSince), { options: readerOptions(), header: 'Tests' })
     } catch {
-      return { verdict: { pass: false, reason: 'the person could not be asked whether to go on with these tests (the question was dismissed, or nobody is at this session)' }, change }
+      // After changed tests the record stays as it was: the next call counts the same round, asks again, and
+      // starts nothing.
+      return { verdict: { pass: false, reason: 'the person could not be asked whether to go on with these tests (the question was dismissed, or nobody is at this session)' }, change: changedSince ? keeps : change }
     }
     const verdict = readerGate(answer)
-    if (!verdict.pass) return { verdict, change }
+    if (!verdict.pass) {
+      // Only "Not yet" is the person's answer: anything else leaves the record as a question not put does.
+      if (answer !== NOT_YET) return { verdict, change: changedSince ? keeps : change }
+      return changedSince ? { verdict: { pass: false, reason: `${verdict.reason}. ${READ_AS_THEY_ARE}` }, change: { ...change, readerAnswered: true } } : { verdict, change: { ...change, readerAnswered: true } }
+    }
     // What the person agreed to is the tests as they were when the question was asked.
     const after = await testHashesNow($, record.modDir)
-    if (after === null || !hashGate(hashes, after).pass) return { verdict: { pass: false, reason: 'the test files changed while the person was being asked: ask again' }, change }
-    return passed(readerEvidence({ by: 'person', rounds, findings }))
+    if (after === null || !hashGate(hashes, after).pass) return { verdict: { pass: false, reason: 'the test files changed while the person was being asked: ask again' }, change: changedSince ? keeps : change }
+    return passed(readerEvidence({ by: 'person', rounds, findings, unread: changedSince, passedBefore: passedIt }))
   }
   // A round that has just ended without a pass: its findings hold Red, or, from the second on, the person is asked.
   const ended = (findings: string[] | null, more = ''): Promise<Step> | Step => {
@@ -820,6 +836,8 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
     case 'ask':
       return ask(step.findings)
     case 'start': {
+      // Once three rounds are counted, no reading is started before the person has answered (SPEC.md 9.36).
+      if (!readerMayStart(rounds, record.readerAnswered)) return ask(last === null ? null : last.findings, true, passedBefore)
       const odd = unnameable(record.modDir, files)
       const message = readerMessage(record.modDir, fromLine, files)
       if (odd.length > 0 || message === null) {
@@ -841,50 +859,72 @@ async function readTests($: Engine, record: BuildRecord, hashes: Hashes, files: 
       await $.store.set(readersKey(sessionId), [...(Array.isArray(known) ? known.filter((one) => typeof one === 'string') : []), agentId])
       return {
         verdict: { pass: false, reason: `${left === '' ? '' : `${left}; `}${READER_STARTED}` }, wait: `${left === '' ? '' : `${left}; `}${READER_STARTED}`,
-        change: { ...keeps, reader: { agentId, startedAt: now, hashes, evidence: passing.evidence ?? '', change: { ...passing.change } }, readerRounds: rounds, readerLast: last },
+        change: { ...keeps, reader: { agentId, startedAt: now, hashes, evidence: passing.evidence ?? '', change: { ...passing.change } }, readerRounds: rounds, readerLast: last, readerAnswered: false },
       }
     }
   }
 }
 
-// A turn has ended (SPEC.md 9.12, 9.19, 9.28). When it is a test reader's of this session, and the session's open
-// record names that reader for the test files as they still are, its answer is stored under the reader's own key,
-// the pane is redrawn, and the main model is nudged to call the gate; the nudge is not waited for, since it
-// resolves only when the main turn has ended. An answer that arrives late (the test files are no longer the
-// ones it was started on, or the record names another reader or none: it was left behind, the person has
-// answered, the phase moved on) is stored marked as left behind, and nobody is nudged. When it is the main
-// session's own turn and the nudge for an unread answer could not be sent, it is sent once more.
-// The verdict is never read here, and nothing the reader wrote is in the nudge.
+// Whether a main turn (one with no agent's id) is running, as far as this module has seen it start and end
+// (SPEC.md 9.37). Lost when the mod reloads: it then reads as none, and a prompt may arrive late, which its
+// text allows for.
+let mainTurn = false
+// Prompts are sent one after another: the wait after a reader's end and a main turn's end may come together,
+// and each would read the count before the other wrote it.
+let nudging: Promise<void> = Promise.resolve()
+
+// The prompt for a reader's answer, sent when it is due (SPEC.md 9.12, 9.37): only while this session's open
+// record is at Red and still names that reader, and once for a reading. The stored answer counts the prompt
+// before it is submitted. The submit is not waited for, since it resolves only when the main turn has ended. A
+// prompt another plugin's hook or the engine refuses does not reject: it resolves with `drop` (9.24, as run);
+// with no session bound it rejects. Both are marked on the stored answer, and a main turn's end tries once more.
+// The verdict is never read here, and nothing the reader wrote is in the prompt.
+function nudgeWhenDue($: Engine, agentId: string): Promise<void> {
+  nudging = nudging.then(async () => {
+    const sessionId = await $.session.id()
+    const entry = await $.store.get(sessionKey(sessionId))
+    if (!isSessionEntry(entry) || entry.modDir === null) return
+    const record = await $.store.get(buildKey(entry.modDir))
+    const stored = readReaderAnswer(await $.store.get(readerKey(agentId)))
+    if (stored === null || !readerNudgeDue(record, sessionId, agentId, stored)) return
+    await $.store.set(readerKey(agentId), { answer: stored.answer, nudges: stored.nudges + 1 })
+    const mark = async () => {
+      try {
+        const now = readReaderAnswer(await $.store.get(readerKey(agentId)))
+        if (now !== null) await $.store.set(readerKey(agentId), { answer: now.answer, nudges: now.nudges, failed: true })
+      } catch {
+        // Nothing more to do: the answer itself is stored.
+      }
+    }
+    void $.prompt.submit({ text: READER_NUDGE }).then((sent) => (typeof (sent as { drop?: unknown } | undefined)?.drop === 'string' ? mark() : undefined), mark)
+  }).catch(() => {
+    // The answer stays stored and unread: the gate finds it when it is called.
+  })
+
+  return nudging
+}
+
+// A turn has ended (SPEC.md 9.12, 9.19, 9.28, 9.37). When it is a test reader's of this session, and the
+// session's open record names that reader for the test files as they still are, its answer is stored under the
+// reader's own key and the pane is redrawn. Nothing is submitted then: the reader's report also reaches the main
+// model as a hand-back, which starts a main turn a moment later, and a prompt submitted now would be queued
+// behind that turn and arrive stale. After a short wait, when no main turn is running, the prompt is sent if
+// the answer is still unread; when one is running, that turn's end sends it under the same test. An answer that
+// arrives late (the test files are no longer the ones it was started on, or the record names another reader or
+// none: it was left behind, the person has answered, the phase moved on) is stored marked as left behind, and
+// nobody is prompted. When it is the main session's own turn, the prompt for an answer still unread is sent if
+// none was, or once more if the one sent could not be.
 async function turnEnded($: Engine, e: { agentId?: unknown; answer?: unknown; reason?: unknown }): Promise<void> {
+  if (e.agentId === undefined) mainTurn = false
   const sessionId = await $.session.id()
   const entry = await $.store.get(sessionKey(sessionId))
   if (!isSessionEntry(entry) || entry.modDir === null) return
   const record = await $.store.get(buildKey(entry.modDir))
   if (!isOpenRecord(record) || (record as BuildRecord).sessionId !== sessionId) return
   const out = (record as BuildRecord).reader ?? null
-  // The nudge is not waited for. One that did not enter is marked on the stored answer, which stays for the next
-  // call of the gate to find: the main session's own next turn end then tries once more (SPEC.md 9.12, point 5).
-  // A prompt another plugin's hook or the engine refuses does not reject: it resolves with `drop` (9.24, as run);
-  // with no session bound it rejects. Both are marked.
-  const nudge = (agentId: string) => {
-    const mark = async () => {
-      try {
-        const stored = readReaderAnswer(await $.store.get(readerKey(agentId)))
-        if (stored !== null) await $.store.set(readerKey(agentId), { answer: stored.answer, nudges: stored.nudges, failed: true })
-      } catch {
-        // Nothing more to do: the answer itself is stored.
-      }
-    }
-    void $.prompt.submit({ text: READER_NUDGE }).then((sent) => (typeof (sent as { drop?: unknown } | undefined)?.drop === 'string' ? mark() : undefined), mark)
-  }
   if (e.agentId === undefined) {
     if (out === null) return
-    // A nudge that was sent is queued until this turn ends (9.13): only one that failed is sent again, and none
-    // for an answer that was left behind.
-    const stored = readReaderAnswer(await $.store.get(readerKey(out.agentId)))
-    if (stored === null || stored.leftBehind === true || !stored.failed || stored.nudges >= READER_NUDGES) return
-    await $.store.set(readerKey(out.agentId), { answer: stored.answer, nudges: stored.nudges + 1 })
-    nudge(out.agentId)
+    await nudgeWhenDue($, out.agentId)
     return
   }
   if (typeof e.agentId !== 'string') return
@@ -903,9 +943,35 @@ async function turnEnded($: Engine, e: { agentId?: unknown; answer?: unknown; re
     await redraw($)
     return
   }
-  await $.store.set(readerKey(e.agentId), { answer, nudges: 1 })
+  await $.store.set(readerKey(e.agentId), { answer, nudges: 0 })
   await redraw($)
-  nudge(e.agentId)
+  nudgeAfterWait($, e.agentId)
+}
+
+// The prompt a short wait from now, when no main turn is running then (SPEC.md 9.37). Not waited for: the
+// reader's turn is over. The wait gives the hand-back's main turn the time to start.
+function nudgeAfterWait($: Engine, agentId: string): void {
+  void (async () => {
+    try {
+      await $.clock.sleep(READER_NUDGE_WAIT_MS)
+      if (!mainTurn) await nudgeWhenDue($, agentId)
+    } catch {
+      // The answer stays stored: a main turn's end, or a call of the gate, finds it.
+    }
+  })()
+}
+
+// When the mod is loaded again while a reader's answer waits unread, with no prompt counted for it, the wait that
+// was running is gone with the module: it is started anew (SPEC.md 9.37). Nothing else is prompted about here.
+async function nudgeAfterReload($: Engine): Promise<void> {
+  const sessionId = await $.session.id()
+  const entry = await $.store.get(sessionKey(sessionId))
+  if (!isSessionEntry(entry) || entry.modDir === null) return
+  const record = await $.store.get(buildKey(entry.modDir))
+  if (!isBuildRecord(record) || record.reader === undefined || record.reader === null) return
+  const stored = readReaderAnswer(await $.store.get(readerKey(record.reader.agentId)))
+  if (stored === null || stored.nudges !== 0 || !readerNudgeDue(record, sessionId, record.reader.agentId, stored)) return
+  nudgeAfterWait($, record.reader.agentId)
 }
 
 // Whether a tool call is one a test reader of this session may not make (SPEC.md 9.12, 9.14): its loop reaches
@@ -1383,7 +1449,7 @@ async function goBack($: Engine, record: BuildRecord, kind: Kind): Promise<strin
   const { attempt: _attempt, testsAgreed: _agreed, skipped: _skipped, ...rest } = now as BuildRecord
   const returns = returnsAfter(record.returns)
   // A Red that was skipped is entered now, for the first time, and is no longer skipped.
-  const moved: BuildRecord = { ...rest, phase: 'red', returns, redBefore: before, reader: null, readerRounds: 0, readerLast: null, greenTestRefusals: 0, ...(rest.red === 'skipped' ? { red: 'edit' as const } : {}) }
+  const moved: BuildRecord = { ...rest, phase: 'red', returns, redBefore: before, reader: null, readerRounds: 0, readerLast: null, readerAnswered: false, greenTestRefusals: 0, ...(rest.red === 'skipped' ? { red: 'edit' as const } : {}) }
   await $.store.set(buildKey(record.modDir), moved)
   try {
     await emptyBeside($, record.modDir, [checksKey(record.modDir)])
@@ -1660,6 +1726,12 @@ export const register: Register = (on, options) => {
         $.ui.log(`mod-builder: the ${role} could not be registered (${String(error)})`, { to: 'debug' })
       }
     }
+    // A reader's answer that waits unread from before a reload is prompted about after the wait (SPEC.md 9.37).
+    try {
+      await nudgeAfterReload($)
+    } catch (error) {
+      $.ui.log(`mod-builder: whether a test reader's answer waits could not be read (${String(error)})`, { to: 'debug' })
+    }
     // Not awaited: the session starts while the fetch runs. A headless session never fetches.
     if (e.isInteractive) void refreshWhenStale($, options.refreshDays)
     // A new session has no open record: a status line an earlier one left is cleared (SPEC.md 8.18, point 4).
@@ -1706,8 +1778,16 @@ export const register: Register = (on, options) => {
       : ({ deny: 'mod-builder: the agent was not started: mod-builder could not read whether this session has a build or edit that uses agents. Run with claude --debug to see why.' } as never),
   )
 
-  // A reader's answer is stored when its turn ends, and the main model nudged (SPEC.md 9.12). A failure here
-  // changes nothing about the turn: the answer stays unread, and the gate counts a round with no verdict.
+  // Whether a main turn is running is kept for the reader's prompt (SPEC.md 9.37): a turn with no agent's id.
+  on('turn.start', ($, e, next) => {
+    if ((e as { agentId?: unknown }).agentId === undefined) mainTurn = true
+
+    return next(e)
+  })
+
+  // A reader's answer is stored when its turn ends, and the main model prompted when that is due (SPEC.md 9.12,
+  // 9.37). A failure here changes nothing about the turn: the answer stays unread, and the gate finds it or
+  // counts a round with no verdict.
   on('turn.complete', async ($, e, next) => {
     try {
       await turnEnded($, e)

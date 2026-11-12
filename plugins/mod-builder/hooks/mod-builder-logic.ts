@@ -721,6 +721,7 @@ export type BuildRecord = {
   reader?: ReaderOut | null // SPEC.md 9.19: the test reader that is out at Red, and the test files it was started on
   readerRounds?: number // the rounds of the test reader that ended without a pass
   readerLast?: ReaderRound | null // the last such round: the test files it was about, and what it found
+  readerAnswered?: boolean // SPEC.md 9.36: the person answered "Not yet" since the last round ended, and no reading was started since
   testsAgreed?: Hashes // an edit's Red: the changed test files the person's answer to 8.4's question covered
   greenTestRefusals?: number // SPEC.md 9.30: Green's refusals in a row that were for the test run
   returns?: number // how often this build or edit went back from Green to Red (SPEC.md 9.11)
@@ -2499,7 +2500,7 @@ export function readersKey(sessionId: string): string {
 }
 
 // What the hook stores for a reader that ended: its answer (empty when its turn ended otherwise than by an
-// answer), how often the main model was nudged about it, and whether the last nudge could not be sent.
+// answer), how often the main model was prompted about it, and whether the last prompt could not be sent.
 // `leftBehind` marks an answer that arrived for tests that were no longer the ones the reader was started on, or
 // for a reader the record no longer named (SPEC.md 9.28): it is never read as a verdict, and nobody is nudged.
 export type ReaderAnswer = { answer: string; nudges: number; failed: boolean; leftBehind?: true }
@@ -2511,10 +2512,31 @@ export function readReaderAnswer(value: unknown): ReaderAnswer | null {
   return { answer, nudges: Number.isInteger(nudges) && (nudges as number) >= 0 ? (nudges as number) : 0, failed: failed === true, ...(leftBehind === true ? { leftBehind: true as const } : {}) }
 }
 
-// How often the main model is nudged about one answer at most: when it arrives, and once more when that nudge
-// could not be sent (SPEC.md 9.12, point 5).
+// How often the main model is prompted about one answer at most: once, and once more when that prompt could not
+// be sent (SPEC.md 9.12, point 5). The text lets the model drop a prompt that arrives late without a tool call
+// (SPEC.md 9.37): a prompt that is queued can't be recalled.
 export const READER_NUDGES = 2
-export const READER_NUDGE = 'mod-builder: the test reader has reported. Call mod_builder_gate.'
+export const READER_NUDGE = 'mod-builder: the test reader has reported. If the build is still at Red, call mod_builder_gate; if it has moved on, do nothing.'
+
+// How long after a reader's end the prompt waits, in milliseconds (SPEC.md 9.37): the reader's report also
+// reaches the main model as a hand-back, which starts a main turn a moment after the reader's turn ended. A
+// prompt submitted while that turn runs would be queued behind it and arrive stale.
+export const READER_NUDGE_WAIT_MS = 2000
+
+// Whether the prompt for a reader's answer is due now (SPEC.md 9.37): only while that answer is still unread.
+// `record` is the session's record as the store holds it, `stored` the reader's stored answer. Unread means the
+// record is open, this session's, at Red, and still names that reader: the gate takes the reader out of the
+// record when it reads the answer or leaves it behind, when the person has answered, and when Red passes. An
+// answer that was left behind is never prompted about. One prompt for a reading: none when one was counted,
+// but for one that could not be sent, which is tried once more.
+export function readerNudgeDue(record: unknown, sessionId: unknown, agentId: unknown, stored: ReaderAnswer | null): boolean {
+  if (typeof sessionId !== 'string' || typeof agentId !== 'string' || agentId === '' || stored === null || typeof stored !== 'object') return false
+  if (!isOpenRecord(record)) return false
+  const open = record as BuildRecord
+  if (open.sessionId !== sessionId || open.phase !== 'red' || !isReaderOut(open.reader) || open.reader.agentId !== agentId) return false
+  if (stored.leftBehind === true) return false
+  return stored.nudges === 0 || (stored.failed === true && stored.nudges < READER_NUDGES)
+}
 
 // The reader that is out, as the record holds it, and the last round that ended, with what it found (null: no
 // verdict). `hashes` are the test files' the reader was started on. `changed` marks a round that ended because
@@ -2552,9 +2574,10 @@ export const READER_ROUNDS = 2
 //            have ended so: its findings are given again, and the tests have to change for a new round;
 //   ask      the same, with READER_ROUNDS rounds or more ended: the person is asked;
 //   start    anything else: a reader is started for these hashes. A reader that is out for other hashes was
-//            left behind by changed tests: the hooks module counts that as a round of its own first (9.28). A
-//            last round that ended so says nothing about these tests, whatever its hashes: it is never given
-//            again and never asked about.
+//            left behind by changed tests: the hooks module counts that as a round of its own first (9.28).
+//            Once three rounds are counted it starts a reader only when the person has answered since, and
+//            asks otherwise (9.36: readerMayStart). A last round that ended because the tests changed says
+//            nothing about these tests, whatever its hashes: it is never given again.
 // `answer` is the stored answer of the reader the record names, or undefined when none is stored.
 export type ReaderStep =
   | { do: 'wait'; seconds: number }
@@ -2584,6 +2607,18 @@ export function roundEnds(rounds: unknown): 'again' | 'ask' {
   return typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= READER_ROUNDS ? 'ask' : 'again'
 }
 
+// Whether a call of Red's gate may start a reading (SPEC.md 9.36), where the step is 'start': `rounds` are the
+// rounds that did not pass, as counted in this call, and `answered` whether the person has answered "Not yet"
+// since the last of them ended. With one or two rounds counted, or none, it may: after two rounds that did not
+// pass, changed tests are read once more as they stand. Once three or more are counted, a reading is started
+// only when the person has answered since; otherwise the person is asked, and nothing is started. That holds
+// whatever the last round was: findings, no verdict, a reader out of time or one that could not be started, a
+// reading left behind or out of date, and a pass that is out of date.
+export function readerMayStart(rounds: unknown, answered: unknown): boolean {
+  const counted = typeof rounds === 'number' && Number.isInteger(rounds) && rounds > 0 ? rounds : 0
+  return counted <= READER_ROUNDS || answered === true
+}
+
 // Whether a call of Red's gate answers "still reading" before any test or compiler runs: only for 'wait'.
 export function readerWaits(out: unknown, hashes: Hashes, now: number, answer: string | undefined): number | null {
   const step = readerStep(out, null, 0, hashes, now, answer)
@@ -2591,10 +2626,12 @@ export function readerWaits(out: unknown, hashes: Hashes, now: number, answer: s
 }
 
 // The gate's words while a reader is out: when it has just been started, and on a call that finds it reading.
-export const READER_STARTED = 'the test reader is reading the tests against the spec. End your turn now: mod-builder will prompt you when it has reported. Do not call the gate again before that'
+// (SPEC.md 9.37: the reader's report reaches the main model as a hand-back, and the prompt comes only while the
+// answer is unread, so the words promise neither alone.)
+export const READER_STARTED = 'the test reader is reading the tests against the spec. End your turn now: its report is handed back to you, or mod-builder prompts you. Call the gate then, and not before'
 
 export function readerReading(seconds: number): string {
-  return `the test reader is still reading (${Number.isInteger(seconds) && seconds >= 0 ? seconds : 0} s). End your turn: mod-builder will prompt you when it has reported`
+  return `the test reader is still reading (${Number.isInteger(seconds) && seconds >= 0 ? seconds : 0} s). End your turn: its report is handed back to you, or mod-builder prompts you`
 }
 
 // While a reader reads, the test files are closed (SPEC.md 9.28, the driving session): from the call of the gate
@@ -2614,7 +2651,8 @@ export function readerClosedRefusal(path: string): string {
 }
 
 // A reading left behind: the tests changed while they were read, which only a shell command can do. It counts as
-// a round that did not pass, with this as its result, and the tests as they are now are read next.
+// a round that did not pass, with this as its result, and the tests as they are now are read next (once three
+// rounds are counted: only when the person has answered since, SPEC.md 9.36).
 export const TESTS_CHANGED = 'the tests changed while they were read'
 
 export function readerLeftBehind(round: number): string {
@@ -2623,7 +2661,8 @@ export function readerLeftBehind(round: number): string {
 
 // A report the gate never read, because the tests changed after it arrived (they are open again then): what it
 // said is about other tests. Findings or no verdict are still a round that did not pass, `round`; a pass counts
-// for nothing (null). Either way the tests as they are now are read next.
+// for nothing (null). The tests as they are now are read next; once three rounds that did not pass are counted,
+// only when the person has answered since (SPEC.md 9.36).
 export function readerOutdated(round: number | null): string {
   return round === null
     ? 'the tests changed after the test reader passed them, so that pass is not theirs'
@@ -2652,13 +2691,27 @@ export function readerOptions(): string[] {
   return [NOT_YET, GO_ON_TESTS]
 }
 
-export function readerQuestion(findings: readonly string[] | null, rounds: number): string {
+// `changedSince` is true when that last reading was left behind or is out of date (SPEC.md 9.36): the question
+// then says that what it shows is not about the tests as they are.
+export const TESTS_NOT_READ = 'The tests have changed since that reading and have not been read as they are now.'
+
+export function readerQuestion(findings: readonly string[] | null, rounds: number, changedSince = false): string {
   const lines = findingLines(findings)
   const head = findings === null || findings.length === 0
     ? `The test reader has read the tests ${rounds} times and gave no verdict the last time.`
     : `The test reader has read the tests ${rounds} times. The last time it found behaviours of the spec that no test would catch:`
-  return [head, ...(findings === null || findings.length === 0 ? [] : lines), 'The code is written next, to these tests. Go on with these tests?'].join('\n')
+  return [head, ...(findings === null || findings.length === 0 ? [] : lines), ...(changedSince === true ? [TESTS_NOT_READ] : []), 'The code is written next, to these tests. Go on with these tests?'].join('\n')
 }
+
+// The question when the last reading passed tests that have changed since (SPEC.md 9.36): a pass that is out
+// of date counts for nothing, and once three rounds are counted no reading is started before the person has
+// answered. `rounds` are the rounds that did not pass before it.
+export function readerPassedQuestion(rounds: number): string {
+  return [`The test reader has read the tests ${rounds + 1} times and passed them the last time, as they were then.`, TESTS_NOT_READ, 'The code is written next, to these tests. Go on with these tests?'].join('\n')
+}
+
+// What the gate adds when the person did not agree after such a question: how the tests get read as they are.
+export const READ_AS_THEY_ARE = 'The next call of the gate has the tests read as they are now'
 
 export function readerGate(answer: string | null | undefined): Verdict {
   if (answer === GO_ON_TESTS) return { pass: true }
@@ -2666,11 +2719,14 @@ export function readerGate(answer: string | null | undefined): Verdict {
 }
 
 // What Red's evidence says of the reader: that it passed the tests, in which round; or the person's answer, after
-// how many rounds, with how many findings the last one had.
-export function readerEvidence(passed: { by: 'reader'; round: number } | { by: 'person'; rounds: number; findings: readonly string[] | null }): string {
+// how many rounds, with how many findings the last one had; and, when the tests changed after that last reading
+// (`unread`, SPEC.md 9.36), that the tests the person went on with were not read as they are.
+export function readerEvidence(passed: { by: 'reader'; round: number } | { by: 'person'; rounds: number; findings: readonly string[] | null; unread?: boolean; passedBefore?: boolean }): string {
   if (passed.by === 'reader') return `the test reader passed the tests (round ${passed.round})`
+  // A last reading that passed tests which then changed (SPEC.md 9.36): the pass was not theirs.
+  if (passed.passedBefore === true) return `the person answered "${GO_ON_TESTS}" after ${passed.rounds} rounds of the test reader that did not pass and one that passed the tests as they were; the tests changed after it and were not read as they are`
   const last = passed.findings === null || passed.findings.length === 0 ? 'no verdict' : `${passed.findings.length} finding${passed.findings.length === 1 ? '' : 's'}`
-  return `the person answered "${GO_ON_TESTS}" after ${passed.rounds} rounds of the test reader (the last: ${last})`
+  return `the person answered "${GO_ON_TESTS}" after ${passed.rounds} rounds of the test reader (the last: ${last}${passed.unread === true ? '; the tests changed after it and were not read as they are' : ''})`
 }
 
 // The round a last reading that did not pass was: the count of such rounds, at least 1.

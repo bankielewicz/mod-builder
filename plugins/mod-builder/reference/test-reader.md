@@ -10,13 +10,16 @@ type is not offered to you.
 ## What you do
 
 1. Call the gate when the tests are written. It answers "the test reader is reading the tests against the spec. End
-   your turn now: mod-builder will prompt you when it has reported. Do not call the gate again before that". **End
-   your turn.** Don't call the gate. While it reads, the test files are closed: any guarded write (Write, Edit,
-   MultiEdit, NotebookEdit), by any agent, is refused with "the test reader is reading these tests; wait for its
-   report". They open again when it has reported, or after 10 minutes.
-2. mod-builder prompts you: "mod-builder: the test reader has reported. Call mod_builder_gate." Call the gate.
-3. A call while it still reads answers "the test reader is still reading (N s). End your turn: mod-builder will
-   prompt you when it has reported", and runs nothing. End your turn again. If no prompt comes, call the gate.
+   your turn now: its report is handed back to you, or mod-builder prompts you. Call the gate then, and not
+   before". **End your turn.** Don't call the gate. While it reads, the test files are closed: any guarded write
+   (Write, Edit, MultiEdit, NotebookEdit), by any agent, is refused with "the test reader is reading these tests;
+   wait for its report". They open again when it has reported, or after 10 minutes.
+2. Its report is handed to you, or mod-builder prompts you: "mod-builder: the test reader has reported. If the
+   build is still at Red, call mod_builder_gate; if it has moved on, do nothing." Call the gate, once. The prompt
+   is sent only while the report is unread at Red: none comes when you have called the gate already.
+3. A call while it still reads answers "the test reader is still reading (N s). End your turn: its report is
+   handed back to you, or mod-builder prompts you", and runs nothing. End your turn again. If no prompt comes,
+   call the gate.
 
 ## What the gate answers after the reader
 
@@ -32,10 +35,11 @@ type is not offered to you.
   the gate starts another reading only for a changed test.
 
 After 2 rounds that did not pass, the gate asks the person, showing the last round's findings. "Not yet" comes
-first; only "Go on with these tests" passes Red. The person is only ever asked about a reading of the tests as they
-are, also one that gave no verdict: tests changed since the last reading are read first. Every later round that
-does not pass ends with the person asked again, and so does a call with the tests unchanged after "Not yet". Don't
-argue a finding in the tests: fix the tests, or let the person decide.
+first; only "Go on with these tests" passes Red. Tests changed after the second such round are read once more as
+they are: a pass goes on, anything else asks the person. Once 3 rounds did not pass, no reading is started before
+the person has answered "Not yet": for tests changed since the last reading, the question says they were not read
+as they are now. Every later round that does not pass ends with the person asked again, and so does a call with
+the tests unchanged after "Not yet". Don't argue a finding in the tests: fix the tests, or let the person decide.
 
 ## What never helps
 

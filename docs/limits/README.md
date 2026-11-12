@@ -128,8 +128,12 @@ their line counts, and with what differs in what the mod hooks, answers and call
 - **The main model sees the reader's report**, as a hand-back message, in every session. The gate does not
   read it: only the answer the mod itself stored counts.
 - **The reader's judgement is not proof.** It reads tests before the code exists: it can pass tests that
-  catch little and flag tests that are fine. After two rounds that do not pass, the person's answer is the
-  last word, and "Go on with these tests" passes Red with the findings as they are.
+  catch little and flag tests that are fine. After two rounds that do not pass the person is asked; when the
+  tests changed after the second, they are read once more as they stand: a pass goes on, and anything else
+  asks the person. Once three rounds did not pass, no reading is started before the person has answered
+  "Not yet". The person's answer is the last word: "Go on with these tests" passes Red with the findings as
+  they are, and, when the tests changed after the last reading, with tests that no reader read as they are;
+  the question says so.
 - **Another plugin can deny the reader's spawn, rewrite its prompt or refuse its reads.** A reader that could
   not be started, gave no verdict line, or took over 10 minutes counts as a round with no verdict, never as a
   pass.
@@ -137,9 +141,13 @@ their line counts, and with what differs in what the mod hooks, answers and call
   reaches a mod's hooks, so the guard can't refuse it; it writes no file.
 - **While the reader reads, the test files are closed to guarded writes only.** A shell command can still
   change them; that reading then counts as a round that did not pass, and the tests are read again.
-- **The gate has to be called after the reader ends.** mod-builder prompts the model then; when that prompt
-  can't be sent, or the session ended meanwhile, the build stays at Red until the gate is called, which reads
-  the stored answer.
+- **The gate has to be called after the reader ends.** The reader's report is handed to the model, which
+  may call the gate at once; else mod-builder prompts it, once for a reading and only while that answer is
+  unread at Red. When the prompt can't be sent, or the session ended meanwhile, the build stays at Red until
+  the gate is called, which reads the stored answer. A prompt that was queued can't be recalled: one that
+  arrives late says to do nothing when the build has moved on. A prompt that was refused is tried once more,
+  and only when the next main turn ends: in a session that stays idle it is not sent again. A main turn that
+  never reports its end holds the prompt until a later turn ends.
 - **Headless (`claude -p`) rests on one run of a probe and a reading of the code**: the reader's report came
   back to the main model as a hand-back there, the prompt may not arrive, and nobody can be asked after two
   rounds, so Red stays (`SPEC.md` 9.13, 9.14, 9.24).
@@ -155,6 +163,8 @@ their line counts, and with what differs in what the mod hooks, answers and call
   in `types/`. An edit is not asked (`SPEC.md` 9.20).
 - **The check is the scaffold script's, run by the gate**: a link is never followed, so a link in place of a
   laid file counts as changed.
+- **mod-builder sees only the mod's folder**: code written ahead and kept anywhere else (a scratch file, the
+  conversation itself) is not seen, and can be written into `hooks/` at Green.
 
 ## The pane
 
