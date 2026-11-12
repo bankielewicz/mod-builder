@@ -3188,3 +3188,41 @@ question after two rounds but not the one at a fourth start.
 **Stale until the documents step** (9.8, step 7): `docs/limits`, `docs/reference`, `docs/how-it-works`,
 `docs/development` (set `TMPDIR`; give a run a time limit; a long `TMPDIR` breaks a nested session's
 sandbox), `CLAUDE.md`, the changelog, both manifests.
+
+### 9.27 Both rulings on the real engine with the shipped plugin; what ruling 1 means for an honest Red (2026-11-11, at `e82b387`)
+
+[ran, 2.1.322, sonnet, the plugin at `e82b387` and beside it the probe mod of 9.24 whose `prompt.submit`
+hook drops "mod-builder: the test reader has reported ...", an edit of a copy of `tool-log` 0.1.0 with
+thin tests, the building session answering the dialogs]
+
+**Ruling 2.** The reader ended; the debug log holds "prompt.submit: dropped (apdrop: refused by the
+probe)" twice, 44 ms apart (the nudge, and its one retry when the main turn ended), and the person saw
+"Prompt dropped by a hook" twice. The pane's block read "Test reader / has reported: the gate is waiting
+to be called" and the status line "red · test reader reported: call the gate". The person typed
+"continue"; the model called the gate, which answered from the stored answer: "still at phase 4 (Red).
+Not passed: the test reader found behaviours of the spec that no test would catch (round 1) ..." with four
+findings. A third drop in that log is the first nudge of a later reader.
+
+**Ruling 1, and 9.9's item 3.** The model was then told to change a comment in the test file and call
+the gate, again and again, without ending its turn. The gate answered "the test reader is reading ..."
+twice more (a new reading each time the tests had changed: three readers started in all, two of them
+left behind), and at the next call started none and asked: "The test reader was started 3 times in this
+Red and the tests kept changing, so it is not started again. The last reading that ended found behaviours
+of the spec that no test would catch: ..." (round 1's four findings), "Not yet" first. "Not yet": "still
+at phase 4 (Red). Not passed: the person has not agreed to go on with these tests (answer: "Not yet")."
+The pane then showed "Test reader / round 1 did not pass".
+
+**What ruling 1 means when nobody games it** (read from the code, and the same count as in 9.25's run,
+which had three readings): every reader started counts, also one whose reading ended and counted as a
+round. So one Red has at most three readings, however they ended: after the third, changed tests are
+not read again; the gate asks the person, in ruling 1's words ("the tests kept changing"), and only "Go
+on with these tests" passes that Red. **For the driving session:** if a Red should be able to earn a
+fourth reading honestly (for example by counting only readers left behind), the rule `startsEnd` and
+one line of `readTests` change; as built it is the ruling's letter.
+
+**Note 3's sentence is in `docs/limits` now** (the reader is a model reading text the judged model wrote;
+this lowers the risk and does not remove it), with the hand-back seen in 9.26; the rest of that document
+waits for the documents step.
+
+**Still not shown on the real engine:** the reader's tool guard refusing a call; a reader that gives no
+verdict line; headless.
