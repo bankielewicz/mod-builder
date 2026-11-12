@@ -3845,3 +3845,67 @@ change):
   mod_builder_gate; if it has moved on, do nothing."
 - What is known of a running turn is lost when the mod reloads; a prompt may then be sent while a turn
   runs and arrive late, which the text allows for.
+
+### 9.38 Plan 49 as built: when the person is asked, and one prompt for a reading; on the real engine (2026-11-12, at `4e36036`)
+
+The driving session, when the first draft's fork had failed on the usage limit: "Rerun it and carry it
+through, with the two docs/limits sentences of 9.36", and the fix of 9.37 "in the same plan or its own".
+One plan holds both.
+
+**Plan 49:** `7efd14d` (existing tests: the prompt's and the gate's new words, the reference file's
+sentences, and the test world answering `turn.start`, `clock.sleep` and a held store read), `8935384`
+red, `4e36036` green; verifier PASS, every point reproduced and 38 mutants each failing a named test (it
+was cut off by the usage limit once and went on from its own report file); 672 module tests, 891 node
+tests, validate and the typecheck pass [ran, by the implementer and the verifier]. The documents the plan
+could not embed or that no test pins (`README.md`, how-it-works, the reference, the changelog,
+`CLAUDE.md`) are `375a92f`; the same counts pass there [ran].
+
+**Read by an agent that did not write it, before the red commit** (16 mutants, 3 survived). One real gap
+in the draft, shown by a probe test: a round-3 question that could not be put (dismissed, or nobody at the
+session) left the record so that the model, having mended the tests, got a fourth reading unasked. The
+special cases were replaced by one rule (below). Also from that read: an out-of-date pass at three or
+more rounds falls under the rule; a mod loaded again while an answer waits unread gets the wait anew; a
+test runs the wait's end and a main turn's end side by side.
+
+**As built, beyond 9.36 and 9.37 or against them** (the building session's, for the driving session to
+keep or change):
+- **The rule** (`readerMayStart`): with fewer than three rounds that did not pass counted, a reading may
+  start without the person. Once three or more are counted, a reading starts only when the person has
+  answered "Not yet" since the last of them ended (the record keeps that answer until a reading starts or
+  Red passes); otherwise the gate asks and starts nothing. A question that can't be put, is answered by
+  neither label, or whose tests change while it is open is no answer: the next call asks again. It holds
+  for findings, no verdict, a timeout, a reader that could not be started, a reading left behind or out of
+  date; in a build, an edit, and a Red the work came back to, where the count starts anew.
+- **Against 9.36's "a fourth reading is never started":** below three counted rounds an out-of-date pass
+  is read again (9.36 says so), and a pass is no round, so a fourth reading can come that way. The
+  documents therefore say: "Once three rounds did not pass, no reading is started before the person has
+  answered "Not yet"."
+- **The question for tests that changed since:** the usual lines, then "The tests have changed since that
+  reading and have not been read as they are now."; for an out-of-date pass: "The test reader has read the
+  tests N times and passed them the last time, as they were then. The tests have changed ...". "Not yet"
+  is answered with "The next call of the gate has the tests read as they are now." The evidence of "Go on
+  with these tests" then ends "(the last: 1 finding; the tests changed after it and were not read as they
+  are)".
+- **The gate's answer when it starts a reader:** "the test reader is reading the tests against the spec.
+  End your turn now: its report is handed back to you, or mod-builder prompts you. Call the gate then, and
+  not before".
+- **The prompt** as 9.37, and: on `session.start` an answer that is unread and unprompted gets the wait
+  again. The main-turn flag has no time limit and the one retry stays at a main turn's end; `docs/limits`
+  says both. The new hook, `turn.start`, and the call `$.clock.sleep` are in the reference.
+- `docs/limits` has both sentences of 9.36, the second as "**mod-builder sees only the mod's folder**:
+  code written ahead and kept anywhere else (a scratch file, the conversation itself) is not seen, and can
+  be written into `hooks/` at Green."
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `4e36036` with `--plugin-dir`, the installed
+copy switched off, agent teams off; each reading's hand-back, prompts and gate answers read in the
+session's transcript in order of time]:
+- *A new build to Done, the model free.* Two readings (findings; then, the tests mended after the report,
+  "counts as round 1" and a pass). The model called the gate in each hand-back's turn. **No prompt was
+  sent, for either reading or after Done** (the session was watched for a minute after Done).
+- *An edit of that mod to Done, the model told to do nothing on a hand-back and to wait for the prompt.*
+  Two readings; each time the model ended the hand-back's turn with "WAITING", and **one prompt came, in
+  the same second**, "mod-builder: the test reader has reported. If the build is still at Red, call
+  mod_builder_gate; if it has moved on, do nothing."; the gate was called on it. Two readings, two
+  prompts, **none after Done**.
+**Not shown live:** the prompt sent by the 2-second wait (no hand-back arriving); a third round's
+question for changed tests; a reload while an answer waits.
