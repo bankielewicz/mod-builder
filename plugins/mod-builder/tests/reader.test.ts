@@ -356,156 +356,31 @@ test('a spawn that fails is one too', async ($, on) => {
 
 // ---------------------------------------------------------------------------------- tests changed meanwhile
 
-test('tests changed while the reader read leave it behind: a new one is started, no round is counted, and its late answer is never stored or read', async ($, on) => {
+test('tests changed while the reader read leave it behind: that is a round, a new reader is started in the same call, and its late answer is marked and never read', async ($, on) => {
   const w = await atRed(on)
   await gate($)
   mend(w, 'changed while the reader read')
-  expect(await gate($)).toBe(STARTED)
+  expect(await gate($)).toBe(`${AT_RED}: the tests changed while the test reader read them, which counts as round 1; ${STARTED.slice(AT_RED.length + 2)}`)
   expect(w.spawned.length).toBe(2)
   expect(kept(w).reader?.agentId).toBe('reader-2')
-  expect(kept(w).readerRounds).toBe(0)
-  expect(kept(w).readerLast).toBe(null)
+  expect(kept(w).readerRounds).toBe(1)
+  expect((kept(w).readerLast as { changed?: boolean; findings: unknown }).changed).toBe(true)
+  expect((kept(w).readerLast as { changed?: boolean; findings: unknown }).findings).toBe(null)
   await endReader($, 'reader-1', 'VERDICT: PASS')
-  expect(w.store['reader:reader-1']).toBe(undefined)
+  expect(w.store['reader:reader-1']).toEqual({ answer: 'VERDICT: PASS', nudges: 0, failed: false, leftBehind: true })
   expect(w.prompts).toEqual([])
   expect((await gate($)).startsWith(`${AT_RED}: the test reader is still reading (`)).toBe(true)
   expect(kept(w).phase).toBe('red')
 })
 
-const STARTS_QUESTION = [
-  'The test reader was started 3 times in this Red and the tests kept changing, so it is not started again.',
-  'No reading of the tests as they are now has ended.', 'The code is written next, to these tests. Go on with these tests?',
-].join('\n')
-// Three readers started, each left behind by tests that changed while it read; the tests are changed once more.
-const thriceLeftBehind = async ($: Engine, w: World) => {
-  await gate($)
-  mend(w, 'changed once')
-  await gate($)
-  mend(w, 'changed twice')
-  await gate($)
-  mend(w, 'changed a third time')
-}
-
-test('every reader started in one Red is counted, those left behind too: when a fourth would start the person is asked, and none is started', async ($, on) => {
+test('tests changed while the reader read and a new reader that can\'t be started, in one call, are two rounds: the person is asked, and "Not yet" keeps Red', async ($, on) => {
   const w = await atRed(on, { answer: 'Not yet' })
-  await thriceLeftBehind($, w)
-  expect(w.spawned.length).toBe(3)
-  expect(kept(w).readerStarts).toBe(3)
-  expect(kept(w).readerRounds).toBe(0)
-  expect(await gate($)).toBe(`${AT_RED}. Not passed: the person has not agreed to go on with these tests (answer: "Not yet").`)
-  expect(w.asked).toEqual([{ question: STARTS_QUESTION, options: ['Not yet', 'Go on with these tests'] }])
-  expect(w.spawned.length).toBe(3)
-  expect(kept(w).reader).toBe(null)
-  expect(kept(w).phase).toBe('red')
-})
-
-test('a reader that could not be started is a round and no start, whether its start was refused or threw: the count is of readers started', async ($, on) => {
-  const w = await atRed(on)
-  await gate($)
-  mend(w, 'the test, changed once')
-  await gate($)
-  expect(kept(w).readerStarts).toBe(2)
-  w.spawnAnswer = 'throws'
-  mend(w, 'the test, changed twice')
-  await gate($)
-  expect(kept(w).readerStarts).toBe(2)
-  expect(kept(w).readerRounds).toBe(1)
-  w.spawnAnswer = null
-  mend(w, 'the test, changed a third time')
-  await gate($)
-  expect(w.spawned.length).toBe(3)
-  expect(kept(w).readerStarts).toBe(3)
-})
-
-test('after "Not yet" to that question, tests changed again are asked about again, and still no reader is started', async ($, on) => {
-  const w = await atRed(on, { answer: 'Not yet' })
-  await thriceLeftBehind($, w)
-  await gate($)
-  mend(w, 'changed a fourth time')
-  expect((await gate($)).startsWith(`${AT_RED}. Not passed: the person has not agreed to go on with these tests`)).toBe(true)
-  expect(w.asked.length).toBe(2)
-  expect(w.spawned.length).toBe(3)
-  expect(kept(w).readerStarts).toBe(3)
-})
-
-test('"Go on with these tests" to that question passes Red, the evidence says after how many readers, and the count ends with the phase', async ($, on) => {
-  const w = await atRed(on, { answer: 'Go on with these tests' })
-  await thriceLeftBehind($, w)
-  expect(await gate($)).toBe(`${PASSED}the person answered "Go on with these tests" after 3 readings of the test reader were started and the tests kept changing). The build is now at phase 6 (Green).`)
-  expect(w.spawned.length).toBe(3)
-  expect(kept(w).phase).toBe('green')
-  expect(kept(w).readerStarts).toBe(0)
-})
-
-test('tests changed while that question is open are not what the person agreed to: "Go on with these tests" does not pass them', async ($, on) => {
-  const w = await atRed(on, { answer: 'Go on with these tests' })
-  await thriceLeftBehind($, w)
-  w.whileAsked = () => {
-    w.files[PANE] = 'changed while asked'
-  }
-  expect(await gate($)).toBe(`${AT_RED}. Not passed: the test files changed while the person was being asked: ask again.`)
-  expect(kept(w).phase).toBe('red')
-  expect(w.spawned.length).toBe(3)
-})
-
-test('that question, when nobody can be asked, keeps Red and starts nothing', async ($, on) => {
-  const w = await atRed(on, { answer: null })
-  await thriceLeftBehind($, w)
-  expect((await gate($)).startsWith(`${AT_RED}. Not passed: the person could not be asked whether to go on with these tests`)).toBe(true)
-  expect(w.spawned.length).toBe(3)
-  expect(kept(w).phase).toBe('red')
-})
-
-test('a round that counted does not start the count of readers anew: findings, then two readers left behind, and the next is the question with those findings', async ($, on) => {
-  const w = await atRed(on, { answer: 'Not yet' })
-  await gate($)
-  await endReader($, 'reader-1', FINDINGS)
-  await gate($)
-  expect(kept(w).readerRounds).toBe(1)
-  expect(kept(w).readerStarts).toBe(1)
-  mend(w, 'mended once')
-  await gate($)
-  mend(w, 'mended twice')
-  await gate($)
-  expect(kept(w).readerStarts).toBe(3)
-  mend(w, 'mended a third time')
-  await gate($)
-  expect(w.spawned.length).toBe(3)
-  expect(w.asked.map((one) => one.question)).toEqual([[
-    'The test reader was started 3 times in this Red and the tests kept changing, so it is not started again.',
-    'The last reading that ended found behaviours of the spec that no test would catch:',
-    '- tests/pane.test.tsx: no test counts a second turn', '- SPEC.md: the reset on /clear is never tested',
-    'The code is written next, to these tests. Go on with these tests?',
-  ].join('\n')])
-})
-
-test('a reader that can\'t be started is a round and no start: the count of readers stays', async ($, on) => {
-  const w = await atRed(on)
-  w.spawnAnswer = { deny: 'no readers today' }
-  await gate($)
-  expect(kept(w).readerRounds).toBe(1)
-  expect(kept(w).readerStarts ?? 0).toBe(0)
-})
-
-test('a pass by the reader ends the count of readers with the phase', async ($, on) => {
-  const w = await atRed(on)
-  await gate($)
-  mend(w, 'changed once')
-  await gate($)
-  expect(kept(w).readerStarts).toBe(2)
-  await endReader($, 'reader-2', 'VERDICT: PASS')
-  expect((await gate($)).startsWith('mod-builder: phase 5 (Red) passed (')).toBe(true)
-  expect(kept(w).readerStarts).toBe(0)
-})
-
-test('tests changed while the reader read and a new reader that can\'t be started, in one call, are one round: the person is not asked', async ($, on) => {
-  const w = await atRed(on, { answer: 'Go on with these tests' })
   await gate($)
   mend(w, 'changed while the reader read')
   w.spawnAnswer = { deny: 'no readers today' }
-  expect((await gate($)).startsWith(`${AT_RED}. Not passed: the reader gave no verdict (round 1)`)).toBe(true)
-  expect(kept(w).readerRounds).toBe(1)
-  expect(w.asked).toEqual([])
+  expect(await gate($)).toBe(`${AT_RED}. Not passed: the person has not agreed to go on with these tests (answer: "Not yet").`)
+  expect(kept(w).readerRounds).toBe(2)
+  expect(w.asked.map((one) => one.question.split('\n')[0])).toEqual(['The test reader has read the tests 2 times and gave no verdict the last time.'])
   expect(kept(w).phase).toBe('red')
 })
 
@@ -564,13 +439,14 @@ test('a record that moved to another phase while the gate ran is given no reader
   expect(kept(w).phase).toBe('green')
 })
 
-test('a pass is for the tests it was about: tests changed after the reader answered are read anew', async ($, on) => {
+test('a pass is for the tests it was about: tests changed after the reader answered are read anew, and that pass counts for nothing', async ($, on) => {
   const w = await atRed(on)
   await gate($)
   await endReader($, 'reader-1', 'VERDICT: PASS')
   mend(w, 'changed after the answer')
-  expect(await gate($)).toBe(STARTED)
+  expect(await gate($)).toBe(`${AT_RED}: the tests changed after the test reader passed them, so that pass is not theirs; ${STARTED.slice(AT_RED.length + 2)}`)
   expect(w.spawned.length).toBe(2)
+  expect(kept(w).readerRounds).toBe(0)
   expect(kept(w).phase).toBe('red')
 })
 

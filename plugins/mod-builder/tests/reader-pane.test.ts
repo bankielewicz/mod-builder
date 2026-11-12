@@ -1,6 +1,7 @@
-// SPEC.md 9.19, what the pane shows of the test reader, through the hooks module itself: reading after the gate
-// started it, reported once its turn ended, its findings after a round that did not pass, and nothing of it once
-// Red has passed. The status line says the same in a few words.
+// SPEC.md 9.19 and 9.28, what the pane shows of the test reader, through the hooks module itself: one row at the
+// top of Red's frame (reading after the gate started it, reported once its turn ended, the round that did not
+// pass and what it came to), each finding just above Red's own block, and nothing of it once Red has passed.
+// The status line says the same in a few words.
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
@@ -46,10 +47,15 @@ const drawn = async ($: Engine) => {
   await ui.unmount()
   return texts
 }
-// The texts from the reader's heading up to the phase's own.
+// The reader's one row: its texts, up to the next block's heading. And the block of its findings, up to Red's own.
+const ends = (text: string) => text.startsWith('5 Red') || text === 'What the test reader found'
 const ofReader = (texts: string[]) => {
   const from = texts.indexOf('Test reader')
-  return from === -1 ? null : texts.slice(from, texts.findIndex((text, index) => index > from && text.startsWith('5 Red')))
+  return from === -1 ? null : texts.slice(from, texts.findIndex((text, index) => index > from && ends(text)))
+}
+const found = (texts: string[]) => {
+  const from = texts.indexOf('What the test reader found')
+  return from === -1 ? null : texts.slice(from + 1, texts.findIndex((text, index) => index > from && text.startsWith('5 Red')))
 }
 
 test('before the gate has started a reader the pane shows nothing of it', async ($, on) => {
@@ -61,7 +67,7 @@ test('before the gate has started a reader the pane shows nothing of it', async 
 test('after the gate started the reader the pane shows it reading, with when it started, and the status line says so', async ($, on) => {
   const w = await atRed(on)
   await gate($)
-  expect(ofReader(await drawn($))).toEqual(['Test reader', '  reading the tests against the spec', 'started 18:05 UTC'])
+  expect(ofReader(await drawn($))).toEqual(['Test reader', 'reading the tests against the spec', 'started 18:05 UTC'])
   expect(String(w.statuses.at(-1)).endsWith(`${DOT} test reader reading`)).toBe(true)
   expect(String(w.statuses.at(-1)).startsWith('red')).toBe(true)
 })
@@ -70,7 +76,7 @@ test('once the reader\'s turn has ended the pane shows it has reported and says 
   const w = await atRed(on)
   await gate($)
   await endReader($, 'reader-1', 'VERDICT: PASS')
-  expect(ofReader(await drawn($))).toEqual(['Test reader', '  has reported: the gate is waiting to be called'])
+  expect(ofReader(await drawn($))).toEqual(['Test reader', 'has reported: the gate is waiting to be called'])
   expect(String(w.statuses.at(-1)).endsWith(`${DOT} test reader reported: call the gate`)).toBe(true)
   expect(kept(w).phase).toBe('red')
 })
@@ -80,7 +86,7 @@ test('a reader whose turn ended with no answer shows as reported too: the gate i
   await gate($)
   await endReader($, 'reader-1', undefined, 'error')
   expect(w.store['reader:reader-1']).toEqual({ answer: '', nudges: 1 })
-  expect(ofReader(await drawn($))).toEqual(['Test reader', '  has reported: the gate is waiting to be called'])
+  expect(ofReader(await drawn($))).toEqual(['Test reader', 'has reported: the gate is waiting to be called'])
   expect(String(w.statuses.at(-1)).endsWith(`${DOT} test reader reported: call the gate`)).toBe(true)
 })
 
@@ -88,16 +94,18 @@ test('another agent\'s answer under another id does not show the reader as repor
   const w = await atRed(on)
   await gate($)
   w.store['reader:someone-else'] = { answer: 'VERDICT: PASS', nudges: 1 }
-  expect(ofReader(await drawn($))).toEqual(['Test reader', '  reading the tests against the spec', 'started 18:05 UTC'])
+  expect(ofReader(await drawn($))).toEqual(['Test reader', 'reading the tests against the spec', 'started 18:05 UTC'])
 })
 
-test('after a round that did not pass the pane shows the round and each finding, and the status line names the round', async ($, on) => {
+test('after a round that did not pass the pane shows the round and how many findings in its first row, each finding above Red\'s own block, and the status line names both', async ($, on) => {
   const w = await atRed(on)
   await gate($)
   await endReader($, 'reader-1', 'VERDICT: FINDINGS\n- tests/pane.test.tsx: no test resets the count\n- SPEC.md line 9: the empty log is never drawn\n')
   await gate($)
-  expect(ofReader(await drawn($))).toEqual(['Test reader', '  round 1 did not pass', '  - tests/pane.test.tsx: no test resets the count', '  - SPEC.md line 9: the empty log is never drawn'])
-  expect(String(w.statuses.at(-1)).endsWith(`${DOT} test reader: round 1 did not pass`)).toBe(true)
+  const texts = await drawn($)
+  expect(ofReader(texts)).toEqual(['Test reader', 'round 1 did not pass', '2 findings'])
+  expect(found(texts)).toEqual(['  - tests/pane.test.tsx: no test resets the count', '  - SPEC.md line 9: the empty log is never drawn'])
+  expect(String(w.statuses.at(-1)).endsWith(`${DOT} test reader: round 1 did not pass ${DOT} 2 findings`)).toBe(true)
   expect(kept(w).phase).toBe('red')
 })
 
@@ -106,7 +114,9 @@ test('a round with no verdict is shown in those words', async ($, on) => {
   await gate($)
   await endReader($, 'reader-1', 'The tests look fine to me.')
   await gate($)
-  expect(ofReader(await drawn($))).toEqual(['Test reader', '  round 1 did not pass', '  the reader gave no verdict'])
+  const texts = await drawn($)
+  expect(ofReader(texts)).toEqual(['Test reader', 'round 1 did not pass', 'no verdict'])
+  expect(found(texts)).toBe(null)
 })
 
 test('once Red has passed the pane shows nothing of the reader but Red\'s evidence, and the status line no word of it', async ($, on) => {
