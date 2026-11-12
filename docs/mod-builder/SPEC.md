@@ -3487,3 +3487,92 @@ that checks a state (for example that a build went back, or that a reader was st
 `expect(...)` or `assert`, and never with `throw new Error(...)`. The helper `wentBack` of
 `tests/back-to-red.test.ts` throws; it is changed to an assertion in the existing-tests commit of the
 next plan that touches that file, or at the documents step at the latest.
+
+### 9.33 Step 5, the opt-in agents, as they will be built; the probes for them (2026-11-12, before the plans)
+
+9.5 is the owner's rule; 9.12 and 9.14 are the driving session's corrections. **Probes first** [ran,
+2.1.322, sonnet, one interactive session with agent teams switched on, a probe mod `ag` in the building
+session's scratch folder: one skill whose text holds `> $ARGUMENTS`, one agent `ag:writer` registered with
+the tools `Read`, `Grep`, `Glob`, `Write`, `Edit` and `omitClaudeMd`, an `agent.offer` hook that reads a
+flag in `$.store`, hooks on `skill.prompt`, `agent.spawn`, `tool.call` and `turn.complete` that log]:
+
+1. **The mod itself can read the word.** For `/ag:go --agents make a pane; it mentions --agents twice`
+   the `skill.prompt` hook's `e.text` held the skill's body with the line `> --agents make a pane; it
+   mentions --agents twice`; the event has no field for the arguments (`skill`, `text`, `frontmatter`,
+   `source`, `pluginName`, `path`). The same when the model ran the skill with the Skill tool and the
+   arguments `--agents second try`. So whether a build uses agents is what the mod read, not what the
+   model passes, and the gate's input gains no field for it.
+2. **The offer follows the store, turn by turn and at dispatch.** With the flag off the model's list of
+   agent types did not hold `ag:writer`, and its Agent call answered "Agent type 'ag:writer' not found.
+   Available agents: ...". After a tool call set the flag, in the same turn, the session showed "1 agent
+   type available", the type was in the model's list and the same Agent call started it. After the flag
+   was cleared the call answered "not found" again. The hook is asked at each turn and at each dispatch;
+   an `async` hook that reads `$.store` works there.
+3. **A model-started agent of a registered type is known at its writes.** The mod's `agent.spawn` hook
+   saw `subagentType` `ag:writer`, `background: true`, no `isTeammate`; `next` resolved to `{ model,
+   agentId }`; the agent's `Write` reached the mod's `tool.call` hook with that `agentId`, and the file
+   was made. The agent listed its tools as `Read`, `Write`, `Edit`, `Grep`, `Glob`, `SubagentHandback`,
+   `advisor`, said it has no `Bash`, listed no skills, and ended through `SubagentHandback` (in an
+   interactive session: 9.13's point 4 saw that tool headless only).
+4. **A teammate of the type is refused at spawn.** Asked for a teammate named `scout` of type `ag:writer`,
+   the hook saw `isTeammate: true`, `name: "scout"` and answered `{ deny }`; the model's call answered
+   "Subagent spawn denied by a plugin: ag: a writer can not be a teammate: ...", and no file was made.
+Not probed: headless; a resumed agent; two agents started in one turn.
+
+**As it will be built.** Decided by the building session where 9.5 is silent, each for the driving session
+to keep or change:
+
+- **The word.** A rule reads the expanded skill's text: the first line that opens with `> ` is the
+  person's request, and the build or edit uses agents when that line's first word is exactly `--agents`.
+  The word anywhere else opts nothing in. The session's entry keeps it; the record takes it when the
+  gate's first call makes the record. A record or an entry without it uses no agents (9.9, item 7).
+  Expanding the skill again changes nothing in an open record; while the entry still waits for its
+  folder, the word once given stays given (`/mod-builder stop` is the way to drop it).
+- **The two agents** are registered at `session.start`, each in a try of its own as the reader is:
+  `test-writer` and `implementer`, with the tools `Read`, `Grep`, `Glob`, `Write`, `Edit`,
+  `omitClaudeMd: true`, a fixed prompt, and no model.
+- **The offer** (mine, narrower than 9.5's "while a record that uses agents is open" and inside it): the
+  test-writer is offered while this session's open record uses agents and is at Red; the implementer
+  while it is at Green. Each has an `agent.offer` hook of its own whose `.catch` withholds.
+- **The `agent.spawn` hook** judges only a spawn of one of the two types; any other, the reader's
+  included, passes untouched. It refuses a teammate (9.14) and a spawn when this session has no record
+  that uses agents at that agent's phase (the offer can be passed by a hook that rewrites a type). On a
+  start it keeps the type under a key of its own for that `agentId`; a denied spawn keeps nothing. A
+  failure before the start refuses the spawn.
+- **The guard's rule by agent**, a pure rule asked after the phase's own verdict allows the write and
+  before the reader's closing: in a record that uses agents,
+  - at Red (a returned Red included, 9.11) a write Red allows is refused unless the call's `agentId` is
+    kept as a test-writer;
+  - at Green a write under `hooks/`, **or of a source file anywhere in the mod**, is refused unless it is
+    kept as an implementer. 9.5 says "under `hooks/`"; its purpose is "the main model cannot write the
+    tests or the code of such a build itself", and Green also opens source outside `hooks/` (9.20), so
+    the letter alone would let the main model write `lib/x.ts` and leave the implementer one import.
+    Source is what 9.20's table names: a `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` or `.cts`
+    file that is no declaration file;
+  - every other phase and path is as without agents. The refusal says which agent writes there and how
+    it is started.
+- **What the two agents may call** (as 9.12 for the reader): a call by a kept test-writer or implementer
+  that reaches the mod's hooks is refused unless the tool is `Read`, `Grep`, `Glob`, `Write`, `Edit` or
+  `SubagentHandback`; the gate tool is the main model's alone.
+- **What the model is told.** The gate's answers carry it: the answer that opens Red, Green or a
+  returned Red in such a record names the agent to start. Each skill gets one sentence, in the paragraph
+  under the request, that names a third reference file, `reference/agents.md`: how each agent is
+  started (the Agent tool, a plain subagent, never a teammate), what it is passed (the mod's folder, the
+  spec and for an edit its section, the types file, the gate's last refusal word for word; for the
+  implementer the failing tests), and that the main model passes facts and never the tests or the code
+  to copy. Each skill stays under 200 lines.
+- **Shown:** one row of the pane says the build uses agents, at every phase.
+- **Kept ids** are removed with the session's other keys when the build or edit is stopped.
+
+**Limits, stated and not built** (`docs/limits` at the documents step, and in the reference file):
+- the guard judges the write tools. The main model's shell can still write a test at Red or code at
+  Green, as it can write any open file in 0.2.0; "cannot write the tests itself" means "not with `Write`,
+  `Edit`, `MultiEdit` or `NotebookEdit`";
+- what an agent is asked is the main model's prompt. The mod sees who wrote a file, not what they were
+  told to write;
+- a teammate of any other type, and the advisor, stay outside the guard (9.14); another plugin can deny
+  or rewrite a spawn; the agents run on what the session gives them; headless is not run.
+
+**Two plans:** the rules, the hooks module and the pane's row; then the wording: the reference file and
+both skills' sentence. The helper `wentBack` (9.32) becomes an assertion in the first plan's existing-tests
+commit.
