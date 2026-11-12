@@ -81,6 +81,20 @@ their line counts, and with what differs in what the mod hooks, answers and call
 - **A claim of "no behaviour change" is checked only on the route that skips Red.** Approved with the plain
   "Approve", the edit goes through Red like any other.
 
+## A folder another session holds
+
+- **A build or edit that a session left open holds its folder.** Another session that names the folder is
+  refused, and told the holding session's id. Nothing expires, and in 0.3.0 no other session can release it:
+  resume the holding session (`claude --resume <its id>`) and run `/mod-builder stop` there, or name another
+  folder. A way to release it from another session waits in the backlog (`SPEC.md` 9.29).
+
+## The way back to Red (0.3.0, not released)
+
+- **Going back is the person's decision, and it is counted, not capped.** After Green's test run fails twice in
+  a row the gate offers `back_to_red`; only the person's "Go back to Red" takes it. The code written at Green
+  stays as it is, closed. A returned Red does not hold `hooks/` to the template or look for source outside
+  `hooks/` and `tests/`, and its test run may pass (`SPEC.md` 9.30).
+
 ## The test reader (0.3.0, not released)
 
 - **The reader is a model reading text the judged model wrote.** At Red mod-builder starts an agent that

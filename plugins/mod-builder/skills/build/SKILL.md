@@ -151,17 +151,17 @@ other checks pass, the gate starts mod-builder's test reader and tells you to en
 
 ### 6. Green
 
-Write the code, under `hooks/` (and `types/` when needed), until every test passes. Tests are frozen: if one
-turns out wrong, stop and say so to the person instead of changing it; the build can't go back to Red.
+Write the code, under `hooks/` (and `types/` when needed), until every test passes. Tests are frozen: if one turns
+out wrong, stop and say so to the person instead of changing it. The gate offers a way back to Red after Green's
+tests fail twice running: read `${CLAUDE_PLUGIN_ROOT}/reference/back-to-red.md` when it does.
 
-Then call the gate. It runs the validator, the tests, a typecheck against this build's types and a headless
-load of the mod: the same four checks Verify ends on, run here because `hooks/` closes when Green passes and
-anything they find has to be found while the code can still be changed. When it refuses for the typecheck or
-the load, its answer carries the last lines the command printed: fix what they name and call the gate again.
-If it says the types are not written yet, load `plugin-authoring` again and ask again. The typecheck runs
-against every distinct types file that names itself this build's (they differ between sessions of one build),
-and a failure names the file it failed against. When Green passes, its answer ends with the "Built on" line
-for phase 7: keep it.
+Then call the gate. It runs the validator, the tests, a typecheck against this build's types and a headless load of
+the mod: the same four checks Verify ends on, run here because `hooks/` closes when Green passes and anything they
+find has to be found while the code can still be changed. When it refuses for the typecheck or the load, its answer
+carries the last lines the command printed: fix what they name and call the gate again. If it says the types are
+not written yet, load `plugin-authoring` again and ask again. The typecheck runs against every distinct types file
+that names itself this build's (they differ between sessions of one build), and a failure names the file it failed
+against. When Green passes, its answer ends with the "Built on" line for phase 7: keep it.
 
 ### 7. Verify
 

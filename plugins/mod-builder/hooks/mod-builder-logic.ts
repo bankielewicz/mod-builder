@@ -1019,6 +1019,13 @@ export function writeVerdictIn(kind: Kind, phase: Phase, relPath: string, red?: 
 
 // ---------------------------------------------------------------------------- the folder an edit may name
 
+// What a session is told of a folder another session's open build or edit holds (SPEC.md 9.29, 9.30): whose it
+// is, and the way out there is in 0.3.0. Nothing expires, and no other session can release it.
+export function heldByAnother(modDir: string, kind: Kind, sessionId: string, phase: string): string {
+  const id = shown(sessionId)
+  return `${modDir} is being ${kind === 'edit' ? 'edited' : 'built'} by another session (${id}; it is at ${phase}). If that session is gone, resume it with claude --resume ${id} and run /mod-builder stop there; or name another folder.`
+}
+
 export type EditFolder = {
   modDir: string // absolute
   pluginRoot: string // this plugin's own folder
@@ -1058,7 +1065,7 @@ export function editFolderVerdict(input: EditFolder): Verdict {
   if (isOpenRecord(input.kept) && (input.kept as BuildRecord).sessionId !== input.sessionId) {
     const kept = input.kept as BuildRecord
     const kind = recordKind(kept) as Kind
-    return { pass: false, reason: `${modDir} is being ${kind === 'edit' ? 'edited' : 'built'} by another session (it is at ${phaseLabelOf(kind, kept.phase)}). Name another folder.` }
+    return { pass: false, reason: heldByAnother(modDir, kind, kept.sessionId, phaseLabelOf(kind, kept.phase)) }
   }
   return { pass: true }
 }

@@ -18,7 +18,7 @@ import {
   readerStep,
   readerWaits, readersKey, roundEnds, sectionLine, unnameable,
   BACK_NOT_OFFERED, BACK_TO_RED_OFFER, backFromGreen, backToRedGate, backToRedOffered, backToRedOptions, backToRedQuestion, changedFiles, greenTestRefusals, isReturned, redCopyKey,
-  returnedRedChanged, returnedRedGate, returnedRedRan, returnsAfter, wentBackAnswer,
+  returnedRedChanged, returnedRedGate, returnedRedRan, returnsAfter, wentBackAnswer, heldByAnother,
   scaffoldGate, scaffoldKeptGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
 import type { UntestedFile, AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
@@ -1449,7 +1449,7 @@ async function gate($: Engine, modDirArgument: unknown, claims = false, back = f
     const kept = await $.store.get(buildKey(modDir))
     if (isOpenRecord(kept) && (kept as BuildRecord).sessionId !== sessionId) {
       const theirs = kept as BuildRecord
-      return `mod-builder: ${modDir} is being ${recordKind(theirs) === 'edit' ? 'edited' : 'built'} by another session (it is at ${phaseLabelOf(recordKind(theirs) as Kind, theirs.phase)}). Name another folder.`
+      return `mod-builder: ${heldByAnother(modDir, recordKind(theirs) as Kind, theirs.sessionId, phaseLabelOf(recordKind(theirs) as Kind, theirs.phase))}`
     }
     // A build this session left unfinished in the folder goes on; a finished or stopped one, or an edit, gives
     // way to a new record.
