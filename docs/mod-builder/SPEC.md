@@ -3909,3 +3909,25 @@ session's transcript in order of time]:
   prompts, **none after Done**.
 **Not shown live:** the prompt sent by the 2-second wait (no hand-back arriving); a third round's
 question for changed tests; a reload while an answer waits.
+
+### 9.39 0.3.0 accepted; the push and the pull request (2026-11-12)
+
+The driving session: "0.3.0 accepted at `efe2a9f`". It accepted plan 49 and the building session's two
+points of 9.38 (the rule "once three rounds did not pass"; the question that says the tests changed after
+the report and were not read as they are). The owner, asked whether to push and open the pull request:
+"Push and open the PR (Recommended)". Nothing is merged; the merge is the owner's.
+
+The driving session's own runs, in its words to the building session:
+- at `4e36036`: 889 node tests pass and 2 skip (no compiler on its path), 672 of 672 module tests,
+  validate;
+- its demonstration at `6dcfe95` (sonnet, 2.1.322, a new build `read-count`, no `--agents`): Scaffold as
+  laid, round 1 with four findings, the question after two rounds, "Go on with these tests", Done with 14
+  tests and the four checks; outside the session validate and 14 of 14 tests pass. It is where the stale
+  prompt was found (9.37);
+- its probe of the reader at `db06b85` (an edit of `tool-log` with one test for a single character): five
+  findings naming the untested ranges;
+- not rerun by it: the prompt fix of plan 49, a build with `--agents`, the way back to Red. The building
+  session's live runs stand for those (9.38, 9.34, 9.31).
+
+`CHANGELOG.md` dates 0.3.0 as 2026-11-12, the day of this push; the merge corrects it if it is later.
+CI's `TMPDIR` line and its step limits run on GitHub for the first time with this pull request.
