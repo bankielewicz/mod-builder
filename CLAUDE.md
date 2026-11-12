@@ -28,10 +28,17 @@ Run from the repository's top folder. Needs Claude Code 2.1.322 or later with mo
 
 ```bash
 claude plugin validate --strict plugins/mod-builder      # the manifest and the hooks module, as the engine reads them
-claude plugin test plugins/mod-builder                    # module tests: tests/*.test.ts(x), about 2.5 s for all
+claude plugin test plugins/mod-builder                    # module tests: tests/*.test.ts(x), 15 to 25 s for all
+export TMPDIR=$(mktemp -d)                                # the node tests make and remove their folders under it
 node --test --test-timeout=120000 plugins/mod-builder/tests/*.test.mjs plugins/mod-builder/scripts/*.test.mjs
 node --test plugins/mod-builder/tests/mod-builder-logic-built.test.mjs   # one node test file
+node --test --test-name-pattern "<part of a test's name>" plugins/mod-builder/tests/mod-builder-logic-built.test.mjs
 ```
+
+- CI (`.github/workflows/ci.yml`) runs validate, the module tests and the node tests on a pinned Claude Code,
+  and no typecheck. There Claude Code is the npm package and runs on Node, so a run leaves
+  `node-compile-cache` under `TMPDIR`: `toolsFolder` in `scripts/test-helpers.mjs` names the folders a tool
+  makes there, and the whole-run test of `scripts/leaves-nothing.test.mjs` sets them aside (`SPEC.md` 9.40).
 
 - `claude plugin validate` and `claude plugin test` try to reach the network and are refused by the command
   sandbox; that changes neither their output nor their exit code.
@@ -63,9 +70,9 @@ Everything is under `plugins/mod-builder/`.
     `$.store` only on what they show;
   - the agents (`SPEC.md` section 9): three types registered at `session.start`, each with an `agent.offer`
     hook whose `.catch` withholds. The gate starts the test reader at Red and returns at once (a hook has 10
-    seconds); a `turn.complete` hook stores its answer, and the model is prompted once, only while that answer is unread
-    at Red and no main turn runs (`turn.start` tells; `SPEC.md` 9.37), to call the gate, which reads the
-    verdict from the store only. An `agent.spawn` hook keeps the ids of a started test-writer or implementer
+    seconds); a `turn.complete` hook stores its answer, and the model is prompted once, only while that
+    answer is unread at Red and no main turn runs (`turn.start` tells; `SPEC.md` 9.37), to call the gate,
+    which reads the verdict from the store only. An `agent.spawn` hook keeps the ids of a started test-writer or implementer
     and refuses a teammate; the guard asks who writes in a record that uses agents;
   - the pane (`ui.render`), the `/mod-builder` command, and the documentation refresh.
 - **`skills/build/SKILL.md`: what the model is told**, phase by phase, started by `/mod-builder:build`. Its
@@ -87,21 +94,28 @@ Everything is under `plugins/mod-builder/`.
 - **`tests/world.ts`: the fake world for module tests.** `world(on, start)` answers every `$` call from plain
   fields (`w.files`, `w.store`, `w.runs`, `w.compilers`, `w.ran`). Two things to know: a test may build only
   one world (a second `on(...)` after the test first called `$` throws), and `w.whileRunning` is called after a
-  run's answer is already picked, so what it sets is the next run's answer.
+  run's answer is already picked, so what it sets is the next run's answer. For the agents: `w.spawned` lists
+  what was started (the reader's ids are `reader-N`, any other agent's `agent-N`), `$.turn.start` and
+  `$.turn.complete` raise a main turn's or an agent's start and end, and `w.sleepHeld` and `w.storeHeld` hold
+  the wait before the reader's prompt and one read of the store until the test lets them go.
 
 ### The eight phases and what closes when
 
 Knowledge, Describe, Spec, Scaffold, Red, Green, Verify, Done (`SPEC.md` 3.3). The design rule that most recent
 changes follow: **a check runs while the files it judges can still be changed** (`SPEC.md` 7.7, 7.10, 7.11).
-Scaffold may write everything; Red only `tests/`; Green anything but `tests/` and `SPEC.md`; Verify anything but
-`tests/`, `hooks/` and the approved part of `SPEC.md`. So Scaffold ends on validate, a passing test run and the
-typecheck, with `hooks/` and `tests/` as the template laid them; Red on new tests failing by assertion, the
-typecheck and the test reader's pass (or the person's answer: asked after two rounds that did not pass, or
-after a third reading when the tests changed after the second; once three rounds did not pass, no reading
-starts before the person's "Not yet"); Green and Verify on the same
-four checks. No phase goes back, with one exception: from Green to Red, offered after Green's test run failed
-twice and taken only on the person's answer (`SPEC.md` 9.11, 9.30). `SPEC.md` and `tests/` are hashed (at approval, at Red) and a later gate refuses when one
-changed, by any tool. Before adding a check to a gate, ask which files it judges and whether they are open
+The guard lets Scaffold write everything; Red only `tests/`; Green anything but `tests/` and `SPEC.md`; Verify
+anything but `tests/`, `hooks/` and the approved part of `SPEC.md`. What each phase ends on:
+
+- **Scaffold:** validate, a passing test run and the typecheck, with `hooks/` and `tests/` exactly as the
+  template laid them. The guard allows a write there; the gate refuses anything but the template (`SPEC.md` 9.4).
+- **Red:** new tests failing by assertion, the typecheck, and the test reader's pass or the person's answer.
+  The person is asked after two rounds that did not pass. Tests changed after the second are read once more
+  as they stand. Once three rounds did not pass, no reading starts before the person's "Not yet" (9.38).
+- **Green and Verify:** the same four checks (validate, the tests, the typecheck, a headless load).
+
+No phase goes back, with one exception: from Green to Red, offered after Green's test run failed twice and
+taken only on the person's answer (`SPEC.md` 9.11, 9.30). `SPEC.md` and `tests/` are hashed (at approval, at
+Red) and a later gate refuses when one changed, by any tool. Before adding a check to a gate, ask which files it judges and whether they are open
 there; `SPEC.md` 7.10 has the table.
 
 The typecheck runs once against every distinct types file that names itself the build's (genuine ones differ
@@ -116,7 +130,8 @@ between sessions), never picking one. A refused command is answered with its las
   its sha256 and lists mutants the verifier must see fail a named test. An agent that did not write the tests
   reads them against the rule before the red commit.
 - **A spec-driven change to an existing test goes in a commit of its own first**, saying why; the red commit
-  then holds only new test files and the green commit only code.
+  then holds only new test files and the green commit only code. One recorded exception: an existing test
+  that needs a helper the plan adds is changed in a commit of its own after the green one (`SPEC.md` 9.40).
 - **Code and tests are changed with the Edit or Write tool, never by a shell command.** The agents need a clean
   `git status` and `HEAD` at the commit they are given, so nothing else touches the worktree while one runs.
 - **A helper in a test file that checks something uses an assertion, never a thrown error** (9.32), so that
@@ -125,8 +140,9 @@ between sessions), never picking one. A refused command is answered with its las
   stays on `main`. Agents and test runs keep their files under a scratch folder, never in the home folder.
 - **A verifier's PASS is not the whole check** (7.2): a rule given as exact is also run against the real engine
   or real command output before it is built, and what was probed is recorded with a `[ran]` or `[read]` tag.
-- **Record decisions in `SPEC.md` section 7 with who made them.** Instructions and dialog answers may come from
-  another Claude session the owner works through ("the driving session"), not the owner; say which.
+- **Record decisions in `SPEC.md`, in the section of the change in hand (7, 8, now 9), with who made them.**
+  Instructions and dialog answers may come from another Claude session the owner works through ("the driving
+  session"), not the owner; say which.
 - The GitHub repository is `https://github.com/bankielewicz/mod-builder` (remote `origin`). Changes reach
   `main` there through a pull request the owner merges; never push to `main` and never push unasked. Commits
   use the owner's GitHub noreply address (set in this repository's git config; `SPEC.md` 7.13). Commits
