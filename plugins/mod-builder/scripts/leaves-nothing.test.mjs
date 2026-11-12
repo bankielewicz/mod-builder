@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { scriptsDir, tempDir } from './test-helpers.mjs';
+import { scriptsDir, tempDir, toolsFolder } from './test-helpers.mjs';
 
 const HELPERS = pathToFileURL(join(scriptsDir, 'test-helpers.mjs')).href;
 const HERE = 'leaves-nothing.test.mjs';
@@ -198,7 +198,7 @@ test('no node test names a temporary folder of its own: tempDir is the one place
   assert.deepEqual(naming.map((path) => basename(path)), [HERE]);
 });
 
-test('a whole run of every other node test file leaves nothing under TMPDIR but the folder Claude Code makes there', async () => {
+test('a whole run of every other node test file leaves nothing under TMPDIR but the folders tools make there', async () => {
   const at = place();
   const tests = dirname(scriptsDir) + '/tests';
   const files = [...readdirSync(tests).map((name) => join(tests, name)), ...readdirSync(scriptsDir).map((name) => join(scriptsDir, name))]
@@ -206,6 +206,7 @@ test('a whole run of every other node test file leaves nothing under TMPDIR but 
   assert.equal(files.length > 40, true);
   const ended = await start(at, ['--test', '--test-timeout=120000', ...files]).done;
   assert.equal(ended.code, 0, ended.output.slice(-2000));
-  // `claude plugin validate`, which one test file runs, makes claude-<user id> under TMPDIR: not a test's folder.
-  assert.deepEqual(readdirSync(at.tmp).filter((name) => !/^claude-\d+$/.test(name)), []);
+  // `claude plugin validate`, which one test file runs, makes claude-<user id> under TMPDIR, and where Claude Code
+  // runs on Node, that process makes node-compile-cache there (SPEC.md 9.40): a tool's folders, not a test's.
+  assert.deepEqual(readdirSync(at.tmp).filter((name) => !toolsFolder(name)), []);
 });
