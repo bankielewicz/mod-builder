@@ -19,9 +19,11 @@ import {
   readerWaits, readersKey, roundEnds, sectionLine, unnameable,
   BACK_NOT_OFFERED, BACK_TO_RED_OFFER, backFromGreen, backToRedGate, backToRedOffered, backToRedOptions, backToRedQuestion, changedFiles, greenTestRefusals, isReturned, redCopyKey,
   returnedRedChanged, returnedRedGate, returnedRedRan, returnsAfter, wentBackAnswer, heldByAnother,
+  AGENT_DESCRIPTIONS, AGENT_PROMPTS, AGENT_ROLES, AGENT_TOOLS, agentCallRefusal, agentKey, agentKeys, agentMayCall, agentNote, agentOffered, agentRole, agentWriteVerdict, agentsOpened,
+  asksForAgents, namedEntry, readKeptAgent, spawnRefusal, usesAgents, waitingEntry,
   scaffoldGate, scaffoldKeptGate, sessionKey, specGate, specKept, testNames, toolPath, typecheckConfig, typesFileIn, typesFolder, typesToCheck, isTypesOf, lastLines, hooksSkipped, builtOnLine, builtMisses, refusedAt, typecheckGate, validateLines, COMPILERS, verifyGate,
 } from './mod-builder-logic'
-import type { UntestedFile, AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
+import type { AgentRole, UntestedFile, AskedFile, Attempt, Baseline, BuildRecord, Cell, Check, Checks, CheckState, Finished, Hashes, Kind, PaneInput, PaneModel, Phase, Run, SpecNow, Stop, Tone, TypecheckRun, TypesCandidate, Verdict } from './mod-builder-logic'
 
 type Engine = EngineInterface
 
@@ -917,6 +919,37 @@ async function readerRefused($: Engine, e: { agentId?: unknown; tool?: unknown }
   return `mod-builder: the test reader may call Read, Grep and Glob only, not ${String(e.tool)}`
 }
 
+// Whether a tool call is one a test-writer or an implementer this session started may not make (SPEC.md 9.33):
+// its five tools and the hand-back only. Answers the refusal, or null. As for the reader, a tool the API runs
+// itself never reaches a hook.
+async function agentRefused($: Engine, e: { agentId?: unknown; tool?: unknown }): Promise<string | null> {
+  if (typeof e.agentId !== 'string' || e.agentId === '' || agentMayCall(e.tool)) return null
+  const kept = readKeptAgent(await $.store.get(agentKey(await $.session.id(), e.agentId)))
+  if (kept === null) return null
+  $.ui.log(`mod-builder: refused the ${kept.role}'s call to ${String(e.tool)}`, { to: 'debug' })
+  return agentCallRefusal(kept.role, e.tool)
+}
+
+// Whether one of the two agents is offered to the model now (SPEC.md 9.33): read from this session's record.
+async function offered($: Engine, role: AgentRole): Promise<boolean> {
+  const sessionId = await $.session.id()
+  const entry = await $.store.get(sessionKey(sessionId))
+  const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
+  return agentOffered(role, sessionId, entry, record)
+}
+
+// The ids kept for the agents a session started are removed when its build or edit is stopped or Done. One that can't
+// be removed stops nothing: it names a mod no open record of this session holds.
+async function forgetAgents($: Engine, sessionId: string): Promise<void> {
+  try {
+    for (const key of await $.store.keys()) {
+      if (key.startsWith(agentKeys(sessionId))) await $.store.set(key, null)
+    }
+  } catch {
+    // The stop itself is done.
+  }
+}
+
 // The check that ends an edit's phase, run now. `claims` is whether the gate's call put the change forward as one
 // with no behaviour change (SPEC.md 8.15).
 async function checkEdit($: Engine, record: BuildRecord, claims: boolean): Promise<Step> {
@@ -1061,6 +1094,7 @@ async function stop($: Engine): Promise<string> {
   // The record first, then the session: a record marked stopped holds nothing even if the second write fails.
   await $.store.set(buildKey(record.modDir), stoppedRecord(record))
   await $.store.set(key, null)
+  await forgetAgents($, sessionId)
   // What was stopped stays in the pane until this session opens another build or edit; it binds nothing.
   await $.store.set(stoppedKey(sessionId), record.modDir)
   await redraw($)
@@ -1357,7 +1391,7 @@ async function goBack($: Engine, record: BuildRecord, kind: Kind): Promise<strin
     // The pane then shows the states before these.
   }
   await settle($, record.modDir)
-  return `mod-builder: back at ${phaseLabelOf(kind, 'red')}: ${wentBackAnswer(returns)}.`
+  return `mod-builder: back at ${phaseLabelOf(kind, 'red')}: ${wentBackAnswer(returns)}.${agentNote(moved, 'red')}`
 }
 
 // The guard's counting of refused writes, in the order they were refused.
@@ -1432,16 +1466,18 @@ async function gate($: Engine, modDirArgument: unknown, claims = false, back = f
     if (!may.pass) return `mod-builder: no edit was opened: ${may.reason}${may.reason.endsWith('.') ? '' : '.'}`
     // An edit this session left unfinished in the folder goes on, with the baseline it took then.
     if (isOpenRecord(kept) && (kept as BuildRecord).sessionId === sessionId && recordKind(kept) === 'edit') {
-      await $.store.set(sessionKey(sessionId), { modDir, kind: 'edit' })
-      return `mod-builder: the edit of ${modDir} goes on. It is at ${phaseLabelOf('edit', (kept as BuildRecord).phase)}. Call ${GATE_TOOL} again to ask for the next phase.`
+      await $.store.set(sessionKey(sessionId), namedEntry(modDir, 'edit', kept))
+      return `mod-builder: the edit of ${modDir} goes on. It is at ${phaseLabelOf('edit', (kept as BuildRecord).phase)}.${agentsOpened(kept)} Call ${GATE_TOOL} again to ask for the next phase.`
     }
     const taken = await takeBaseline($, modDir, sessionId)
     if (typeof taken === 'string') return `mod-builder: no edit was opened, and nothing was written: ${taken}.`
     await emptyBeside($, modDir)
-    await $.store.set(buildKey(modDir), taken.record)
-    await $.store.set(sessionKey(sessionId), { modDir, kind: 'edit' })
+    // The word the mod read when the skill was expanded goes into the record, which keeps it from here on.
+    const opened: BuildRecord = usesAgents(entry) ? { ...taken.record, agents: true } : taken.record
+    await $.store.set(buildKey(modDir), opened)
+    await $.store.set(sessionKey(sessionId), namedEntry(modDir, 'edit', opened))
     await redraw($)
-    return `mod-builder: the edit's mod folder is ${modDir}. ${taken.said}\nIt is at ${phaseLabelOf('edit', 'knowledge')}. Call ${GATE_TOOL} again to ask for the next phase.`
+    return `mod-builder: the edit's mod folder is ${modDir}. ${taken.said}\nIt is at ${phaseLabelOf('edit', 'knowledge')}.${agentsOpened(opened)} Call ${GATE_TOOL} again to ask for the next phase.`
   }
   if (entry.modDir === null) {
     const modDir = typeof modDirArgument === 'string' ? absolutePath(modDirArgument, await $.session.cwd()) : null
@@ -1454,12 +1490,12 @@ async function gate($: Engine, modDirArgument: unknown, claims = false, back = f
     // A build this session left unfinished in the folder goes on; a finished or stopped one, or an edit, gives
     // way to a new record.
     const goesOn = isOpenRecord(kept) && (kept as BuildRecord).sessionId === sessionId && recordKind(kept) === 'build'
-    const record = goesOn ? (kept as BuildRecord) : newRecord(modDir, sessionId)
+    const record: BuildRecord = goesOn ? (kept as BuildRecord) : usesAgents(entry) ? { ...newRecord(modDir, sessionId), agents: true } : newRecord(modDir, sessionId)
     if (!goesOn) await emptyBeside($, modDir)
     await $.store.set(buildKey(modDir), record)
-    await $.store.set(sessionKey(sessionId), { modDir })
+    await $.store.set(sessionKey(sessionId), namedEntry(modDir, 'build', record))
     await redraw($)
-    return `mod-builder: the build's mod folder is ${modDir}. It is at ${phaseLabel(record.phase)}. Call ${GATE_TOOL} again to ask for the next phase.`
+    return `mod-builder: the build's mod folder is ${modDir}. It is at ${phaseLabel(record.phase)}.${agentsOpened(record)} Call ${GATE_TOOL} again to ask for the next phase.`
   }
   const record = await $.store.get(buildKey(entry.modDir))
   if (!isBuildRecord(record) || record.sessionId !== sessionId || record.modDir !== entry.modDir) {
@@ -1515,8 +1551,10 @@ async function gate($: Engine, modDirArgument: unknown, claims = false, back = f
     const evidence = { ...record.evidence, [record.phase]: step.evidence ?? '' }
     await $.store.set(buildKey(record.modDir), { ...kept, ...step.change, phase: next, evidence })
     if (next === 'done') toast($, doneToast(record.modDir, 'build'))
+    // At Done nothing is left for an agent to write: the ids kept for this session's are removed (SPEC.md 9.33).
+    if (next === 'done') await forgetAgents($, sessionId)
     await settle($, record.modDir)
-    return `mod-builder: ${phaseLabel(record.phase)} passed (${step.evidence ?? ''}). The build is now at ${phaseLabel(next)}.${step.note === undefined ? '' : `\n${step.note}`}`
+    return `mod-builder: ${phaseLabel(record.phase)} passed (${step.evidence ?? ''}). The build is now at ${phaseLabel(next)}.${agentNote(record, next)}${step.note === undefined ? '' : `\n${step.note}`}`
   }
   let step: Step
   try {
@@ -1546,9 +1584,10 @@ async function gate($: Engine, modDirArgument: unknown, claims = false, back = f
   const evidence = { ...record.evidence, [record.phase]: step.evidence ?? '' }
   await $.store.set(buildKey(record.modDir), { ...moved, phase: next, evidence })
   if (next === 'done') toast($, doneToast(record.modDir, 'edit'))
+  if (next === 'done') await forgetAgents($, sessionId)
   await settle($, record.modDir)
   const skips = record.phase === 'spec' && next === 'green' ? ` Red is skipped (${moved.skipped === 'no behaviour change' ? 'no behaviour change' : 'the test files fit this build'}).` : ''
-  return `mod-builder: ${at} passed (${step.evidence ?? ''}).${skips} The edit is now at ${phaseLabelOf('edit', next)}.${step.note === undefined ? '' : `\n${step.note}`}`
+  return `mod-builder: ${at} passed (${step.evidence ?? ''}).${skips} The edit is now at ${phaseLabelOf('edit', next)}.${agentNote(record, next)}${step.note === undefined ? '' : `\n${step.note}`}`
 }
 
 // The folders above a path that hold a plugin's manifest, nearest first.
@@ -1612,6 +1651,15 @@ export const register: Register = (on, options) => {
     } catch (error) {
       $.ui.log(`mod-builder: the test reader could not be registered (${String(error)})`, { to: 'debug' })
     }
+    // The test-writer and the implementer (SPEC.md 9.5, 9.33), each in a try of its own: one that can't be
+    // registered leaves the other, the reader and the gate as they are. No model is named.
+    for (const role of AGENT_ROLES) {
+      try {
+        await $.agent.register({ name: role, description: AGENT_DESCRIPTIONS[role], prompt: AGENT_PROMPTS[role], tools: [...AGENT_TOOLS], omitClaudeMd: true })
+      } catch (error) {
+        $.ui.log(`mod-builder: the ${role} could not be registered (${String(error)})`, { to: 'debug' })
+      }
+    }
     // Not awaited: the session starts while the fetch runs. A headless session never fetches.
     if (e.isInteractive) void refreshWhenStale($, options.refreshDays)
     // A new session has no open record: a status line an earlier one left is cleared (SPEC.md 8.18, point 4).
@@ -1623,6 +1671,40 @@ export const register: Register = (on, options) => {
   // The test reader is the mod's to start, never the model's: its type is withheld from the model (SPEC.md 9.3).
   // The .catch withholds it too: a hook that failed here would otherwise be skipped, and the type offered.
   on('agent.offer', { agent: 'mod-builder:test-reader' }, () => ({ isOffered: false })).catch(() => ({ isOffered: false }))
+
+  // The test-writer and the implementer are offered to the model only while this session's record uses agents and
+  // is at one of that agent's phases (SPEC.md 9.33: Red; Green and Verify). Each hook's .catch withholds: a failure offers nothing.
+  on('agent.offer', { agent: 'mod-builder:test-writer' }, async ($) => ({ isOffered: await offered($, 'test-writer') })).catch(() => ({ isOffered: false }))
+  on('agent.offer', { agent: 'mod-builder:implementer' }, async ($) => ({ isOffered: await offered($, 'implementer') })).catch(() => ({ isOffered: false }))
+
+  // A spawn of one of the two is judged, and its id kept when it started (SPEC.md 9.14, 9.33): the guard knows a
+  // writer by that id. Any other spawn, the test reader's included, passes untouched. A teammate is refused, and
+  // so is a spawn while no record of this session uses agents at that agent's phase. A failure before the start
+  // refuses the spawn; one after it keeps no id, so that agent's writes are refused.
+  on('agent.spawn', async ($, e, next) => {
+    const role = agentRole(e.subagentType)
+    if (role === null) return next(e)
+    const sessionId = await $.session.id()
+    const entry = await $.store.get(sessionKey(sessionId))
+    const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
+    const refusal = spawnRefusal({ subagentType: e.subagentType, isTeammate: (e as { isTeammate?: unknown }).isTeammate, sessionId, entry, record })
+    if (refusal !== null) return { deny: refusal } as never
+    const started = await next(e)
+    const agentId = (started as { agentId?: unknown }).agentId
+    if (typeof agentId === 'string' && agentId !== '') {
+      try {
+        await $.store.set(agentKey(sessionId, agentId), { role, modDir: (record as BuildRecord).modDir })
+      } catch (error) {
+        $.ui.log(`mod-builder: the ${role} ${agentId} was started, but its id could not be kept, so its writes will be refused (${String(error)})`, { to: 'debug' })
+      }
+    }
+
+    return started
+  }).catch(($, e, next) =>
+    next.called || agentRole(e.subagentType) === null
+      ? next(e)
+      : ({ deny: 'mod-builder: the agent was not started: mod-builder could not read whether this session has a build or edit that uses agents. Run with claude --debug to see why.' } as never),
+  )
 
   // A reader's answer is stored when its turn ends, and the main model nudged (SPEC.md 9.12). A failure here
   // changes nothing about the turn: the answer stays unread, and the gate counts a round with no verdict.
@@ -1646,7 +1728,7 @@ export const register: Register = (on, options) => {
       if (!isOpenRecord(record)) {
         // The transcript's line comes once: not again while the build it opened still waits for its folder.
         const waits = isSessionEntry(entry) && entry.modDir === null && entryKind(entry) === 'build'
-        await $.store.set(key, { modDir: null })
+        await $.store.set(key, waitingEntry('build', asksForAgents(e.text), entry))
         await emptyBeside($, '', [stoppedKey(await $.session.id())])
         if (!waits) $.ui.log(openedLine('build'))
       }
@@ -1662,7 +1744,7 @@ export const register: Register = (on, options) => {
       // A build or an edit under way stays as it is; a finished, stopped or lost one gives way to a pending edit.
       if (!isOpenRecord(record)) {
         const waits = isSessionEntry(entry) && entry.modDir === null && entryKind(entry) === 'edit'
-        await $.store.set(key, { modDir: null, kind: 'edit' })
+        await $.store.set(key, waitingEntry('edit', asksForAgents(e.text), entry))
         await emptyBeside($, '', [stoppedKey(await $.session.id())])
         if (!waits) $.ui.log(openedLine('edit'))
       }
@@ -1680,7 +1762,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__mod-builder__mod_builder_gate' }, async ($, e) => {
     // The gate is the main model's to call. This hook answers before the guard's, so the test reader is refused
     // here too: it may call its three tools and the hand-back (SPEC.md 9.14).
-    const refused = e.agentId === undefined ? null : await readerRefused($, e)
+    const refused = e.agentId === undefined ? null : (await readerRefused($, e)) ?? (await agentRefused($, e))
     if (refused !== null) return { deny: refused }
 
     return { result: await gate($, (e as { mod_dir?: unknown }).mod_dir, (e as { no_behaviour_change?: unknown }).no_behaviour_change === true, (e as { back_to_red?: unknown }).back_to_red === true) }
@@ -1691,8 +1773,9 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
     // A test reader's loop may call its three tools and the hand-back, nothing else (SPEC.md 9.12, 9.14).
+    // A test-writer's or an implementer's may call its five tools and the hand-back (SPEC.md 9.33).
     if (e.agentId !== undefined) {
-      const refused = await readerRefused($, e)
+      const refused = (await readerRefused($, e)) ?? (await agentRefused($, e))
       if (refused !== null) return { deny: refused }
     }
     const path = isGuardedTool(tool) ? toolPath(tool, e as { file_path?: unknown; notebook_path?: unknown }) : null
@@ -1720,6 +1803,17 @@ export const register: Register = (on, options) => {
     const pluginFolders = await pluginFoldersAbove($, path, cwd)
     const record = isSessionEntry(entry) && entry.modDir !== null ? await $.store.get(buildKey(entry.modDir)) : undefined
     let verdict = guardVerdict({ tool, path, cwd, sessionId, entry, record, pluginFolders })
+    // In a build or edit that uses agents, a write its phase allows is also asked who makes it (SPEC.md 9.5, 9.33):
+    // the tests are the test-writer's at Red, the code the implementer's at Green, and a source file still the
+    // implementer's at Verify (Done keeps that rule). The id the call carries is one
+    // the mod kept from its own agent.spawn hook, or it names nobody.
+    if (verdict.allowed && isBuildRecord(record) && record.stopped !== true && record.sessionId === sessionId && usesAgents(record)) {
+      const whole = absolutePath(path, cwd) ?? path
+      if (whole === record.modDir || whole.startsWith(`${record.modDir}/`)) {
+        const kept = typeof e.agentId === 'string' && e.agentId !== '' ? await $.store.get(agentKey(sessionId, e.agentId)) : undefined
+        verdict = agentWriteVerdict({ record, relPath: whole === record.modDir ? '' : whole.slice(record.modDir.length + 1), kept })
+      }
+    }
     // While a test reader reads, the mod's files that Red may write, its test files, are closed to everyone
     // (SPEC.md 9.28): they reopen when its answer is stored or its time is up. A write Red refuses anyway keeps
     // its own reason.
