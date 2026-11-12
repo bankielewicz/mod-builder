@@ -3062,3 +3062,51 @@ arrived.
 **Headless, stated as not run:** the reference file's sentences on `claude -p` (the report may come back
 as a hand-back; nobody can be asked after two rounds, so Red stays) rest on 9.13's one run and a reading
 of the code.
+
+### 9.25 The reader in the hooks module, as built, and an edit with it on the real engine (2026-11-11, at `dbba0f8`)
+
+**Plan 42** (9.19, 9.21, 9.22, 9.24): `8f6cc35` (existing tests: every test that passes Red lets a reader
+pass it first; Red's evidence names the reader; validate lists the withholding hook; the test world
+answers an agent's start, its end and a prompt), `120bc01` red, `dbba0f8` green; verifier PASS, every
+check reproduced and 17 mutants each failing its named test; 493 module tests, 745 node tests, validate
+and the typecheck pass [ran, by the implementer and the verifier]. A third agent read the tests of the two
+rulings before the red commit (26 mutants, 4 survived; two gaps, now tested: a start that threw counted
+as a start, a drop with no reason). The verifier noted that the plan's first criterion names verification
+command 2 where it means 3, and judged it by 3.
+
+As built, beyond 9.19 as changed by 9.21, 9.22 and 9.24: the gate's hook for its own tool also refuses a
+reader's call; the record gains `reader`, `readerRounds`, `readerLast`, `readerStarts` and `testsAgreed`;
+the session's readers are listed in the store under a key of their own.
+
+**On the real engine** [ran, 2.1.322, sonnet, the plugin at `dbba0f8` loaded with `--plugin-dir`, the
+installed copy switched off, the building session answering the dialogs] (9.9, items 1, 2 and, for an
+edit, 6): an edit of a copy of `tool-log` 0.1.0 (from the restore point of 8.29's run) asking for
+display-width cutting, the model told to write three tests that use one wide character only.
+- Red's other checks passed; the gate answered "still at phase 4 (Red): the test reader is reading the
+  tests against the spec. End your turn now: ..."; the pane's agent list showed
+  `mod-builder:test-reader`; the model ended its turn.
+- "Prompt from the mod-builder plugin: mod-builder: the test reader has reported. Call
+  mod_builder_gate."; the model called the gate: "still at phase 4 (Red). Not passed: the test reader
+  found behaviours of the spec that no test would catch (round 1). Change the tests and call the gate
+  again, which starts another reading; after 2 rounds that do not pass, the person is asked." with the
+  findings beneath (zero-width characters untested; only one wide character used; ...).
+- The model changed one test; the second reading did not pass either, and in the same call the person
+  was asked: "The test reader has read the tests 2 times. The last time it found behaviours of the spec
+  that no test would catch: ..." (four findings, among them "only 漢 is ever used. Code that treats just
+  CJK ideographs as wide would pass. Korean, Japanese kana, full-width forms and emoji ... are not
+  tested"), "Not yet" first.
+- "Not yet": "still at phase 4 (Red). Not passed: the person has not agreed to go on with these tests
+  (answer: "Not yet")." The model changed its tests; a third reading found two things; the person was
+  asked again; "Go on with these tests": "phase 4 (Red) passed (14 tests ran, a new or changed one
+  failing by assertion; the typecheck passes (...); 3 test files hashed, not as at the baseline:
+  tests/width.test.tsx; the person answered "Go on with these tests" after 3 rounds of the test reader
+  (the last: 2 findings))".
+- The edit reached Done: validate, 14 tests, the typecheck and a headless load pass; version 0.2.0.
+The reader's two refused calls in that run are in the debug log ("refused the test reader's call to
+..."): it tried a tool it may not use, and went on.
+
+**Two things the run showed that are not the plugin's own:** a session that was ended while it held an
+edit left the folder "being edited by another session" (0.2.0's behaviour, 8.20; the run used a copy);
+and a `TMPDIR` whose path is long broke the nested session's own command sandbox ("Failed to create
+bridge sockets"), so a live run is started with `TMPDIR` unset. Each live run writes a restore point
+under `~/.claude/mod-builder-data/v2/restore/`, as an edit does; the building session removes none.
