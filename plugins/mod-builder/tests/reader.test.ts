@@ -99,11 +99,11 @@ test('the reader\'s type is withheld from the model, and no other type is', asyn
   expect((await $.agent.offer(offer('mod-builder:test-reader-2'))).isOffered).toBe(true)
 })
 
-test('the gate takes no verdict from the model: its input names the folder and the claim of no behaviour change, and nothing else', async ($, on) => {
+test('the gate takes no verdict from the model: its input names the folder, the claim of no behaviour change and the request to go back to Red, and nothing else', async ($, on) => {
   const w = world(on)
   await start($)
   const schema = (w.registered[0] as unknown as { inputSchema: { properties: Record<string, unknown> } }).inputSchema
-  expect(Object.keys(schema.properties).sort()).toEqual(['mod_dir', 'no_behaviour_change'])
+  expect(Object.keys(schema.properties).sort()).toEqual(['back_to_red', 'mod_dir', 'no_behaviour_change'])
 })
 
 // ------------------------------------------------------------------------------------------ the two calls

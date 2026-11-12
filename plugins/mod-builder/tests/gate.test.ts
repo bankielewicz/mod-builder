@@ -411,7 +411,8 @@ test('Green stays when a test still fails, and when a test went missing from the
   w.runs.test = { exitCode: 1, stdout: failing(['test 1'], ['counts a turn']) }
   expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: claude plugin test exited 1: not every test passes.')
   w.runs.test = { exitCode: 0, stdout: passing(1) }
-  expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: the run has 1 test, fewer than the 2 at Red.')
+  // The second refusal in a row for the test run: the way back to Red is offered (SPEC.md 9.30).
+  expect(first(await gate($))).toBe('mod-builder: still at phase 6 (Green). Not passed: the run has 1 test, fewer than the 2 at Red. If a test is what is wrong, call the gate with back_to_red: true: mod-builder then asks the person whether to go back to Red and change the tests.')
   w.runs.test = 'never starts'
   expect(await gate($)).toMatch(/Not passed: claude plugin test ended with no exit code/)
   expect(phase(w)).toBe('green')
